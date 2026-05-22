@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from types import CoroutineType
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
 from .llm_fetcher import LLMFetcher, LLMOutput, LLMToolCall
@@ -188,15 +188,25 @@ class Agent:
             self.memory_list.append(memory)
         return memory
 
-    def get_memories(self) -> List[str]:
+    def copy_memories(self) -> List[str]:
         """
-        获取所有已存储的记忆。
+        获取所有已存储的记忆，该操作会拷贝一份。
         注意：“记忆”层级不等于“上下文”——记忆不会被再次压缩。
 
         Returns:
             List of memory summary strings.
         """
         return self.memory_list.copy()
+
+    def get_memories(self) -> List[str]:
+        """
+        获取所有已存储的记忆，该操作不会拷贝，而是会返回其引用。
+        建议在获取后立即改为 tuple 类型以只读。
+
+        Returns:
+            List of memory summary strings.
+        """
+        return self.memory_list
 
     def clear_memories(self) -> None:
         """
@@ -294,7 +304,8 @@ class Agent:
         max_turns: int = 8,
         max_context_size: int = 131072,
         temperature: float = 0.4,
-        stream: bool = False
+        max_tokens: int = 4096,
+        stop_callback: Optional[Callable[[], bool]] = None,
     ) -> str:
         """
         进行一整个轮次的 Agent 执行轮。
@@ -312,9 +323,9 @@ class Agent:
             streamer: 流式输出的处理器，如果无处理器则默认正常颜色输出。
             verbose_info: 为 True 时，打印每轮调用、tool_calls、结果等调试信息。
             max_turns: 最大轮次上限。
-            max_context_size: 当本次运行上下文达到该数值时，压缩上下文。
-            temperature: 本轮采样温度，透传给底层 LLM fetcher。
-            stream: 是否使用流式输出。
+            temperature: 采样温度，透传给底层 LLM 请求。
+            max_tokens: 最大输出 token 数，透传给底层 LLM 请求。
+            stop_callback: 可选，用于确定是否停止运行的回调函数。该函数返回 True 时则停止执行。
 
         Returns:
             LLM 生成的完整回复文本。
@@ -324,10 +335,15 @@ class Agent:
         tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider)   # 工具调用方法
         final_content: str = ""
 
+        def _should_stop() -> bool:
+            return bool(stop_callback and stop_callback())
+
         turn: int = 0
-        # 轮次开始。有个问题，
+        # 轮次开始。
         while turn < max_turns:
             turn += 1
+            if _should_stop():
+                break
             prev_messages: Optional[LLMContext] = await self._build_prev_messages()
 
             if verbose_info:
@@ -336,45 +352,19 @@ class Agent:
                 print(f"[Agent] Tool schemas count: {len(tool_schemas)}")
                 print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
 
+            if _should_stop():
+                break
+
             # ---- 调用 LLM - 这里采用异步执行 ----
-            if not stream:
-                response: LLMOutput = await self.llm_handler.fetch(
-                    msg=msg,
-                    system_prompt=self.system_prompt,
-                    temperature=temperature,
-                    prev_messages=[prev_messages] if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
-                    tools=tool_schemas if tool_schemas else None,  # 传递工具信息
-                    fallback_order=self.fallback_order,
-                )
-            else:
-                from time import time
-                token_num: int = 0
-                t1 = time()
-                response_stream: AsyncGenerator[str, None] = self.llm_handler.fetch_stream(
-                    msg=msg,
-                    system_prompt=self.system_prompt,
-                    temperature=temperature,
-                    prev_messages=[prev_messages] if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
-                    tools=tool_schemas if tool_schemas else None,  # 传递工具信息
-                    fallback_order=self.fallback_order,
-                )
-                response_chunks: List[str] = []
-                async for chunk in response_stream:
-                    if streamer:
-                        streamer(chunk)
-                    response_chunks.append(chunk)
-                    token_num += 1
-                t2 = time()
-                dt = t2 - t1
-                tps = token_num / dt
-                # 如果这样做的话……不太符合这个东西的 schema 记录，但现在只能这样了
-                response = LLMOutput(
-                    content="".join(response_chunks),
-                    provider=self.provider,
-                    backend_name="",
-                    model="",
-                    role="assistant",
-                )
+            response: LLMOutput = await self.llm_handler.fetch(
+                msg=msg,
+                system_prompt=self.system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                prev_messages=[prev_messages] if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
+                tools=tool_schemas if tool_schemas else None,  # 传递工具信息
+                fallback_order=self.fallback_order,
+            )
 
             # 然后查看工具内容，如果有工具的话。
             message: str = response.text
@@ -398,11 +388,15 @@ class Agent:
                         self._execute_single_tool(
                             tool_call=tool.to_execution_format(), 
                             verbose=verbose_info
-                            )
                         )
+                    )
                 # 然后等待
                 executing_result = await asyncio.gather(*executing_tools)
-            
+
+            if _should_stop():
+                final_content = final_content or response.text
+                break
+
             # 将工具执行结果放进来。
             tool_record_round: List[ToolExecutionRecord] = [
                 ToolExecutionRecord(
@@ -432,10 +426,14 @@ class Agent:
 
             # 判断是否结束？
             # 传统：如果没有 tool call，则立即结束。
+
             if len(tool_record_round) == 0:
                 final_content = message
                 break
-        
+            if _should_stop():
+                final_content = final_content or response.text
+                break
+
         else:
             raise MaxTurnsExceededError(f"Agent round exceeded max_turns={max_turns}.")
 
@@ -470,10 +468,14 @@ class Agent:
             context.tags = []
             return context
 
-        tags: LLMOutput = await self.llm_handler.fetch(
-            msg=tag_source,
-            system_prompt=TAGIFY_CONTEXT_PROMPT,
-        )
+        prompt: str = """
+        You should generate machine-readable tags for one Agent context entry.
+        Return only 3 to 5 lowercase snake_case tags separated by commas.
+        Do not explain. Do not ask for more input. Do not use Markdown or backticks.
+        Example: context_lookup, tool_call, empty_history
+        """
+
+        tags: LLMOutput = await self.llm_handler.fetch(msg=tag_source, system_prompt=prompt, temperature=1.0)   # 问题在这里，在给上下文加标签时会有一个没输入 temperature 参数的信息
         parsed_tags = [
             tag
             for tag in re.findall(r"[a-zA-Z][a-zA-Z0-9_]{1,40}", tags.content.lower())

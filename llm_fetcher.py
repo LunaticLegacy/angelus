@@ -182,6 +182,352 @@ class LLMFetcher:
         
         return messages
 
+<<<<<<< HEAD
+=======
+    def _convert_to_anthropic_messages(
+        self,
+        messages: List[Dict[str, str]]
+    ) -> tuple[List[Dict[str, Any]], Optional[str]]:
+        """Convert OpenAI-style messages to Anthropic format.
+        
+        Anthropic has some key differences:
+        - No "system" role (use system parameter instead)
+        - Tool results use different format
+        - Content can be mixed (text + tool_use/tool_result)
+        
+        Args:
+            messages: OpenAI-format message list
+            
+        Returns:
+            Tuple of (Anthropic-format message list, system prompt string)
+        """
+        anthropic_messages = []
+        system_message = None
+        
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            
+            if role == "system":
+                # Anthropic doesn't have system role in messages
+                # Store it separately (will be passed as system parameter)
+                system_message = content
+                continue
+            
+            elif role == "tool":
+                # Convert tool result to Anthropic format
+                tool_call_id = msg.get("tool_call_id", "")
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_call_id,
+                            "content": content
+                        }
+                    ]
+                })
+            
+            else:
+                # user or assistant messages
+                anthropic_messages.append({
+                    "role": role,
+                    "content": content
+                })
+        
+        return anthropic_messages, system_message
+
+    def _convert_to_anthropic_tools(
+        self,
+        tools: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Convert OpenAI-style tool schemas to Anthropic format.
+        
+        OpenAI format:
+        {
+            "type": "function",
+            "function": {
+                "name": "...",
+                "description": "...",
+                "parameters": {...}
+            }
+        }
+        
+        Anthropic format:
+        {
+            "name": "...",
+            "description": "...",
+            "input_schema": {...}
+        }
+        
+        Args:
+            tools: OpenAI-format tool schemas
+            
+        Returns:
+            Anthropic-format tool schemas
+        """
+        anthropic_tools = []
+        
+        for tool in tools:
+            if tool.get("type") == "function":
+                func = tool.get("function", {})
+                anthropic_tools.append({
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "input_schema": func.get("parameters", {})
+                })
+            else:
+                # Already in Anthropic format or unknown format
+                anthropic_tools.append(tool)
+        
+        return anthropic_tools
+
+    def _build_openvino_chat_history(
+        self,
+        backend: LLMBackendConfig,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """Build an OpenVINO GenAI ChatHistory when available, otherwise a list."""
+        ov_genai = self.openvino_modules[backend.name]
+        chat_history_cls = getattr(ov_genai, "ChatHistory", None)
+        history = chat_history_cls() if chat_history_cls is not None else []
+
+        append = getattr(history, "append", None)
+        for message in messages:
+            item = {
+                "role": str(message.get("role", "")),
+                "content": str(message.get("content", "")),
+            }
+            if append is not None:
+                append(item)
+            else:
+                history.append(item)
+
+        if tools and hasattr(history, "set_tools"):
+            history.set_tools(tools)
+
+        extra_context = backend.extra.get("extra_context")
+        if extra_context and hasattr(history, "set_extra_context"):
+            history.set_extra_context(extra_context)
+
+        return history
+
+    def _openvino_generation_config(
+        self,
+        backend: LLMBackendConfig,
+        *,
+        temperature: float,
+        max_tokens: int,
+    ) -> Dict[str, Any]:
+        """Translate common generation options into OpenVINO GenAI kwargs."""
+        config = dict(backend.extra.get("generation_config") or {})
+        config.setdefault("max_new_tokens", max_tokens)
+        config.setdefault("temperature", temperature)
+        return config
+
+    def _call_openvino_generate(
+        self,
+        pipe: Any,
+        prompt_or_history: Any,
+        config: Dict[str, Any],
+        *,
+        streamer: Optional[Callable[[str], Any]] = None,
+    ) -> Any:
+        """Call OpenVINO GenAI with fallbacks for supported Python signatures."""
+        call_attempts: List[Callable[[], Any]]
+        if streamer is None:
+            call_attempts = [
+                lambda: pipe.generate(prompt_or_history, config),
+                lambda: pipe.generate(prompt_or_history, **config),
+            ]
+        else:
+            call_attempts = [
+                lambda: pipe.generate(prompt_or_history, config, streamer=streamer),
+                lambda: pipe.generate(prompt_or_history, streamer=streamer, **config),
+            ]
+
+        last_type_error: Optional[TypeError] = None
+        for call in call_attempts:
+            try:
+                return call()
+            except TypeError as exc:
+                last_type_error = exc
+        if last_type_error is not None:
+            raise last_type_error
+        raise RuntimeError("OpenVINO generation failed before any call attempt.")
+
+    def _openvino_result_text(self, result: Any) -> str:
+        """Extract text from OpenVINO GenAI decoded results."""
+        if result is None:
+            return ""
+        texts = self._read_field(result, "texts", None)
+        if texts:
+            return str(texts[0])
+        text = self._read_field(result, "text", None)
+        if text is not None:
+            return str(text)
+        return str(result)
+
+    def _create_openvino_stream(
+        self,
+        backend: LLMBackendConfig,
+        prompt_or_history: Any,
+        config: Dict[str, Any],
+    ) -> Iterable[str]:
+        """Run OpenVINO generation in a thread and expose streamed text chunks."""
+        pipe = self.openvino_pipelines[backend.name]
+        ov_genai = self.openvino_modules[backend.name]
+        items: queue.Queue[Any] = queue.Queue()
+        sentinel = object()
+
+        def streamer(text: str) -> Any:
+            if text:
+                items.put(str(text))
+            streaming_status = getattr(ov_genai, "StreamingStatus", None)
+            running = getattr(streaming_status, "RUNNING", None)
+            return running if running is not None else False
+
+        def worker() -> None:
+            try:
+                self._call_openvino_generate(
+                    pipe,
+                    prompt_or_history,
+                    config,
+                    streamer=streamer,
+                )
+            except BaseException as exc:
+                items.put(exc)
+            finally:
+                items.put(sentinel)
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        while True:
+            item = items.get()
+            if item is sentinel:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            yield str(item)
+
+    def _create_completion(
+        self,
+        backend: LLMBackendConfig,
+        *,
+        messages: List[Dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        stream: bool,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """向具体后端发起补全请求。
+
+        Args:
+            backend: 当前要调用的后端配置。
+            messages: 已整理好的消息列表。
+            temperature: 采样温度。
+            max_tokens: 最大输出 token 数。
+            stream: 是否启用流式返回。
+            tools: 可选的工具 schema 列表（OpenAI 或 Anthropic 格式）。
+
+        Returns:
+            后端 SDK 返回的原始响应对象或流式迭代器。
+
+        Raises:
+            ValueError: 当提供方类型不受支持时抛出。
+        """
+        if backend.provider == "openai":
+            client = self.openai_clients[backend.name]
+            kwargs: Dict[str, Any] = {
+                "model": backend.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": stream,
+                "timeout": backend.timeout,
+            }
+            if tools:
+                # OpenAI 要求 tools 与 tool_choice 成对出现，仅在传入 tools 时补充 tool_choice
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            kwargs.update(backend.extra)
+            return client.chat.completions.create(**kwargs)
+
+        elif backend.provider == "anthropic":
+            client = self.anthropic_clients[backend.name]
+            
+            # Anthropic 使用不同的消息格式和参数
+            # 需要将 OpenAI 格式的消息转换为 Anthropic 格式
+            anthropic_messages, system_prompt = self._convert_to_anthropic_messages(messages)
+            
+            kwargs: Dict[str, Any] = {
+                "model": backend.model,
+                "messages": anthropic_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": stream,
+            }
+            
+            # Anthropic 支持 system prompt 作为单独参数
+            if system_prompt:
+                kwargs["system"] = system_prompt
+            
+            # Anthropic 的工具格式不同
+            if tools:
+                # 转换工具 schema 为 Anthropic 格式
+                anthropic_tools = self._convert_to_anthropic_tools(tools)
+                kwargs["tools"] = anthropic_tools
+            
+            kwargs.update(backend.extra)
+            
+            return client.messages.create(**kwargs)
+
+        if backend.provider == "litellm":
+            try:
+                from litellm import completion as litellm_completion
+            except ImportError as exc:  # pragma: no cover - depends on optional package
+                raise ValueError(
+                    "litellm provider requires the 'litellm' package to be installed."
+                ) from exc
+            kwargs: Dict[str, Any] = {
+                "model": backend.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": stream,
+                "timeout": backend.timeout,
+                "api_key": backend.api_key,
+            }
+            if backend.api_url:
+                kwargs["api_base"] = backend.api_url
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+            kwargs.update(backend.extra)
+            return litellm_completion(**kwargs)
+        
+        if backend.provider == "openvino":
+            history = self._build_openvino_chat_history(backend, messages, tools=tools)
+            config = self._openvino_generation_config(
+                backend,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            if stream:
+                return self._create_openvino_stream(backend, history, config)
+
+            pipe = self.openvino_pipelines[backend.name]
+            result = self._call_openvino_generate(pipe, history, config)
+            return _OpenVINOCompletionResponse(
+                content=self._openvino_result_text(result),
+                raw=result,
+            )
+
+        raise ValueError(f"Unsupported provider: {backend.provider}")
+
+>>>>>>> 0faa67b (Added CTF-specfied objects and a demo, modify tool calls, modify context manager and llm fetcher, and those test instances.)
     def _normalize_exception(self, backend: LLMBackendConfig, exc: Exception) -> LLMError:
         """将提供方异常映射为本地统一异常。
 

@@ -2,6 +2,13 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Union, Set, Any, Callable
 
+from typing import TypeAlias
+
+JsonScalar: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
+JsonArray: TypeAlias = list[JsonValue]
+
 # --------------------------
 # LLM API-level objecets
 # --------------------------
@@ -25,11 +32,11 @@ class LLMToolCall:
     """Backend-neutral tool call emitted by a model."""
 
     name: str
-    arguments: Dict[str, object] = field(default_factory=dict)
+    arguments: JsonObject = field(default_factory=dict)
     call_id: Optional[str] = None
     source: Optional[str] = None
 
-    def to_execution_format(self) -> Dict[str, Any]:
+    def to_execution_format(self) -> JsonObject:
         """Return the format expected by ToolRegistry.execute()."""
         return {
             "tool": self.name,
@@ -185,8 +192,8 @@ class Tool:
 MessageDict = Dict[str, str]
 Messages = List[MessageDict]    # Alias for List[Dict[str, str]]
 
-ToolArgs = Dict[str, object]
-AssistantMessageDict = Dict[str, object]
+ToolArgs = JsonObject
+AssistantMessageDict = JsonObject
 
 ToolList = List[Tool]
 OptionalToolList = Optional[ToolList]

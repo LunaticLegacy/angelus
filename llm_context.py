@@ -73,7 +73,7 @@ class LLMContextHandler:
         不递归统计压缩摘要的 source 原文，否则压缩后长度不会下降。
         """
 
-        def list_len(values: Optional[List[object]]) -> int:
+        def list_len(values: Optional[List[str]]) -> int:
             if not values:
                 return 0
             return sum(len(str(value)) for value in values)

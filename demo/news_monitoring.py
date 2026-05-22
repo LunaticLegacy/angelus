@@ -8,8 +8,8 @@ A multi-agent pipeline that:
   3. Produces a final structured summary
 
 Usage:
-  python main.py "artificial intelligence breakthroughs 2025"
-  python main.py   (prompts interactively)
+  python news_monitoring.py "artificial intelligence breakthroughs 2025"
+  python news_monitoring.py   (prompts interactively)
 
 Requires: DEEPSEEK_API_KEY environment variable.
 """

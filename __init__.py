@@ -28,6 +28,14 @@ from .llm_fetcher import (
 )
 from .agent import Agent
 from .tool import Tool, ToolRegistry
+from .ctf_module.ctf_skill_router import (
+    CTFSkill,
+    SkillClassification,
+    build_ctf_skill_context,
+    classify_ctf_challenge,
+    discover_ctf_skills,
+    enrich_prompt_with_ctf_skills,
+)
 from .thinking_graph import (
     ThinkingGraph,
     ThinkingNodeType,
@@ -134,6 +142,12 @@ __all__ = [
     "Agent",
     "Tool",
     "ToolRegistry",
+    "CTFSkill",
+    "SkillClassification",
+    "build_ctf_skill_context",
+    "classify_ctf_challenge",
+    "discover_ctf_skills",
+    "enrich_prompt_with_ctf_skills",
 
     # Thinking Graph
     "ThinkingGraph",
