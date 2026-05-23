@@ -371,15 +371,12 @@ class Agent:
             tool_calls: List[LLMToolCall] = self._resolve_tool_calls(response)
             executing_tools: List[CoroutineType] = []
             executing_result: List[str] = []
-            if verbose_info:
-                if stream:
-                    print(f"\nTokens: {token_num}, Time elapsed: {dt}, TPS: {tps}")
-                if not stream:
-                    print(f"\n[Agent] Message output: \n{message}")
-                    print(f"[Agent] Parsed tool calls: {len(tool_calls)}")
-                    if tool_calls:
-                        for idx, tool in enumerate(tool_calls, start=1):
-                            print(f"[Agent] Tool call {idx}: {tool.to_execution_format()}")
+            if verbose_info:            
+                print(f"\n[Agent] Message output: \n{message}")
+                print(f"[Agent] Parsed tool calls: {len(tool_calls)}")
+                if tool_calls:
+                    for idx, tool in enumerate(tool_calls, start=1):
+                        print(f"[Agent] Tool call {idx}: {tool.to_execution_format()}")
 
             if len(tool_calls) > 0:
                 # 工具可并行

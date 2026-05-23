@@ -182,8 +182,6 @@ class LLMFetcher:
         
         return messages
 
-<<<<<<< HEAD
-=======
     def _convert_to_anthropic_messages(
         self,
         messages: List[Dict[str, str]]
@@ -527,7 +525,6 @@ class LLMFetcher:
 
         raise ValueError(f"Unsupported provider: {backend.provider}")
 
->>>>>>> 0faa67b (Added CTF-specfied objects and a demo, modify tool calls, modify context manager and llm fetcher, and those test instances.)
     def _normalize_exception(self, backend: LLMBackendConfig, exc: Exception) -> LLMError:
         """将提供方异常映射为本地统一异常。
 
