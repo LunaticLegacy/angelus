@@ -332,7 +332,7 @@ class Agent:
         """
         # TODO: 为防止每一个轮次开始时都重新调度上下文，需要缓存一些东西。
 
-        tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider)   # 工具调用方法
+        tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider)   # 拉取工具调用方法
         final_content: str = ""
 
         def _should_stop() -> bool:
@@ -344,6 +344,10 @@ class Agent:
             turn += 1
             if _should_stop():
                 break
+
+            # TODO: 这里每一次都会重新 build 一次旧信息。
+            # 如果我要采用线性上下文，我只需要增量。
+            # 如果我要让 agent 自己控制上下文，我要怎么做？？
             prev_messages: Optional[LLMContext] = await self._build_prev_messages()
 
             if verbose_info:
@@ -413,9 +417,10 @@ class Agent:
                 tool_call_result=[i for i in executing_result]
             )
             # 然后将其加入自身上下文中
-            await self.add_context(await self._tagify_context(now_context))
+            await self.add_context(await self._tagify_context(now_context, temperature))
             # 如果 stdout 太大，需要将工具怎么办？而且这样做的话，工具是否要重构？
 
+            # 上下文压缩。
             if self.llm_context_handler.context_len() > max_context_size:
                 print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
                 print(f"[Agent] Context exceeded, compressing history...")
@@ -441,7 +446,7 @@ class Agent:
     # 内部辅助方法
     # ------------------------------------------------------------------
 
-    async def _tagify_context(self, context: LLMContext) -> LLMContext:
+    async def _tagify_context(self, context: LLMContext, temperature: float = 1.0) -> LLMContext:
         """
         为一个上下文历史加入标签。
 
@@ -472,7 +477,7 @@ class Agent:
         Example: context_lookup, tool_call, empty_history
         """
 
-        tags: LLMOutput = await self.llm_handler.fetch(msg=tag_source, system_prompt=prompt, temperature=1.0)   # 问题在这里，在给上下文加标签时会有一个没输入 temperature 参数的信息
+        tags: LLMOutput = await self.llm_handler.fetch(msg=tag_source, system_prompt=prompt, temperature=temperature)
         parsed_tags = [
             tag
             for tag in re.findall(r"[a-zA-Z][a-zA-Z0-9_]{1,40}", tags.content.lower())

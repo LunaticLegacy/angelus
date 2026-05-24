@@ -229,6 +229,7 @@ class LLMContextHandler:
     ) -> Optional[str]:
         """
         获取当前上下文，以单个字符串格式。每行一条内容。
+        TODO: 我可能需要维护一个状态机，维持一个当前激活的上下文 id。但在此之前我是否需要将这里的上下文 id 信息也加入上下文？
 
         Args:
             id_list: 可选返回的上下文内容，如果不填则默认返回全部上下文。
@@ -243,23 +244,29 @@ class LLMContextHandler:
         # 接下来需要将这个东西全部序列化了。
         # 已保证过，压缩和未压缩的代码部分，返回的东西都严格保证 schema。
         lines: List[str] = []
+        
+        # 被压缩的信息，agent 会看到该内容的摘要。
         for c_info in compacted_info:
             msg_str: str = f"""
             [Context (Compacted)]:
+            ID: {c_info.context_id}
             Abstract info: {c_info.info.abstract_msg}
             Tag: {c_info.info.tags}
-            This abstract is originally from messages with id: {c_info.context_id}.
+            This abstract is originally from messages with id: {c_info.info.source_ids}.
             """
             lines.append(msg_str)
-
-
+        
+        # 未压缩的信息。
         for u_info in uncompacted_info:
             msg_str: str = f"""
             [Context (Uncompacted)]:
+            ID: {u_info.context_id}
             Role: {u_info.info.role}
             Tag: {u_info.info.tags}
             Content: {u_info.info.content}
             """
+
+            # 如果有工具信息，则加入信息。否则告诉 llm 没有工具信息。
             if not u_info.info.tool_call_info:
                 msg_str_additional_tool: str = f"""
                 This round does not contains any of tool call.
@@ -277,7 +284,7 @@ class LLMContextHandler:
     
     async def compress_context(self, id_list: Optional[List[int]] = None) -> bool:
         """
-        压缩当前全部未压缩上下文，或给定压缩索引，将其压缩。
+        压缩当前全部未压缩上下文，或给定压缩索引并将其压缩。
 
         Args:
             id_list: 可选压缩的上下文内容，如果不填则默认压缩未被压缩的上下文。
