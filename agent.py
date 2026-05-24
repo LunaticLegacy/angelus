@@ -43,6 +43,10 @@ class Agent:
         provider: str = "custom_json",
         round_compress_threshold: Optional[int] = None,
         round_compress_keep_tail: int = 6,
+        context_selection_interval: Optional[int] = 3,
+        context_selection_min_active_items: int = 8,
+        context_selection_min_active_chars: int = 8192,
+        tool_result_summary_threshold_chars: int = 3000,
     ):
         """
         初始化Agent，绑定LLM处理器、系统提示词和可选工具列表。
@@ -53,7 +57,6 @@ class Agent:
             system_prompt: Base system prompt
             tools: Initial tools to register
             max_concurrent_tools: Max parallel tool executions
-                                  TODO: 设置为-1，以无限制并行工具。
             fallback_order: Backend fallback order
             provider: LLM provider for tool calling. 
                      Options: "openai", "anthropic", "custom_json"
@@ -61,16 +64,29 @@ class Agent:
                                       their count reaches this value. None or not set will disables it.
 
             round_compress_keep_tail: Number of latest in-round messages to keep verbatim.
+            context_selection_interval: Trigger active-context reselection every N turns.
+                                        Set to None or 0 to disable periodic reselection.
+            context_selection_min_active_items: Minimum active item count before reselection can trigger.
+            context_selection_min_active_chars: Minimum active-context char length before reselection can trigger.
+            tool_result_summary_threshold_chars: Archive and summarize one round immediately
+                                                 when tool results exceed this many chars.
         """
         self._base_system_prompt: str = system_prompt   # 系统提示词。
         self.llm_handler = llm_handler  # 用于处理 llm api 通信相关的东西。
-        self.llm_context_handler = LLMContextHandler(llm_handler=self.llm_handler)  # 上下文管理器。
+        self.fallback_order = fallback_order
+        self.llm_context_handler = LLMContextHandler(
+            llm_handler=self.llm_handler,
+            fallback_order=self.fallback_order,
+        )  # 上下文管理器。
         self.tool_registry = ToolRegistry() # 注册工具。
         self.max_concurrent_tools = max_concurrent_tools    # 本 agent 最大可并发多少工具。
-        self.fallback_order = fallback_order
         self.provider = provider  # ← 保存 provider 设置
         self.round_compress_threshold = round_compress_threshold
         self.round_compress_keep_tail = round_compress_keep_tail
+        self.context_selection_interval = context_selection_interval
+        self.context_selection_min_active_items = context_selection_min_active_items
+        self.context_selection_min_active_chars = context_selection_min_active_chars
+        self.tool_result_summary_threshold_chars = tool_result_summary_threshold_chars
 
         # 记忆
         self.memory_list: List[str] = []
@@ -236,6 +252,18 @@ class Agent:
         """
         return await self.llm_context_handler.get_now_context(ids)
 
+    def select_context(self, ids: Optional[List[int]] = None) -> List[int]:
+        """
+        Select the active context window by timeline ids.
+
+        Args:
+            ids: Timeline ids to activate. `None` selects all known context entries.
+
+        Returns:
+            The normalized active timeline ids after selection.
+        """
+        return self.llm_context_handler.set_active_context_by_ids(ids)
+
 
     async def chat_once(
         self,
@@ -345,6 +373,13 @@ class Agent:
             if _should_stop():
                 break
 
+            await self._maybe_run_context_selection(
+                task_msg=msg,
+                turn=turn,
+                verbose_info=verbose_info,
+                temperature=temperature
+            )
+
             # TODO: 这里每一次都会重新 build 一次旧信息。
             # 如果我要采用线性上下文，我只需要增量。
             # 如果我要让 agent 自己控制上下文，我要怎么做？？
@@ -417,14 +452,22 @@ class Agent:
                 tool_call_result=[i for i in executing_result]
             )
             # 然后将其加入自身上下文中
-            await self.add_context(await self._tagify_context(now_context, temperature))
+            now_context = await self._tagify_context(now_context, temperature)
+            await self.add_context(now_context)
+            await self._maybe_archive_long_round_context(
+                context=now_context,
+                verbose_info=verbose_info,
+            )
             # 如果 stdout 太大，需要将工具怎么办？而且这样做的话，工具是否要重构？
 
             # 上下文压缩。
             if self.llm_context_handler.context_len() > max_context_size:
                 print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
                 print(f"[Agent] Context exceeded, compressing history...")
-                await self.llm_context_handler.compress_context()
+                while self.llm_context_handler.context_len() > max_context_size:
+                    compressed = await self._archive_old_active_context(verbose_info=verbose_info)
+                    if not compressed:
+                        break
 
             # 判断是否结束？
             # 传统：如果没有 tool call，则立即结束。
@@ -486,6 +529,143 @@ class Agent:
         context.tags = parsed_tags[:5]
         return context
 
+    def _parse_selection_ids(self, content: str) -> List[int]:
+        """Extract selected context ids from a strict JSON response."""
+        if not content.strip():
+            return []
+
+        candidates: List[str] = [content.strip()]
+        candidates.extend(match.group(0) for match in re.finditer(r"\{.*?\}", content, flags=re.DOTALL))
+
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            ids = payload.get("ids")
+            if isinstance(ids, list):
+                return [int(item) for item in ids]
+        return []
+
+    def _should_trigger_context_selection(self, turn: int) -> bool:
+        """Determine whether the active context should be reselected this turn."""
+        interval = self.context_selection_interval
+        if not interval or interval <= 0:
+            return False
+        if turn % interval != 0:
+            return False
+
+        active_ids = self.llm_context_handler.get_active_context_ids()
+        if len(active_ids) < self.context_selection_min_active_items:
+            return False
+
+        if self.llm_context_handler.context_len() < self.context_selection_min_active_chars:
+            return False
+
+        return True
+
+    async def _maybe_run_context_selection(
+        self,
+        task_msg: str,
+        turn: int,
+        verbose_info: bool = False,
+        temperature: float = 0.4,
+    ) -> Optional[List[int]]:
+        """Periodically let the model shrink the active context window."""
+        if not self._should_trigger_context_selection(turn):
+            return None
+
+        context_listing = await self.tool_registry.execute("context_list", {"limit": 0})
+        selection_prompt = f"""
+You are selecting the minimal active context window for the current agent round.
+
+Current task:
+{task_msg}
+
+Available context entries:
+{context_listing}
+
+Return only strict JSON in this format:
+{{"ids": [1, 2, 3]}}
+
+Rules:
+- Select only the ids needed for the current task.
+- Prefer the smallest sufficient set.
+- Do not explain.
+""".strip()
+
+        if verbose_info:
+            print(f"[Agent] Triggering periodic context selection at turn {turn}.")
+
+        selection_output = await self.chat_once(
+            selection_prompt,
+            temperature=temperature,
+            use_history=False,
+            use_tools=False,
+            save_context=False,
+            tag_context=False,
+        )
+        selected_ids = self._parse_selection_ids(selection_output.text)
+        if not selected_ids:
+            if verbose_info:
+                print("[Agent] Context selection returned no valid ids; keeping current active window.")
+            return None
+
+        normalized_ids = self.select_context(selected_ids)
+        if verbose_info:
+            print(f"[Agent] Active context selected as: {normalized_ids}")
+        return normalized_ids
+
+    async def _maybe_archive_long_round_context(
+        self,
+        context: LLMContext,
+        verbose_info: bool = False,
+    ) -> bool:
+        """Archive one tool-heavy round immediately when the payload is too large."""
+        tool_result_chars = sum(len(result) for result in context.tool_call_result or [])
+        if tool_result_chars < self.tool_result_summary_threshold_chars:
+            return False
+
+        if context.order < 0:
+            return False
+
+        if verbose_info:
+            print(
+                "[Agent] Tool result payload exceeded threshold; archiving round "
+                f"{context.order} ({tool_result_chars} chars)."
+            )
+        return await self.compress_history([context.order])
+
+    async def _archive_old_active_context(self, verbose_info: bool = False) -> bool:
+        """
+        Archive older active uncompacted entries while keeping a recent verbatim tail.
+
+        The original entries remain addressable by their timeline ids through
+        `context_read`, even after they leave the active window.
+        """
+        active_ids = self.llm_context_handler.get_active_context_ids()
+        uncompacted_ids = [
+            context_id
+            for context_id in active_ids
+            if context_id in self.llm_context_handler.context_dict_uncompacted
+        ]
+
+        keep_tail = max(0, self.round_compress_keep_tail)
+        if len(uncompacted_ids) > keep_tail:
+            target_ids = uncompacted_ids[:-keep_tail] if keep_tail else uncompacted_ids
+        elif uncompacted_ids:
+            target_ids = [uncompacted_ids[0]]
+        else:
+            return False
+
+        if not target_ids:
+            return False
+
+        if verbose_info:
+            print(f"[Agent] Archiving active context ids: {target_ids}")
+
+        return await self.compress_history(target_ids)
+
     async def _build_prev_messages(self) -> Optional[LLMContext]:
         """
         将历史内容序列化。
@@ -501,7 +681,7 @@ class Agent:
         if self.llm_context_handler.empty:
             return None
 
-        history_msg: Optional[str] = await self.get_conversation_summary()
+        history_msg: Optional[str] = await self.llm_context_handler.get_active_content_as_single_str()
         if not history_msg:
             history_msg = ""
 

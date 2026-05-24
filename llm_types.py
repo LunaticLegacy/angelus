@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Union, Set, Any, Callable
 
 from typing import TypeAlias
+from uuid import UUID, uuid4
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -83,6 +84,8 @@ class LLMBackendError(LLMError):
 # --------------------------
 
 LLMContextValue = Union[
+    UUID,
+    int,
     str, 
     Optional[List[str]]
     ]
@@ -92,12 +95,16 @@ class LLMContext:
     """One chat message."""
     role: str
     content: str
+    uuid: UUID = field(default_factory=uuid4)
+    order: int = -1
     tool_call_info: Optional[List[str]] = None  # 调度了什么工具，可选——有可能调度了不止一件工具。
     tool_call_result: Optional[List[str]] = None
     tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextValue]:
         d: Dict[str, LLMContextValue] = {
+            "uuid": self.uuid,
+            "order": self.order,
             "role": self.role,
             "content": self.content,
         }
@@ -115,8 +122,10 @@ class LLMContext:
 
 
 LLMContextCompactedValue = Union[
+    UUID,
     str, 
     List[Union[LLMContext, "LLMContextCompacted"]],
+    List[UUID],
     List[int],
     Optional[List[str]]
 ]
@@ -128,14 +137,18 @@ class LLMContextCompacted:
     """
     abstract_msg: str   # 压缩（并抽象后的）结论
     source: List[Union[LLMContext, "LLMContextCompacted"]]    # 原始信息源，必要时让 agent 查询该信息源。可以二压。
-    source_ids: List[int] # 原始信息源的id
+    source_uuid: List[UUID] # 原始信息源的 UUID
+    source_timeline: List[int] # 原始信息源的时间线 id
+    uuid: UUID = field(default_factory=uuid4)
     tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextCompactedValue]:
         d: Dict[str, LLMContextCompactedValue] = {
+            "uuid": self.uuid,
             "abstract_msg": self.abstract_msg,
             "source": self.source,
-            "source_ids": self.source_ids
+            "source_uuid": self.source_uuid,
+            "source_timeline": self.source_timeline,
         }
         if self.tags:
             d["tags"] = self.tags

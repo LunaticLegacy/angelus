@@ -60,10 +60,11 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
         if include_compacted:
             for item in history.compacted_info:
                 rows.append(
-                    "id={id} type=compacted tags={tags} source_ids={source_ids} preview={preview}".format(
+                    "id={id} type=compacted tags={tags} source_timeline={source_timeline} source_uuid={source_uuid} preview={preview}".format(
                         id=item.context_id,
                         tags=item.info.tags or [],
-                        source_ids=item.info.source_ids,
+                        source_timeline=item.info.source_timeline,
+                        source_uuid=item.info.source_uuid,
                         preview=_preview(item.info.abstract_msg),
                     )
                 )
@@ -108,6 +109,18 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
         if context_ids is None:
             return "Compressed all uncompacted context entries."
         return f"Compressed context entries: {context_ids}"
+
+    async def _context_select(**kwargs: Any) -> str:
+        """
+        Select the active context window used for later Agent rounds.
+        """
+        bound_agent = _require_agent(agent)
+        context_ids = _parse_context_ids(kwargs.get("ids"))
+
+        selected_ids = bound_agent.select_context(context_ids)
+        if not selected_ids:
+            return "No matching context entries were selected."
+        return f"Active context selected: {selected_ids}"
 
     async def _memory_create(**kwargs: Any) -> str:
         """
@@ -200,6 +213,18 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
                 "additionalProperties": False,
             },
             handler=_context_compress,
+        ),
+        Tool(
+            name="context_select",
+            description="Select the active conversation context entries by id for later Agent rounds.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ids": ids_schema,
+                },
+                "additionalProperties": False,
+            },
+            handler=_context_select,
         ),
         Tool(
             name="memory_create",

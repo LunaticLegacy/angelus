@@ -5,7 +5,7 @@
 - `llm_fetcher.py` now acts as a backend-agnostic scheduler. It owns backend registration, fallback order, retries, rate limiting, and dispatch into backend handlers, but it no longer owns provider-specific request or response logic.
 - `handlers/` contains all backend-specific implementations. Each handler is a subclass of the same abstract base and is created through classmethod-based discovery.
 - `agent.py` consumes `LLMOutput` instead of reading OpenAI or Anthropic SDK response layouts directly in the main agent loop.
-- `llm_context.py` stores conversation context and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
+- `llm_context.py` stores conversation context, tracks an `active_context` UUID window for each Agent round, and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
 - `tools/builtin_tools.py` provides Agent-bound management tools for reading, listing, compressing context, and managing persistent memories.
 - `prompt.py` centralizes reusable prompt templates, prompt builders, and shared system prompts so model-facing text lives in one module.
 - `swarm/execution_graph.py` routes execution graph branches by label and can now fan out to multiple labeled downstream edges when a router returns more than one route.
@@ -21,6 +21,8 @@
 - `OpenAIHandler`, `LiteLLMHandler`, `AnthropicHandler`, `OpenVINOHandler`: concrete backend handlers living in `handlers/`. They encapsulate client creation and provider-specific response parsing.
 - `LLMContextPair`: compatibility container for older imports. New agent persistence stores user and assistant messages as separate `LLMContext` entries.
 - `LLMContextCompressed`: compatibility alias for `LLMContextCompacted`.
+- `LLMContext`: one raw context entry. It now carries a stable `uuid` plus integer `order` so timeline position and durable identity can coexist.
+- `LLMContextCompacted`: one compressed summary entry. It carries its own `uuid`, plus `source_uuid` and `source_timeline` lists so compressed history can point back to both durable source identities and their original timeline slots.
 
 ## Functions
 
@@ -36,20 +38,25 @@
 - `OpenVINOHandler.normalize_completion_response(...)`: converts OpenVINO output into `LLMOutput`.
 - `Agent.chat_once(...)`: performs exactly one `LLMFetcher.fetch()` call, optionally includes serialized history and tool schemas, optionally stores the assistant response, and never executes returned tool calls.
 - `Agent.run_agent_round(...)`: sends the user message on each tool-loop turn with the dynamic system prompt and serialized history, asks `LLMFetcher.fetch()` for `LLMOutput`, executes any native provider tool calls, stores assistant/tool context, and stops when a turn has no tool calls. It raises `MaxTurnsExceededError` if the loop reaches `max_turns`.
+- `Agent.run_agent_round(...)` can now periodically reseat the active context window before a turn begins. When the configured interval and size thresholds are met, it asks the model for a minimal set of context ids, applies `context_select`, and then continues the normal tool loop against that smaller active window.
 - `Agent.run_agent_round(...)` also owns stream rendering when `stream=True`: it feeds each yielded chunk into the provided `Streamer`/callable before accumulating the final response text.
 - `Agent._register_builtin_tools(...)`: registers built-in tools returned by `create_builtin_tools(agent=self)` so handlers can call the Agent context and memory APIs.
 - `Agent._tagify_context(...)`: builds tag input from assistant text plus tool call/result records. Empty contexts get no tags; non-empty contexts are sent to the LLM with a strict comma-separated snake_case tag prompt, then parsed with a regex and capped at five tags.
 - `Agent._agent_message_from_output(...)`: builds diagnostics from `LLMOutput` without depending on SDK response objects.
 - `Agent._extract_response_text(...)`: returns `LLMOutput.content` for normalized responses and keeps legacy extraction as fallback for older callers.
-- `LLMContextHandler.add_context(...)`: stores a context entry, indexes it by object id, and indexes tags when present.
-- `LLMContextHandler.context_len() -> int`: returns the character length of active context only, counting uncompacted role/content/tool data/tags and compacted abstract/source_ids/tags without recursively counting compressed source objects.
-- `LLMContextHandler.get_content_as_single_str(...)`: serializes compacted and uncompacted context into text, including stored tool-call records and tool results for later Agent turns.
+- `LLMContextHandler.add_context(...)`: stores a context entry, assigns its timeline `order`, indexes it by UUID and timeline id, and appends its UUID to the active context window.
+- `LLMContextHandler.set_active_context(...)`: replaces the active context UUID window used for later round history assembly.
+- `LLMContextHandler.context_len() -> int`: returns the character length of the active context window only, counting uncompacted role/content/tool data/tags and compacted abstract/source_uuid/source_timeline/tags without recursively counting compressed source objects.
+- `LLMContextHandler.get_content_as_single_str(...)`: serializes compacted and uncompacted context into text, including stored tool-call records, UUIDs, timeline ids, and tool results for later Agent turns.
+- `LLMContextHandler.get_active_content_as_single_str(...)`: serializes only the UUIDs currently selected in `active_context`; `Agent._build_prev_messages()` uses this per-round active window instead of always sending every stored entry.
 - `LLMContextHandler.compress_context(...)`: sends serialized context to `LLMFetcher.fetch()` and reads the abstracted result from `response.content`.
+- Context compression is archival rather than destructive: compressed entries leave the active window and are replaced by one compacted summary entry, but the original raw entries remain in the manager's full timeline store and can still be revisited later by their original ids.
 - `LLMContextHandler.generate_memory(...)`: asks the fetcher for a memory summary and returns `response.content` when present.
 - `create_builtin_tools(agent=None) -> List[Tool]`: creates built-in tools. The context and memory tools require an Agent binding; unbound calls raise a runtime error.
 - `context_list`: returns context ids, entry type, role/source ids, tags, and one-line previews. Inputs include optional `limit`, `include_compacted`, and `include_uncompacted`.
 - `context_read`: serializes selected context ids, or all context when `ids` is omitted, using the Agent's conversation summary API.
 - `context_compress`: compresses selected uncompacted context ids, or all uncompacted context when `ids` is omitted.
+- `context_select`: replaces the Agent's active context window with the selected context ids so later rounds only see that chosen history slice.
 - `memory_create`: generates and stores a persistent memory summary from selected context ids.
 - `memory_list`: returns indexed persistent memories stored on the Agent.
 - `memory_clear`: clears all persistent memories stored on the Agent.
