@@ -48,7 +48,7 @@ def _format_preview(data: bytes, *, encoding: str, truncated: bool) -> str:
     return f"[kind] {kind}\n[bytes] {len(data)}\n[content]\n{preview}{suffix}"
 
 
-def create_knowledge_tools(knowledge_base=None):
+def create_knowledge_tools(knowledge_base: Optional["KnowledgeBase"] = None):
     """Create knowledge base search and retrieval tools.
     
     Args:
