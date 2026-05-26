@@ -4,25 +4,23 @@ import asyncio
 import json
 import re
 from types import CoroutineType
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
 
-from .llm_fetcher import LLMFetcher, LLMOutput, LLMToolCall
+from .llm_fetcher import LLMFetcher
 from .llm_context import LLMContext, LLMContextCompacted, LLMContextHandler, LLMContextInfo
-from .prompt import TAGIFY_CONTEXT_PROMPT
 from .tool_call_adapter import ToolCallSource, normalize_tool_calls
 from .tool import Tool, ToolRegistry
 from .tools.builtin_tools import create_builtin_tools
 
 from .llm_types import (
-    OptionalToolList,
-    MessageDict, Messages,
+    LLMInfo, MessageDict, Messages,
     ToolArgs, AssistantMessageDict,
     ToolList,
-    OptionalToolList,
     AgentMessage,
     ToolExecutionRecord,
     LLMOutput,
+    LLMToolCall,
     # 报错类型
     AgentExecutionError,
     EmptyModelResponseError,
@@ -37,7 +35,7 @@ class Agent:
         self,
         llm_handler: LLMFetcher,
         system_prompt: str,
-        tools: OptionalToolList = None,
+        tools: Optional[ToolList] = None,
         max_concurrent_tools: int = 1,
         fallback_order: Optional[List[str]] = None,
         provider: str = "custom_json",
@@ -45,19 +43,19 @@ class Agent:
         round_compress_keep_tail: int = 6,
         context_selection_interval: Optional[int] = 3,
         context_selection_min_active_items: int = 8,
-        context_selection_min_active_chars: int = 8192,
-        tool_result_summary_threshold_chars: int = 3000,
+        context_selection_min_active_chars: int = 16384,
+        tool_result_summary_threshold_chars: int = 8192,
     ):
         """
-        初始化Agent，绑定LLM处理器、系统提示词和可选工具列表。
+        初始化 Agent，绑定 LLM 处理器、系统提示词和可选工具列表。
         TODO: 再这么下去这傻逼东西迟早会成为一个超级类，可能不能再这么下去了。
 
         Args:
-            llm_handler: LLM fetcher instance
-            system_prompt: Base system prompt
-            tools: Initial tools to register
+            llm_handler: 已有的LLM fetcher 实例。
+            system_prompt: 基础的系统提示词。（如果要注入 skill，请自便）
+            tools: 本 Agent 初始使用的工具。
             max_concurrent_tools: Max parallel tool executions
-            fallback_order: Backend fallback order
+            fallback_order: Backend fallback order.（这个东西可以删掉，和下面的provider一起）
             provider: LLM provider for tool calling. 
                      Options: "openai", "anthropic", "custom_json"
             round_compress_threshold: Auto-compress temporary in-round messages when
@@ -74,10 +72,13 @@ class Agent:
         self._base_system_prompt: str = system_prompt   # 系统提示词。
         self.llm_handler = llm_handler  # 用于处理 llm api 通信相关的东西。
         self.fallback_order = fallback_order
+        # 上下文管理器。
         self.llm_context_handler = LLMContextHandler(
             llm_handler=self.llm_handler,
             fallback_order=self.fallback_order,
-        )  # 上下文管理器。
+            enable_memory=True,     # 启用记忆机制
+            enable_tagging=True     # 启用标签机制
+        )
         self.tool_registry = ToolRegistry() # 注册工具。
         self.max_concurrent_tools = max_concurrent_tools    # 本 agent 最大可并发多少工具。
         self.provider = provider  # ← 保存 provider 设置
@@ -88,16 +89,11 @@ class Agent:
         self.context_selection_min_active_chars = context_selection_min_active_chars
         self.tool_result_summary_threshold_chars = tool_result_summary_threshold_chars
 
-        # 记忆
-        self.memory_list: List[str] = []
-
         # 工具调用历史
         self.tool_call_history: List[List[LLMToolCall]] = []
-        self.tool_call_result_history: List[List[str]] = []
 
-
-        # 注册内嵌工具（round_end 等），供 LLM 控制轮次生命周期
-        self._register_builtin_tools()  # 现在这里只有一个 turn end……我可能需要将结束回合的东西单独从工具里摘出来。
+        # 注册内嵌工具，供 LLM 控制上下文信息
+        self._register_builtin_tools()
 
         # 如果有工具，则对本内容注册工具。
         if tools:
@@ -117,6 +113,7 @@ class Agent:
         该函数会拼装系统提示词，和工具提示词。
         """
         prompt: str = self._base_system_prompt
+
         hint: Optional[str] = self.tool_registry.get_prompt_hint()  # 获取所有工具提示。
         if hint:
             prompt = f"{prompt}\n{hint}"    # 拼接提示，随后返回数据。
@@ -130,140 +127,36 @@ class Agent:
         return self.llm_context_handler
 
     def update_system_prompt(self, new_prompt: str) -> None:
-        """运行时动态修改 Agent 的系统提示词。"""
+        """
+        运行时动态修改 Agent 的系统提示词。
+        
+        Args:
+            new_prompt: 系统提示词。
+        """
         self._base_system_prompt = new_prompt
 
     def add_tool(self, tool: "Tool") -> None:
-        """运行时给 Agent 增加一个工具。"""
+        """
+        运行时给 Agent 增加一个工具。
+        
+        Args:
+            tool: 一份有效的工具注册 schema。
+        """
         self.tool_registry.register(tool)
 
     def remove_tool(self, tool_name: str) -> None:
-        """在运行期间，从本 Agent 的工具注册表内，移除一个命名工具。"""
+        """
+        在运行期间，从本 Agent 的工具注册表内，移除一个命名工具。
+    
+        Args:
+            tool_name: 工具名。
+        """
         self.tool_registry.unregister(tool_name)
 
     # ------------------------------------------------------------------
     # 上下文管理接口
+    # DEPRECATED - 以后上下文管理将直接调用上下文管理器。
     # ------------------------------------------------------------------
-
-    async def add_context(self, msg: LLMContext) -> None:
-        """
-        增加上下文内容。
-        """
-        await self.llm_context_handler.add_context(msg)
-
-    async def get_conversation_history(self, id_list: Optional[List[int]] = None) -> Optional[LLMContextInfo]:
-        """
-        获取完整的对话历史。
-        异步，等待当前上下文内容。
-
-        Args:
-            id_list: 选择的ID。如果不选择ID，则压缩全部未被压缩过的对话。
-        
-        Returns:
-            List of message dicts with 'role' and 'content' keys.
-        """
-        return await self.llm_context_handler.get_now_context(id_list)
-
-    async def get_conversation_summary(self, id_list: Optional[List[int]] = None) -> Optional[str]:
-        """
-        获取格式化的对话摘要。
-
-        Args:
-            id_list: 选择的ID。如果不选择ID，则压缩全部未被压缩过的对话。
-        
-        Returns:
-            将所有上下文放在了同一个 str 里。
-        """
-        return await self.llm_context_handler.get_content_as_single_str(id_list)
-
-    async def compress_history(self, id_list: Optional[List[int]] = None) -> bool:
-        """
-        压缩对话历史以节省 token。
-        
-        Args:
-            id_list: 选择的ID。如果不选择ID，则压缩全部未被压缩过的对话。
-            
-        Returns:
-            True if compression succeeded, False if no history to compress.
-        """
-        return await self.llm_context_handler.compress_context(id_list)
-
-    async def create_memory(self, context_ids: List[int]) -> Optional[str]:
-        """
-        从特定对话中提取关键信息作为永久记忆。
-        本函数会调用上下文管理器实例，创建新的记忆。
-        
-        Args:
-            context_ids: List of context IDs to summarize into memory.
-            
-        Returns:
-            Memory summary string, or None if extraction failed.
-        """
-        memory = await self.llm_context_handler.generate_memory(context_ids)
-        if memory:
-            self.memory_list.append(memory)
-        return memory
-
-    def copy_memories(self) -> List[str]:
-        """
-        获取所有已存储的记忆，该操作会拷贝一份。
-        注意：“记忆”层级不等于“上下文”——记忆不会被再次压缩。
-
-        Returns:
-            List of memory summary strings.
-        """
-        return self.memory_list.copy()
-
-    def get_memories(self) -> List[str]:
-        """
-        获取所有已存储的记忆，该操作不会拷贝，而是会返回其引用。
-        建议在获取后立即改为 tuple 类型以只读。
-
-        Returns:
-            List of memory summary strings.
-        """
-        return self.memory_list
-
-    def clear_memories(self) -> None:
-        """
-        清除所有记忆。
-        """
-        self.memory_list.clear()
-
-    def get_context_count(self) -> int:
-        """
-        获取存储的上下文条目数量。
-        
-        Returns:
-            Number of conversation rounds stored.
-        """
-        return len(self.llm_context_handler.context_dict)
-
-    async def get_context_by_ids(self, ids: List[int]) -> Optional[LLMContextInfo]:
-        """
-        Retrieve specific context entries by their IDs.
-        根据ID检索特定的上下文条目。
-        
-        Args:
-            ids: List of context IDs to retrieve.
-            
-        Returns:
-            LLMContextInfo containing compacted and uncompacted entries, or None.
-        """
-        return await self.llm_context_handler.get_now_context(ids)
-
-    def select_context(self, ids: Optional[List[int]] = None) -> List[int]:
-        """
-        Select the active context window by timeline ids.
-
-        Args:
-            ids: Timeline ids to activate. `None` selects all known context entries.
-
-        Returns:
-            The normalized active timeline ids after selection.
-        """
-        return self.llm_context_handler.set_active_context_by_ids(ids)
-
 
     async def chat_once(
         self,
@@ -279,15 +172,10 @@ class Agent:
         """
         Execute exactly one LLM chat request.
 
-        This helper is intentionally not an agent loop:
-        - it does not execute tool calls
-        - it does not call the model again with tool results
-        - it only saves the assistant response when requested
-
         Use this for simple chat, debugging, tag/summarizer-style calls, or
         cases where the caller wants to inspect raw `LLMOutput.tool_calls`.
         """
-        prev_message: Optional[LLMContext] = await self._build_prev_messages() if use_history else None
+        prev_message: Optional[List[LLMInfo]] = await self._build_prev_messages() if use_history else None
         tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider) if use_tools else []
 
         resolved_system_prompt = system_prompt
@@ -298,7 +186,7 @@ class Agent:
             msg=msg,
             system_prompt=resolved_system_prompt,
             temperature=temperature,
-            prev_messages=[prev_message] if prev_message else None,
+            prev_messages=prev_message if prev_message else None,
             tools=tool_schemas if tool_schemas else None,
             fallback_order=self.fallback_order,
         )
@@ -307,19 +195,14 @@ class Agent:
 
         if save_context:
             tool_call_info = [str(tool_call.to_execution_format()) for tool_call in resolved_tool_calls]
-            tool_call_result = [
-                "Tool call was returned by chat_once but not executed."
-                for _ in resolved_tool_calls
-            ]
             context = LLMContext(
                 role=output.role or "assistant",
                 content=output.text,
                 tool_call_info=tool_call_info,
-                tool_call_result=tool_call_result,
             )
             if tag_context:
-                context = await self._tagify_context(context)
-            await self.add_context(context)
+                context = await self.llm_context_handler.tagify_context(context)
+            await self.llm_context_handler.add_context(context)
 
         return output
 
@@ -363,6 +246,16 @@ class Agent:
         tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider)   # 拉取工具调用方法
         final_content: str = ""
 
+        # 在整个 agent 执行轮开始前，加入用户当前输入。
+        await self.context_manager.add_context(
+            LLMContext(
+                role="user", 
+                content=msg, 
+                tags=["user_request"]), 
+            append_to_active=True
+        )
+
+        # 规定一个应当停止的东西。
         def _should_stop() -> bool:
             return bool(stop_callback and stop_callback())
 
@@ -373,17 +266,19 @@ class Agent:
             if _should_stop():
                 break
 
-            await self._maybe_run_context_selection(
+            # TODO: 这里每一次都会重新 build 一次旧信息。
+            # 如果我要采用线性上下文，我只需要增量。
+            # 如果我要让 agent 自己控制上下文，我要怎么做？？
+            prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages()
+            # print(f"Previous message as: {prev_messages}")
+
+            # 在每一轮开始时，决定本轮使用的上下文……？
+            context_selection: List[int] | None = await self._maybe_run_context_selection(
                 task_msg=msg,
                 turn=turn,
                 verbose_info=verbose_info,
                 temperature=temperature
             )
-
-            # TODO: 这里每一次都会重新 build 一次旧信息。
-            # 如果我要采用线性上下文，我只需要增量。
-            # 如果我要让 agent 自己控制上下文，我要怎么做？？
-            prev_messages: Optional[LLMContext] = await self._build_prev_messages()
 
             if verbose_info:
                 print(f"\n[Agent] ====== Executing Turn: {turn} ======")
@@ -400,7 +295,7 @@ class Agent:
                 system_prompt=self.system_prompt,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                prev_messages=[prev_messages] if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
+                prev_messages=prev_messages if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
                 tools=tool_schemas if tool_schemas else None,  # 传递工具信息
                 fallback_order=self.fallback_order,
             )
@@ -418,7 +313,7 @@ class Agent:
                         print(f"[Agent] Tool call {idx}: {tool.to_execution_format()}")
 
             if len(tool_calls) > 0:
-                # 工具可并行
+                # 工具可并行。todo: 工具执行最大并发量限制未能使用。（后面再做，现在先改上下文）
                 for tool in tool_calls:
                     executing_tools.append(
                         self._execute_single_tool(
@@ -434,6 +329,7 @@ class Agent:
                 break
 
             # 将工具执行结果放进来。
+            # 这一块东西不会进入上下文，而是被 agent 实例自己记录。
             tool_record_round: List[ToolExecutionRecord] = [
                 ToolExecutionRecord(
                     name=tool_info.name,
@@ -442,25 +338,28 @@ class Agent:
                 ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
             ]
             self.tool_call_history.append(tool_calls)
-            self.tool_call_result_history.append(executing_result)
 
-            # 拼接上下文
-            now_context: LLMContext = LLMContext(
+            # 拼接上下文。
+            # 这里才会包括工具。
+            now_assistant_context: LLMContext = LLMContext(
                 role="assistant",
                 content=message,  # 文本
                 tool_call_info=[str(i) for i in tool_record_round],
-                tool_call_result=[i for i in executing_result]
             )
-            # 然后将其加入自身上下文中
-            now_context = await self._tagify_context(now_context, temperature)
-            await self.add_context(now_context)
-            await self._maybe_archive_long_round_context(
-                context=now_context,
+
+            # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
+            # 先打标签，再加进来。
+            now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
+            await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
+            await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
+                context=now_assistant_context,
                 verbose_info=verbose_info,
             )
-            # 如果 stdout 太大，需要将工具怎么办？而且这样做的话，工具是否要重构？
 
-            # 上下文压缩。
+            if verbose_info:
+                print(f"[Agent] Current active context IDs: {self.llm_context_handler.active_ids}")
+
+            # 检测上下文长度，并压缩之。
             if self.llm_context_handler.context_len() > max_context_size:
                 print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
                 print(f"[Agent] Context exceeded, compressing history...")
@@ -471,7 +370,6 @@ class Agent:
 
             # 判断是否结束？
             # 传统：如果没有 tool call，则立即结束。
-
             if len(tool_record_round) == 0:
                 final_content = message
                 break
@@ -489,81 +387,6 @@ class Agent:
     # 内部辅助方法
     # ------------------------------------------------------------------
 
-    async def _tagify_context(self, context: LLMContext, temperature: float = 1.0) -> LLMContext:
-        """
-        为一个上下文历史加入标签。
-
-        Args:
-            context: 等待加标签的上下文。
-        
-        Returns:
-            加好标签的上下文内容。
-        """
-
-        tag_source_parts: List[str] = []
-        if context.content.strip():
-            tag_source_parts.append(context.content.strip())
-        if context.tool_call_info:
-            tag_source_parts.extend(context.tool_call_info)
-        if context.tool_call_result:
-            tag_source_parts.extend(context.tool_call_result)
-
-        tag_source = "\n".join(part for part in tag_source_parts if part.strip())
-        if not tag_source.strip():
-            context.tags = []
-            return context
-
-        prompt: str = """
-        You should generate machine-readable tags for one Agent context entry.
-        Return only 3 to 5 lowercase snake_case tags separated by commas.
-        Do not explain. Do not ask for more input. Do not use Markdown or backticks.
-        Example: context_lookup, tool_call, empty_history
-        """
-
-        tags: LLMOutput = await self.llm_handler.fetch(msg=tag_source, system_prompt=prompt, temperature=temperature)
-        parsed_tags = [
-            tag
-            for tag in re.findall(r"[a-zA-Z][a-zA-Z0-9_]{1,40}", tags.content.lower())
-            if tag not in {"tag_1", "tag_2", "tag_3", "tag_4", "tag_5"}
-        ]
-        context.tags = parsed_tags[:5]
-        return context
-
-    def _parse_selection_ids(self, content: str) -> List[int]:
-        """Extract selected context ids from a strict JSON response."""
-        if not content.strip():
-            return []
-
-        candidates: List[str] = [content.strip()]
-        candidates.extend(match.group(0) for match in re.finditer(r"\{.*?\}", content, flags=re.DOTALL))
-
-        for candidate in candidates:
-            try:
-                payload = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            ids = payload.get("ids")
-            if isinstance(ids, list):
-                return [int(item) for item in ids]
-        return []
-
-    def _should_trigger_context_selection(self, turn: int) -> bool:
-        """Determine whether the active context should be reselected this turn."""
-        interval = self.context_selection_interval
-        if not interval or interval <= 0:
-            return False
-        if turn % interval != 0:
-            return False
-
-        active_ids = self.llm_context_handler.get_active_context_ids()
-        if len(active_ids) < self.context_selection_min_active_items:
-            return False
-
-        if self.llm_context_handler.context_len() < self.context_selection_min_active_chars:
-            return False
-
-        return True
-
     async def _maybe_run_context_selection(
         self,
         task_msg: str,
@@ -571,11 +394,43 @@ class Agent:
         verbose_info: bool = False,
         temperature: float = 0.4,
     ) -> Optional[List[int]]:
-        """Periodically let the model shrink the active context window."""
+        """
+        让模型选择上下文窗口。
+        
+        Notes:
+            该函数会在 agent 执行轮次内，每轮开始时调度一次。
+            如果说在每一轮内不传入总上下文，或每一个索引的摘要，这个函数看起来会让 agent 定期遗忘，而非自主选择上下文。
+        
+        Args:
+            task_msg: 当前任务。
+            turn: 当前回合轮数。
+            verbose_info: 是否打印信息。
+            temperature: 模型温度。
+        """
+
+        # 检查：是否应该执行？
         if not self._should_trigger_context_selection(turn):
             return None
 
-        context_listing = await self.tool_registry.execute("context_list", {"limit": 0})
+        # First retrieve a narrowed candidate set so the selector never scans the full history.
+        # 注意：这个查找是个耗时过程。
+        candidate_ids = await self._retrieve_context_candidates_for_task(
+            task_msg=task_msg,
+            temperature=temperature,
+        )
+        if not candidate_ids:
+            if verbose_info:
+                print("[Agent] Context selection found no retrieval candidates; keeping current active window.")
+            return None
+
+        # Serialize only the retrieved candidates and use that as the selector's visible search space.
+        context_listing = await self.llm_context_handler.get_now_context_as_str(candidate_ids)
+        if not context_listing.strip():
+            if verbose_info:
+                print("[Agent] Candidate context listing is empty; keeping current active window.")
+            return None
+
+        # Ask the model for the smallest sufficient subset of candidate ids for this round.
         selection_prompt = f"""
 You are selecting the minimal active context window for the current agent round.
 
@@ -591,12 +446,15 @@ Return only strict JSON in this format:
 Rules:
 - Select only the ids needed for the current task.
 - Prefer the smallest sufficient set.
+- You may select raw entries, compacted entries, or both.
 - Do not explain.
 """.strip()
 
         if verbose_info:
             print(f"[Agent] Triggering periodic context selection at turn {turn}.")
-
+        
+        # 用于选择上下文的输出。注意：问题大概率出在这里。
+        # TODO: 这里可能需要传入上下文摘要。
         selection_output = await self.chat_once(
             selection_prompt,
             temperature=temperature,
@@ -605,56 +463,200 @@ Rules:
             save_context=False,
             tag_context=False,
         )
-        selected_ids = self._parse_selection_ids(selection_output.text)
+        # 然后解析。如果没有选择的 id，则不返回。
+        selected_ids = self._parse_selection_timelines(selection_output.text)
+        if verbose_info:
+            print(f"[Agent] Original selection output as: {selection_output.text}")
+            print(f"[Agent] Selection output as: {selected_ids}")
+
         if not selected_ids:
             if verbose_info:
                 print("[Agent] Context selection returned no valid ids; keeping current active window.")
             return None
 
-        normalized_ids = self.select_context(selected_ids)
+        # Reject ids outside the retrieved candidate pool so the selector cannot silently widen scope.
+        valid_candidate_ids = set(candidate_ids)
+        filtered_ids = [
+            context_id
+            for context_id in selected_ids
+            if context_id in valid_candidate_ids
+        ]
+        if not filtered_ids:
+            if verbose_info:
+                print("[Agent] Context selection returned ids outside candidates; keeping current active window.")
+            return None
+
+        # Keep the latest tail active so the agent never drops immediate local continuity.
+        recent_tail_ids = self.llm_context_handler.get_active_ids_window()[-2:]
+        final_ids = sorted(set(filtered_ids + recent_tail_ids))
+        applied_ids = self.llm_context_handler.set_active_ids(final_ids)
+
         if verbose_info:
-            print(f"[Agent] Active context selected as: {normalized_ids}")
-        return normalized_ids
+            print(f"[Agent] Active context window updated to: {applied_ids}")
+
+        return applied_ids
+
+    async def _retrieve_context_candidates_for_task(
+        self,
+        task_msg: str,
+        temperature: float = 0.4,
+    ) -> List[int]:
+        """
+        Retrieve candidate context ids for the current task before LLM reselection.
+
+        Strategy:
+        - derive tags from the task text when tagging is enabled,
+        - query compacted summaries by the raw task text,
+        - intersect summary hits and tag hits when possible,
+        - fall back to the union when intersection is empty,
+        - always preserve a short recent active tail.
+        """
+        # Preserve a short recent tail so retrieval never loses immediate turn-to-turn continuity.
+        active_ids = self.llm_context_handler.get_active_ids_window()
+        recent_tail_ids = active_ids[-4:]
+
+        # Turn the current task into lightweight retrieval tags using the same tagger as stored context.
+        task_tags: List[str] = []
+        if self.llm_context_handler.enable_tagging:
+            probe_context = LLMContext(role="user", content=task_msg)
+            probe_context = await self.llm_context_handler.tagify_context(
+                probe_context,
+                temperature=temperature,
+            )
+            task_tags = probe_context.tags or []
+
+        # Prefer the intersection of summary hits and tag hits when both signals are available.
+        intersected_hits = None
+        if task_tags:
+            intersected_hits = await self.llm_context_handler.find_context_by_summary_and_tags(
+                summary_query=task_msg,
+                tags=task_tags,
+                blur_summary=True,
+                blur_tags=True,
+            )
+
+        # Keep the individual retrieval channels available as a fallback when the intersection is empty.
+        tag_hits = None
+        if task_tags:
+            tag_hits = await self.llm_context_handler.find_context_by_tags(
+                tags=task_tags,
+                blur=True,
+            )
+
+        summary_hits = await self.llm_context_handler.find_context_by_summary(
+            summary_query=task_msg,
+            blur=True,
+            include_raw=False,
+            include_compacted=True,
+        )
+
+        # Build the final candidate pool from intersection first, then fall back to the retrieval union.
+        candidate_ids: Set[int] = set()
+        if intersected_hits:
+            candidate_ids.update(item.timeline for item in intersected_hits)
+        else:
+            if tag_hits:
+                candidate_ids.update(item.timeline for item in tag_hits)
+            if summary_hits:
+                candidate_ids.update(item.timeline for item in summary_hits)
+
+        # Always append the recent tail so prompt assembly retains local continuity even after reselection.
+        candidate_ids.update(recent_tail_ids)
+        return sorted(candidate_ids)
+
+
+    def _parse_selection_timelines(self, content: str) -> List[int]:
+        """
+        Extract selected context ids from a strict JSON response.
+        
+        Args:
+            content: 输入的 JSON 内容，该内容会直接来自上下文选择器。
+        """
+        if not content.strip():
+            return []
+
+        candidates: List[str] = [content.strip()]
+        candidates.extend(match.group(0) for match in re.finditer(r"\{.*?\}", content, flags=re.DOTALL))
+
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            ids = payload.get("ids")
+            if not isinstance(ids, list):
+                ids = payload.get("timelines")
+            if isinstance(ids, list):
+                return [int(item) for item in ids]
+        return []
+
+    def _should_trigger_context_selection(self, turn: int) -> bool:
+        """
+        Determine whether the active context should be reselected this turn.
+        Args:
+            turn: 当前回合轮数。
+        """
+
+        # 检查当前轮次
+        interval = self.context_selection_interval
+        if not interval or interval <= 0:
+            return False
+        if turn % interval != 0:
+            return False
+        
+        # 检查当前激活上下文数量
+        active_ids = self.llm_context_handler.get_active_ids_window()
+        if len(active_ids) < self.context_selection_min_active_items:
+            return False
+
+        if self.llm_context_handler.context_len() < self.context_selection_min_active_chars:
+            return False
+
+        return True
 
     async def _maybe_archive_long_round_context(
         self,
         context: LLMContext,
         verbose_info: bool = False,
     ) -> bool:
-        """Archive one tool-heavy round immediately when the payload is too large."""
-        tool_result_chars = sum(len(result) for result in context.tool_call_result or [])
+        """
+        对于一些长度较长的东西，将其压缩并摘要。
+
+        Args:
+            context: 目标上下文信息。
+            verbose_info: 是否打印信息。
+        """
+        tool_result_chars = sum(len(result) for result in context.tool_call_info or [])
         if tool_result_chars < self.tool_result_summary_threshold_chars:
             return False
 
-        if context.order < 0:
+        if context.timeline < 0:
             return False
 
         if verbose_info:
             print(
                 "[Agent] Tool result payload exceeded threshold; archiving round "
-                f"{context.order} ({tool_result_chars} chars)."
+                f"{context.timeline} ({tool_result_chars} chars)."
             )
-        return await self.compress_history([context.order])
+        return await self.llm_context_handler.compress_context([context.timeline])
 
-    async def _archive_old_active_context(self, verbose_info: bool = False) -> bool:
+    async def _archive_old_active_context(
+        self, verbose_info: bool = False
+    ) -> bool:
         """
         Archive older active uncompacted entries while keeping a recent verbatim tail.
 
         The original entries remain addressable by their timeline ids through
         `context_read`, even after they leave the active window.
         """
-        active_ids = self.llm_context_handler.get_active_context_ids()
-        uncompacted_ids = [
-            context_id
-            for context_id in active_ids
-            if context_id in self.llm_context_handler.context_dict_uncompacted
-        ]
+        active_ids: List[int] = self.llm_context_handler.active_ids
 
         keep_tail = max(0, self.round_compress_keep_tail)
-        if len(uncompacted_ids) > keep_tail:
-            target_ids = uncompacted_ids[:-keep_tail] if keep_tail else uncompacted_ids
-        elif uncompacted_ids:
-            target_ids = [uncompacted_ids[0]]
+        
+        if len(active_ids) > keep_tail:
+            target_ids = active_ids[:-keep_tail] if keep_tail else active_ids
+        elif active_ids:
+            target_ids = [active_ids[0]]
         else:
             return False
 
@@ -664,34 +666,32 @@ Rules:
         if verbose_info:
             print(f"[Agent] Archiving active context ids: {target_ids}")
 
-        return await self.compress_history(target_ids)
+        return await self.llm_context_handler.compress_context(target_ids)
 
-    async def _build_prev_messages(self) -> Optional[LLMContext]:
+    async def _build_prev_messages(self) -> Optional[List[LLMInfo]]:
         """
-        将历史内容序列化。
-        规定：传入一个 agent 时，需要的 schema：
-        - 上下文内容
-            - 压缩后上下文内容（已实现）
-            - 未压缩的上下文内容（已实现）
-        - 工具历史（已在上下文内容里）
-        
+        将历史内容导出，而非序列化，匹配 llmfetcher 的要求。
+
         Returns:
             上下文内容。如果没有上下文，则返回空白内容。
         """
         if self.llm_context_handler.empty:
             return None
-
-        history_msg: Optional[str] = await self.llm_context_handler.get_active_content_as_single_str()
-        if not history_msg:
-            history_msg = ""
-
-        history_context: LLMContext = LLMContext(
-            role="user",
-            content=f"[History]\n{history_msg}\n[End of History]"
-        )
-
-        return history_context
+        
+        # 这部分已经被 llm_context 实现。
+        history_msg_raw: Optional[LLMContextInfo] = await self.llm_context_handler.get_now_active_context()
+        if not history_msg_raw:
+            history_msg = []
+        else:
+            history_msg = history_msg_raw.items
+        
+        return history_msg
     
+    # ====================================================================
+    # Tool handlers
+    # 这些函数会处理工具相关事务。
+    # ====================================================================
+
     async def _execute_single_tool(self, tool_call: Dict[str, Any], verbose: bool) -> str:
         """
         执行一个工具，工具执行结果将异步返回。
@@ -705,14 +705,12 @@ Rules:
 
         if verbose:
             print(f"[Agent] Calling tool {tool_name} with param: {json.dumps(args, ensure_ascii=False)}")
-
-        if tool_name == "round_end":
-            result: str = "Round ended."
-        else:
-            try:
-                result = await self.tool_registry.execute(tool_name, args)
-            except Exception as exc:
-                result = f"Error: {exc}"
+        
+        # 执行工具
+        try:
+            result = await self.tool_registry.execute(tool_name, args)
+        except Exception as exc:
+            result = f"Error: {exc}"
 
         if verbose:
             print(f"[Agent] Result of tool {tool_name} as: \n{str(result)}")
@@ -720,7 +718,12 @@ Rules:
         return str(result)
 
     def _coerce_tool_arguments(self, value: Any) -> Dict[str, Any]:
-        """Coerce tool arguments from dict/string/None into a dict."""
+        """
+        Coerce tool arguments from dict/string/None into a dict.
+
+        Args:
+            value: tool call arguments.
+        """
         if isinstance(value, dict):
             return dict(value)
         if isinstance(value, str) and value.strip():

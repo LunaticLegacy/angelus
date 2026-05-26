@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple, Union, Set, Any, Callable
+from typing import List, Dict, Literal, Optional, Tuple, Union, Set, Any, Callable, overload, override
 
 from typing import TypeAlias
 from uuid import UUID, uuid4
@@ -26,6 +26,20 @@ class LLMBackendConfig:
     timeout: float = 60.0
     max_retries: int = 0
     extra: Dict[str, Any] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return f"""
+        LLMBackendConfig(
+            Name: {self.name},
+            Provider: {self.provider},
+            Model: {self.model},
+            API Key: {self.api_key},
+            API URL: {self.api_url},
+            Timeout: {self.timeout} secs,
+            Max retries: {self.max_retries},
+            Extra args: {self.extra}
+        )
+        """
 
 
 @dataclass
@@ -84,48 +98,62 @@ class LLMBackendError(LLMError):
 # --------------------------
 
 LLMContextValue = Union[
-    UUID,
     int,
     str, 
     Optional[List[str]]
-    ]
+]
 
 @dataclass
 class LLMContext:
     """One chat message."""
-    role: str
-    content: str
-    uuid: UUID = field(default_factory=uuid4)
-    order: int = -1
-    tool_call_info: Optional[List[str]] = None  # 调度了什么工具，可选——有可能调度了不止一件工具。
-    tool_call_result: Optional[List[str]] = None
+    role: Literal["system", "user", "assistant"]   # 角色，有效值：system, user, assistant
+    content: str    # 内容
+    timeline: int = -1   # 时间线 id
+    tool_call_info: Optional[List[str]] = None  # 调度了什么工具，可选，且有可能调度了不止一件工具。
     tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextValue]:
         d: Dict[str, LLMContextValue] = {
-            "uuid": self.uuid,
-            "order": self.order,
-            "role": self.role,
+            "timeline": self.timeline,
+            "role": self.role,  
             "content": self.content,
         }
 
         # schema: 必须保证工具调度的信息和结果信息同时存在。
         if self.tool_call_info:
             d["tool_call_info"] = self.tool_call_info
-        if self.tool_call_result:
-            d["tool_call_result"] = self.tool_call_result
 
         if self.tags:
             d["tags"] =  self.tags
 
-        return d
+        return d    
+
+    def __str__(self) -> str:
+        parts = [
+            "[LLM Context]",
+            f"Role: {self.role}",
+            f"Timeline: {self.timeline}",
+        ]
+        if self.role == "user":
+            parts.append("User context won't contains tool call info.")
+        else:
+            if self.tool_call_info:
+                parts.append(f"Tool call info: {self.tool_call_info}")
+            if self.tags:
+                parts.append(f"Tags: {self.tags}")
+
+            if not self.tool_call_info:
+                parts.append("This context does not contains tool call info.")
+        
+        if self.content != "":
+            parts.append(f"Content: {self.content if self.content else "None"}")
+
+        return ", ".join(parts)
 
 
 LLMContextCompactedValue = Union[
-    UUID,
     str, 
     List[Union[LLMContext, "LLMContextCompacted"]],
-    List[UUID],
     List[int],
     Optional[List[str]]
 ]
@@ -136,43 +164,43 @@ class LLMContextCompacted:
     用于存储对单条 LLM 上下文执行压缩的结果。
     """
     abstract_msg: str   # 压缩（并抽象后的）结论
-    source: List[Union[LLMContext, "LLMContextCompacted"]]    # 原始信息源，必要时让 agent 查询该信息源。可以二压。
-    source_uuid: List[UUID] # 原始信息源的 UUID
-    source_timeline: List[int] # 原始信息源的时间线 id
-    uuid: UUID = field(default_factory=uuid4)
+    source: List[Union[LLMContext, "LLMContextCompacted"]]    # 直接参与本次压缩的条目，可包含原始条目或更早的摘要条目。
+    source_timeline: List[int] # 展平后的原始来源时间线 id，而非“本次压缩输入条目”的 id。
+    timeline: int = -1   # 时间线 id
     tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextCompactedValue]:
         d: Dict[str, LLMContextCompactedValue] = {
-            "uuid": self.uuid,
             "abstract_msg": self.abstract_msg,
             "source": self.source,
-            "source_uuid": self.source_uuid,
             "source_timeline": self.source_timeline,
         }
         if self.tags:
             d["tags"] = self.tags
         
         return d
-
-@dataclass
-class LLMCompactedContextInfoItem:
-    context_id: int
-    info: LLMContextCompacted
-
-
-@dataclass
-class LLMUncompactedContextInfoItem:
-    context_id: int
-    info: LLMContext
-
-@dataclass
-class LLMContextInfo:
-    compacted_info: List[LLMCompactedContextInfoItem] = field(default_factory=list)
-    uncompacted_info: List[LLMUncompactedContextInfoItem] = field(default_factory=list)
+    
+    def __str__(self) -> str:
+        parts = [
+            "[LLM Context Compacted]",
+            f"Abstract message: {self.abstract_msg}",
+            f"Source count: {len(self.source)}",
+            f"Source timeline: {self.source_timeline}",
+        ]
+        if self.tags:
+            parts.append(f"Tags: {self.tags}")
+        return ", ".join(parts)
 
 # 设计集合类
 LLMInfo = Union[LLMContext, LLMContextCompacted]
+
+@dataclass
+class LLMContextInfo:
+    """
+    上下文信息，包括压缩后的上下文和未被压缩的上下文。
+    """
+    items: List[LLMInfo] = field(default_factory=list)
+
 
 # --------------------------
 # Tool
@@ -209,7 +237,6 @@ ToolArgs = JsonObject
 AssistantMessageDict = JsonObject
 
 ToolList = List[Tool]
-OptionalToolList = Optional[ToolList]
 
 @dataclass
 class AgentMessage:

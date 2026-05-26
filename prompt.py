@@ -44,6 +44,8 @@ ROUTER_SELECTION_PROMPT_TEMPLATE = _clean(
     """
 )
 
+# 我去，codex 怎么将 demo 里，需要被用户使用的 prompt 扔在这里了？
+# 代码语义又不对，服了。fuck codex
 NEWS_FETCHER_SYSTEM_PROMPT = _clean(
     """
     You are a news collection expert. Your task is to gather the latest news related to the user's query topic.

@@ -1,28 +1,29 @@
-from typing import Dict, List, Optional, Set
-from uuid import UUID
+import re
+from typing import Dict, List, Optional, Set, Tuple
 
 from .llm_fetcher import LLMFetcher, LLMOutput
-from .prompt import CONTEXT_COMPACT_PROMPT_TEMPLATE, MEMORY_CONCLUDE_PROMPT_TEMPLATE
-from .llm_types import (
-    LLMInfo, LLMContext, LLMContextCompacted,
-    LLMCompactedContextInfoItem,
-    LLMUncompactedContextInfoItem,
-    LLMContextInfo,
+from .prompt import (
+    CONTEXT_COMPACT_PROMPT_TEMPLATE, 
+    MEMORY_CONCLUDE_PROMPT_TEMPLATE, 
+    TAGIFY_CONTEXT_PROMPT
 )
+from .llm_types import LLMContext, LLMContextCompacted, LLMContextInfo, LLMInfo
 
 
 class LLMContextHandler:
     """
-    用于处理 LLM 上下文内容的管理器，对每一个 agent 都要有一个实例。
+    用于处理 LLM 上下文内容的管理器，每个 agent 有且仅有 1 个该实例。
 
     Notes:
-        该类会在创建类 Agent 时自动为其创建，作为类实例。
+        该类会在创建 Agent 时自动为其创建，作为类实例。
     """
 
     def __init__(
         self,
         llm_handler: LLMFetcher,
         fallback_order: Optional[List[str]] = None,
+        enable_memory: bool = True,
+        enable_tagging: bool = False,
     ):
         """
         初始化。
@@ -30,403 +31,633 @@ class LLMContextHandler:
         Args:
             llm_handler: 传入的 LLM 实例内容。
             fallback_order: 可选的回退后端顺序列表。
+            enable_memory: 允许记忆机制存在。
         """
         self.llm_handler = llm_handler
         self.fallback_order = fallback_order
 
-        # 时间线 id 到上下文对象。
-        self.context_raw_dict: Dict[int, LLMInfo] = {}
-        # UUID 索引，供 active_context 和外部引用使用。
-        self.context_uuid_dict: Dict[UUID, LLMInfo] = {}
-        self.context_uuid_to_timeline: Dict[UUID, int] = {}
+        # ========== 基础索引 ==========
+        # 索引：时间线 id -> 上下文对象。
+        self.context_timeline_dict: Dict[int, LLMInfo] = {}
 
-        self.context_dict: Dict[int, LLMContext] = {}
-        self.context_dict_uncompacted: Dict[int, LLMContext] = {}
-        self.context_dict_compacted: Dict[int, LLMContextCompacted] = {}
+        # 当前激活的上下文时间线 id 列表。
+        self.active_ids: List[int] = []
 
-        # 当前轮默认可取用的上下文窗口。
-        self.active_context: List[UUID] = []
-
-        # 根据标签反查上下文 timeline id。
-        self.reverse_tag_dict: Dict[str, Set[int]] = {}
-
-        # 全局时间线游标。
+        # 本 agent 的时间线游标。
         self.now_context_id: int = 0
+
+        # ========= 记忆机制 =========
+        # 记忆不会被压缩。
+        self.enable_memory = enable_memory
+        self.memory_list: Optional[List[str]] = None
+        if self.enable_memory:
+            self.memory_list = []
+
+
+        # ========= 标签索引和查询机制 ==========
+        # k: tag: str 当前标签, v: List[int] 具有当前标签的信息
+        # 标签具有不确定性
+        self.enable_tagging = enable_tagging    # 启用标签功能
+        self.tag_to_context: Optional[Dict[str, List[int]]] = None
+        if self.enable_tagging:
+            self.tag_to_context = {}
+
+    # ====================================================================
+    # Basic System
+    # 这里是上下文管理器的基础，当前实现仍可兼容线性上下文。
+    # ====================================================================
 
     @property
     def empty(self) -> bool:
-        return not (
-            self.context_raw_dict
-            or self.context_uuid_dict
-            or self.context_dict
-            or self.context_dict_uncompacted
-            or self.context_dict_compacted
-        )
+        """
+        检查：当前上下文内容是否为空。
+        """
+        return not self.context_timeline_dict
 
-    def clear_memories(self) -> None:
-        """清除所有上下文内容。"""
-        self.context_raw_dict.clear()
-        self.context_uuid_dict.clear()
-        self.context_uuid_to_timeline.clear()
-        self.context_dict.clear()
-        self.context_dict_uncompacted.clear()
-        self.context_dict_compacted.clear()
-        self.active_context.clear()
-        self.reverse_tag_dict.clear()
+    def clear(self) -> None:
+        """
+        清除所有上下文内容，并重置时间线索引。
+        如果需要清楚记忆，请手动清理记忆。
+        """
+        self.context_timeline_dict.clear()
+        self.active_ids.clear()
         self.now_context_id = 0
 
-    def _ordered_active_uuids(self) -> List[UUID]:
-        """Return active context UUIDs ordered by timeline."""
-        return sorted(
-            [context_uuid for context_uuid in self.active_context if context_uuid in self.context_uuid_to_timeline],
-            key=lambda context_uuid: self.context_uuid_to_timeline[context_uuid],
-        )
+        if self.enable_tagging:
+            self.tag_to_context.clear() # pyright: ignore
 
-    def _ordered_active_ids(self) -> List[int]:
-        """Return active context timeline ids ordered by timeline."""
-        return [
-            self.context_uuid_to_timeline[context_uuid]
-            for context_uuid in self._ordered_active_uuids()
-        ]
-
-    def get_active_context(self) -> List[UUID]:
-        """Return the UUID list for the current active context window."""
-        return list(self._ordered_active_uuids())
-
-    def get_active_context_ids(self) -> List[int]:
-        """Return the timeline ids for the current active context window."""
-        return list(self._ordered_active_ids())
-
-    def set_active_context(self, context_uuids: Optional[List[UUID]] = None) -> None:
+    def set_active_ids(self, context_ids: Optional[List[int]] = None) -> List[int]:
         """
-        Replace the active context window.
+        设置当前激活的上下文窗口。
 
         Args:
-            context_uuids: UUIDs to activate. `None` means activate every known context
-                           entry still present in the manager.
-        """
-        if context_uuids is None:
-            context_uuids = list(self.context_uuid_to_timeline.keys())
-
-        seen: Set[UUID] = set()
-        normalized: List[UUID] = []
-        for context_uuid in context_uuids:
-            if context_uuid in seen or context_uuid not in self.context_uuid_to_timeline:
-                continue
-            seen.add(context_uuid)
-            normalized.append(context_uuid)
-
-        self.active_context = sorted(
-            normalized,
-            key=lambda context_uuid: self.context_uuid_to_timeline[context_uuid],
-        )
-
-    def set_active_context_by_ids(self, context_ids: Optional[List[int]] = None) -> List[int]:
-        """
-        Replace the active context window using timeline ids.
-
-        Args:
-            context_ids: Timeline ids to activate. `None` means activate every known
-                         context entry still present in the manager.
-
+            context_ids: 需要激活的时间线 id 列表。传入 `None` 时激活全部已知条目。
+        
         Returns:
-            The normalized active timeline ids after selection.
+            返回当前激活的 id 列表。
         """
-        if context_ids is None:
-            selected_ids = sorted(self.context_raw_dict.keys())
-        else:
-            selected_ids = sorted(
-                {
-                    int(context_id)
-                    for context_id in context_ids
-                    if int(context_id) in self.context_raw_dict
-                }
-            )
 
-        selected_uuids = [
-            self.context_raw_dict[context_id].uuid
-            for context_id in selected_ids
-        ]
-        self.set_active_context(selected_uuids)
-        return self._ordered_active_ids()
+        if context_ids is None:
+            normalized_ids = sorted(self.context_timeline_dict.keys())
+        else:
+            # 检查：id 有效，这里已经检查过了
+            normalized_ids = [
+                context_id
+                for context_id in context_ids
+                if context_id in self.context_timeline_dict
+            ]
+        
+        # 去重
+        self.active_ids = list(set(normalized_ids))
+        return list(self.active_ids)
+
+    def append_active_ids(self, context: LLMInfo) -> None:
+        """
+        在当前活跃上下文列表末尾添加一个上下文 id。
+
+        Args:
+            context: 上下文信息，需要携带 timeline。
+        """
+        # 检查：如果本上下文信息不在活跃列表中
+        if context.timeline not in self.active_ids:
+            self.active_ids.append(context.timeline)
+
+    def get_active_ids_window(self) -> List[int]:
+        """
+        返回当前活跃上下文列表。
+        """
+        return list(self.active_ids)
 
     def context_len(self) -> int:
         """
-        返回上下文总字符长度。
-
-        只统计当前活跃上下文：
-        - 未压缩上下文的 role/content/tool 信息/tags
-        - 压缩上下文的摘要/source_uuid/source_timeline/tags
-
-        不递归统计压缩摘要的 source 原文，否则压缩后长度不会下降。
+        返回当前活跃上下文序列化后的总字符长度。
         """
-
-        def list_len(values: Optional[List[str]]) -> int:
-            if not values:
-                return 0
-            return sum(len(str(value)) for value in values)
-
         total = 0
-        active_uuid_set = set(self.active_context)
-
-        for context in self.context_dict_uncompacted.values():
-            if context.uuid not in active_uuid_set:
-                continue
-            total += len(context.role)
-            total += len(context.content)
-            total += list_len(context.tool_call_info)
-            total += list_len(context.tool_call_result)
-            total += list_len(context.tags)
-
-        for context_comp in self.context_dict_compacted.values():
-            if context_comp.uuid not in active_uuid_set:
-                continue
-            total += len(context_comp.abstract_msg)
-            total += list_len([str(value) for value in context_comp.source_uuid])
-            total += list_len([str(value) for value in context_comp.source_timeline])
-            total += list_len(context_comp.tags)
-
+        for context_id in self.active_ids:
+            entry = self.context_timeline_dict.get(context_id)
+            if entry is not None:
+                total += len(str(entry))
         return total
 
-    async def add_context(self, context: LLMContext) -> None:
+    async def add_context(
+        self,
+        context: LLMContext,
+        append_to_active: bool = True,
+        temperature: float = 0.4
+    ) -> None:
         """
-        加入上下文内容。
+        加入一条新的上下文内容。
 
         Args:
             context: 每次调度的信息。
+            append_to_active: 是否加入当前活跃上下文窗口。
+            temperature: 给上下文打标签时，该 agent handler 的温度。
         """
-        context.order = self.now_context_id
-
-        self.context_raw_dict[self.now_context_id] = context
-        self.context_uuid_dict[context.uuid] = context
-        self.context_uuid_to_timeline[context.uuid] = self.now_context_id
-        self.context_dict[self.now_context_id] = context
-        self.context_dict_uncompacted[self.now_context_id] = context
-        self.active_context.append(context.uuid)
-
+        # 如果支持标签化，则先打标签，然后加入反查表。
+        if self.enable_tagging:
+            context = await self.tagify_context(context, temperature)
+            await self.add_tag_index(context)
+        
+        context.timeline = self.now_context_id
+        self.context_timeline_dict[self.now_context_id] = context
         self.now_context_id += 1
 
-        if context.tags:
-            for tag in context.tags:
-                self.reverse_tag_dict.setdefault(tag, set()).add(context.order)
+        if self.enable_tagging:
+            await self.add_tag_index(context)
+
+        # 加入当前活跃上下文窗口
+        if append_to_active:
+            self.append_active_ids(context)
+        
 
     async def get_now_context(
         self,
-        id_list: Optional[List[int]] = None,
+        timeline_id_list: Optional[List[int]] = None,
     ) -> Optional[LLMContextInfo]:
         """
-        获取当前上下文，以消息字典列表格式。
+        获取上下文，以消息字典列表格式。
+        TODO: 需要按时间线走。
 
         Args:
-            id_list: 可选返回的上下文内容，如果不填则默认返回全部上下文。
+            timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
+
+        Notes:
+            如果未指定，则返回当前被激活的上下文内容。
         """
-        if not self.context_raw_dict:
+        if self.empty:
             return None
 
-        compacted_info: List[LLMCompactedContextInfoItem] = []
-        uncompacted_info: List[LLMUncompactedContextInfoItem] = []
-        added_info: Set[int] = set()
-        id_list_set: Optional[Set[int]] = set(id_list) if id_list is not None else None
+        if timeline_id_list is None:
+            # 获取当前被激活的上下文。
+            selected_ids = self.get_active_ids_window()
+        else:
+            # 获取指定时间线的内容，保证存在。
+            selected_ids = [
+                timeline_id
+                for timeline_id in timeline_id_list
+                if timeline_id in self.context_timeline_dict
+            ]
 
-        for entry_compacted in self.context_dict_compacted.values():
-            context_id = self.context_uuid_to_timeline[entry_compacted.uuid]
-            if id_list_set is None or context_id in id_list_set:
-                compacted_info.append(
-                    LLMCompactedContextInfoItem(
-                        context_id=context_id,
-                        info=entry_compacted,
-                    )
-                )
-            added_info.add(context_id)
+        # 保持时间线有序，从小到大。
+        sorted_ids = sorted(selected_ids)
 
-        for entry in self.context_dict_uncompacted.values():
-            context_id = self.context_uuid_to_timeline[entry.uuid]
-            if id_list_set is None or context_id in id_list_set:
-                uncompacted_info.append(
-                    LLMUncompactedContextInfoItem(
-                        context_id=context_id,
-                        info=entry,
-                    )
-                )
-            added_info.add(context_id)
+        info: List[LLMInfo] = []
 
-        if id_list_set is not None:
-            lefting_ids: Set[int] = set(id_list_set) - added_info
-            for entry_all in self.context_dict.values():
-                context_id = self.context_uuid_to_timeline[entry_all.uuid]
-                if context_id in lefting_ids:
-                    uncompacted_info.append(
-                        LLMUncompactedContextInfoItem(
-                            context_id=context_id,
-                            info=entry_all,
-                        )
-                    )
+        for context_id in sorted_ids:
+            entry = self.context_timeline_dict[context_id]
+            info.append(entry)
+        
+        return LLMContextInfo(items=info)
 
-        compacted_info.sort(key=lambda item: item.context_id)
-        uncompacted_info.sort(key=lambda item: item.context_id)
-
-        return LLMContextInfo(
-            compacted_info=compacted_info,
-            uncompacted_info=uncompacted_info,
-        )
-
-    async def get_active_context_info(self) -> Optional[LLMContextInfo]:
-        """Return only the context entries currently marked active."""
-        active_ids = self._ordered_active_ids()
-        if not active_ids:
-            return None
-        return await self.get_now_context(active_ids)
-
-    async def get_content_as_single_str(
+    async def get_now_active_context(self) -> Optional[LLMContextInfo]:
+        """
+        Alias:
+            get_now_context()
+        """
+        return await self.get_now_context()
+    
+    async def transcribe_context_to_str(
         self,
-        id_list: Optional[List[int]] = None,
-    ) -> Optional[str]:
+        contexts: LLMContextInfo
+    ) -> str:
         """
-        获取当前上下文，以单个字符串格式。每行一条内容。
+        将上下文信息转为字符串。
 
         Args:
-            id_list: 可选返回的上下文内容，如果不填则默认返回全部上下文。
+            contexts: 上下文信息。
+        
+        Return:
+            str: 转换后的字符串。
         """
-        messages = await self.get_now_context(id_list)
-        if messages is None:
-            return None
-
         lines: List[str] = []
-
-        for c_info in messages.compacted_info:
-            msg_str = f"""
-            [Context (Compacted)]:
-            ID: {c_info.context_id}
-            UUID: {c_info.info.uuid}
-            Abstract info: {c_info.info.abstract_msg}
-            Tag: {c_info.info.tags}
-            This abstract is originally from messages with uuid: {c_info.info.source_uuid}.
-            This abstract is originally from messages with timeline id: {c_info.info.source_timeline}.
-            """
-            lines.append(msg_str)
-
-        for u_info in messages.uncompacted_info:
-            msg_str = f"""
-            [Context (Uncompacted)]:
-            ID: {u_info.context_id}
-            UUID: {u_info.info.uuid}
-            Role: {u_info.info.role}
-            Tag: {u_info.info.tags}
-            Content: {u_info.info.content}
-            """
-
-            if not u_info.info.tool_call_info:
-                msg_str += """
-                This round does not contains any of tool call.
-                """
-            else:
-                msg_str += f"""
-                Called tools: {u_info.info.tool_call_info},
-                Results: {u_info.info.tool_call_result}
-                """
-
-            lines.append(msg_str)
+        for context in contexts.items:
+            lines.append(str(context))
 
         return "\n".join(lines)
 
-    async def get_active_content_as_single_str(self) -> Optional[str]:
-        """Serialize only the active context window."""
-        active_ids = self._ordered_active_ids()
-        if not active_ids:
-            return None
-        return await self.get_content_as_single_str(active_ids)
-
-    async def compress_context(self, id_list: Optional[List[int]] = None) -> bool:
+    async def get_now_context_as_str(
+        self,
+        timeline_id_list: Optional[List[int]] = None,
+    ) -> str:
         """
-        压缩当前全部未压缩上下文，或给定压缩索引并将其压缩。
+        获取当前上下文，以字符串格式。
 
         Args:
-            id_list: 可选压缩的上下文内容，如果不填则默认压缩未被压缩的上下文。
+            timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
+
+        Returns:
+            返回当前上下文，以单个字符串格式。如果为空则返回空字符串。
         """
-        if not self.context_dict_uncompacted:
-            return False
+        info = await self.get_now_context(timeline_id_list)
+        if info is None:
+            return ""
 
-        if id_list is None:
-            target_ids = sorted(self.context_dict_uncompacted.keys())
-        else:
-            target_ids = [
-                context_id
-                for context_id in id_list
-                if context_id in self.context_dict_uncompacted
+        return await self.transcribe_context_to_str(info)
+
+    async def get_now_active_context_as_str(self) -> str:
+        """
+        Alias: 
+            get_content_as_single_str()
+        """
+        return await self.get_now_context_as_str()
+    
+
+    async def compress_context(
+        self,
+        timeline_id_list: Optional[List[int]] = None,
+        temperature: float = 0.3
+    ) -> bool:
+        """
+        压缩当前全部未压缩上下文，或压缩给定时间线 id 对应的条目。
+
+        Args:
+            timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
+
+        Returns:
+            返回是否成功压缩。
+        """
+        # 获取目标 id
+        target_ids = self.get_active_ids_window() if timeline_id_list is None \
+            else [
+                timeline_id
+                for timeline_id in timeline_id_list
+                if timeline_id in self.context_timeline_dict
             ]
-
+        
         if not target_ids:
             return False
-
-        lines = await self.get_content_as_single_str(target_ids)
-        if lines is None:
+        
+        # 获取当前上下文信息
+        info: Optional[LLMContextInfo] = await self.get_now_context(target_ids)
+        if info is None:
             return False
 
+        lines = await self.transcribe_context_to_str(info)
+        if not lines:
+            return False
+        
+        
+        # 获取压缩提示，然后开始压缩
         prompt = CONTEXT_COMPACT_PROMPT_TEMPLATE.format(lines=lines)
         response: LLMOutput = await self.llm_handler.fetch(
             msg=prompt,
             fallback_order=self.fallback_order,
+            temperature=temperature
         )
+        # 压缩
         compacted_text = response.content.strip()
-
         if not compacted_text:
             return False
-
-        source_items: List[LLMContext] = [
-            self.context_dict_uncompacted[context_id]
+        
+        # 创建压缩信息
+        info_by_timeline: Dict[int, LLMInfo] = {
+            item.timeline: item
+            for item in info.items
+        }
+        source_items: List[LLMInfo] = [
+            info_by_timeline[context_id]
             for context_id in target_ids
         ]
 
+        # 合并标签，并整理时间线
         merged_tags: Set[str] = set()
+        flattened_timeline: List[int] = []
         for item in source_items:
             if item.tags:
                 merged_tags.update(item.tags)
-
+            if isinstance(item, LLMContextCompacted):
+                flattened_timeline.extend(item.source_timeline)
+            else:
+                flattened_timeline.append(item.timeline)
+        
+        # 使用新的 id，并加入时间线
+        compacted_id: int = self.now_context_id
         compacted_info = LLMContextCompacted(
+            timeline=self.now_context_id,
             abstract_msg=compacted_text,
-            source=source_items,       # pyright: ignore[reportArgumentType]
-            source_uuid=[item.uuid for item in source_items],
-            source_timeline=list(target_ids),
+            source=source_items,
+            source_timeline=flattened_timeline,
             tags=sorted(merged_tags),
         )
 
-        compacted_id = self.now_context_id
+        self.context_timeline_dict[compacted_id] = compacted_info
         self.now_context_id += 1
 
-        self.context_raw_dict[compacted_id] = compacted_info
-        self.context_uuid_dict[compacted_info.uuid] = compacted_info
-        self.context_uuid_to_timeline[compacted_info.uuid] = compacted_id
-        self.context_dict_compacted[compacted_id] = compacted_info
-
-        source_uuid_set = {item.uuid for item in source_items}
-        self.active_context = [
-            context_uuid
-            for context_uuid in self.active_context
-            if context_uuid not in source_uuid_set
+        if self.enable_tagging:
+            await self.add_tag_index(compacted_info)
+        
+        # 然后更改激活上下文
+        selected_id_set = set(target_ids)
+        self.active_ids = [
+            context_id
+            for context_id in self.active_ids       # 在已有的被激活上下文里
+            if context_id not in selected_id_set    # 剔除已选择的上下文
         ]
+        self.active_ids.append(compacted_id)
 
-        for context_id in target_ids:
-            self.context_dict_uncompacted.pop(context_id, None)
-
-        self.active_context.append(compacted_info.uuid)
-
-        for tag in compacted_info.tags or []:
-            self.reverse_tag_dict.setdefault(tag, set()).add(compacted_id)
+        # 如果有压缩上下文
+        if self.enable_tagging:
+            await self.add_tag_index(compacted_info)
 
         return True
 
-    async def generate_memory(self, id_list: List[int]) -> Optional[str]:
+    # ====================================================================
+    # Memory System
+    # 记忆是不会改变的。
+    # “记忆”层级不等于“上下文”——记忆不会被压缩。
+    # ====================================================================
+    
+    async def create_memory(self, id_list: Optional[List[int]]) -> Optional[str]:
         """
         将特定的上下文内容提取为短条内容。
-        - 这是作为“记忆“的重要部分，记忆不会被格式化。
+        - 这是作为“记忆”的重要部分，记忆不会被格式化。
+        - 如果未规定记忆则提取全部。
 
         Args:
             id_list: 目标上下文内容 id。
+        
+        Returns:
+            返回生成的记忆。如果为空则返回 None。
         """
-        if not self.context_raw_dict:
+        if not self.context_timeline_dict:
             return None
 
-        lines = await self.get_content_as_single_str(id_list)
+        lines = await self.get_now_context_as_str(id_list)
+        if not lines:
+            return None
+
         prompt = MEMORY_CONCLUDE_PROMPT_TEMPLATE.format(lines=lines)
-        response = await self.llm_handler.fetch(msg=prompt, fallback_order=self.fallback_order)
+        response = await self.llm_handler.fetch(
+            msg=prompt,
+            fallback_order=self.fallback_order,
+        )
         return response.content or None
+
+    def copy_memories(self) -> Optional[List[str]]:
+        """
+        获取所有已存储的记忆，该操作会拷贝一份。
+        
+        Notes:
+            仅当记忆开启时会返回内容，记忆不开启时将返回 None。
+
+        Returns:
+            记忆内容，拷贝一份。
+        """
+        if self.enable_memory:
+            # 此时 self.memory_list 的类型是 List[str]
+            return self.memory_list.copy()  # pyright: ignore
+        return None
+
+    def get_memories(self) -> Optional[Tuple[str]]:
+        """
+        获取所有已存储的记忆，该操作将返回只读引用。
+
+        Notes:
+            建议在获取后立即改为 tuple 类型以只读。
+            仅当记忆开启时会返回内容，记忆不开启时将返回 None。
+
+        Returns:
+            记忆内容。
+        """
+        if self.enable_memory:
+            return tuple(self.memory_list)  # pyright: ignore
+        return None
+
+    def clear_memories(self) -> None:
+        """
+        清除记忆。
+        """
+        if self.enable_memory:
+            # 同上
+            self.memory_list.clear()    # pyright: ignore
+
+    # ====================================================================
+    # Tag System
+    # 从这里，将开始标签化查询系统的构建。
+    # 需要的东西：
+    # - 标签化系统
+    # - 标签查询系统（包括模糊匹配）
+    # - 摘要索引系统
+    # ====================================================================
+    
+    async def tagify_context(
+        self, 
+        context: LLMContext, 
+        temperature: float = 0.0
+    ) -> LLMContext:
+        """
+        为一个上下文历史加入标签。
+
+        Args:
+            context: 等待加标签的上下文。
+        
+        Returns:
+            加好标签的上下文内容。
+        """
+
+        tag_source_parts: List[str] = []
+        if context.content.strip():
+            tag_source_parts.append(context.content.strip())
+        if context.tool_call_info:
+            tag_source_parts.extend(context.tool_call_info)
+
+        tag_source = "\n".join(part for part in tag_source_parts if part.strip())
+        if not tag_source.strip():
+            context.tags = []
+            return context
+        
+        # 标签
+        tags: LLMOutput = await self.llm_handler.fetch(
+            msg=tag_source, 
+            system_prompt=TAGIFY_CONTEXT_PROMPT, 
+            temperature=temperature
+        )
+        parsed_tags = [
+            tag
+            for tag in re.findall(r"[a-zA-Z][a-zA-Z0-9_]{1,40}", tags.content.lower())
+            if tag not in {"tag_1", "tag_2", "tag_3", "tag_4", "tag_5"}
+        ]
+        # 不要强制限定标签数。
+        context.tags = parsed_tags
+        return context
+    
+    async def add_tag_index(
+        self,
+        context: LLMInfo
+    ) -> None:
+        """
+        将特定上下文的东西加入到标签反查表内。
+        
+        Args:
+            context: 加入到标签反查表的上下文索引。
+        """
+        if not self.enable_tagging or not self.tag_to_context:
+            return
+
+        tags: List[str] = context.tags or []
+        for tag in tags:
+            bucket = self.tag_to_context.setdefault(tag, [])
+            if context.timeline not in bucket:
+                bucket.append(context.timeline)
+
+    async def find_context_by_tags(
+        self,
+        tags: List[str],
+        blur: bool = False
+    ) -> Optional[List[LLMInfo]]:
+        """
+        根据特定的标签，找到所有具有该标签的上下文信息。支持模糊查询。
+
+        Args:
+            tags: 待查标签
+            bool: 是否使用模糊查询
+
+        Returns:
+            所有符合要求的上下文，包括原始内容和被压缩后内容。
+        """
+        if not self.enable_tagging or not self.tag_to_context:
+            return None
+
+        normalized_tags: List[str] = [
+            tag.strip().lower()
+            for tag in tags
+            if isinstance(tag, str) and tag.strip()
+        ]
+        if not normalized_tags:
+            return None
+        
+        # 寻找查找到的内容
+        matched_ids: Set[int] = set()
+        for query_tag in normalized_tags:
+            # 支持模糊查询的场合
+            if blur:
+                for indexed_tag, context_ids in self.tag_to_context.items():
+                    if query_tag in indexed_tag or indexed_tag in query_tag:
+                        matched_ids.update(context_ids)
+            else:
+                matched_ids.update(self.tag_to_context.get(query_tag, []))
+        
+        # 如果没东西
+        if not matched_ids:
+            return None
+
+        ordered_ids = sorted(
+            context_id
+            for context_id in matched_ids
+            if context_id in self.context_timeline_dict
+        )
+
+        return [
+            self.context_timeline_dict[context_id]
+            for context_id in ordered_ids
+        ]
+
+    async def find_context_by_summary(
+        self,
+        summary_query: str,
+        blur: bool = True,
+        include_raw: bool = False,
+        include_compacted: bool = True,
+    ) -> Optional[List[LLMInfo]]:
+        """
+        根据摘要文本或正文内容检索上下文。
+
+        Args:
+            summary_query: 待搜索的摘要关键词。
+            blur: 是否模糊搜索。
+            include_raw: 是否允许在原始上下文正文中检索。
+            include_compacted: 是否允许在压缩摘要中检索。
+
+        Returns:
+            所有命中的上下文内容。
+        """
+
+        # Normalize the incoming query once so all later comparisons share the same casing rules.
+        normalized_query: str = summary_query.strip().lower()
+        if not normalized_query:
+            return None
+        
+        # Scan the timeline store in order and collect entries whose chosen text field matches the query.
+        matched_items: List[LLMInfo] = []
+        for context_id in sorted(self.context_timeline_dict.keys()):
+            # Pick the searchable text from either the compacted abstract or the raw content payload.
+            entry = self.context_timeline_dict[context_id]
+            target_text: str = ""
+
+            if isinstance(entry, LLMContextCompacted):
+                if not include_compacted:
+                    continue
+                target_text = entry.abstract_msg
+            else:
+                if not include_raw:
+                    continue
+                target_text = entry.content
+
+            # Skip empty targets and then apply either substring matching or exact matching.
+            normalized_target = target_text.strip().lower()
+            if not normalized_target:
+                continue
+
+            is_match = normalized_query in normalized_target if blur \
+                else normalized_query == normalized_target
+            if is_match:
+                matched_items.append(entry)
+
+        # Return None instead of an empty list so callers can treat "no hit" as a simple falsey branch.
+        if not matched_items:
+            return None
+
+        return matched_items
+    
+    async def find_context_by_summary_and_tags(
+        self,
+        summary_query: str,
+        tags: List[str],
+        blur_summary: bool = True,
+        blur_tags: bool = False,
+    ) -> Optional[List[LLMInfo]]:
+        """
+        根据标签和摘要，从被压缩后的上下文内容里，查询原始上下文。
+
+        Notes:
+            - 如果要多次搜索的话，时间复杂度可能高达 O(nn)
+            - 这是最小实现，管他呢。
+
+        Args:
+            summary_query: 待搜索的摘要
+            tags: 待搜索的标签
+            blur_summary: 是否模糊搜索摘要
+            blur_tags: 是否模糊搜索标签
+        """
+        # Resolve the tag-side candidate set first so empty tag matches can short-circuit early.
+        tag_hits = await self.find_context_by_tags(tags=tags, blur=blur_tags)
+        if not tag_hits:
+            return None
+        
+        # Resolve the summary-side candidate set from compacted entries only.
+        summary_hits = await self.find_context_by_summary(
+            summary_query=summary_query,
+            blur=blur_summary,
+            include_raw=False,
+            include_compacted=True,
+        )
+        if not summary_hits:
+            return None
+
+        # Intersect both hit sets by timeline id so only entries matching both constraints survive.
+        tag_hit_ids: Set[int] = {item.timeline for item in tag_hits}
+        summary_hit_ids: Set[int] = {item.timeline for item in summary_hits}
+        intersected_ids = sorted(tag_hit_ids & summary_hit_ids)
+
+        # Materialize the surviving ids back into timeline-ordered context objects.
+        if not intersected_ids:
+            return None
+
+        return [
+            self.context_timeline_dict[context_id]
+            for context_id in intersected_ids
+            if context_id in self.context_timeline_dict
+        ]
+
+    
+    
