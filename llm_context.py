@@ -81,7 +81,7 @@ class LLMContextHandler:
         # k: tag: str 当前标签, v: List[int] 具有当前标签的信息
         # 标签具有不确定性
         self.enable_tagging = enable_tagging    # 启用标签功能
-        self.tag_to_context: Optional[Dict[str, List[int]]] = None
+        self.tag_to_context: Optional[Dict[str, List[int]]] = None  # 反查：tag -> 时间线 id
         if self.enable_tagging:
             self.tag_to_context = {}
 

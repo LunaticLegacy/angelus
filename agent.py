@@ -410,6 +410,7 @@ class Agent:
         temperature: float = 0.4,
     ) -> None:
         """Ask the model to reseat the active context window for one turn.
+        TODO: 这里需要加一个新的东西：将当前有效的情况放在记忆里。
 
         Notes:
             This hook runs at the beginning of selected turns. It first retrieves
