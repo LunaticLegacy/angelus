@@ -2,6 +2,7 @@
 
 from typing import Any, List, Optional
 
+from ..llm_types import LLMContextCompacted
 from ..tool import Tool
 
 
@@ -44,39 +45,44 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
     """Create Agent built-in tools for context and memory management."""
 
     async def _context_list(**kwargs: Any) -> str:
-        """
-        List stored context entries by id, role, tags, and short preview.
-        """
+        """List stored context entries by id, role, tags, and short preview."""
         bound_agent = _require_agent(agent)
         limit = int(kwargs.get("limit", 20))
         include_compacted = bool(kwargs.get("include_compacted", True))
         include_uncompacted = bool(kwargs.get("include_uncompacted", True))
 
-        history = await bound_agent.get_conversation_history()
-        if history is None:
+        context_manager = bound_agent.context_manager
+        if context_manager.empty:
             return "No context entries."
 
         rows: List[str] = []
-        if include_compacted:
-            for item in history.compacted_info:
+        timeline_ids = sorted(context_manager.context_timeline_dict.keys())
+        for context_id in timeline_ids:
+            entry = context_manager.context_timeline_dict[context_id]
+
+            # Emit compacted summary entries with their provenance chain so the
+            # model can tell which archived raw ids each summary represents.
+            if include_compacted and hasattr(entry, "abstract_msg"):
                 rows.append(
                     "id={id} type=compacted tags={tags} source_timeline={source_timeline} source_uuid={source_uuid} preview={preview}".format(
-                        id=item.context_id,
-                        tags=item.info.tags or [],
-                        source_timeline=item.info.source_timeline,
-                        source_uuid=item.info.source_uuid,
-                        preview=_preview(item.info.abstract_msg),
+                        id=context_id,
+                        tags=entry.tags or [],
+                        source_timeline=getattr(entry, "source_timeline", []),
+                        source_uuid=getattr(entry, "source_uuid", []),
+                        preview=_preview(getattr(entry, "abstract_msg", "")),
                     )
                 )
+                continue
 
-        if include_uncompacted:
-            for item in history.uncompacted_info:
+            # Emit raw entries with role and preview data so the model can see
+            # which original observations are still available to restore.
+            if include_uncompacted and hasattr(entry, "content"):
                 rows.append(
                     "id={id} type=uncompacted role={role} tags={tags} preview={preview}".format(
-                        id=item.context_id,
-                        role=item.info.role,
-                        tags=item.info.tags or [],
-                        preview=_preview(item.info.content),
+                        id=context_id,
+                        role=entry.role,
+                        tags=entry.tags or [],
+                        preview=_preview(entry.content),
                     )
                 )
 
@@ -85,25 +91,23 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
         return "\n".join(rows) if rows else "No matching context entries."
 
     async def _context_read(**kwargs: Any) -> str:
-        """
-        Read selected context entries as the same serialized text used by the Agent.
-        """
+        """Read selected context entries as serialized prompt-ready text."""
         bound_agent = _require_agent(agent)
         context_ids = _parse_context_ids(kwargs.get("ids"))
 
-        summary = await bound_agent.get_conversation_summary(context_ids)
+        # Serialize the requested ids directly from the context manager so
+        # archived raw entries stay readable even after leaving the active window.
+        summary = await bound_agent.context_manager.get_now_context_as_str(context_ids)
         if not summary:
             return "No matching context entries."
         return summary
 
     async def _context_compress(**kwargs: Any) -> str:
-        """
-        Compress selected uncompacted context entries, or all uncompacted entries if ids are omitted.
-        """
+        """Compress selected raw entries, or all active raw entries if omitted."""
         bound_agent = _require_agent(agent)
         context_ids = _parse_context_ids(kwargs.get("ids"))
 
-        compressed = await bound_agent.compress_history(context_ids)
+        compressed = await bound_agent.context_manager.compress_context(context_ids)
         if not compressed:
             return "No context entries were compressed."
         if context_ids is None:
@@ -111,48 +115,94 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
         return f"Compressed context entries: {context_ids}"
 
     async def _context_select(**kwargs: Any) -> str:
-        """
-        Select the active context window used for later Agent rounds.
-        """
+        """Select the active context window used for later Agent rounds."""
         bound_agent = _require_agent(agent)
         context_ids = _parse_context_ids(kwargs.get("ids"))
 
-        selected_ids = bound_agent.select_context(context_ids)
+        # Expand selected compacted ids back into summary-plus-raw active ids so
+        # later rounds see both the archive summary and the detailed source text.
+        selected_ids = bound_agent.context_manager.expand_active_selection_ids(
+            context_ids,
+            expand_compacted_sources=True,
+            keep_compacted_entries=True,
+        )
+        if selected_ids:
+            selected_ids = bound_agent.context_manager.set_active_ids(selected_ids)
         if not selected_ids:
             return "No matching context entries were selected."
         return f"Active context selected: {selected_ids}"
 
     async def _memory_create(**kwargs: Any) -> str:
-        """
-        Create a persistent memory summary from selected context ids.
-        """
+        """Create a persistent memory summary from selected context ids."""
         bound_agent = _require_agent(agent)
         context_ids = _parse_context_ids(kwargs.get("ids"))
         if not context_ids:
             return "Pass one or more context ids to create memory."
 
-        memory = await bound_agent.create_memory(context_ids)
+        memory = await bound_agent.context_manager.create_memory(context_ids)
         if not memory:
             return "No memory was created."
         return memory
 
     async def _memory_list(**kwargs: Any) -> str:
-        """
-        List persistent memories currently stored on the Agent.
-        """
+        """List persistent memories currently stored on the Agent."""
         bound_agent = _require_agent(agent)
-        memories = bound_agent.get_memories()
+        memories = bound_agent.context_manager.get_memories()
         if not memories:
             return "No memories."
         return "\n".join(f"{index}: {memory}" for index, memory in enumerate(memories))
 
     async def _memory_clear(**kwargs: Any) -> str:
-        """
-        Clear all persistent memories currently stored on the Agent.
-        """
+        """Clear all persistent memories currently stored on the Agent."""
         bound_agent = _require_agent(agent)
-        bound_agent.clear_memories()
+        bound_agent.context_manager.clear_memories()
         return "Cleared all memories."
+
+    async def _context_status(**kwargs: Any) -> str:
+        """Report the agent's current active/archived context state."""
+        bound_agent = _require_agent(agent)
+        limit = int(kwargs.get("limit", 20))
+        context_manager = bound_agent.context_manager
+        active_ids = sorted(context_manager.get_active_ids_window())
+        compacted_ids = sorted(
+            context_id
+            for context_id, entry in context_manager.context_timeline_dict.items()
+            if isinstance(entry, LLMContextCompacted)
+        )
+
+        # 先输出当前激活窗口和摘要条目索引，让模型快速判断自己眼下
+        # 实际可见的上下文范围与已经被归档的条目集合。
+        lines: List[str] = [
+            f"active_ids={active_ids}",
+            f"compacted_ids={compacted_ids}",
+        ]
+
+        # 再补充最近若干条时间线的类型和来源关系，便于模型决定是直接
+        # 读取原文，还是先把某个 compacted 条目重新选回 active window。
+        timeline_ids = sorted(context_manager.context_timeline_dict.keys())[-max(0, limit):]
+        for context_id in timeline_ids:
+            entry = context_manager.context_timeline_dict[context_id]
+            if isinstance(entry, LLMContextCompacted):
+                lines.append(
+                    "context id={id} type=compacted active={active} sources={sources} tags={tags}".format(
+                        id=context_id,
+                        active=context_id in active_ids,
+                        sources=entry.source_timeline,
+                        tags=entry.tags or [],
+                    )
+                )
+                continue
+
+            lines.append(
+                "context id={id} type=raw role={role} active={active} tags={tags}".format(
+                    id=context_id,
+                    role=entry.role,
+                    active=context_id in active_ids,
+                    tags=entry.tags or [],
+                )
+            )
+
+        return "\n".join(lines)
 
     ids_schema = {
         "description": "Context id, comma-separated context ids, or list of context ids.",
@@ -225,6 +275,22 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
                 "additionalProperties": False,
             },
             handler=_context_select,
+        ),
+        Tool(
+            name="context_status",
+            description="Show the current active context ids, archived compacted ids, and recent resource index coverage.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of recent timeline entries to include.",
+                        "default": 20,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            handler=_context_status,
         ),
         Tool(
             name="memory_create",

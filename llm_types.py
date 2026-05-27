@@ -160,8 +160,16 @@ LLMContextCompactedValue = Union[
 
 @dataclass
 class LLMContextCompacted:
-    """
-    用于存储对单条 LLM 上下文执行压缩的结果。
+    """Store one compressed summary entry and its raw provenance chain.
+
+    Attributes:
+        abstract_msg: Summarized text produced from one or more source entries.
+        source: Direct source entries that were compressed into this summary.
+            Entries may be raw contexts or older compacted summaries.
+        source_timeline: Flattened original raw timeline ids represented by the
+            summary, even when the source list already contains compacted items.
+        timeline: Timeline id assigned to this compacted entry itself.
+        tags: Optional retrieval tags associated with the compacted summary.
     """
     abstract_msg: str   # 压缩（并抽象后的）结论
     source: List[Union[LLMContext, "LLMContextCompacted"]]    # 直接参与本次压缩的条目，可包含原始条目或更早的摘要条目。
@@ -170,23 +178,45 @@ class LLMContextCompacted:
     tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextCompactedValue]:
+        """Serialize the compacted entry into a JSON-friendly dictionary.
+
+        Returns:
+            A dictionary containing the summary text, direct source entries, the
+            flattened source timeline ids, and optional tags.
+        """
+        # Emit the summary payload fields that downstream persistence and debug
+        # tooling need to inspect this compacted context entry.
         d: Dict[str, LLMContextCompactedValue] = {
             "abstract_msg": self.abstract_msg,
             "source": self.source,
             "source_timeline": self.source_timeline,
         }
+
+        # Attach tags only when present so serialized payloads stay compact.
         if self.tags:
             d["tags"] = self.tags
         
         return d
     
     def __str__(self) -> str:
+        """Render the compacted entry as one debug-friendly single-line record.
+
+        Returns:
+            A readable line containing the compacted entry id, abstract text,
+            source counts, flattened source timeline ids, and optional tags.
+        """
+        # Include the compacted entry's own timeline id so selectors can choose
+        # a valid candidate id instead of confusing it with source_timeline ids.
         parts = [
             "[LLM Context Compacted]",
+            f"Timeline: {self.timeline}",
             f"Abstract message: {self.abstract_msg}",
             f"Source count: {len(self.source)}",
             f"Source timeline: {self.source_timeline}",
         ]
+
+        # Preserve tags in the debug string so retrieval-related traces remain
+        # understandable when inspecting the serialized context window.
         if self.tags:
             parts.append(f"Tags: {self.tags}")
         return ", ".join(parts)

@@ -20,7 +20,60 @@ TAGIFY_CONTEXT_PROMPT = _clean(
     """
 )
 
-CONTEXT_COMPACT_PROMPT_TEMPLATE = "Please compact the following context, keep essential information:\n\n{lines}"
+CONTEXT_COMPACT_PROMPT_TEMPLATE = _clean("""
+You are an Agent Memory Compactor for a CTF agent.
+
+Your job is NOT to write a human-readable summary.
+Your job is to convert the context into an operational memory record
+for future agent turns.
+
+Return ONLY valid JSON. Do not use Markdown. Do not explain.
+
+Task type: {task_type}
+
+Common JSON schema:
+
+{{
+  "summary": string,
+  "key_facts": [string],
+  "state_updates": object,
+  "artifacts": [
+    {{
+      "path": string,
+      "kind": string,
+      "purpose": string,
+      "source_context_id": string
+    }}
+  ],
+  "failed_attempts": [
+    {{
+      "action": string,
+      "reason": string,
+      "evidence": string
+    }}
+  ],
+  "do_not_repeat": [string],
+  "next_actions": [string],
+  "tags": [string]
+}}
+
+Global rules:
+- Preserve exact technical identifiers: filenames, paths, URLs, ports, symbols, function names, offsets, addresses, constants, hashes, cookie names, parameter names, error messages.
+- Every next_action must be concrete and executable.
+- Invalid next_actions include: "continue exploring", "analyze further", "investigate more", "look around", "try harder".
+- If a tool/action failed, record it in failed_attempts and add a specific do_not_repeat item.
+- If raw output is too large, keep a concise summary and preserve artifact/context reference.
+- Do not invent facts.
+- Keep the output concise but operational.
+
+Domain-specific extraction rules:
+
+{domain_schema}
+
+Context:
+{lines}
+"""
+)
 
 MEMORY_CONCLUDE_PROMPT_TEMPLATE = (
     "Please conclude the folowing conversations into an abstract for memory, "

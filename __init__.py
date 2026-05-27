@@ -48,6 +48,7 @@ from .thinking_graph import (
 # Context Management
 # ============================================================================
 from .llm_context import (
+    ContextCompressionProfile,
     LLMContextHandler,
     LLMContext,
     LLMContextCompacted,
@@ -157,6 +158,7 @@ __all__ = [
     "ThinkingGraphTransactionRecord",
 
     # Context Management
+    "ContextCompressionProfile",
     "LLMContextHandler",
     "LLMContext",
     "LLMContextCompacted",

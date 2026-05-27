@@ -1,21 +1,38 @@
 import re
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
 from .llm_fetcher import LLMFetcher, LLMOutput
 from .prompt import (
-    CONTEXT_COMPACT_PROMPT_TEMPLATE, 
+    CONTEXT_COMPACT_PROMPT_TEMPLATE,
     MEMORY_CONCLUDE_PROMPT_TEMPLATE, 
     TAGIFY_CONTEXT_PROMPT
 )
 from .llm_types import LLMContext, LLMContextCompacted, LLMContextInfo, LLMInfo
 
 
-class LLMContextHandler:
+@dataclass
+class ContextCompressionProfile:
+    """Describe how one agent should compress stored context.
+
+    Attributes:
+        task_type: Human-readable task label inserted into the compaction prompt.
+        domain_schema: Domain-specific extraction schema appended to the prompt.
+        prompt_template: Prompt template used to render the final compaction request.
     """
-    用于处理 LLM 上下文内容的管理器，每个 agent 有且仅有 1 个该实例。
+
+    task_type: str = "general"
+    domain_schema: str = "No additional domain-specific extraction rules."
+    prompt_template: str = CONTEXT_COMPACT_PROMPT_TEMPLATE
+
+
+class LLMContextHandler:
+    """Manage stored conversation context, summaries, and lightweight retrieval.
 
     Notes:
-        该类会在创建 Agent 时自动为其创建，作为类实例。
+        Each agent owns exactly one handler instance. The handler keeps a full
+        timeline store, a smaller active window used for prompt assembly, and
+        optional memory/tag indexes for retrieval.
     """
 
     def __init__(
@@ -24,17 +41,23 @@ class LLMContextHandler:
         fallback_order: Optional[List[str]] = None,
         enable_memory: bool = True,
         enable_tagging: bool = False,
+        compression_profile: Optional[ContextCompressionProfile] = None,
     ):
-        """
-        初始化。
+        """Initialize the context handler.
 
         Args:
-            llm_handler: 传入的 LLM 实例内容。
-            fallback_order: 可选的回退后端顺序列表。
-            enable_memory: 允许记忆机制存在。
+            llm_handler: Fetcher used for compression, tagging, and memory
+                generation requests.
+            fallback_order: Optional backend preference order forwarded to the
+                fetcher during helper LLM calls.
+            enable_memory: Whether persistent memory summaries should be stored.
+            enable_tagging: Whether tag-based retrieval indexes should be built.
+            compression_profile: Default prompt profile used whenever context
+                compression is requested without an explicit override.
         """
         self.llm_handler = llm_handler
         self.fallback_order = fallback_order
+        self.compression_profile = compression_profile or ContextCompressionProfile()
 
         # ========== 基础索引 ==========
         # 索引：时间线 id -> 上下文对象。
@@ -44,7 +67,7 @@ class LLMContextHandler:
         self.active_ids: List[int] = []
 
         # 本 agent 的时间线游标。
-        self.now_context_id: int = 0
+        self.now_context_id: int = 1
 
         # ========= 记忆机制 =========
         # 记忆不会被压缩。
@@ -81,7 +104,7 @@ class LLMContextHandler:
         """
         self.context_timeline_dict.clear()
         self.active_ids.clear()
-        self.now_context_id = 0
+        self.now_context_id = 1
 
         if self.enable_tagging:
             self.tag_to_context.clear() # pyright: ignore
@@ -156,7 +179,6 @@ class LLMContextHandler:
         # 如果支持标签化，则先打标签，然后加入反查表。
         if self.enable_tagging:
             context = await self.tagify_context(context, temperature)
-            await self.add_tag_index(context)
         
         context.timeline = self.now_context_id
         self.context_timeline_dict[self.now_context_id] = context
@@ -265,13 +287,17 @@ class LLMContextHandler:
     async def compress_context(
         self,
         timeline_id_list: Optional[List[int]] = None,
-        temperature: float = 0.3
+        temperature: float = 0.3,
+        compression_profile: Optional[ContextCompressionProfile] = None,
     ) -> bool:
         """
         压缩当前全部未压缩上下文，或压缩给定时间线 id 对应的条目。
 
         Args:
             timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
+            temperature: 模型温度。
+            compression_profile: 可选的压缩配置，允许调用方按任务类型
+                切换压缩模板、task_type 与领域 schema。
 
         Returns:
             返回是否成功压缩。
@@ -295,10 +321,18 @@ class LLMContextHandler:
         lines = await self.transcribe_context_to_str(info)
         if not lines:
             return False
-        
-        
-        # 获取压缩提示，然后开始压缩
-        prompt = CONTEXT_COMPACT_PROMPT_TEMPLATE.format(lines=lines)
+
+        # 解析本次压缩应使用的 profile，使任务层可以按场景调度压缩策略，
+        # 而不是把领域知识硬编码在上下文管理器内部。
+        resolved_profile = compression_profile or self.compression_profile
+
+        # 根据 profile 渲染压缩提示词，并将当前选中的上下文内容交给 LLM
+        # 生成可用于后续检索和恢复的摘要条目。
+        prompt = resolved_profile.prompt_template.format(
+            task_type=resolved_profile.task_type,
+            domain_schema=resolved_profile.domain_schema,
+            lines=lines,
+        )
         response: LLMOutput = await self.llm_handler.fetch(
             msg=prompt,
             fallback_order=self.fallback_order,
@@ -391,7 +425,10 @@ class LLMContextHandler:
             msg=prompt,
             fallback_order=self.fallback_order,
         )
-        return response.content or None
+        memory = response.content or None
+        if memory and self.enable_memory and self.memory_list is not None:
+            self.memory_list.append(memory)
+        return memory
 
     def copy_memories(self) -> Optional[List[str]]:
         """
@@ -491,7 +528,7 @@ class LLMContextHandler:
         Args:
             context: 加入到标签反查表的上下文索引。
         """
-        if not self.enable_tagging or not self.tag_to_context:
+        if not self.enable_tagging or self.tag_to_context == None:
             return
 
         tags: List[str] = context.tags or []
@@ -572,34 +609,38 @@ class LLMContextHandler:
             所有命中的上下文内容。
         """
 
-        # Normalize the incoming query once so all later comparisons share the same casing rules.
-        normalized_query: str = summary_query.strip().lower()
-        if not normalized_query:
-            return None
-        
         # Scan the timeline store in order and collect entries whose chosen text field matches the query.
         matched_items: List[LLMInfo] = []
+        # 对全部上下文进行查找
         for context_id in sorted(self.context_timeline_dict.keys()):
+
             # Pick the searchable text from either the compacted abstract or the raw content payload.
-            entry = self.context_timeline_dict[context_id]
+            # 从上下文字典里抓一个东西
+            entry: LLMInfo = self.context_timeline_dict[context_id]
             target_text: str = ""
 
+            # 是否为压缩后的？
             if isinstance(entry, LLMContextCompacted):
+                # 门控：在压缩后内容里检索
                 if not include_compacted:
                     continue
+                # 从压缩后的内容里检索摘要
                 target_text = entry.abstract_msg
             else:
+                # 门控：在原始内容里检索
                 if not include_raw:
                     continue
+                # 从原始内容里检索
                 target_text = entry.content
 
             # Skip empty targets and then apply either substring matching or exact matching.
-            normalized_target = target_text.strip().lower()
-            if not normalized_target:
+            if not target_text.strip():
                 continue
 
-            is_match = normalized_query in normalized_target if blur \
-                else normalized_query == normalized_target
+            # 是否匹配？
+            is_match = (summary_query in target_text) if blur else (summary_query == target_text)
+
+            # 匹配的场合，直接加进去。
             if is_match:
                 matched_items.append(entry)
 
@@ -621,7 +662,7 @@ class LLMContextHandler:
 
         Notes:
             - 如果要多次搜索的话，时间复杂度可能高达 O(nn)
-            - 这是最小实现，管他呢。
+            - 这是最小实现，且该实现表达的关系为 "AND"。
 
         Args:
             summary_query: 待搜索的摘要
@@ -630,11 +671,12 @@ class LLMContextHandler:
             blur_tags: 是否模糊搜索标签
         """
         # Resolve the tag-side candidate set first so empty tag matches can short-circuit early.
+        # 寻找：标签候选项
         tag_hits = await self.find_context_by_tags(tags=tags, blur=blur_tags)
         if not tag_hits:
             return None
         
-        # Resolve the summary-side candidate set from compacted entries only.
+        # 从摘要里寻找候选内容。
         summary_hits = await self.find_context_by_summary(
             summary_query=summary_query,
             blur=blur_summary,
@@ -644,20 +686,148 @@ class LLMContextHandler:
         if not summary_hits:
             return None
 
-        # Intersect both hit sets by timeline id so only entries matching both constraints survive.
+        # 获取候选内容的 id，并进行交集运算
         tag_hit_ids: Set[int] = {item.timeline for item in tag_hits}
         summary_hit_ids: Set[int] = {item.timeline for item in summary_hits}
         intersected_ids = sorted(tag_hit_ids & summary_hit_ids)
 
-        # Materialize the surviving ids back into timeline-ordered context objects.
+        # 没东西
         if not intersected_ids:
             return None
-
+        
+        # 抓出这些内容
         return [
             self.context_timeline_dict[context_id]
             for context_id in intersected_ids
             if context_id in self.context_timeline_dict
         ]
+
+    def expand_retrieval_hit_ids(
+        self,
+        items: Optional[List[LLMInfo]],
+        *,
+        expand_compacted: bool = True,
+        include_hit_id_for_compacted: bool = True,
+    ) -> Optional[List[int]]:
+        """Expand retrieval hits into prompt-selectable context timeline ids.
+        本函数直接被 agent._retrieve_context_candidates_for_task 调用，用于从压缩后的内容中获取原始内容。
+
+        Args:
+            items: 在查询环节中被命中的条目。
+            expand_compacted: 决定：压缩后的内容是否可被选择。
+            include_hit_id_for_compacted: 压缩后的内容被选择时，是否保留压缩后的 id。
+
+        Returns:
+            在当前时间线内储存的、排序并去重后的目标 id 列表。
+        """
+
+        # 如果没东西，返回 None
+        if not items:
+            return None
+        
+        # 获取 id
+        expanded_ids: Set[int] = set()
+        for item in items:    # 对于每一项内容
+            # 如果是压缩后内容
+            if isinstance(item, LLMContextCompacted):
+                if include_hit_id_for_compacted and item.timeline in self.context_timeline_dict:    # 压缩后的内容被选择时，保留压缩后的 id
+                    expanded_ids.add(item.timeline)
+                
+                # 如果允许扩展，此时：
+                if expand_compacted:
+                    # 对于每个源
+                    for source_timeline in item.source_timeline:
+                        # 如果源存在则加入
+                        if source_timeline in self.context_timeline_dict:
+                            expanded_ids.add(source_timeline)
+                continue
+
+            # 如果是原始内容，保证其真实存在即可
+            if item.timeline in self.context_timeline_dict:
+                expanded_ids.add(item.timeline)
+
+        return sorted(expanded_ids)
+
+    def expand_active_selection_ids(
+        self,
+        context_ids: Optional[List[int]],
+        *,
+        expand_compacted_sources: bool = True,
+        keep_compacted_entries: bool = True,
+    ) -> List[int]:
+        """Expand selected ids into an active-window-friendly id list.
+
+        Args:
+            context_ids: Context timeline ids chosen by the selector model.
+            expand_compacted_sources: Whether selected compacted entries should
+                also contribute their raw `source_timeline` ids.
+            keep_compacted_entries: Whether selected compacted entries should
+                remain in the active window together with their raw sources.
+
+        Returns:
+            A sorted de-duplicated list of valid timeline ids ready to be stored
+            as the next active context window.
+        """
+        # Treat missing selections as an empty expansion so callers can reuse
+        # the helper in fallback paths without extra branching.
+        if not context_ids:
+            return []
+
+        expanded_ids: Set[int] = set()
+        for context_id in context_ids:
+            entry = self.context_timeline_dict.get(context_id)
+            if entry is None:
+                continue
+
+            # Keep the selected compacted entry itself when requested so the
+            # active window preserves the concise summary representation.
+            if isinstance(entry, LLMContextCompacted):
+                if keep_compacted_entries:
+                    expanded_ids.add(entry.timeline)
+
+                # Pull the compacted entry's flattened raw provenance back into
+                # the active window so reverse indexing restores detailed text.
+                if expand_compacted_sources:
+                    for source_timeline in entry.source_timeline:
+                        if source_timeline in self.context_timeline_dict:
+                            expanded_ids.add(source_timeline)
+                continue
+
+            # Preserve raw selections directly because they already point at the
+            # detailed context entries the model explicitly asked for.
+            expanded_ids.add(entry.timeline)
+
+        return sorted(expanded_ids)
+
+    def find_compacted_entries_by_source_ids(self, source_ids: List[int]) -> Optional[List[int]]:
+        """Find compacted timeline ids that reference any supplied raw ids.
+        这个函数的存在是何意味？？codex 到底为啥会整这个烂活？
+
+        Args:
+            source_ids: Raw timeline ids that may be represented by compacted
+                summary entries elsewhere in the timeline store.
+
+        Returns:
+            A sorted list of compacted timeline ids whose `source_timeline`
+            contains at least one of the supplied raw ids.
+        """
+
+        # 如果没东西，返回 None
+        if not source_ids:
+            return None
+        
+        # 创建一个 id 集合
+        source_id_set = set(source_ids)
+        matched_ids: List[int] = []
+
+        # 在当前时间线内搜索压缩后的内容，然后组装时间线。
+        for context_id, entry in self.context_timeline_dict.items():
+            if not isinstance(entry, LLMContextCompacted):
+                continue
+            if source_id_set.intersection(entry.source_timeline):
+                matched_ids.append(context_id)
+
+        return sorted(matched_ids)
 
     
     

@@ -3,12 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from types import CoroutineType
 from typing import Any, Callable, Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
 
 from .llm_fetcher import LLMFetcher
-from .llm_context import LLMContext, LLMContextCompacted, LLMContextHandler, LLMContextInfo
+from .llm_context import (
+    ContextCompressionProfile,
+    LLMContext,
+    LLMContextCompacted,
+    LLMContextHandler,
+    LLMContextInfo,
+)
 from .tool_call_adapter import ToolCallSource, normalize_tool_calls
 from .tool import Tool, ToolRegistry
 from .tools.builtin_tools import create_builtin_tools
@@ -42,9 +49,10 @@ class Agent:
         round_compress_threshold: Optional[int] = None,
         round_compress_keep_tail: int = 6,
         context_selection_interval: Optional[int] = 3,
-        context_selection_min_active_items: int = 8,
+        context_selection_min_active_items: int = 4,
         context_selection_min_active_chars: int = 16384,
         tool_result_summary_threshold_chars: int = 8192,
+        compression_profile: Optional[ContextCompressionProfile] = None,
     ):
         """
         初始化 Agent，绑定 LLM 处理器、系统提示词和可选工具列表。
@@ -68,16 +76,21 @@ class Agent:
             context_selection_min_active_chars: Minimum active-context char length before reselection can trigger.
             tool_result_summary_threshold_chars: Archive and summarize one round immediately
                                                  when tool results exceed this many chars.
+            compression_profile: Default context-compression profile shared by
+                                 automatic archiving and explicit compression calls.
         """
         self._base_system_prompt: str = system_prompt   # 系统提示词。
         self.llm_handler = llm_handler  # 用于处理 llm api 通信相关的东西。
         self.fallback_order = fallback_order
+        self.compression_profile = compression_profile
+
         # 上下文管理器。
         self.llm_context_handler = LLMContextHandler(
             llm_handler=self.llm_handler,
             fallback_order=self.fallback_order,
             enable_memory=True,     # 启用记忆机制
-            enable_tagging=True     # 启用标签机制
+            enable_tagging=True,    # 启用标签机制
+            compression_profile=self.compression_profile,
         )
         self.tool_registry = ToolRegistry() # 注册工具。
         self.max_concurrent_tools = max_concurrent_tools    # 本 agent 最大可并发多少工具。
@@ -249,7 +262,8 @@ class Agent:
         # 在整个 agent 执行轮开始前，加入用户当前输入。
         await self.context_manager.add_context(
             LLMContext(
-                role="user", 
+                role="user",
+                timeline=0,
                 content=msg, 
                 tags=["user_request"]), 
             append_to_active=True
@@ -269,16 +283,16 @@ class Agent:
             # TODO: 这里每一次都会重新 build 一次旧信息。
             # 如果我要采用线性上下文，我只需要增量。
             # 如果我要让 agent 自己控制上下文，我要怎么做？？
-            prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages()
-            # print(f"Previous message as: {prev_messages}")
 
             # 在每一轮开始时，决定本轮使用的上下文……？
-            context_selection: List[int] | None = await self._maybe_run_context_selection(
+            await self._maybe_run_context_selection(
                 task_msg=msg,
                 turn=turn,
                 verbose_info=verbose_info,
                 temperature=temperature
             )
+
+            prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages()
 
             if verbose_info:
                 print(f"\n[Agent] ====== Executing Turn: {turn} ======")
@@ -358,6 +372,7 @@ class Agent:
 
             if verbose_info:
                 print(f"[Agent] Current active context IDs: {self.llm_context_handler.active_ids}")
+                print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
 
             # 检测上下文长度，并压缩之。
             if self.llm_context_handler.context_len() > max_context_size:
@@ -393,46 +408,50 @@ class Agent:
         turn: int,
         verbose_info: bool = False,
         temperature: float = 0.4,
-    ) -> Optional[List[int]]:
-        """
-        让模型选择上下文窗口。
-        
-        Notes:
-            该函数会在 agent 执行轮次内，每轮开始时调度一次。
-            如果说在每一轮内不传入总上下文，或每一个索引的摘要，这个函数看起来会让 agent 定期遗忘，而非自主选择上下文。
-        
-        Args:
-            task_msg: 当前任务。
-            turn: 当前回合轮数。
-            verbose_info: 是否打印信息。
-            temperature: 模型温度。
-        """
+    ) -> None:
+        """Ask the model to reseat the active context window for one turn.
 
-        # 检查：是否应该执行？
+        Notes:
+            This hook runs at the beginning of selected turns. It first retrieves
+            a smaller candidate pool, then asks the model to choose the minimum
+            sufficient subset from that pool only.
+
+        Args:
+            task_msg: User-visible task text for the current round.
+            turn: One-based turn number inside the current agent round.
+            verbose_info: Whether diagnostic messages should be printed.
+            temperature: Sampling temperature used by helper model calls.
+
+        Returns:
+            The applied active context ids when reselection succeeds, otherwise
+            `None` when reselection is skipped or rejected.
+        """
+        # 决定：是否执行上下文选择？
         if not self._should_trigger_context_selection(turn):
             return None
 
-        # First retrieve a narrowed candidate set so the selector never scans the full history.
-        # 注意：这个查找是个耗时过程。
+        # 寻找满足用户当前输入的备选 id
         candidate_ids = await self._retrieve_context_candidates_for_task(
             task_msg=task_msg,
             temperature=temperature,
         )
+        print(f"[Agent] Context selection found {len(candidate_ids)} candidates: {candidate_ids}")
         if not candidate_ids:
             if verbose_info:
                 print("[Agent] Context selection found no retrieval candidates; keeping current active window.")
             return None
 
-        # Serialize only the retrieved candidates and use that as the selector's visible search space.
+        # 如果找不到目标上下文的 id
         context_listing = await self.llm_context_handler.get_now_context_as_str(candidate_ids)
         if not context_listing.strip():
             if verbose_info:
                 print("[Agent] Candidate context listing is empty; keeping current active window.")
             return None
 
-        # Ask the model for the smallest sufficient subset of candidate ids for this round.
+        # 建立一个 prompt，用于确定上下文窗口。
+        # 这块的 prompt 可能吃了上下文注入，以至于这东西直接变成了第二个解题器。
         selection_prompt = f"""
-You are selecting the minimal active context window for the current agent round.
+You are selecting the best active context window for the current agent round.
 
 Current task:
 {task_msg}
@@ -445,7 +464,7 @@ Return only strict JSON in this format:
 
 Rules:
 - Select only the ids needed for the current task.
-- Prefer the smallest sufficient set.
+- The selection SHOULD contain the previous essential data for the current task. Like: codes, logs, etc.
 - You may select raw entries, compacted entries, or both.
 - Do not explain.
 """.strip()
@@ -453,8 +472,7 @@ Rules:
         if verbose_info:
             print(f"[Agent] Triggering periodic context selection at turn {turn}.")
         
-        # 用于选择上下文的输出。注意：问题大概率出在这里。
-        # TODO: 这里可能需要传入上下文摘要。
+        # 在这里直接和 agent 进行聊天，并对话。
         selection_output = await self.chat_once(
             selection_prompt,
             temperature=temperature,
@@ -463,7 +481,8 @@ Rules:
             save_context=False,
             tag_context=False,
         )
-        # 然后解析。如果没有选择的 id，则不返回。
+
+        # 解析来自 agent 的选择结果。
         selected_ids = self._parse_selection_timelines(selection_output.text)
         if verbose_info:
             print(f"[Agent] Original selection output as: {selection_output.text}")
@@ -474,50 +493,68 @@ Rules:
                 print("[Agent] Context selection returned no valid ids; keeping current active window.")
             return None
 
-        # Reject ids outside the retrieved candidate pool so the selector cannot silently widen scope.
-        valid_candidate_ids = set(candidate_ids)
-        filtered_ids = [
-            context_id
-            for context_id in selected_ids
-            if context_id in valid_candidate_ids
-        ]
-        if not filtered_ids:
+        # 过滤掉所有不在备选 id 范围内的 id
+        # # 不过滤了，直接试试看
+        # valid_candidate_ids = set(candidate_ids)
+        # filtered_ids = [
+        #     context_id
+        #     for context_id in selected_ids
+        #     if context_id in valid_candidate_ids
+        # ]
+        # if not filtered_ids:
+        #     if verbose_info:
+        #         print("[Agent] Context selection returned ids outside candidates; keeping current active window.")
+        #     return None
+
+        # 然后展开这些 id
+        expanded_selected_ids = self.llm_context_handler.expand_active_selection_ids(
+            selected_ids,
+            expand_compacted_sources=True,
+            keep_compacted_entries=True,
+        )
+        if not expanded_selected_ids:
             if verbose_info:
-                print("[Agent] Context selection returned ids outside candidates; keeping current active window.")
+                print("[Agent] Expanded active selection is empty; keeping current active window.")
             return None
 
-        # Keep the latest tail active so the agent never drops immediate local continuity.
+        # Preserve the newest active tail so the agent keeps immediate local
+        # continuity even when the selector picks an older history slice.
         recent_tail_ids = self.llm_context_handler.get_active_ids_window()[-2:]
-        final_ids = sorted(set(filtered_ids + recent_tail_ids))
+        final_ids = sorted(set(expanded_selected_ids + recent_tail_ids)) 
+
+        # 设置激活的上下文 id
         applied_ids = self.llm_context_handler.set_active_ids(final_ids)
 
         if verbose_info:
             print(f"[Agent] Active context window updated to: {applied_ids}")
 
-        return applied_ids
-
     async def _retrieve_context_candidates_for_task(
         self,
         task_msg: str,
         temperature: float = 0.4,
+        recent_tail_len: int = 4,
     ) -> List[int]:
-        """
-        Retrieve candidate context ids for the current task before LLM reselection.
+        """Retrieve prompt-selectable context ids for the current task.
 
-        Strategy:
-        - derive tags from the task text when tagging is enabled,
-        - query compacted summaries by the raw task text,
-        - intersect summary hits and tag hits when possible,
-        - fall back to the union when intersection is empty,
-        - always preserve a short recent active tail.
-        """
-        # Preserve a short recent tail so retrieval never loses immediate turn-to-turn continuity.
-        active_ids = self.llm_context_handler.get_active_ids_window()
-        recent_tail_ids = active_ids[-4:]
+        Args:
+            task_msg: User-visible task text for the current round.
+            temperature: Sampling temperature used by helper tagging calls.
+            recent_tail_len: Number of recent active context ids to preserve.
 
-        # Turn the current task into lightweight retrieval tags using the same tagger as stored context.
+        Returns:
+            A sorted candidate id list containing any expanded retrieval hits and
+            a recent active tail preserved for local continuity.
+        """
+
+        # 选择最后若干轮的上下文表示当前进度
+        active_ids: List[int] = self.llm_context_handler.get_active_ids_window()
+        recent_tail_ids = active_ids[-recent_tail_len:]
+
+        # 将用户的输入转为上下文，然后标签化
         task_tags: List[str] = []
         if self.llm_context_handler.enable_tagging:
+            # 创建用户的上下文，并自动标签化
+            # TODO: 这个代码快好像可以直接缓存以避免重新计算……
             probe_context = LLMContext(role="user", content=task_msg)
             probe_context = await self.llm_context_handler.tagify_context(
                 probe_context,
@@ -525,8 +562,8 @@ Rules:
             )
             task_tags = probe_context.tags or []
 
-        # Prefer the intersection of summary hits and tag hits when both signals are available.
-        intersected_hits = None
+        # 寻找同时满足输入标签和输入摘要的索引。
+        intersected_hits: Optional[List[LLMInfo]] = None
         if task_tags:
             intersected_hits = await self.llm_context_handler.find_context_by_summary_and_tags(
                 summary_query=task_msg,
@@ -534,33 +571,42 @@ Rules:
                 blur_summary=True,
                 blur_tags=True,
             )
-
-        # Keep the individual retrieval channels available as a fallback when the intersection is empty.
+        
+        # 然后分别查询标签和摘要。
+        # 标签
         tag_hits = None
         if task_tags:
-            tag_hits = await self.llm_context_handler.find_context_by_tags(
+            tag_hits: Optional[List[LLMInfo]] = await self.llm_context_handler.find_context_by_tags(
                 tags=task_tags,
                 blur=True,
             )
-
-        summary_hits = await self.llm_context_handler.find_context_by_summary(
+        # 摘要
+        summary_hits: Optional[List[LLMInfo]] = await self.llm_context_handler.find_context_by_summary(
             summary_query=task_msg,
             blur=True,
             include_raw=False,
             include_compacted=True,
         )
 
-        # Build the final candidate pool from intersection first, then fall back to the retrieval union.
+        # Expand compacted hits back into raw source timeline ids so summary
+        # matches can re-open the original detailed context for selection.
         candidate_ids: Set[int] = set()
-        if intersected_hits:
-            candidate_ids.update(item.timeline for item in intersected_hits)
-        else:
-            if tag_hits:
-                candidate_ids.update(item.timeline for item in tag_hits)
-            if summary_hits:
-                candidate_ids.update(item.timeline for item in summary_hits)
+        if intersected_hits: # 如果找到交集内容
+            intersect_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(intersected_hits)
+            if intersect_id:
+                candidate_ids.update(intersect_id)
 
-        # Always append the recent tail so prompt assembly retains local continuity even after reselection.
+        else:   # 没找到交集内容，则分别找
+            if tag_hits:
+                tag_hit_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(tag_hits)
+                if tag_hit_id:
+                    candidate_ids.update(tag_hit_id)
+            if summary_hits:
+                summary_hit_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(summary_hits)
+                if summary_hit_id:
+                    candidate_ids.update(summary_hit_id)
+        
+        # 然后添加最近几轮的上下文
         candidate_ids.update(recent_tail_ids)
         return sorted(candidate_ids)
 
@@ -593,23 +639,33 @@ Rules:
     def _should_trigger_context_selection(self, turn: int) -> bool:
         """
         Determine whether the active context should be reselected this turn.
+
+        Notes:
+            1. 当前轮数是否满足间隔条件。
+            2. 当前激活上下文数量是否满足最小阈值。
+            3. 当前激活上下文字符总长度是否满足最小阈值。
+            必须同时满足以上三个条件，才会重新进行选择。
+
         Args:
             turn: 当前回合轮数。
+        
+        Returns:
+            如果是 True，则表示需要重新选择上下文。
         """
 
         # 检查当前轮次
         interval = self.context_selection_interval
-        if not interval or interval <= 0:
+        if not interval or interval <= 0:   # 无间隔或间隔小于 0
             return False
-        if turn % interval != 0:
+        if turn % interval != 0:            # 不是间隔的轮次
             return False
         
         # 检查当前激活上下文数量
         active_ids = self.llm_context_handler.get_active_ids_window()
-        if len(active_ids) < self.context_selection_min_active_items:
+        if len(active_ids) < self.context_selection_min_active_items:   # 如果激活上下文数量小于要求的最小阈值
             return False
 
-        if self.llm_context_handler.context_len() < self.context_selection_min_active_chars:
+        if self.llm_context_handler.context_len() < self.context_selection_min_active_chars:    # 如果激活上下文字符总长度小于最小阈值
             return False
 
         return True
@@ -635,7 +691,7 @@ Rules:
 
         if verbose_info:
             print(
-                "[Agent] Tool result payload exceeded threshold; archiving round "
+                "[Agent] Tool result payload exceeded threshold; archiving context ID "
                 f"{context.timeline} ({tool_result_chars} chars)."
             )
         return await self.llm_context_handler.compress_context([context.timeline])
