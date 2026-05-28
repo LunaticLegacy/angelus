@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
-from ..llm_types import LLMOutput
-from .base import JSONValue, ToolSchema, LLMBackendConfig, LLMToolCall, LLMBackendHandler
+from ..llm_types import LLMOutput, LLMToolCall
+from ._tool_schemas import to_anthropic_tool_schemas
+from .base import JSONValue, LLMBackendConfig, LLMBackendHandler, ToolDefinition, ToolSchema
 
 
 class AnthropicHandler(LLMBackendHandler):
@@ -50,21 +51,44 @@ class AnthropicHandler(LLMBackendHandler):
 
         return anthropic_messages, system_message
 
-    def convert_tools(self, tools: list[ToolSchema]) -> list[ToolSchema]:
-        anthropic_tools: list[ToolSchema] = []
-        for tool in tools:
-            if tool.get("type") == "function":
-                func = tool.get("function", {})
-                anthropic_tools.append(
-                    {
-                        "name": func.get("name", ""),
-                        "description": func.get("description", ""),
-                        "input_schema": func.get("parameters", {}),
-                    }
+    def prepare_tools(
+        self,
+        tools: Optional[Sequence[ToolDefinition]],
+    ) -> Optional[list[ToolSchema]]:
+        """Prepare tools for Anthropic's `input_schema` tool format."""
+        return to_anthropic_tool_schemas(tools)
+
+    def _normalize_anthropic_blocks(
+        self,
+        blocks: Iterable[object | Mapping[str, JSONValue]],
+    ) -> tuple[str, str, list[LLMToolCall]]:
+        text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: list[LLMToolCall] = []
+
+        for block in blocks:
+            block_type = self._read_field(block, "type", None)
+            if block_type == "text":
+                text_parts.append(str(self._read_field(block, "text", "")))
+            elif block_type in {"thinking", "reasoning"}:
+                reasoning = self._read_field(block, "thinking", None)
+                if reasoning is None:
+                    reasoning = self._read_field(block, "text", "")
+                reasoning_parts.append(str(reasoning))
+            elif block_type == "tool_use":
+                name = self._read_field(block, "name", "")
+                if not name:
+                    continue
+                tool_calls.append(
+                    LLMToolCall(
+                        name=str(name),
+                        arguments=self._parse_arguments(self._read_field(block, "input", {})),
+                        call_id=self._read_field(block, "id", None),
+                        source="anthropic",
+                    )
                 )
-            else:
-                anthropic_tools.append(tool)
-        return anthropic_tools
+
+        return "".join(text_parts), "".join(reasoning_parts), tool_calls
 
     def create_completion(
         self,
@@ -86,7 +110,7 @@ class AnthropicHandler(LLMBackendHandler):
         if system_prompt:
             kwargs["system"] = system_prompt
         if tools:
-            kwargs["tools"] = self.convert_tools(tools)
+            kwargs["tools"] = tools
         kwargs.update(self.backend.extra)
         return self.client.messages.create(**kwargs)
 
@@ -114,52 +138,54 @@ class AnthropicHandler(LLMBackendHandler):
             else:
                 event_type = getattr(chunk, "type", None)
                 delta = getattr(chunk, "delta", None)
+            
+            match event_type:
 
-            if event_type == "content_block_start":
-                block = chunk.get("content_block") if isinstance(chunk, dict) else getattr(chunk, "content_block", None)
-                block_type = self._read_field(block, "type", None)
-                if block_type == "text":
-                    content = self._read_field(block, "text", None)
+                case "content_block_start":
+                    block = chunk.get("content_block") if isinstance(chunk, dict) else getattr(chunk, "content_block", None)
+                    block_type = self._read_field(block, "type", None)
+                    if block_type == "text":
+                        content = self._read_field(block, "text", None)
+                        if in_thinking and content:
+                            yield "\n</think>\n"
+                            in_thinking = False
+                        if content:
+                            yield str(content)
+                    elif block_type in {"thinking", "reasoning"} and output_reasoning:
+                        reasoning = self._extract_reasoning(block)
+                        if reasoning:
+                            if not in_thinking:
+                                yield "\n<think>\n"
+                                in_thinking = True
+                            yield reasoning
+                    continue
+
+                case "content_block_delta":
+                    delta_type = self._read_field(delta, "type", None)
+                    if delta_type == "text_delta":
+                        text = self._read_field(delta, "text", None)
+                        if in_thinking and text:
+                            yield "\n</think>\n"
+                            in_thinking = False
+                        if text:
+                            yield str(text)
+                    elif delta_type in {"thinking_delta", "reasoning_delta"} and output_reasoning:
+                        reasoning = self._extract_reasoning(delta)
+                        if reasoning:
+                            if not in_thinking:
+                                yield "\n<think>\n"
+                                in_thinking = True
+                            yield reasoning
+                    continue
+
+                case "text_delta":
+                    content = self._extract_content(delta or chunk)
                     if in_thinking and content:
                         yield "\n</think>\n"
                         in_thinking = False
                     if content:
-                        yield str(content)
-                elif block_type in {"thinking", "reasoning"} and output_reasoning:
-                    reasoning = self._extract_reasoning(block)
-                    if reasoning:
-                        if not in_thinking:
-                            yield "\n<think>\n"
-                            in_thinking = True
-                        yield reasoning
-                continue
-
-            if event_type == "content_block_delta":
-                delta_type = self._read_field(delta, "type", None)
-                if delta_type == "text_delta":
-                    text = self._read_field(delta, "text", None)
-                    if in_thinking and text:
-                        yield "\n</think>\n"
-                        in_thinking = False
-                    if text:
-                        yield str(text)
-                elif delta_type in {"thinking_delta", "reasoning_delta"} and output_reasoning:
-                    reasoning = self._extract_reasoning(delta)
-                    if reasoning:
-                        if not in_thinking:
-                            yield "\n<think>\n"
-                            in_thinking = True
-                        yield reasoning
-                continue
-
-            if event_type == "text_delta":
-                content = self._extract_content(delta or chunk)
-                if in_thinking and content:
-                    yield "\n</think>\n"
-                    in_thinking = False
-                if content:
-                    yield content
-                continue
+                        yield content
+                    continue
 
             if event_type in {"thinking_delta", "reasoning_delta"} and output_reasoning:
                 reasoning = self._extract_reasoning(delta or chunk)

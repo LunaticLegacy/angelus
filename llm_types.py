@@ -5,6 +5,7 @@ from typing import List, Dict, Literal, Optional, Tuple, Union, Set, Any, Callab
 
 from typing import TypeAlias
 from uuid import UUID, uuid4
+import json
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -64,12 +65,12 @@ class LLMToolCall:
 class LLMOutput:
     """Backend-neutral non-streaming model output."""
 
-    content: str
-    provider: str
-    backend_name: str
-    model: str
-    role: str = "assistant"
-    reasoning_content: str = ""
+    content: str                # 内容……？？   
+    provider: str               # 模型提供者
+    backend_name: str           # 后端名称
+    model: str                  # 模型名称
+    role: str = "assistant"     # 角色，支持 "assistant"、"system" 和 "user"
+    reasoning_content: str = "" # 思考过程内容……？ 这东西和AgentMessage 重复了……
     tool_calls: List[LLMToolCall] = field(default_factory=list)
     stop_reason: Optional[str] = None
     usage: Dict[str, Any] = field(default_factory=dict)
@@ -147,7 +148,7 @@ class LLMContext:
                 parts.append("This context does not contains tool call info.")
         
         if self.content != "":
-            parts.append(f"Content: {self.content if self.content else "None"}")
+            parts.append(f"Content: {self.content if self.content else 'None'}")
 
         return ", ".join(parts)
 
@@ -249,8 +250,7 @@ class Tool:
     async def execute(self, **kwargs: Any) -> Any:
         """
         Invoke the tool handler, awaiting if necessary.
-
-        要求所有工具均使用异步模式。
+        工具本身可以是同步函数，也可以是异步函数，但在执行期间将被异步处理。
         """
         if inspect.iscoroutinefunction(self.handler):
             return await self.handler(**kwargs)
@@ -265,17 +265,103 @@ MessageDict = Dict[str, str]
 Messages = List[MessageDict]    # Alias for List[Dict[str, str]]
 
 ToolArgs = JsonObject
+ToolList = List[Tool]
 AssistantMessageDict = JsonObject
 
-ToolList = List[Tool]
+ContextView = Literal["raw", "compacted"]
+
+
+@dataclass
+class ContextSelectionView:
+    """
+    用于选择上下文的信息。
+
+    Attributes:
+        id: 目标上下文 id
+        view: 标识原始信息或上下文信息用。
+        reason: 添加此上下文的原因。
+    """
+    id: int
+    view: ContextView = "raw"
+    reason: Optional[str] = None
+
+@dataclass
+class AgentState:
+    """
+    Agent 当前状态机。语义：
+
+    Attributes:
+        task: 任务描述
+        phase: 任务阶段
+        facts: 事实列表
+        hypotheses: 假设列表
+        artifacts: 工件列表
+        credentials: 凭证列表
+        known_routes: 已知路由列表
+        failed_actions: 失败动作列表，储存现在失败的动作。
+        do_not_repeat: 不重复列表，让 agent 不再重复执行。
+        next_actions: 下一步动作列表
+    """
+    task: str = ""
+    phase: str = "initial"
+    facts: list[str] = field(default_factory=list)
+    hypotheses: list[str] = field(default_factory=list)
+    artifacts: dict[str, str] = field(default_factory=dict)
+    credentials: list[dict[str, str]] = field(default_factory=list)
+    known_routes: dict[str, str] = field(default_factory=dict)
+    failed_actions: list[str] = field(default_factory=list)
+    do_not_repeat: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        """
+        将当前 agent 状态转为字符串。
+        """
+        sections: List[str] = ["[Agent State]"]
+        sections.append(f"Task: {self.task or '(unset)'}")
+        sections.append(f"Phase: {self.phase}")
+
+        def add_list(label: str, values: List[str]) -> None:
+            if values:
+                sections.append(f"{label}:")
+                sections.extend(f"- {value}" for value in values[-12:])
+
+        add_list("Facts", self.facts)
+        add_list("Hypotheses", self.hypotheses)
+        add_list("Failed actions", self.failed_actions)
+        add_list("Do not repeat", self.do_not_repeat)
+        add_list("Next actions", self.next_actions)
+        if self.artifacts:
+            sections.append(f"Artifacts: {json.dumps(self.artifacts, ensure_ascii=False)}")
+        if self.credentials:
+            sections.append(f"Credentials: {json.dumps(self.credentials, ensure_ascii=False)}")
+        if self.known_routes:
+            sections.append(f"Known routes: {json.dumps(self.known_routes, ensure_ascii=False)}")
+        return "\n".join(sections)
+
+@dataclass
+class ContextBundle:
+    """
+    Attributes:
+        state_text: 状态文本，用于……做什么？
+    """
+    state_text: str = ""
+    pinned_ids: list[int] = field(default_factory=list)
+    selected_ids: list[int] = field(default_factory=list)
+    recent_ids: list[int] = field(default_factory=list)
+
+    def ordered_ids(self) -> list[int]:
+        from .utils_function import stable_unique_ids   # a partial import
+        return stable_unique_ids(self.pinned_ids + self.selected_ids + self.recent_ids)
+
 
 @dataclass
 class AgentMessage:
-    """定义一个 Agent 的对话轮使用的内容"""
-    provider: str   # 模型提供商？？还是什么？
+    """定义一个 Agent 的对话轮使用的内容，好像再也用不上了"""
+    provider: str   # 后端 handler 的提供商
     role: str = "assistant" # 规则
     content: str = ""       # 输出内容
-    reasoning_content: str = "" # 
+    reasoning_content: str = "" # 思考过程
     tool_blocks: List[Any] = field(default_factory=list)    # 使用的工具
     stop_reason: Optional[str] = None   # 停止原因
     raw_message: Optional[Any] = None
@@ -326,3 +412,38 @@ class NoToolCallError(AgentExecutionError):
 class MaxTurnsExceededError(AgentExecutionError):
     """错误：最大轮次"""
     pass
+
+# --------------------------
+# Context
+# --------------------------
+
+
+ContextMode = Literal["linear", "graph"]
+
+STOP_TAGS: Set[str] = {
+    "about",
+    "after",
+    "also",
+    "and",
+    "are",
+    "but",
+    "can",
+    "for",
+    "from",
+    "generate",
+    "has",
+    "have",
+    "into",
+    "just",
+    "need",
+    "not",
+    "only",
+    "provide",
+    "should",
+    "that",
+    "the",
+    "this",
+    "was",
+    "will",
+    "with",
+}

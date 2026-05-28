@@ -1,12 +1,38 @@
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from ..llm_types import LLMOutput
-from .base import JSONValue, ToolSchema, LLMBackendHandler
+from ..llm_types import LLMOutput, LLMToolCall
+from ._tool_schemas import to_openai_tool_schemas
+from .base import LLMBackendHandler, ToolDefinition, ToolSchema
 
 
 class OpenAICompatibleHandler(LLMBackendHandler):
+    def prepare_tools(
+        self,
+        tools: Optional[Sequence[ToolDefinition]],
+    ) -> Optional[list[ToolSchema]]:
+        """Prepare tools for OpenAI-compatible chat-completion APIs."""
+        return to_openai_tool_schemas(tools)
+
+    def _normalize_openai_tool_calls(self, message: object | Mapping[str, Any] | None) -> list[LLMToolCall]:
+        raw_calls = self._read_field(message, "tool_calls", None) or []
+        calls: list[LLMToolCall] = []
+        for raw_call in raw_calls:
+            function = self._read_field(raw_call, "function", {}) or {}
+            name = self._read_field(function, "name", "")
+            if not name:
+                continue
+            calls.append(
+                LLMToolCall(
+                    name=str(name),
+                    arguments=self._parse_arguments(self._read_field(function, "arguments", {})),
+                    call_id=self._read_field(raw_call, "id", None),
+                    source="openai_native",
+                )
+            )
+        return calls
+
     def normalize_completion_response(self, response) -> LLMOutput:
         choices = self._read_field(response, "choices", None) or []
         choice = choices[0] if choices else None
@@ -67,4 +93,3 @@ class OpenAICompatibleHandler(LLMBackendHandler):
 
         if in_thinking:
             yield "\n</think>\n"
-

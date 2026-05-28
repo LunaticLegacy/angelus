@@ -1,8 +1,9 @@
 """平台无关的 LLM 调度器。
 
-本模块只负责后端注册、fallback 顺序、重试、限流与统一输出调度。
-具体 provider 的请求构造、响应归一化和流式解析都委托给 `handlers/` 里的后端类。
-
+本模块只负责后端注册、fallback 顺序、重试和统一调用调度。
+所有 provider 细节都下沉到 `handlers/`：
+消息适配、tool schema 转换、tool call 解析、流式事件解析和响应归一化
+都不应在这里再实现一次。
 """
 
 from __future__ import annotations
@@ -23,18 +24,22 @@ from .llm_types import (
     LLMBackendConfig,
     LLMContext,
     LLMContextCompacted,
-    LLMInfo, LLMToolCall, LLMOutput,
+    LLMInfo,
+    LLMOutput,
     LLMError,
-    LLMTimeoutError, LLMBackendError
+    LLMTimeoutError,
+    LLMBackendError,
 )
 
 from .handlers import (
-    ToolSchema,
+    ToolDefinition,
     LLMBackendHandler,
 )
 
 class LLMFetcher:
-    """Route chat requests across one or more configured LLM backends."""
+    """
+    Route chat requests across one or more configured LLM backends.
+    """
 
     @staticmethod
     def list_available_backend_providers() -> Tuple[str, ...]:
@@ -70,11 +75,10 @@ class LLMFetcher:
         self.backend_order: List[str] = []  # 按次序调用后端内容。
         self.handlers: Dict[str, LLMBackendHandler] = {}    # 后端 handler 索引
 
-        # 如果有设置后端
+        # 如果有设置后端，则对每个后端进行注册。
         if backends and len(backends) > 0:
             for backend in backends:
                 self._register_backend(backend)
-
         # 否则直接报错：
         else:
             raise ValueError("You should set at least ONE backend with class LLMBackendConfig.")
@@ -88,7 +92,40 @@ class LLMFetcher:
             self.backend_order.insert(0, default_backend)
 
         self.default_backend = self.backend_order[0]
+    
+    @property
+    def backend_configs(self) -> Dict[str, LLMBackendConfig]:
+        """
+        获得当前全部后端配置。
+        """
+        return dict(self.backends)
+    
+    @property
+    def fallback_order(self) -> List[str]:
+        """
+        获得当前回退顺序。
+        """
+        return list(self.backend_order)
 
+    @property
+    def default_backend_config(self) -> LLMBackendConfig:
+        """
+        返回默认后端配置。
+        """
+        return self.backends[self.default_backend]
+
+    @property
+    def provider(self) -> str:
+        """
+        返回当前默认后端的供应商。
+        TODO: 考虑是否保留该 property
+        """
+        return self.default_backend_config.provider
+
+    @property
+    def backend_providers(self) -> Dict[str, str]:
+        """Return backend-name to provider-name mapping for routing inspection."""
+        return {name: backend.provider for name, backend in self.backends.items()}
 
     def _register_backend(
         self, 
@@ -159,26 +196,21 @@ class LLMFetcher:
             messages.append({"role": "user", "content": msg})
 
         if prev_messages:
-            # 解析过去的信息时，这个过去信息会分为如下：
-            # List[LLMInfo]，包含两种实例：LLMContext et LLMContextCompacted
+            # 历史上下文已经被上层整理成统一的可渲染对象。
+            # 这里不做 provider 侧的结构理解，只负责把上下文转成消息序列。
             for item in prev_messages:
                 role: Optional[str] = None
                 content: Optional[str] = None
-                
+
                 if isinstance(item, LLMContext):
-                    context: LLMContext = item
-                    role = context.role
-                    content = str(context)
-
-                if isinstance(item, LLMContextCompacted):
-                    context_compacted: LLMContextCompacted = item
+                    role = item.role
+                    content = str(item)
+                elif isinstance(item, LLMContextCompacted):
                     role = "user"
-                    # 我要怎么解析这个该死的上下文信息？
-                    content = str(context_compacted)
+                    content = str(item)
 
-                if not role:
-                    continue
-                messages.append({"role": role, "content": content})
+                if role:
+                    messages.append({"role": role, "content": content or ""})
 
         return messages
 
@@ -211,8 +243,7 @@ class LLMFetcher:
         max_tokens: int = 4096,
         prev_messages: Optional[List[LLMInfo]] = None,
         backend_name: Optional[str] = None,
-        fallback_order: Optional[Sequence[str]] = None,
-        tools: Optional[List[ToolSchema]] = None,
+        tools: Optional[Sequence[ToolDefinition]] = None,
     ) -> LLMOutput:
         """执行一次非流式请求，并按顺序尝试后端回退。
 
@@ -224,7 +255,8 @@ class LLMFetcher:
             prev_messages: 历史上下文。（在未来，这个东西有可能会是被精选后的上下文了）
             backend_name: 显式指定的后端名称。
             fallback_order: 额外指定的回退后端顺序。
-            tools: 可选的 OpenAI tools schema 列表。
+            tools: 可选工具列表。可以传入可执行 `Tool` 对象，或兼容旧调用的
+                provider/tool schema 字典。具体转换由 handler 负责。
 
         Returns:
             抽象后的 LLM 输出，只暴露正文、推理内容、工具调用、用量等统一字段。
@@ -241,22 +273,22 @@ class LLMFetcher:
         backend_errors: List[str] = []
 
         # 解析后端
-        for backend in self._resolve_backends(backend_name, fallback_order):
+        for backend in self._resolve_backends(backend_name, self.fallback_order):
             handler = self._handler_for_backend(backend)
             # 重试次数：
             retries_left = self._timeout_retry_count(backend)
 
             while True:
                 try:
-                    # 原始信息
+                    # 这些东西将全部由 provider 返回。
+                    provider_tools = handler.prepare_tools(tools)
                     raw_response = handler.create_completion(
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=False,
-                        tools=tools,
+                        tools=provider_tools,
                     )
-                    # 使用 handler 的处理方式
                     return handler.normalize_completion_response(raw_response)
                 except Exception as exc:
                     normalized_error = self._normalize_exception(backend, exc)
@@ -279,8 +311,7 @@ class LLMFetcher:
         max_tokens: int = 4096,
         output_reasoning: bool = False,
         backend_name: Optional[str] = None,
-        fallback_order: Optional[Sequence[str]] = None,
-        tools: Optional[List[ToolSchema]] = None,
+        tools: Optional[Sequence[ToolDefinition]] = None,
     ) -> AsyncGenerator[str, None]:
         """执行一次流式请求，并按顺序尝试后端回退。
         TODO: 让这个函数可正式返回一个函数包体。
@@ -293,8 +324,8 @@ class LLMFetcher:
             max_tokens: 最大输出 token 数。
             output_reasoning: 是否输出推理内容。
             backend_name: 显式指定的后端名称。
-            fallback_order: 额外指定的回退后端顺序。
-            tools: 可选的 OpenAI tools schema 列表。
+            tools: 可选工具列表。可以传入可执行 `Tool` 对象，或兼容旧调用的
+                provider/tool schema 字典。具体转换由 handler 负责。
 
         Yields:
             标准化后的流式文本片段。
@@ -310,19 +341,20 @@ class LLMFetcher:
         )
         backend_errors: List[str] = []
 
-        for backend in self._resolve_backends(backend_name, fallback_order):
+        for backend in self._resolve_backends(backend_name, self.fallback_order):
             handler = self._handler_for_backend(backend)
             retries_left = self._timeout_retry_count(backend)
 
             while True:
                 yielded_any = False
                 try:
+                    provider_tools = handler.prepare_tools(tools)
                     response = handler.create_completion(
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=True,
-                        tools=tools,
+                        tools=provider_tools,
                     )
 
                     for text in handler.iter_stream_text(

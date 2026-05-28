@@ -8,77 +8,20 @@ from .prompt import (
     MEMORY_CONCLUDE_PROMPT_TEMPLATE, 
     TAGIFY_CONTEXT_PROMPT
 )
-from .llm_types import LLMContext, LLMContextCompacted, LLMContextInfo, LLMInfo
+from .llm_types import (
+    LLMContext, 
+    LLMContextCompacted, 
+    LLMContextInfo, 
+    LLMInfo, 
+    ContextMode, 
+    STOP_TAGS    
+)
 
-
-ContextMode = Literal["linear", "graph"]
-
-
-STOP_TAGS: Set[str] = {
-    "about",
-    "after",
-    "also",
-    "and",
-    "are",
-    "but",
-    "can",
-    "for",
-    "from",
-    "generate",
-    "has",
-    "have",
-    "into",
-    "just",
-    "need",
-    "not",
-    "only",
-    "provide",
-    "should",
-    "that",
-    "the",
-    "this",
-    "was",
-    "will",
-    "with",
-}
-
-
-def stable_unique_ids(ids: List[int]) -> List[int]:
-    """Return ids with duplicates removed while preserving first-seen order."""
-    seen: Set[int] = set()
-    out: List[int] = []
-    for context_id in ids:
-        if context_id not in seen:
-            out.append(context_id)
-            seen.add(context_id)
-    return out
-
-
-def sanitize_tags(tags: Optional[List[str]], *, max_tags: int = 12) -> List[str]:
-    """Normalize, filter, and stably dedupe retrieval tags."""
-    if not tags:
-        return []
-
-    sanitized: List[str] = []
-    seen: Set[str] = set()
-    for raw_tag in tags:
-        tag = str(raw_tag or "").strip().lower()
-        if not re.fullmatch(r"[a-z][a-z0-9_]{2,31}", tag):
-            continue
-        if tag in STOP_TAGS:
-            continue
-        if tag in seen:
-            continue
-        sanitized.append(tag)
-        seen.add(tag)
-        if len(sanitized) >= max_tags:
-            break
-    return sanitized
-
-
-def normalize_context_mode(context_mode: str) -> ContextMode:
-    """Normalize context mode values accepted by the LLM context layer."""
-    return "graph" if str(context_mode or "").strip().lower() == "graph" else "linear"
+from .utils_function import (
+    normalize_context_mode,
+    sanitize_tags,
+    stable_unique_ids
+)
 
 
 @dataclass
@@ -332,7 +275,6 @@ class LLMContextHandler:
     def __init__(
         self,
         llm_handler: LLMFetcher,
-        fallback_order: Optional[List[str]] = None,
         enable_memory: bool = True,
         enable_tagging: bool = False,
         compression_profile: Optional[ContextCompressionProfile] = None,
@@ -343,8 +285,6 @@ class LLMContextHandler:
         Args:
             llm_handler: Fetcher used for compression, tagging, and memory
                 generation requests.
-            fallback_order: Optional backend preference order forwarded to the
-                fetcher during helper LLM calls.
             enable_memory: Whether persistent memory summaries should be stored.
             enable_tagging: Whether tag-based retrieval indexes should be built.
             compression_profile: Default prompt profile used whenever context
@@ -353,11 +293,13 @@ class LLMContextHandler:
                 chronological active context with summarization; `graph`
                 enables the experimental retrieval/selection helpers.
         """
-        self.llm_handler = llm_handler
-        self.fallback_order = fallback_order
+        self.llm_handler = llm_handler        
         self.compression_profile = compression_profile or ContextCompressionProfile()
         self.context_mode: ContextMode = normalize_context_mode(context_mode)
         self.retrieval_enabled = self.context_mode == "graph"
+
+        # 在储存变量结束后加入回退索引
+        self.fallback_order = self.llm_handler.fallback_order
 
         # ========== 基础索引 ==========
         # 索引：时间线 id -> 上下文对象。

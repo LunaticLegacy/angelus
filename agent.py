@@ -5,7 +5,7 @@ import json
 import re
 import time
 from types import CoroutineType
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set, Literal
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Set, Literal
 from dataclasses import dataclass, field
 
 from .llm_fetcher import LLMFetcher
@@ -27,6 +27,7 @@ from .llm_types import (
     ToolArgs, AssistantMessageDict,
     ToolList,
     AgentMessage,
+    AgentState,
     ToolExecutionRecord,
     LLMOutput,
     LLMToolCall,
@@ -34,71 +35,14 @@ from .llm_types import (
     AgentExecutionError,
     EmptyModelResponseError,
     NoToolCallError,
-    MaxTurnsExceededError
+    MaxTurnsExceededError, ToolResultRef,
+    # 上下文管理
+    ContextView,
+    ContextSelectionView,
+    ContextBundle
 )
 
 from .streamers import Streamer, ThinkColorStreamer
-
-
-@dataclass
-class AgentState:
-    """
-    Agent 状态，语义：
-
-    Attributes:
-        task: 任务描述
-        phase: 任务阶段
-        facts: 事实列表
-        hypotheses: 假设列表
-        artifacts: 工件列表
-        credentials: 凭证列表
-        known_routes: 已知路由列表
-        failed_actions: 失败动作列表，储存现在失败的动作。
-        do_not_repeat: 不重复列表，让 agent 不再重复执行。
-        next_actions: 下一步动作列表
-    """
-    task: str = ""
-    phase: str = "initial"
-    facts: list[str] = field(default_factory=list)
-    hypotheses: list[str] = field(default_factory=list)
-    artifacts: dict[str, str] = field(default_factory=dict)
-    credentials: list[dict[str, str]] = field(default_factory=list)
-    known_routes: dict[str, str] = field(default_factory=dict)
-    failed_actions: list[str] = field(default_factory=list)
-    do_not_repeat: list[str] = field(default_factory=list)
-    next_actions: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ContextBundle:
-    """
-    Attributes:
-        state_text: 状态文本，用于……做什么？
-    """
-    state_text: str = ""
-    pinned_ids: list[int] = field(default_factory=list)
-    selected_ids: list[int] = field(default_factory=list)
-    recent_ids: list[int] = field(default_factory=list)
-
-    def ordered_ids(self) -> list[int]:
-        return stable_unique_ids(self.pinned_ids + self.selected_ids + self.recent_ids)
-
-
-ContextView = Literal["raw", "compacted"]
-
-
-@dataclass
-class ContextSelectionView:
-    """
-    用于选择上下文的信息。
-
-    Attributes:
-        id:
-        view: 标识原始信息或上下文信息用。
-    """
-    id: int
-    view: ContextView = "raw"
-    reason: Optional[str] = None
 
 
 class Agent:
@@ -106,10 +50,8 @@ class Agent:
         self,
         llm_handler: LLMFetcher,
         system_prompt: str,
-        tools: Optional[ToolList] = None,
+        tools: Optional[List[Tool]] = None,
         max_concurrent_tools: int = 1,
-        fallback_order: Optional[List[str]] = None,
-        provider: str = "custom_json",
         round_compress_threshold: Optional[int] = None,
         round_compress_keep_tail: int = 6,
         context_selection_interval: Optional[int] = 3,
@@ -121,26 +63,18 @@ class Agent:
     ):
         """
         初始化 Agent，绑定 LLM 处理器、系统提示词和可选工具列表。
-        TODO: 再这么下去这傻逼东西迟早会成为一个超级类，可能不能再这么下去了。
 
         Args:
-            llm_handler: 已有的LLM fetcher 实例。
-            system_prompt: 基础的系统提示词。（如果要注入 skill，请自便）
+            llm_handler: 已有的 LLM fetcher 实例。
+            system_prompt: 基础的系统提示词。（推荐在这里注入 skill）
             tools: 本 Agent 初始使用的工具。
-            max_concurrent_tools: Max parallel tool executions
-            fallback_order: Backend fallback order.（这个东西可以删掉，和下面的provider一起）
-            provider: LLM provider for tool calling. 
-                     Options: "openai", "anthropic", "custom_json" （可以直接删掉，和 llm_handler 的功能重复）
-            round_compress_threshold: Auto-compress temporary in-round messages when
-                                      their count reaches this value. None or not set will disables it.
-
-            round_compress_keep_tail: Number of latest in-round messages to keep verbatim.
-            context_selection_interval: Trigger active-context reselection every N turns.
-                                        Set to None or 0 to disable periodic reselection.
-            context_selection_min_active_items: Minimum active item count before reselection can trigger.
-            context_selection_min_active_chars: Minimum active-context char length before reselection can trigger.
-            tool_result_summary_threshold_chars: Archive and summarize one round immediately
-                                                 when tool results exceed this many chars.
+            max_concurrent_tools: 工具并发最大数量。
+            round_compress_threshold: 当有 N 轮未触发压缩上下文时，压缩上下文。
+            round_compress_keep_tail: 当压缩上下文时，保留最后 N 轮信息。
+            context_selection_interval: 仅当 context_mode = 'graph' 时有效。每 N 轮执行一次上下文选择。
+            context_selection_min_active_items: 仅当 context_mode = 'graph' 时有效，决定触发上下文选择的最小项目数。
+            context_selection_min_active_chars: 仅当 context_mode = 'graph' 时有效，决定触发上下文选择的最小字符数。
+            tool_result_summary_threshold_chars: 仅当 context_mode = 'graph' 时有效，当工具返回结果长度超过此阈值时，将立即归档该工具信息，并总结此轮。
             compression_profile: Default context-compression profile shared by
                                  automatic archiving and explicit compression calls.
             context_mode: `linear` 将使用传统线性上下文机制， `graph` 模式下启用实验性上下文机制。
@@ -149,10 +83,9 @@ class Agent:
         # 先初始化所有输入参数。
         self._base_system_prompt: str = system_prompt   # 系统提示词。
         self.llm_handler = llm_handler  # 用于处理 llm api 通信相关的东西。
-        self.fallback_order = fallback_order
         self.compression_profile = compression_profile
         self.max_concurrent_tools = max_concurrent_tools    # 本 agent 最大可并发多少工具。
-        self.provider = provider  # ← 保存 provider 设置
+        
         self.round_compress_threshold = round_compress_threshold
         self.round_compress_keep_tail = round_compress_keep_tail
         self.context_selection_interval = context_selection_interval
@@ -161,13 +94,14 @@ class Agent:
         self.tool_result_summary_threshold_chars = tool_result_summary_threshold_chars
         self.context_mode: ContextMode = context_mode if context_mode == "graph" else "linear"
 
+        # 系统默认的 provider 和后端回退机制 - 这俩好像也可以删
+
         self.tool_registry = ToolRegistry() # 注册工具。
         self.agent_state = AgentState()     # 当前 agent 状态
 
         # 上下文管理器。
         self.llm_context_handler = LLMContextHandler(
             llm_handler=self.llm_handler,
-            fallback_order=self.fallback_order,
             enable_memory=True,     # 启用记忆机制
             enable_tagging=self.context_mode == "graph",    # 图式上下文才启用检索标签
             compression_profile=self.compression_profile,
@@ -176,6 +110,7 @@ class Agent:
 
         # 工具调用历史
         self.tool_call_history: List[List[LLMToolCall]] = []
+        self._round_task_tags: Optional[List[str]] = None
 
         # 注册内嵌工具，供 LLM 控制上下文信息
         self._register_builtin_tools()
@@ -187,7 +122,9 @@ class Agent:
                 self.tool_registry.register(tool)
 
     def _register_builtin_tools(self) -> None:
-        """注册 Agent 内嵌的元工具，用于控制对话轮次的生命周期。"""
+        """
+        注册 Agent 内嵌的元工具，用于控制对话轮次的生命周期。
+        """
         for tool in create_builtin_tools(agent=self):
             self.tool_registry.register(tool)
 
@@ -212,14 +149,20 @@ class Agent:
 
     def update_system_prompt(self, new_prompt: str) -> None:
         """
-        运行时动态修改 Agent 的系统提示词。
+        修改 Agent 的系统提示词。
         
         Args:
             new_prompt: 系统提示词。
         """
         self._base_system_prompt = new_prompt
 
-    def add_tool(self, tool: "Tool") -> None:
+    def set_system_prompt(self, new_prompt: str) -> None:
+        """
+        函数 `Agent.update_system_prompt` 的别名。
+        """
+        self.update_system_prompt(new_prompt)
+
+    def add_tool(self, tool: Tool) -> None:
         """
         运行时给 Agent 增加一个工具。
         
@@ -230,7 +173,7 @@ class Agent:
 
     def remove_tool(self, tool_name: str) -> None:
         """
-        在运行期间，从本 Agent 的工具注册表内，移除一个命名工具。
+        从本 Agent 的工具注册表内，移除一个工具。
     
         Args:
             tool_name: 工具名。
@@ -258,25 +201,31 @@ class Agent:
 
         Use this for simple chat, debugging, tag/summarizer-style calls, or
         cases where the caller wants to inspect raw `LLMOutput.tool_calls`.
+
+        建议在调试 agent 系统时使用本方法。
         """
+
         prev_message: Optional[List[LLMInfo]] = await self._build_prev_messages() if use_history else None
-        tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider) if use_tools else []
+
+        request_tools = self.tool_registry.tools if use_tools else []
 
         resolved_system_prompt = system_prompt
         if resolved_system_prompt is None:
-            resolved_system_prompt = self.system_prompt if use_tools else self._base_system_prompt
-
+            resolved_system_prompt = self.system_prompt
+        
+        # 拉取本轮回复内容。
         output: LLMOutput = await self.llm_handler.fetch(
             msg=msg,
             system_prompt=resolved_system_prompt,
             temperature=temperature,
             prev_messages=prev_message if prev_message else None,
-            tools=tool_schemas if tool_schemas else None,
-            fallback_order=self.fallback_order,
+            tools=request_tools if request_tools else None,
         )
 
-        resolved_tool_calls = self._resolve_tool_calls(output)
+        # tool call 是模型无关的东西
+        resolved_tool_calls = output.tool_calls
 
+        # 如果需要保存上下文，则保存。（但是工具不执行）
         if save_context:
             tool_call_info = [str(tool_call.to_execution_format()) for tool_call in resolved_tool_calls]
             context = LLMContext(
@@ -304,6 +253,7 @@ class Agent:
     ) -> str:
         """
         进行一整个轮次的 Agent 执行轮。
+        TODO: 这一个函数里压进去了太多屎山，需要拆解。
 
         核心特性：
         - 多轮工具调用循环：LLM 可在一次 agent 轮内连续调用多个工具，
@@ -325,20 +275,26 @@ class Agent:
         Returns:
             LLM 生成的完整回复文本。
         """
-        # TODO: 为防止每一个轮次开始时都重新调度上下文，需要缓存一些东西。
 
-        tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider)   # 拉取工具调用方法
+        request_tools = self.tool_registry.tools
         final_content: str = ""
         if not self.agent_state.task:
             self.agent_state.task = msg
+        
+        user_input_context: LLMContext = LLMContext(
+            role="user",
+            timeline=0,
+            content=msg,
+            tags=["user_request"]
+        )
 
-        # 在整个 agent 执行轮开始前，加入用户当前输入。
+        self._round_task_tags = await self._cache_round_task_tags(
+            user_input_context=user_input_context,
+            temperature=temperature,
+        )
+
         await self.context_manager.add_context(
-            LLMContext(
-                role="user",
-                timeline=0,
-                content=msg, 
-                tags=["user_request"]), 
+            user_input_context,
             append_to_active=True
         )
 
@@ -346,159 +302,149 @@ class Agent:
         def _should_stop() -> bool:
             return bool(stop_callback and stop_callback())
 
-        turn: int = 0
-        # 轮次开始。
-        while turn < max_turns:
-            turn += 1
-            if _should_stop():
-                break
+        # 在整个 agent 执行轮开始前，加入用户当前输入。
+        try:    
+            turn: int = 0
+            # 轮次开始。
+            while turn < max_turns:
+                turn += 1
+                if _should_stop():
+                    break
 
-            # TODO: 这里每一次都会重新 build 一次旧信息。
-            # 如果我要采用线性上下文，我只需要增量。
-            # 如果我要让 agent 自己控制上下文，我要怎么做？？
+                # TODO: 这里每一次都会重新 build 一次旧信息。
+                # 如果我要采用线性上下文，我只需要增量。
+                # 如果我要让 agent 自己控制上下文，我要怎么做？？
 
-            if self.context_mode == "graph":
-                # 在图式上下文模式下，为本次主模型调用构造显式上下文包。
-                context_bundle = await self._build_main_context_bundle(
-                    task_msg=msg,
-                    turn=turn,
-                    temperature=temperature,
-                    verbose_info=verbose_info,
-                )
+                if self.context_mode == "graph":
+                    active_window_before_bundle = self.llm_context_handler.get_active_ids_window()
 
-                if verbose_info:
-                    print(f"[Agent] Current active context IDs before agent round: {self.llm_context_handler.active_ids}")
-                    print(f"[Agent] Main context bundle IDs: {context_bundle.ordered_ids()}")
-
-                prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages(context_bundle)
-            else:
-                if verbose_info:
-                    print(f"[Agent] Current active linear context IDs before agent round: {self.llm_context_handler.active_ids}")
-                prev_messages = await self._build_prev_messages()
-
-            if verbose_info:
-                print(f"\n[Agent] ====== Executing Turn: {turn} ======")
-                print(f"[Agent] Provider: {self.provider}")
-                print(f"[Agent] Tool schemas count: {len(tool_schemas)}")
-                print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
-
-            if _should_stop():
-                break
-
-            # ---- 调用 LLM - 这里采用异步执行 ----
-            response: LLMOutput = await self.llm_handler.fetch(
-                msg=msg,
-                system_prompt=self.system_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                prev_messages=prev_messages if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
-                tools=tool_schemas if tool_schemas else None,  # 传递工具信息
-                fallback_order=self.fallback_order,
-            )
-
-            # 然后查看工具内容，如果有工具的话。
-            message: str = response.text
-            tool_calls: List[LLMToolCall] = self._resolve_tool_calls(response)
-            executing_tools: List[CoroutineType] = []
-            executing_result: List[str] = []
-            if verbose_info:            
-                print(f"\n[Agent] Message output: \n{message}")
-                print(f"[Agent] Parsed tool calls: {len(tool_calls)}")
-                if tool_calls:
-                    for idx, tool in enumerate(tool_calls, start=1):
-                        print(f"[Agent] Tool call {idx}: {tool.to_execution_format()}")
-
-            if len(tool_calls) > 0:
-                # 工具可并行。todo: 工具执行最大并发量限制未能使用。（后面再做，现在先改上下文）
-                for tool in tool_calls:
-                    executing_tools.append(
-                        self._execute_single_tool(
-                            tool_call=tool.to_execution_format(), 
-                            verbose=verbose_info
-                        )
+                    # 在图式上下文模式下，为本次主模型调用构造显式上下文包。
+                    context_bundle = await self._build_main_context_bundle(
+                        user_input_context=user_input_context,
+                        turn=turn,
+                        temperature=temperature,
+                        verbose_info=verbose_info,
                     )
-                # 然后等待
-                executing_result = await asyncio.gather(*executing_tools)
-                self._record_tool_round_in_state(tool_calls, executing_result)
 
-            self._record_assistant_round_in_state(message, tool_calls)
+                    if verbose_info:
+                        print(f"[Agent] Active window before graph bundle: {active_window_before_bundle}")
+                        print(f"[Agent] Main context bundle ids: {context_bundle.ordered_ids()}")
 
-            if _should_stop():
-                final_content = final_content or response.text
-                break
+                    prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages(context_bundle)
+                else:
+                    if verbose_info:
+                        print(f"[Agent] Current active linear context IDs before agent round: {self.llm_context_handler.active_ids}")
+                    prev_messages = await self._build_prev_messages()
 
-            # 将工具执行结果放进来。
-            # 这一块东西不会进入上下文，而是被 agent 实例自己记录。
-            tool_record_round: List[ToolExecutionRecord] = [
-                ToolExecutionRecord(
-                    name=tool_info.name,
-                    arguments=tool_info.arguments,
-                    result=tool_result
-                ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
-            ]
-            self.tool_call_history.append(tool_calls)
+                if verbose_info:
+                    print(f"\n[Agent] ====== Executing Turn: {turn} ======")
+                    print(f"[Agent] Provider: {self.llm_handler.provider}")
+                    print(f"[Agent] Tool count: {len(request_tools)}")
+                    print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
 
-            # 拼接上下文。
-            # 这里才会包括工具。
-            now_assistant_context: LLMContext = LLMContext(
-                role="assistant",
-                content=message,  # 文本
-                tool_call_info=[str(i) for i in tool_record_round],
-            )
+                if _should_stop():
+                    break
 
-            # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
-            # 先打标签，再加进来。
-            if (self.context_mode == "graph"):
-                now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
-                await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
-                    context=now_assistant_context,
-                    verbose_info=verbose_info,
+                # ---- 调用 LLM - 这里采用异步执行 ----
+                response: LLMOutput = await self.llm_handler.fetch(
+                    msg=msg,
+                    system_prompt=self.system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    prev_messages=prev_messages if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
+                    tools=request_tools if request_tools else None,  # 传递工具信息
                 )
-            
-            # 将信息加入当前上下文。
-            await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
 
-            if verbose_info:
-                print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
-                print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
+                # 然后查看工具内容，如果有工具的话。
+                message: str = response.text    # 本轮文本
+                
+                # 现在的 tool call 被抽象为了当前包体的中间层（见类型 `LLMToolCall`），已和供应商无关
+                tool_calls: List[LLMToolCall] = response.tool_calls
 
-            # 检测上下文长度，并压缩之。
-            if self.llm_context_handler.context_len() > max_context_size:
-                print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
-                print(f"[Agent] Context exceeded, compressing history...")
-                while self.llm_context_handler.context_len() > max_context_size:
-                    compressed = await self._archive_old_active_context(verbose_info=verbose_info)
-                    if not compressed:
-                        break
+                executing_result: List[str] = await self._handle_tool_calls(tool_calls, max_concurrent_calls=self.max_concurrent_tools)
 
-            # 判断是否结束？
-            # 传统：如果没有 tool call，则立即结束。
-            if len(tool_record_round) == 0:
-                final_content = message
-                break
-            if _should_stop():
-                final_content = final_content or response.text
-                break
+                # 记录本轮的信息？？
+                self._record_assistant_round_in_state(message, tool_calls)
 
-        else:
-            raise MaxTurnsExceededError(f"Agent round exceeded max_turns={max_turns}.")
+                if _should_stop():
+                    final_content = final_content or response.text
+                    break
+
+                # 将工具执行结果放进来。
+                # 这一块东西不会进入上下文，而是被 agent 实例自己记录。
+                tool_record_round: List[ToolExecutionRecord] = [
+                    ToolExecutionRecord(
+                        name=tool_info.name,
+                        arguments=tool_info.arguments,
+                        result=tool_result
+                    ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
+                ]
+                self.tool_call_history.append(tool_calls)
+
+                # 拼接上下文。
+                # 这里才会包括工具。
+                now_assistant_context: LLMContext = LLMContext(
+                    role="assistant",
+                    content=message,  # 文本
+                    tool_call_info=[str(i) for i in tool_record_round],
+                )
+
+                # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
+                # 先打标签，再加进来。
+                if (self.context_mode == "graph"):
+                    now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
+                    await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
+                        context=now_assistant_context,
+                        verbose_info=verbose_info,
+                    )
+                
+                # 将信息加入当前上下文。
+                await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
+
+                if verbose_info:
+                    print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
+                    print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
+
+                # 检测上下文长度，并压缩之。
+                if self.llm_context_handler.context_len() > max_context_size:
+                    print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
+                    print(f"[Agent] Context exceeded, compressing history...")
+                    while self.llm_context_handler.context_len() > max_context_size:
+                        compressed = await self._archive_old_active_context(verbose_info=verbose_info)
+                        if not compressed:
+                            break
+
+                # 判断是否结束？
+                # 传统：如果没有 tool call，则立即结束。
+                if len(tool_record_round) == 0:
+                    final_content = message
+                    break
+                if _should_stop():
+                    final_content = final_content or response.text
+                    break
+
+            else:
+                raise MaxTurnsExceededError(f"Agent round exceeded max_turns={max_turns}.")
+        finally:
+            self._round_task_tags = None
 
         return final_content
     
     
-    # ------------------------------------------------------------------
-    # 内部辅助方法
-    # ------------------------------------------------------------------
+    # ---------------
+    # 上下文管理相关
+    # 现在……到底要不要将它做成真正的图式上下文状态机？
+    # ---------------
 
     async def _maybe_run_context_selection(
         self,
-        task_msg: str,
+        user_input_context: LLMContext,
         turn: int,
         verbose_info: bool = False,
         temperature: float = 0.4,
     ) -> Optional[List[int]]:
         """Ask the model to reseat the active context window for one turn.
-        TODO: 这里需要加一个新的东西：将当前有效的情况放在记忆里。
+        TODO: 该类方法本身的方法论需要权衡，如果要用 llm 作为选择器，可能会太重。
 
         Notes:
             This hook runs at the beginning of selected turns. It first retrieves
@@ -515,6 +461,7 @@ class Agent:
             The applied active context ids when reselection succeeds, otherwise
             `None` when reselection is skipped or rejected.
         """
+        # 如果当前模式不是 graph，或当前的 llm_context_handler 不支持检索，则不返回。
         if self.context_mode != "graph" or not self.llm_context_handler.retrieval_enabled:
             return None
 
@@ -524,8 +471,9 @@ class Agent:
 
         # 寻找满足用户当前输入的备选 id
         candidate_ids = await self._retrieve_context_candidates_for_task(
-            task_msg=task_msg,
+            user_input_context=user_input_context,
             temperature=temperature,
+            recent_tail_len=self.round_compress_keep_tail   # TODO: 这里有争议，先标记上 todo 再说
         )
         if verbose_info:
             print(f"[Agent] Context selection found {len(candidate_ids)} candidates: {candidate_ids}")
@@ -551,7 +499,7 @@ class Agent:
 You are selecting the best active context window for the current agent round.
 
 Current task:
-{task_msg}
+{user_input_context.content}
 
 Available context entries:
 {context_listing}
@@ -628,33 +576,45 @@ Rules:
 
     async def _build_main_context_bundle(
         self,
-        task_msg: str,
+        user_input_context: LLMContext,
         turn: int,
         temperature: float,
         verbose_info: bool = False,
     ) -> ContextBundle:
-        """Build the explicit context bundle for one main LLM turn."""
+        """
+        Build the explicit context bundle for one main LLM turn.
+        
+        Args:
+            task_msg: 任务。（一般来自用户输入）
+            turn: 当前轮数。
+            temperature: 模型温度。
+            verbose_info: 是否输出详细推理信息。
+        """
         active_ids = self.llm_context_handler.get_active_ids_window()
         recent_tail_ids = stable_unique_ids(active_ids[-2:])
         selected_ids: List[int] = []
 
+        # 选择 id
         maybe_selected_ids = await self._maybe_run_context_selection(
-            task_msg=task_msg,
+            user_input_context=user_input_context,
             turn=turn,
             verbose_info=verbose_info,
             temperature=temperature,
         )
         if maybe_selected_ids:
             selected_ids = stable_unique_ids(maybe_selected_ids)
-
+        
+        # 返回上下文包体。
         return ContextBundle(
-            state_text=self._render_agent_state(),
+            state_text=str(self.agent_state),   # 重载 str 方法实现
             selected_ids=selected_ids,
             recent_ids=recent_tail_ids,
         )
 
     def _candidate_closure_ids(self, candidate_ids: List[int]) -> List[int]:
-        """Return candidates plus descendants of compacted candidates in stable order."""
+        """
+        Return candidates plus descendants of compacted candidates in stable order.
+        """
         closure_ids: List[int] = []
         for context_id in candidate_ids:
             if context_id not in self.llm_context_handler.context_timeline_dict:
@@ -667,7 +627,7 @@ Rules:
 
     async def _retrieve_context_candidates_for_task(
         self,
-        task_msg: str,
+        user_input_context: LLMContext,
         temperature: float = 0.4,
         recent_tail_len: int = 4,
     ) -> List[int]:
@@ -690,23 +650,14 @@ Rules:
         active_ids: List[int] = self.llm_context_handler.get_active_ids_window()
         recent_tail_ids = active_ids[-recent_tail_len:]
 
-        # 将用户的输入转为上下文，然后标签化
-        task_tags: List[str] = []
-        if self.llm_context_handler.enable_tagging:
-            # 创建用户的上下文，并自动标签化
-            # TODO: 这个代码快好像可以直接缓存以避免重新计算……
-            probe_context = LLMContext(role="user", content=task_msg)
-            probe_context = await self.llm_context_handler.tagify_context(
-                probe_context,
-                temperature=temperature,
-            )
-            task_tags = probe_context.tags or []
+        # 将用户输入转为上下文标签；优先使用 round 开始时缓存好的结果。
+        task_tags = await self._get_round_task_tags(user_input_context, temperature=temperature)
 
         # 寻找同时满足输入标签和输入摘要的索引。
         intersected_hits: Optional[List[LLMInfo]] = None
         if task_tags:
             intersected_hits = await self.llm_context_handler.find_context_by_summary_and_tags(
-                summary_query=task_msg,
+                summary_query=user_input_context.content,
                 tags=task_tags,
                 blur_summary=True,
                 blur_tags=True,
@@ -722,7 +673,7 @@ Rules:
             )
         # 摘要
         summary_hits: Optional[List[LLMInfo]] = await self.llm_context_handler.find_context_by_summary(
-            summary_query=task_msg,
+            summary_query=user_input_context.content,
             blur=True,
             include_raw=False,
             include_compacted=True,
@@ -749,6 +700,37 @@ Rules:
         # 然后添加最近几轮的上下文
         candidate_ids.extend(recent_tail_ids)
         return stable_unique_ids(candidate_ids)
+
+    async def _cache_round_task_tags(
+        self,
+        user_input_context: LLMContext,
+        temperature: float = 0.4,
+    ) -> List[str]:
+        """Cache the current round's task tags before context selection begins."""
+        if self.context_mode != "graph" or not self.llm_context_handler.enable_tagging:
+            return []
+
+        probe_context = await self.llm_context_handler.tagify_context(
+            user_input_context,
+            temperature=temperature,
+        )
+        return probe_context.tags or []
+
+    async def _get_round_task_tags(
+        self,
+        user_input_context: LLMContext,
+        temperature: float = 0.4,
+    ) -> List[str]:
+        """
+        Return the cached task tags for the current round, computing them on demand if needed.
+        TODO: 这个好像真可以用。
+        """
+        if self._round_task_tags is None:
+            self._round_task_tags = await self._cache_round_task_tags(
+                user_input_context=user_input_context,
+                temperature=temperature,
+            )
+        return self._round_task_tags
 
 
     def _parse_selection_timelines(self, content: str) -> List[int]:
@@ -852,7 +834,7 @@ Rules:
         verbose_info: bool = False,
     ) -> bool:
         """
-        对于一些长度较长的东西，将其压缩并摘要。
+        检查上下文信息，对于长度超标的上下文信息，进行压缩。
 
         Args:
             context: 目标上下文信息。
@@ -945,30 +927,11 @@ Rules:
         
         return history_msg
 
-    def _render_agent_state(self) -> str:
-        """Render the agent state as pinned context for the next main call."""
-        state = self.agent_state
-        sections: List[str] = ["[Agent State]"]
-        sections.append(f"Task: {state.task or '(unset)'}")
-        sections.append(f"Phase: {state.phase}")
 
-        def add_list(label: str, values: List[str]) -> None:
-            if values:
-                sections.append(f"{label}:")
-                sections.extend(f"- {value}" for value in values[-12:])
-
-        add_list("Facts", state.facts)
-        add_list("Hypotheses", state.hypotheses)
-        add_list("Failed actions", state.failed_actions)
-        add_list("Do not repeat", state.do_not_repeat)
-        add_list("Next actions", state.next_actions)
-        if state.artifacts:
-            sections.append(f"Artifacts: {json.dumps(state.artifacts, ensure_ascii=False)}")
-        if state.credentials:
-            sections.append(f"Credentials: {json.dumps(state.credentials, ensure_ascii=False)}")
-        if state.known_routes:
-            sections.append(f"Known routes: {json.dumps(state.known_routes, ensure_ascii=False)}")
-        return "\n".join(sections)
+    # ---------------------------
+    # 状态机相关
+    # 本段函数开始，将是 agent 状态机相关的处理器。
+    # ---------------------------
 
     def _record_tool_round_in_state(
         self,
@@ -997,64 +960,167 @@ Rules:
         message: str,
         tool_calls: List[LLMToolCall],
     ) -> None:
-        """Record assistant-visible progress into the persistent Agent state."""
-        text = str(message or "").strip()
-        if not text:
-            if tool_calls:
-                planned_tools = ", ".join(tool.name for tool in tool_calls)
-                self._append_agent_state_item("next_actions", f"Call tools: {planned_tools}", limit=12)
-            return
+        """
+        Record structured assistant state updates into the persistent Agent state.
 
-        lower_text = text.lower()
+        This method intentionally avoids natural-language chunking. It only
+        consumes a structured JSON payload when the assistant emits one, then
+        merges the payload into the existing AgentState schema.
+        """
+        text = str(message or "").strip()
+        parsed_update = self._parse_agent_state_update(text) if text else None
+        if parsed_update:
+            self._apply_agent_state_update(parsed_update)
+
         if tool_calls:
             planned_tools = ", ".join(tool.name for tool in tool_calls)
             self._append_agent_state_item("next_actions", f"Call tools: {planned_tools}", limit=12)
-        elif any(marker in lower_text for marker in ("flag{", "ctf{", "elfctf{", "final", "answer", "结论", "答案")):
-            self.agent_state.phase = "answering"
-        else:
-            self.agent_state.phase = "reasoning"
+            if not parsed_update or "phase" not in parsed_update:
+                self.agent_state.phase = "reasoning"
+        elif text:
+            if not parsed_update or "phase" not in parsed_update:
+                self.agent_state.phase = "answering"
+        elif not parsed_update:
+            # No structured update and no assistant text: keep the phase as-is.
+            return
 
-        extracted_facts = self._extract_state_lines(text, prefixes=("fact", "事实", "observed", "发现", "已知"))
-        for fact in extracted_facts:
-            self._append_agent_state_item("facts", fact, limit=24)
-        for hypothesis in self._extract_state_lines(text, prefixes=("hypothesis", "假设", "maybe", "可能", "suspect")):
-            self._append_agent_state_item("hypotheses", hypothesis, limit=12)
-        for action in self._extract_state_lines(text, prefixes=("next", "todo", "下一步", "计划", "需要")):
-            self._append_agent_state_item("next_actions", action, limit=12)
+    def _parse_agent_state_update(self, text: str) -> Optional[Dict[str, Any]]:
+        """Parse a structured AgentState update from assistant output."""
+        if not text.strip():
+            return None
 
-        if not extracted_facts:
-            summary = self._compact_state_sentence(text)
-            if summary:
-                self._append_agent_state_item("facts", summary, limit=24)
+        payload = self._load_json_object(text)
+        if payload is None:
+            return None
 
-    def _extract_state_lines(self, text: str, *, prefixes: Tuple[str, ...]) -> List[str]:
-        """Extract structured state bullets from assistant text."""
-        extracted: List[str] = []
-        for raw_line in text.splitlines():
-            line = raw_line.strip().lstrip("-*0123456789.、) ").strip()
-            if not line:
+        if not isinstance(payload, dict):
+            return None
+
+        update = payload.get("state_updates")
+        if isinstance(update, dict):
+            payload = update
+
+        normalized: Dict[str, Any] = {}
+        for key in (
+            "task",
+            "phase",
+            "facts",
+            "key_facts",
+            "hypotheses",
+            "artifacts",
+            "credentials",
+            "known_routes",
+            "failed_actions",
+            "failed_attempts",
+            "do_not_repeat",
+            "next_actions",
+        ):
+            if key in payload:
+                normalized[key] = payload[key]
+
+        return normalized or None
+
+    def _load_json_object(self, text: str) -> Optional[object]:
+        """Load a JSON object from raw text or fenced JSON content."""
+        candidate_texts = [text.strip()]
+        fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        candidate_texts.extend(block.strip() for block in fenced_blocks if block.strip())
+
+        for candidate in candidate_texts:
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
                 continue
-            normalized = line.lower()
-            for prefix in prefixes:
-                if normalized.startswith(prefix.lower()):
-                    _, _, value = line.partition(":")
-                    if not value:
-                        _, _, value = line.partition("：")
-                    extracted.append((value or line).strip())
-                    break
-        return extracted
+            if isinstance(payload, dict):
+                return payload
+        return None
 
-    def _compact_state_sentence(self, text: str) -> str:
-        """Return a short fallback fact from free-form assistant text."""
-        normalized = " ".join(text.split())
-        if not normalized:
-            return ""
-        if len(normalized) > 240:
-            normalized = f"{normalized[:237]}..."
-        return normalized
+    def _apply_agent_state_update(self, update: Mapping[str, Any]) -> None:
+        """Merge a structured state update into the persistent AgentState."""
+        task = update.get("task")
+        if isinstance(task, str) and task.strip():
+            self.agent_state.task = task.strip()
 
-    def _append_agent_state_item(self, field_name: str, value: str, *, limit: int) -> None:
-        """Append a unique non-empty string to an AgentState list field."""
+        phase = update.get("phase")
+        if isinstance(phase, str) and phase.strip():
+            self.agent_state.phase = phase.strip()
+
+        list_field_map: Dict[str, str] = {
+            "facts": "facts",
+            "key_facts": "facts",
+            "hypotheses": "hypotheses",
+            "failed_actions": "failed_actions",
+            "do_not_repeat": "do_not_repeat",
+            "next_actions": "next_actions",
+        }
+        for source_field, target_field in list_field_map.items():
+            values = update.get(source_field)
+            if isinstance(values, list):
+                for value in values:
+                    if isinstance(value, str):
+                        self._append_agent_state_item(target_field, value, limit=24 if target_field == "facts" else 12)
+                    elif isinstance(value, dict):
+                        self._append_agent_state_item(
+                            target_field,
+                            json.dumps(value, ensure_ascii=False, sort_keys=True),
+                            limit=24 if target_field == "facts" else 12,
+                        )
+
+        failed_attempts = update.get("failed_attempts")
+        if isinstance(failed_attempts, list):
+            for item in failed_attempts:
+                if not isinstance(item, dict):
+                    continue
+                action = str(item.get("action", "")).strip()
+                reason = str(item.get("reason", "")).strip()
+                evidence = str(item.get("evidence", "")).strip()
+                summary_parts = [part for part in (action, reason, evidence) if part]
+                if summary_parts:
+                    failed_action = " | ".join(summary_parts)
+                    self._append_agent_state_item("failed_actions", failed_action, limit=12)
+                    self._append_agent_state_item("do_not_repeat", failed_action, limit=12)
+
+        artifacts = update.get("artifacts")
+        if isinstance(artifacts, dict):
+            for key, value in artifacts.items():
+                if not isinstance(key, str):
+                    continue
+                self.agent_state.artifacts[key] = str(value)
+        elif isinstance(artifacts, list):
+            for index, item in enumerate(artifacts, start=1):
+                if not isinstance(item, dict):
+                    continue
+                artifact_key = str(item.get("path") or item.get("name") or item.get("id") or f"artifact_{index}")
+                self.agent_state.artifacts[artifact_key] = json.dumps(item, ensure_ascii=False, sort_keys=True)
+
+        credentials = update.get("credentials")
+        if isinstance(credentials, list):
+            for item in credentials:
+                if isinstance(item, dict):
+                    normalized = {str(key): str(value) for key, value in item.items()}
+                    if normalized not in self.agent_state.credentials:
+                        self.agent_state.credentials.append(normalized)
+
+        known_routes = update.get("known_routes")
+        if isinstance(known_routes, dict):
+            for key, value in known_routes.items():
+                if isinstance(key, str):
+                    self.agent_state.known_routes[key] = str(value)
+
+    def _append_agent_state_item(
+        self, 
+        field_name: str, 
+        value: str, 
+        *, 
+        limit: int
+    ) -> None:
+        """
+        Append a unique non-empty string to an AgentState list field.
+
+        来了来了，codex 又开始霍霍 agent 状态了。
+        TODO: 现在需要紧急明确 agent state schema 的内容，包括从提示词方面。
+        TODO for TODO: 删掉所有这个函数。
+        """
         normalized = " ".join(str(value or "").split())
         if not normalized:
             return
@@ -1063,13 +1129,61 @@ Rules:
             return
         target.append(normalized)
         setattr(self.agent_state, field_name, target[-limit:])
+
+    def _render_agent_state(self):
+        """对一个旧接口的兼容：将 agent_state 转换成字符串。"""
+        return str(self.agent_state)
     
     # ====================================================================
     # Tool handlers
     # 这些函数会处理工具相关事务。
     # ====================================================================
 
-    async def _execute_single_tool(self, tool_call: Dict[str, Any], verbose: bool) -> str:
+    async def _handle_tool_calls(
+        self,
+        tool_calls: List[LLMToolCall],
+        verbose_info: bool = False,
+        max_concurrent_calls: int = 1,
+    ) -> List[str]:
+        """
+        同时执行多个工具，并返回工具调用结果。
+
+        Args:
+            tool_calls: 工具调用列表。
+            verbose_info: 是否打印信息。
+            max_concurrent_calls: 最大并发调用数。TODO: 未来补充本参数的用途。
+
+        Returns:
+            如果没有工具调用，则返回一个空列表。
+        """
+        executing_tools: List[CoroutineType] = []
+        executing_result: List[str] = []
+        if verbose_info:            
+            print(f"[Agent] Parsed tool calls: {len(tool_calls)}")
+            if tool_calls:
+                for idx, tool in enumerate(tool_calls, start=1):
+                    print(f"[Agent] Tool call {idx}: {tool.to_execution_format()}")
+
+        if len(tool_calls) > 0:
+            # 工具可并行。TODO: 工具执行最大并发量限制未能生效。（后面再做，现在先改上下文）
+            for tool in tool_calls:
+                executing_tools.append(
+                    self._execute_single_tool(
+                        tool_call=tool,
+                        verbose=verbose_info
+                    )
+                )
+            # 然后等待
+            executing_result = await asyncio.gather(*executing_tools)
+            self._record_tool_round_in_state(tool_calls, executing_result)
+        return executing_result
+
+
+    async def _execute_single_tool(
+        self, 
+        tool_call: LLMToolCall, 
+        verbose: bool
+    ) -> str:
         """
         执行一个工具，工具执行结果将异步返回。
 
@@ -1077,8 +1191,10 @@ Rules:
             tool_call: 一个 tool call 方法。
             verbose: 显示 tool call 信息。
         """
-        tool_name: str = str(tool_call["tool"])
-        args: ToolArgs = dict(tool_call.get("arguments") or {})
+
+        # 解包工具调用信息
+        tool_name: str = tool_call.name
+        args: ToolArgs = tool_call.arguments or {}
 
         if verbose:
             print(f"[Agent] Calling tool {tool_name} with param: {json.dumps(args, ensure_ascii=False)}")
@@ -1093,124 +1209,3 @@ Rules:
             print(f"[Agent] Result of tool {tool_name} as: \n{str(result)}")
 
         return str(result)
-
-    def _coerce_tool_arguments(self, value: Any) -> Dict[str, Any]:
-        """
-        Coerce tool arguments from dict/string/None into a dict.
-
-        Args:
-            value: tool call arguments.
-        """
-        if isinstance(value, dict):
-            return dict(value)
-        if isinstance(value, str) and value.strip():
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return {}
-            return parsed if isinstance(parsed, dict) else {}
-        return {}
-
-    def _parse_custom_json_tool_calls(self, content: str) -> List[Dict[str, Any]]:
-        """Parse tool calls embedded in a text response."""
-        if not content:
-            return []
-
-        candidates: List[str] = []
-        fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)```", content, flags=re.IGNORECASE | re.DOTALL)
-        candidates.extend(block.strip() for block in fenced_blocks if block.strip())
-
-        xml_blocks = re.findall(r"<tool_call>\s*(.*?)\s*</tool_call>", content, flags=re.IGNORECASE | re.DOTALL)
-        candidates.extend(block.strip() for block in xml_blocks if block.strip())
-
-        xml_list_blocks = re.findall(r"<tool_calls>\s*(.*?)\s*</tool_calls>", content, flags=re.IGNORECASE | re.DOTALL)
-        candidates.extend(block.strip() for block in xml_list_blocks if block.strip())
-
-        stripped = content.strip()
-        if stripped:
-            candidates.append(stripped)
-
-        parsed_calls: List[Dict[str, Any]] = []
-        for candidate in candidates:
-            parsed = self._try_parse_tool_payload(candidate)
-            if parsed:
-                parsed_calls.extend(parsed)
-
-        for match in re.finditer(r"\{.*?\}", content, flags=re.DOTALL):
-            parsed = self._try_parse_tool_payload(match.group(0))
-            if parsed:
-                parsed_calls.extend(parsed)
-
-        deduped: List[Dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for item in parsed_calls:
-            tool_name = str(item.get("tool", "")).strip()
-            if not tool_name:
-                continue
-            arguments = item.get("arguments") or {}
-            signature = (tool_name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
-            if signature in seen:
-                continue
-            seen.add(signature)
-            deduped.append({"tool": tool_name, "arguments": arguments})
-
-        return deduped
-
-    def _try_parse_tool_payload(self, text: str) -> List[Dict[str, Any]]:
-        """Parse a JSON object or array into tool call dicts."""
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return []
-        return self._normalize_tool_payload(payload)
-
-    def _normalize_tool_payload(self, payload: Any) -> List[Dict[str, Any]]:
-        """Normalize a parsed JSON payload into tool call dicts."""
-        if isinstance(payload, dict):
-            if "tool_calls" in payload and isinstance(payload["tool_calls"], list):
-                normalized: List[Dict[str, Any]] = []
-                for entry in payload["tool_calls"]:
-                    normalized.extend(self._normalize_tool_payload(entry))
-                return normalized
-
-            tool_name = payload.get("tool", payload.get("name"))
-            if tool_name:
-                raw_arguments = payload.get("arguments", payload.get("input", {}))
-                return [
-                    {
-                        "tool": str(tool_name),
-                        "arguments": self._coerce_tool_arguments(raw_arguments),
-                    }
-                ]
-            return []
-
-        if isinstance(payload, list):
-            normalized: List[Dict[str, Any]] = []
-            for entry in payload:
-                normalized.extend(self._normalize_tool_payload(entry))
-            return normalized
-
-        return []
-
-    def _resolve_tool_calls(self, response: LLMOutput) -> List[LLMToolCall]:
-        """Resolve tool calls from native outputs or custom JSON text."""
-        if response.tool_calls:
-            return response.tool_calls
-
-        if self.provider not in {"custom_json", "openvino"}:
-            return []
-
-        normalized = normalize_tool_calls(
-            response,
-            source=ToolCallSource.CUSTOM_JSON,
-            fallback_parser=self._parse_custom_json_tool_calls,
-        )
-        return [
-            LLMToolCall(
-                name=item.tool_name,
-                arguments=item.arguments,
-                call_id=item.call_id,
-                source=item.source.value,
-            )
-            for item in normalized
-        ]
