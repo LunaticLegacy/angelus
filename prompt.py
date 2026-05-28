@@ -14,7 +14,8 @@ def _clean(text: str) -> str:
 TAGIFY_CONTEXT_PROMPT = _clean(
     """
     You should generate machine-readable tags for one Agent context entry.
-    Return only 3 to 5 lowercase snake_case tags separated by commas.
+    You are recommended to give back 3 to 8 lowercase snake_case tags separated by commas if necessary. 
+    If it's not needed, you can give back tags less than 3.
     Do not explain. Do not ask for more input. Do not use Markdown or backticks.
     Example: context_lookup, tool_call, empty_history
     """

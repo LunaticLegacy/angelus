@@ -119,11 +119,11 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
         bound_agent = _require_agent(agent)
         context_ids = _parse_context_ids(kwargs.get("ids"))
 
-        # Expand selected compacted ids back into summary-plus-raw active ids so
-        # later rounds see both the archive summary and the detailed source text.
+        # Preserve the selected ids as-is so compacted summaries stay compact
+        # unless the model explicitly chose raw provenance ids.
         selected_ids = bound_agent.context_manager.expand_active_selection_ids(
             context_ids,
-            expand_compacted_sources=True,
+            expand_compacted_sources=False,
             keep_compacted_entries=True,
         )
         if selected_ids:
@@ -213,7 +213,7 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
         ],
     }
 
-    return [
+    tools = [
         Tool(
             name="context_list",
             description="List available conversation context entries with ids, roles, tags, and previews.",
@@ -265,18 +265,6 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
             handler=_context_compress,
         ),
         Tool(
-            name="context_select",
-            description="Select the active conversation context entries by id for later Agent rounds.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "ids": ids_schema,
-                },
-                "additionalProperties": False,
-            },
-            handler=_context_select,
-        ),
-        Tool(
             name="context_status",
             description="Show the current active context ids, archived compacted ids, and recent resource index coverage.",
             parameters={
@@ -326,6 +314,25 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
             handler=_memory_clear,
         ),
     ]
+
+    if getattr(agent, "context_mode", "linear") == "graph":
+        tools.insert(
+            3,
+            Tool(
+                name="context_select",
+                description="Select the active conversation context entries by id for later Agent rounds.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "ids": ids_schema,
+                    },
+                    "additionalProperties": False,
+                },
+                handler=_context_select,
+            ),
+        )
+
+    return tools
 
 
 # ============================================================================

@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from typing import List, Dict, Literal, Optional, Tuple, Union, Set, Any, Callable, overload, override
 
@@ -251,7 +252,7 @@ class Tool:
 
         要求所有工具均使用异步模式。
         """
-        if asyncio.iscoroutinefunction(self.handler):
+        if inspect.iscoroutinefunction(self.handler):
             return await self.handler(**kwargs)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: self.handler(**kwargs))

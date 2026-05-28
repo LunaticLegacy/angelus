@@ -5,16 +5,18 @@ import json
 import re
 import time
 from types import CoroutineType
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Tuple, Set, Literal
 from dataclasses import dataclass, field
 
 from .llm_fetcher import LLMFetcher
 from .llm_context import (
     ContextCompressionProfile,
+    ContextMode,
     LLMContext,
     LLMContextCompacted,
     LLMContextHandler,
     LLMContextInfo,
+    stable_unique_ids,
 )
 from .tool_call_adapter import ToolCallSource, normalize_tool_calls
 from .tool import Tool, ToolRegistry
@@ -37,6 +39,68 @@ from .llm_types import (
 
 from .streamers import Streamer, ThinkColorStreamer
 
+
+@dataclass
+class AgentState:
+    """
+    Agent 状态，语义：
+
+    Attributes:
+        task: 任务描述
+        phase: 任务阶段
+        facts: 事实列表
+        hypotheses: 假设列表
+        artifacts: 工件列表
+        credentials: 凭证列表
+        known_routes: 已知路由列表
+        failed_actions: 失败动作列表，储存现在失败的动作。
+        do_not_repeat: 不重复列表，让 agent 不再重复执行。
+        next_actions: 下一步动作列表
+    """
+    task: str = ""
+    phase: str = "initial"
+    facts: list[str] = field(default_factory=list)
+    hypotheses: list[str] = field(default_factory=list)
+    artifacts: dict[str, str] = field(default_factory=dict)
+    credentials: list[dict[str, str]] = field(default_factory=list)
+    known_routes: dict[str, str] = field(default_factory=dict)
+    failed_actions: list[str] = field(default_factory=list)
+    do_not_repeat: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ContextBundle:
+    """
+    Attributes:
+        state_text: 状态文本，用于……做什么？
+    """
+    state_text: str = ""
+    pinned_ids: list[int] = field(default_factory=list)
+    selected_ids: list[int] = field(default_factory=list)
+    recent_ids: list[int] = field(default_factory=list)
+
+    def ordered_ids(self) -> list[int]:
+        return stable_unique_ids(self.pinned_ids + self.selected_ids + self.recent_ids)
+
+
+ContextView = Literal["raw", "compacted"]
+
+
+@dataclass
+class ContextSelectionView:
+    """
+    用于选择上下文的信息。
+
+    Attributes:
+        id:
+        view: 标识原始信息或上下文信息用。
+    """
+    id: int
+    view: ContextView = "raw"
+    reason: Optional[str] = None
+
+
 class Agent:
     def __init__(
         self,
@@ -53,6 +117,7 @@ class Agent:
         context_selection_min_active_chars: int = 16384,
         tool_result_summary_threshold_chars: int = 8192,
         compression_profile: Optional[ContextCompressionProfile] = None,
+        context_mode: ContextMode = "linear",
     ):
         """
         初始化 Agent，绑定 LLM 处理器、系统提示词和可选工具列表。
@@ -65,7 +130,7 @@ class Agent:
             max_concurrent_tools: Max parallel tool executions
             fallback_order: Backend fallback order.（这个东西可以删掉，和下面的provider一起）
             provider: LLM provider for tool calling. 
-                     Options: "openai", "anthropic", "custom_json"
+                     Options: "openai", "anthropic", "custom_json" （可以直接删掉，和 llm_handler 的功能重复）
             round_compress_threshold: Auto-compress temporary in-round messages when
                                       their count reaches this value. None or not set will disables it.
 
@@ -78,21 +143,14 @@ class Agent:
                                                  when tool results exceed this many chars.
             compression_profile: Default context-compression profile shared by
                                  automatic archiving and explicit compression calls.
+            context_mode: `linear` 将使用传统线性上下文机制， `graph` 模式下启用实验性上下文机制。
         """
+
+        # 先初始化所有输入参数。
         self._base_system_prompt: str = system_prompt   # 系统提示词。
         self.llm_handler = llm_handler  # 用于处理 llm api 通信相关的东西。
         self.fallback_order = fallback_order
         self.compression_profile = compression_profile
-
-        # 上下文管理器。
-        self.llm_context_handler = LLMContextHandler(
-            llm_handler=self.llm_handler,
-            fallback_order=self.fallback_order,
-            enable_memory=True,     # 启用记忆机制
-            enable_tagging=True,    # 启用标签机制
-            compression_profile=self.compression_profile,
-        )
-        self.tool_registry = ToolRegistry() # 注册工具。
         self.max_concurrent_tools = max_concurrent_tools    # 本 agent 最大可并发多少工具。
         self.provider = provider  # ← 保存 provider 设置
         self.round_compress_threshold = round_compress_threshold
@@ -101,6 +159,20 @@ class Agent:
         self.context_selection_min_active_items = context_selection_min_active_items
         self.context_selection_min_active_chars = context_selection_min_active_chars
         self.tool_result_summary_threshold_chars = tool_result_summary_threshold_chars
+        self.context_mode: ContextMode = context_mode if context_mode == "graph" else "linear"
+
+        self.tool_registry = ToolRegistry() # 注册工具。
+        self.agent_state = AgentState()     # 当前 agent 状态
+
+        # 上下文管理器。
+        self.llm_context_handler = LLMContextHandler(
+            llm_handler=self.llm_handler,
+            fallback_order=self.fallback_order,
+            enable_memory=True,     # 启用记忆机制
+            enable_tagging=self.context_mode == "graph",    # 图式上下文才启用检索标签
+            compression_profile=self.compression_profile,
+            context_mode=self.context_mode,
+        )
 
         # 工具调用历史
         self.tool_call_history: List[List[LLMToolCall]] = []
@@ -122,7 +194,6 @@ class Agent:
     @property
     def system_prompt(self) -> str:
         """
-        Dynamic system prompt enriched with tool descriptions.
         该函数会拼装系统提示词，和工具提示词。
         """
         prompt: str = self._base_system_prompt
@@ -209,7 +280,7 @@ class Agent:
         if save_context:
             tool_call_info = [str(tool_call.to_execution_format()) for tool_call in resolved_tool_calls]
             context = LLMContext(
-                role=output.role or "assistant",
+                role=output.role or "assistant",    # pyright: ignore
                 content=output.text,
                 tool_call_info=tool_call_info,
             )
@@ -258,6 +329,8 @@ class Agent:
 
         tool_schemas = self.tool_registry.get_schemas_for_provider(self.provider)   # 拉取工具调用方法
         final_content: str = ""
+        if not self.agent_state.task:
+            self.agent_state.task = msg
 
         # 在整个 agent 执行轮开始前，加入用户当前输入。
         await self.context_manager.add_context(
@@ -284,15 +357,24 @@ class Agent:
             # 如果我要采用线性上下文，我只需要增量。
             # 如果我要让 agent 自己控制上下文，我要怎么做？？
 
-            # 在每一轮开始时，决定本轮使用的上下文……？
-            await self._maybe_run_context_selection(
-                task_msg=msg,
-                turn=turn,
-                verbose_info=verbose_info,
-                temperature=temperature
-            )
+            if self.context_mode == "graph":
+                # 在图式上下文模式下，为本次主模型调用构造显式上下文包。
+                context_bundle = await self._build_main_context_bundle(
+                    task_msg=msg,
+                    turn=turn,
+                    temperature=temperature,
+                    verbose_info=verbose_info,
+                )
 
-            prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages()
+                if verbose_info:
+                    print(f"[Agent] Current active context IDs before agent round: {self.llm_context_handler.active_ids}")
+                    print(f"[Agent] Main context bundle IDs: {context_bundle.ordered_ids()}")
+
+                prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages(context_bundle)
+            else:
+                if verbose_info:
+                    print(f"[Agent] Current active linear context IDs before agent round: {self.llm_context_handler.active_ids}")
+                prev_messages = await self._build_prev_messages()
 
             if verbose_info:
                 print(f"\n[Agent] ====== Executing Turn: {turn} ======")
@@ -337,6 +419,9 @@ class Agent:
                     )
                 # 然后等待
                 executing_result = await asyncio.gather(*executing_tools)
+                self._record_tool_round_in_state(tool_calls, executing_result)
+
+            self._record_assistant_round_in_state(message, tool_calls)
 
             if _should_stop():
                 final_content = final_content or response.text
@@ -363,15 +448,18 @@ class Agent:
 
             # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
             # 先打标签，再加进来。
-            now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
+            if (self.context_mode == "graph"):
+                now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
+                await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
+                    context=now_assistant_context,
+                    verbose_info=verbose_info,
+                )
+            
+            # 将信息加入当前上下文。
             await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
-            await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
-                context=now_assistant_context,
-                verbose_info=verbose_info,
-            )
 
             if verbose_info:
-                print(f"[Agent] Current active context IDs: {self.llm_context_handler.active_ids}")
+                print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
                 print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
 
             # 检测上下文长度，并压缩之。
@@ -408,7 +496,7 @@ class Agent:
         turn: int,
         verbose_info: bool = False,
         temperature: float = 0.4,
-    ) -> None:
+    ) -> Optional[List[int]]:
         """Ask the model to reseat the active context window for one turn.
         TODO: 这里需要加一个新的东西：将当前有效的情况放在记忆里。
 
@@ -427,6 +515,9 @@ class Agent:
             The applied active context ids when reselection succeeds, otherwise
             `None` when reselection is skipped or rejected.
         """
+        if self.context_mode != "graph" or not self.llm_context_handler.retrieval_enabled:
+            return None
+
         # 决定：是否执行上下文选择？
         if not self._should_trigger_context_selection(turn):
             return None
@@ -436,14 +527,19 @@ class Agent:
             task_msg=task_msg,
             temperature=temperature,
         )
-        print(f"[Agent] Context selection found {len(candidate_ids)} candidates: {candidate_ids}")
+        if verbose_info:
+            print(f"[Agent] Context selection found {len(candidate_ids)} candidates: {candidate_ids}")
         if not candidate_ids:
             if verbose_info:
                 print("[Agent] Context selection found no retrieval candidates; keeping current active window.")
             return None
 
         # 如果找不到目标上下文的 id
-        context_listing = await self.llm_context_handler.get_now_context_as_str(candidate_ids)
+        candidate_listing_ids = self._candidate_closure_ids(candidate_ids)
+        context_listing = await self.llm_context_handler.get_now_context_as_str(
+            candidate_listing_ids,
+            preserve_order=True,
+        )
         if not context_listing.strip():
             if verbose_info:
                 print("[Agent] Candidate context listing is empty; keeping current active window.")
@@ -461,12 +557,18 @@ Available context entries:
 {context_listing}
 
 Return only strict JSON in this format:
-{{"ids": [1, 2, 3]}}
+{{"items": [
+  {{"id": 12, "view": "raw", "reason": "need exact tool result"}},
+  {{"id": 18, "view": "compacted", "reason": "summary is enough"}}
+]}}
 
 Rules:
 - Select only the ids needed for the current task.
-- The selection SHOULD contain the previous essential data for the current task. Like: codes, logs, etc.
-- You may select raw entries, compacted entries, or both.
+- Prefer compacted entries when the summary is sufficient.
+- Select raw entries only when you need the original details that are not fully preserved in a compacted summary.
+- You may choose descendants of listed compacted entries when exact original details are needed.
+- You may select raw entries, compacted entries, or both, but avoid selecting both unless you truly need both representations.
+- Backward-compatible {{"ids": [1, 2, 3]}} is accepted, but prefer the items format.
 - Do not explain.
 """.strip()
 
@@ -484,50 +586,84 @@ Rules:
         )
 
         # 解析来自 agent 的选择结果。
-        selected_ids = self._parse_selection_timelines(selection_output.text)
+        selected_views = self._parse_selection_views(selection_output.text)
+        selected_ids = [item.id for item in selected_views]
         if verbose_info:
             print(f"[Agent] Original selection output as: {selection_output.text}")
-            print(f"[Agent] Selection output as: {selected_ids}")
+            print(f"[Agent] Selection output as: {selected_views}")
 
         if not selected_ids:
             if verbose_info:
                 print("[Agent] Context selection returned no valid ids; keeping current active window.")
             return None
 
-        # 过滤掉所有不在备选 id 范围内的 id
-        # # 不过滤了，直接试试看
-        # valid_candidate_ids = set(candidate_ids)
-        # filtered_ids = [
-        #     context_id
-        #     for context_id in selected_ids
-        #     if context_id in valid_candidate_ids
-        # ]
-        # if not filtered_ids:
-        #     if verbose_info:
-        #         print("[Agent] Context selection returned ids outside candidates; keeping current active window.")
-        #     return None
-
-        # 然后展开这些 id
-        expanded_selected_ids = self.llm_context_handler.expand_active_selection_ids(
-            selected_ids,
-            expand_compacted_sources=True,
-            keep_compacted_entries=True,
-        )
-        if not expanded_selected_ids:
+        allowed_ids = set(candidate_listing_ids)
+        filtered_ids = [
+            context_id
+            for context_id in selected_ids
+            if context_id in allowed_ids
+        ]
+        if not filtered_ids:
             if verbose_info:
-                print("[Agent] Expanded active selection is empty; keeping current active window.")
+                print("[Agent] Context selection returned ids outside candidates; keeping current active window.")
             return None
 
-        # Preserve the newest active tail so the agent keeps immediate local
-        # continuity even when the selector picks an older history slice.
-        recent_tail_ids = self.llm_context_handler.get_active_ids_window()[-2:]
-        final_ids = sorted(set(expanded_selected_ids + recent_tail_ids)) 
+        # 归一化这些 id，但默认保留压缩条目本身，不强制展开成原文。
+        normalized_selected_ids = self.llm_context_handler.expand_active_selection_ids(
+            filtered_ids,
+            expand_compacted_sources=False,
+            keep_compacted_entries=True,
+        )
+        if not normalized_selected_ids:
+            if verbose_info:
+                print("[Agent] Normalized active selection is empty; keeping current active window.")
+            return None
 
-        # 设置激活的上下文 id
-        applied_ids = self.llm_context_handler.set_active_ids(final_ids)
+        applied_ids = self.llm_context_handler.set_active_ids(normalized_selected_ids)
 
         if verbose_info:
-            print(f"[Agent] Active context window updated to: {applied_ids}")
+            print(f"[Agent] Active context cache updated to selected ids: {applied_ids}")
+
+        return applied_ids
+
+    async def _build_main_context_bundle(
+        self,
+        task_msg: str,
+        turn: int,
+        temperature: float,
+        verbose_info: bool = False,
+    ) -> ContextBundle:
+        """Build the explicit context bundle for one main LLM turn."""
+        active_ids = self.llm_context_handler.get_active_ids_window()
+        recent_tail_ids = stable_unique_ids(active_ids[-2:])
+        selected_ids: List[int] = []
+
+        maybe_selected_ids = await self._maybe_run_context_selection(
+            task_msg=task_msg,
+            turn=turn,
+            verbose_info=verbose_info,
+            temperature=temperature,
+        )
+        if maybe_selected_ids:
+            selected_ids = stable_unique_ids(maybe_selected_ids)
+
+        return ContextBundle(
+            state_text=self._render_agent_state(),
+            selected_ids=selected_ids,
+            recent_ids=recent_tail_ids,
+        )
+
+    def _candidate_closure_ids(self, candidate_ids: List[int]) -> List[int]:
+        """Return candidates plus descendants of compacted candidates in stable order."""
+        closure_ids: List[int] = []
+        for context_id in candidate_ids:
+            if context_id not in self.llm_context_handler.context_timeline_dict:
+                continue
+            closure_ids.append(context_id)
+            entry = self.llm_context_handler.context_timeline_dict[context_id]
+            if isinstance(entry, LLMContextCompacted):
+                closure_ids.extend(sorted(self.llm_context_handler.get_descendant_ids(context_id)))
+        return stable_unique_ids(closure_ids)
 
     async def _retrieve_context_candidates_for_task(
         self,
@@ -546,6 +682,9 @@ Rules:
             A sorted candidate id list containing any expanded retrieval hits and
             a recent active tail preserved for local continuity.
         """
+
+        if self.context_mode != "graph" or not self.llm_context_handler.retrieval_enabled:
+            return []
 
         # 选择最后若干轮的上下文表示当前进度
         active_ids: List[int] = self.llm_context_handler.get_active_ids_window()
@@ -589,27 +728,27 @@ Rules:
             include_compacted=True,
         )
 
-        # Expand compacted hits back into raw source timeline ids so summary
-        # matches can re-open the original detailed context for selection.
-        candidate_ids: Set[int] = set()
+        # Keep compacted hits compact by default; if the selector later needs
+        # raw provenance, it can explicitly choose those raw ids.
+        candidate_ids: List[int] = []
         if intersected_hits: # 如果找到交集内容
             intersect_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(intersected_hits)
             if intersect_id:
-                candidate_ids.update(intersect_id)
+                candidate_ids.extend(intersect_id)
 
         else:   # 没找到交集内容，则分别找
             if tag_hits:
                 tag_hit_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(tag_hits)
                 if tag_hit_id:
-                    candidate_ids.update(tag_hit_id)
+                    candidate_ids.extend(tag_hit_id)
             if summary_hits:
                 summary_hit_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(summary_hits)
                 if summary_hit_id:
-                    candidate_ids.update(summary_hit_id)
+                    candidate_ids.extend(summary_hit_id)
         
         # 然后添加最近几轮的上下文
-        candidate_ids.update(recent_tail_ids)
-        return sorted(candidate_ids)
+        candidate_ids.extend(recent_tail_ids)
+        return stable_unique_ids(candidate_ids)
 
 
     def _parse_selection_timelines(self, content: str) -> List[int]:
@@ -619,6 +758,10 @@ Rules:
         Args:
             content: 输入的 JSON 内容，该内容会直接来自上下文选择器。
         """
+        return [item.id for item in self._parse_selection_views(content)]
+
+    def _parse_selection_views(self, content: str) -> List[ContextSelectionView]:
+        """Extract selector choices from new `items` or legacy `ids` JSON."""
         if not content.strip():
             return []
 
@@ -630,11 +773,43 @@ Rules:
                 payload = json.loads(candidate)
             except json.JSONDecodeError:
                 continue
+
+            items = payload.get("items")
+            if isinstance(items, list):
+                parsed_items: List[ContextSelectionView] = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        context_id = int(item.get("id"))
+                    except (TypeError, ValueError):
+                        continue
+                    view_value = item.get("view", "raw")
+                    view: ContextView = "compacted" if view_value == "compacted" else "raw"
+                    reason = item.get("reason")
+                    parsed_items.append(
+                        ContextSelectionView(
+                            id=context_id,
+                            view=view,
+                            reason=str(reason) if reason is not None else None,
+                        )
+                    )
+                return parsed_items
+
             ids = payload.get("ids")
             if not isinstance(ids, list):
                 ids = payload.get("timelines")
             if isinstance(ids, list):
-                return [int(item) for item in ids]
+                parsed_ids: List[ContextSelectionView] = []
+                for item in ids:
+                    try:
+                        context_id = int(item)
+                    except (TypeError, ValueError):
+                        continue
+                    entry = self.llm_context_handler.context_timeline_dict.get(context_id)
+                    view: ContextView = "compacted" if isinstance(entry, LLMContextCompacted) else "raw"
+                    parsed_ids.append(ContextSelectionView(id=context_id, view=view))
+                return parsed_ids
         return []
 
     def _should_trigger_context_selection(self, turn: int) -> bool:
@@ -725,15 +900,41 @@ Rules:
 
         return await self.llm_context_handler.compress_context(target_ids)
 
-    async def _build_prev_messages(self) -> Optional[List[LLMInfo]]:
+    async def _build_prev_messages(
+        self,
+        bundle: Optional[ContextBundle] = None,
+    ) -> Optional[List[LLMInfo]]:
         """
         将历史内容导出，而非序列化，匹配 llmfetcher 的要求。
 
         Returns:
             上下文内容。如果没有上下文，则返回空白内容。
         """
-        if self.llm_context_handler.empty:
+        if self.llm_context_handler.empty and not (bundle and bundle.state_text.strip()):
             return None
+
+        if bundle is not None:
+            history_msg: List[LLMInfo] = []
+            if bundle.state_text.strip():
+                history_msg.append(
+                    LLMContext(
+                        role="user",
+                        timeline=0,
+                        content=bundle.state_text,
+                        tags=["agent_state"],
+                    )
+                )
+
+            ordered_ids = bundle.ordered_ids()
+            if ordered_ids:
+                context_info = await self.llm_context_handler.get_now_context(
+                    ordered_ids,
+                    preserve_order=True,
+                )
+                if context_info:
+                    history_msg.extend(context_info.items)
+
+            return history_msg or None
         
         # 这部分已经被 llm_context 实现。
         history_msg_raw: Optional[LLMContextInfo] = await self.llm_context_handler.get_now_active_context()
@@ -743,6 +944,125 @@ Rules:
             history_msg = history_msg_raw.items
         
         return history_msg
+
+    def _render_agent_state(self) -> str:
+        """Render the agent state as pinned context for the next main call."""
+        state = self.agent_state
+        sections: List[str] = ["[Agent State]"]
+        sections.append(f"Task: {state.task or '(unset)'}")
+        sections.append(f"Phase: {state.phase}")
+
+        def add_list(label: str, values: List[str]) -> None:
+            if values:
+                sections.append(f"{label}:")
+                sections.extend(f"- {value}" for value in values[-12:])
+
+        add_list("Facts", state.facts)
+        add_list("Hypotheses", state.hypotheses)
+        add_list("Failed actions", state.failed_actions)
+        add_list("Do not repeat", state.do_not_repeat)
+        add_list("Next actions", state.next_actions)
+        if state.artifacts:
+            sections.append(f"Artifacts: {json.dumps(state.artifacts, ensure_ascii=False)}")
+        if state.credentials:
+            sections.append(f"Credentials: {json.dumps(state.credentials, ensure_ascii=False)}")
+        if state.known_routes:
+            sections.append(f"Known routes: {json.dumps(state.known_routes, ensure_ascii=False)}")
+        return "\n".join(sections)
+
+    def _record_tool_round_in_state(
+        self,
+        tool_calls: List[LLMToolCall],
+        executing_result: List[str],
+    ) -> None:
+        """Add concise tool execution facts to the persistent agent state."""
+        if not tool_calls:
+            return
+
+        self.agent_state.phase = "tool_execution"
+        for tool_call, result in zip(tool_calls, executing_result):
+            result_text = str(result or "").replace("\n", " ").strip()
+            if len(result_text) > 240:
+                result_text = f"{result_text[:237]}..."
+            fact = f"Executed {tool_call.name}: {result_text or '(empty result)'}"
+            self._append_agent_state_item("facts", fact, limit=24)
+
+            if result_text.lower().startswith("error:"):
+                failed_action = f"{tool_call.name}({json.dumps(tool_call.arguments, ensure_ascii=False)})"
+                self._append_agent_state_item("failed_actions", failed_action, limit=12)
+                self._append_agent_state_item("do_not_repeat", failed_action, limit=12)
+
+    def _record_assistant_round_in_state(
+        self,
+        message: str,
+        tool_calls: List[LLMToolCall],
+    ) -> None:
+        """Record assistant-visible progress into the persistent Agent state."""
+        text = str(message or "").strip()
+        if not text:
+            if tool_calls:
+                planned_tools = ", ".join(tool.name for tool in tool_calls)
+                self._append_agent_state_item("next_actions", f"Call tools: {planned_tools}", limit=12)
+            return
+
+        lower_text = text.lower()
+        if tool_calls:
+            planned_tools = ", ".join(tool.name for tool in tool_calls)
+            self._append_agent_state_item("next_actions", f"Call tools: {planned_tools}", limit=12)
+        elif any(marker in lower_text for marker in ("flag{", "ctf{", "elfctf{", "final", "answer", "结论", "答案")):
+            self.agent_state.phase = "answering"
+        else:
+            self.agent_state.phase = "reasoning"
+
+        extracted_facts = self._extract_state_lines(text, prefixes=("fact", "事实", "observed", "发现", "已知"))
+        for fact in extracted_facts:
+            self._append_agent_state_item("facts", fact, limit=24)
+        for hypothesis in self._extract_state_lines(text, prefixes=("hypothesis", "假设", "maybe", "可能", "suspect")):
+            self._append_agent_state_item("hypotheses", hypothesis, limit=12)
+        for action in self._extract_state_lines(text, prefixes=("next", "todo", "下一步", "计划", "需要")):
+            self._append_agent_state_item("next_actions", action, limit=12)
+
+        if not extracted_facts:
+            summary = self._compact_state_sentence(text)
+            if summary:
+                self._append_agent_state_item("facts", summary, limit=24)
+
+    def _extract_state_lines(self, text: str, *, prefixes: Tuple[str, ...]) -> List[str]:
+        """Extract structured state bullets from assistant text."""
+        extracted: List[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip().lstrip("-*0123456789.、) ").strip()
+            if not line:
+                continue
+            normalized = line.lower()
+            for prefix in prefixes:
+                if normalized.startswith(prefix.lower()):
+                    _, _, value = line.partition(":")
+                    if not value:
+                        _, _, value = line.partition("：")
+                    extracted.append((value or line).strip())
+                    break
+        return extracted
+
+    def _compact_state_sentence(self, text: str) -> str:
+        """Return a short fallback fact from free-form assistant text."""
+        normalized = " ".join(text.split())
+        if not normalized:
+            return ""
+        if len(normalized) > 240:
+            normalized = f"{normalized[:237]}..."
+        return normalized
+
+    def _append_agent_state_item(self, field_name: str, value: str, *, limit: int) -> None:
+        """Append a unique non-empty string to an AgentState list field."""
+        normalized = " ".join(str(value or "").split())
+        if not normalized:
+            return
+        target = getattr(self.agent_state, field_name)
+        if normalized in target:
+            return
+        target.append(normalized)
+        setattr(self.agent_state, field_name, target[-limit:])
     
     # ====================================================================
     # Tool handlers

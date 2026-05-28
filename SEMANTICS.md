@@ -6,9 +6,12 @@
 - `handlers/` contains all backend-specific implementations. Each handler is a subclass of the same abstract base and is created through classmethod-based discovery.
 - `agent.py` consumes `LLMOutput` instead of reading OpenAI or Anthropic SDK response layouts directly in the main agent loop.
 - `agent.py` accepts an optional `ContextCompressionProfile` so task orchestration layers can choose compression behavior without hard-coding domain schemas inside the generic agent loop.
-- `llm_context.py` stores conversation context, tracks an `active_context` UUID window for each Agent round, and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
+- `llm_context.py` stores conversation context, tracks an ordered `active_ids` compatibility/cache window, and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
+- `llm_context.py` now updates its derived retrieval indexes only when contexts are written or compressed; there is no separate tag-index refresh helper anymore.
 - `llm_context.py` now owns `ContextCompressionProfile`, which carries the task label, domain schema, and prompt template used to compress context entries.
+- `agent.py` builds main-turn history through `AgentState -> ContextBundle -> _build_prev_messages(...)`; `active_ids` is no longer the sole source of prompt context for the main LLM turn.
 - `tools/builtin_tools.py` provides Agent-bound management tools for reading, listing, compressing context, and managing persistent memories.
+- Runtime-adapted hotplug tools are registered as ordinary `Tool` objects, and the workflow layer can whitelist them per task so the Agent loop does not need a separate execution path for JSON-manifest tools.
 - `prompt.py` centralizes reusable prompt templates, prompt builders, and shared system prompts so model-facing text lives in one module, while task-specific compression schemas can live in domain layers such as `core/ctf_prompt.py`.
 - `swarm/execution_graph.py` routes execution graph branches by label and can now fan out to multiple labeled downstream edges when a router returns more than one route.
 - `tool.py` now exposes OpenAI-style tool schemas for `custom_json` and `openvino` providers so prompt-based tool calling can still receive explicit schemas.
@@ -24,8 +27,12 @@
 - `LLMContextPair`: compatibility container for older imports. New agent persistence stores user and assistant messages as separate `LLMContext` entries.
 - `LLMContextCompressed`: compatibility alias for `LLMContextCompacted`.
 - `ContextCompressionProfile`: immutable-style configuration bundle for context compression. It carries `task_type`, `domain_schema`, and `prompt_template`.
-- `LLMContext`: one raw context entry. It now carries a stable `uuid` plus integer `order` so timeline position and durable identity can coexist.
+- `AgentState`: lightweight task-progress state pinned into every main LLM turn. It stores the current task, phase, facts, hypotheses, artifacts, credentials, routes, failed actions, do-not-repeat entries, and next actions.
+- `ContextBundle`: per-call prompt context plan. It carries pinned state text plus pinned, selected, and recent timeline ids, and exposes `ordered_ids()` with stable deduplication.
+- `ContextSelectionView`: selector output item with an id, a `raw` or `compacted` view, and an optional reason. The agent still accepts legacy `{"ids": [...]}` selector JSON.
+- `LLMContext`: one raw context entry. It carries role, content, timeline id, optional tool-call info, and sanitized retrieval tags.
 - `LLMContextCompacted`: one compressed summary entry. Its string form now includes the compacted entry's own `timeline` id in addition to `source_timeline`, so context-selection prompts expose valid selectable ids instead of provenance ids only.
+- `ContextIndex`: derived in-memory inverted index for context retrieval. It stores normalized text, token/character-gram postings, tag postings, and compacted-to-source links so lookup methods can avoid scanning the whole timeline.
 
 ## Functions
 
@@ -40,34 +47,41 @@
 - `AnthropicHandler.normalize_completion_response(...)`: extracts text, reasoning, and `tool_use` blocks from Anthropic-compatible message content into `LLMOutput`.
 - `OpenVINOHandler.normalize_completion_response(...)`: converts OpenVINO output into `LLMOutput`.
 - `Agent.chat_once(...)`: performs exactly one `LLMFetcher.fetch()` call, optionally includes serialized history and tool schemas, optionally stores the assistant response, and never executes returned tool calls.
-- `Agent.run_agent_round(...)`: sends the user message on each tool-loop turn with the dynamic system prompt and serialized history, asks `LLMFetcher.fetch()` for `LLMOutput`, executes any native provider tool calls, stores assistant/tool context, and stops when a turn has no tool calls. It raises `MaxTurnsExceededError` if the loop reaches `max_turns`.
-- `Agent.run_agent_round(...)` can now periodically reseat the active context window before a turn begins. When the configured interval and size thresholds are met, it asks the model for a minimal set of context ids, applies `context_select`, and then continues the normal tool loop against that smaller active window.
-- `Agent._maybe_run_context_selection(...)`: retrieves a narrowed candidate pool for the current task, asks the model to choose the smallest sufficient subset, preserves a short recent tail, and then applies the resulting active context ids for the current round.
-- `Agent._maybe_run_context_selection(...)`: after validating the selector's chosen ids against the candidate pool, it now expands any selected compacted entry back into its raw `source_timeline` ids while also preserving the compacted summary entry itself, then appends the recent active tail before updating the active window.
-- `Agent._retrieve_context_candidates_for_task(...)`: derives temporary task tags, queries compacted summaries plus tag hits, prefers their intersection, expands compacted hits back into raw `source_timeline` ids plus the compacted hit itself, falls back to the retrieval union when needed, and always preserves a recent active tail so local continuity survives reselection.
+- `Agent.run_agent_round(...)`: sends the user message on each tool-loop turn with the dynamic system prompt and bundle-rendered history, asks `LLMFetcher.fetch()` for `LLMOutput`, executes any native provider tool calls, stores assistant/tool context, and stops when a turn has no tool calls. It raises `MaxTurnsExceededError` if the loop reaches `max_turns`.
+- `Agent.run_agent_round(...)` initializes `AgentState.task` on the first round and records state after every assistant turn. Structured lines such as `事实:`/`Fact:`, `假设:`/`Hypothesis:`, and `下一步:`/`Next:` are routed into facts, hypotheses, and next actions; free-form assistant replies fall back to one compact fact so the Agent State panel does not stay empty when the model does not use explicit headings.
+- `Agent._record_tool_round_in_state(...)`: records tool execution summaries as facts and stores failed tool calls in both failed actions and do-not-repeat lists.
+- `Agent._build_main_context_bundle(...)`: snapshots the recent active tail, optionally asks the selector for current-task ids, and returns a `ContextBundle` containing pinned state text, selected ids, and recent ids for one main LLM call.
+- `Agent._maybe_run_context_selection(...)`: retrieves a narrowed candidate pool for the current task, expands only candidate closure for compacted descendants, asks the model to choose `ContextSelectionView` items, rejects ids outside the candidate closure, and keeps compacted selections compact by default. It may mirror selected ids into `active_ids`, but callers use its return value instead of reading the cache back.
+- `Agent._candidate_closure_ids(...)`: returns candidate ids plus descendants of compacted candidate ids so the selector may choose exact raw children under a summary without gaining access to unrelated global timeline ids.
+- `Agent._retrieve_context_candidates_for_task(...)`: derives temporary task tags, queries compacted summaries plus tag hits, prefers their intersection, keeps compacted hits compact in the candidate pool, falls back to the retrieval union when needed, and appends a stable recent active tail for local continuity.
+- `Agent._build_prev_messages(...)`: accepts an optional `ContextBundle`. With a bundle, it renders state first as synthetic pinned context, then fetches pinned, selected, and recent context ids in bundle order. Without a bundle, it falls back to current active context for compatibility.
 - `Agent.run_agent_round(...)` also owns stream rendering when `stream=True`: it feeds each yielded chunk into the provided `Streamer`/callable before accumulating the final response text.
 - `Agent._register_builtin_tools(...)`: registers built-in tools returned by `create_builtin_tools(agent=self)` so handlers can call the Agent context and memory APIs.
 - `Agent._tagify_context(...)`: builds tag input from assistant text plus tool call/result records. Empty contexts get no tags; non-empty contexts are sent to the LLM with a strict comma-separated snake_case tag prompt, then parsed with a regex and capped at five tags.
 - `Agent._agent_message_from_output(...)`: builds diagnostics from `LLMOutput` without depending on SDK response objects.
 - `Agent._extract_response_text(...)`: returns `LLMOutput.content` for normalized responses and keeps legacy extraction as fallback for older callers.
-- `LLMContextHandler.add_context(...)`: stores a raw context entry in the full timeline store, assigns its timeline `order`, indexes it by UUID and timeline id, and appends its UUID to the active context window.
-- `LLMContextHandler.set_active_context(...)`: replaces the active context UUID window used for later round history assembly.
+- `LLMContextHandler.add_context(...)`: stores a raw context entry in the full timeline store, assigns its timeline id, sanitizes tags, updates the derived inverted indexes, and optionally appends its id to the active window.
+- `LLMContextHandler.set_active_ids(...)`: replaces the active id window after filtering to known timeline ids and removing duplicates with first-seen order preserved.
 - `LLMContextHandler.context_len() -> int`: returns the character length of the active context window only, counting uncompacted role/content/tool data/tags and compacted abstract/source_uuid/source_timeline/tags without recursively counting compressed source objects.
-- `LLMContextHandler.get_content_as_single_str(...)`: serializes any selected context ids from the full timeline store in timeline order, including stored tool-call records, UUIDs, timeline ids, and tool results for later Agent turns.
-- `LLMContextHandler.get_active_content_as_single_str(...)`: serializes only the UUIDs currently selected in `active_context`; `Agent._build_prev_messages()` uses this per-round active window instead of always sending every stored entry.
-- `LLMContextHandler.compress_context(...)`: compresses all still-uncompacted raw entries when ids are omitted, or compresses any explicitly selected timeline ids when ids are supplied. It resolves an explicit compression profile or falls back to the handler's default profile, then renders the profile's prompt template with `task_type`, `domain_schema`, and selected context text before storing the new compacted entry.
-- Context compression is archival rather than destructive: compressed entries leave the active window and are replaced by one compacted summary entry, but the original raw entries remain in the manager's full timeline store and can still be revisited later by their original ids.
+- `LLMContextHandler.get_now_context(..., preserve_order=False)`: serializes selected context ids from the full timeline store. The default keeps legacy timeline sorting; `preserve_order=True` returns entries in caller-supplied order for `ContextBundle` rendering.
+- `LLMContextHandler.get_now_context_as_str(..., preserve_order=False)`: stringifies `get_now_context(...)` with the same ordering option for selector prompts and debug reads.
+- `LLMContextHandler.compress_context(...)`: compresses all still-uncompacted raw entries when ids are omitted, or compresses any explicitly selected timeline ids when ids are supplied. It resolves an explicit compression profile or falls back to the handler's default profile, then renders the profile's prompt template with `task_type`, `domain_schema`, and selected context text before storing the new compacted entry and updating compacted-source indexes.
+- Context compression is archival rather than destructive: compressed entries leave the active window and are replaced by one compacted summary entry using stable id deduplication, but the original raw entries remain in the manager's full timeline store and can still be revisited later by their original ids.
+- `LLMContextHandler.get_descendant_ids(...)`: recursively returns raw and nested compacted descendants represented by one compacted id for selector candidate-closure validation.
+- `stable_unique_ids(...)`: removes duplicate timeline ids without changing first-seen order.
+- `sanitize_tags(...)`: lowercases tags, enforces a compact identifier regex, removes generic stop tags, stably dedupes, and caps the list.
 - `LLMContextHandler.generate_memory(...)`: asks the fetcher for a memory summary and returns `response.content` when present.
-- `LLMContextHandler.find_context_by_summary(...)`: scans compacted abstracts and, optionally, raw content bodies for a normalized summary query and returns matching timeline entries in timeline order.
-- `LLMContextHandler.find_context_by_summary_and_tags(...)`: intersects the tag-hit timeline set with the summary-hit timeline set so callers can retrieve only entries matching both retrieval signals.
+- `LLMContextHandler.find_context_by_summary(...)`: uses the derived text postings index to narrow candidates, then validates the normalized summary query against compacted abstracts and optionally raw content bodies before returning matching timeline entries in timeline order.
+- `LLMContextHandler.find_context_by_tags(...)`: uses exact or fuzzy tag postings to return matching timeline entries without scanning all tags in the handler.
+- `LLMContextHandler.find_context_by_summary_and_tags(...)`: intersects the indexed tag-hit timeline set with the indexed summary-hit timeline set so callers can retrieve only entries matching both retrieval signals without scanning the full timeline.
 - `LLMContextHandler.expand_retrieval_hit_ids(...)`: turns retrieval-hit objects into selectable timeline ids by preserving raw hit ids, optionally keeping compacted hit ids, and expanding compacted summaries back to their flattened `source_timeline` provenance chain.
-- `LLMContextHandler.expand_active_selection_ids(...)`: expands selector-chosen ids into the actual active-window ids by optionally keeping selected compacted entries and rehydrating their raw `source_timeline` provenance entries alongside them.
-- `LLMContextHandler.find_compacted_entries_by_source_ids(...)`: looks up compacted summary ids whose `source_timeline` references any supplied raw ids so resource restoration can keep summary entries active alongside restored raw context.
+- `LLMContextHandler.expand_active_selection_ids(...)`: normalizes selector-chosen ids into active-window ids while preserving compacted summaries by default; raw provenance expansion only happens when a caller explicitly opts in.
+- `LLMContextHandler.find_compacted_entries_by_source_ids(...)`: looks up compacted summary ids through the derived source-to-compacted index so resource restoration can keep summary entries active alongside restored raw context.
 - `create_builtin_tools(agent=None) -> List[Tool]`: creates built-in tools. The context and memory tools require an Agent binding; unbound calls raise a runtime error.
 - `context_list`: returns context ids, entry type, role/source ids, tags, and one-line previews. Inputs include optional `limit`, `include_compacted`, and `include_uncompacted`.
 - `context_read`: serializes selected context ids, or all context when `ids` is omitted, using the Agent's conversation summary API.
 - `context_compress`: compresses selected uncompacted context ids, or all uncompacted context when `ids` is omitted.
-- `context_select`: replaces the Agent's active context window with the selected context ids so later rounds only see that chosen history slice.
+- `context_select`: replaces the Agent's active context window with the selected context ids so later rounds only see that chosen history slice, preserving compacted summaries unless the caller explicitly selects raw provenance ids.
 - `context_status`: reports active ids, compacted ids, and recent timeline entries so the model can inspect its current memory state without depending on task-specific agent methods.
 - `memory_create`: generates and stores a persistent memory summary from selected context ids.
 - `memory_list`: returns indexed persistent memories stored on the Agent.
