@@ -126,7 +126,7 @@ class AnthropicHandler(LLMBackendHandler):
             reasoning_content=reasoning,
             tool_calls=tool_calls,
             stop_reason=self._read_field(response, "stop_reason", None),
-            usage=self._usage_to_dict(self._read_field(response, "usage", None)),
+            usage=self.normalize_usage(self._read_field(response, "usage", None)),
         )
 
     def iter_stream_text(self, response, *, output_reasoning: bool) -> Iterable[str]:

@@ -51,7 +51,7 @@ class OpenAICompatibleHandler(LLMBackendHandler):
             reasoning_content=str(reasoning or ""),
             tool_calls=self._normalize_openai_tool_calls(message),
             stop_reason=self._read_field(choice, "finish_reason", None),
-            usage=self._usage_to_dict(self._read_field(response, "usage", None)),
+            usage=self.normalize_usage(self._read_field(response, "usage", None)),
         )
 
     def iter_stream_text(self, response, *, output_reasoning: bool) -> Iterable[str]:

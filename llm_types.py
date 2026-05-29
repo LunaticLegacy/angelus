@@ -62,6 +62,27 @@ class LLMToolCall:
 
 
 @dataclass
+class TokenUsage:
+    """Platform-irrelevant token usage summary produced by every LLM handler.
+
+    Each handler normalizes its provider-specific usage response into this
+    type so downstream consumers never need provider aliases or flattening.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Fraction of input tokens served from the provider's prompt cache."""
+        denominator = max(1, self.input_tokens)
+        return round(min(100.0, self.cached_tokens / denominator * 100.0), 1)
+
+
+@dataclass
 class LLMOutput:
     """Backend-neutral non-streaming model output."""
 
@@ -73,7 +94,7 @@ class LLMOutput:
     reasoning_content: str = "" # 思考过程内容……？ 这东西和AgentMessage 重复了……
     tool_calls: List[LLMToolCall] = field(default_factory=list)
     stop_reason: Optional[str] = None
-    usage: Dict[str, Any] = field(default_factory=dict)
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
     @property
     def text(self) -> str:

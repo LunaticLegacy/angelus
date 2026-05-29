@@ -4,7 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import ClassVar, Iterable, Mapping, Optional, Protocol, Sequence, TYPE_CHECKING, TypeAlias, Type, Any
 
-from ..llm_types import LLMBackendConfig, LLMOutput, Tool
+from ..llm_types import LLMBackendConfig, LLMOutput, TokenUsage, Tool
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
     from .openvino import OpenVINOGenerateResult, OpenVINOHistory
@@ -194,10 +194,8 @@ class LLMBackendHandler(ABC):
 
     def _usage_to_dict(self, usage: _UsageLike | Mapping[str, JSONValue] | None) -> JSONObject:
         """
-        Transforms the usage object into a dictionary.
-        
-        Args:
-            usage: The usage object to transform.
+        Deprecated: use _normalize_usage() instead.
+        Kept for subclasses that may override this method.
         """
         if usage is None:
             return {}
@@ -219,6 +217,34 @@ class LLMBackendHandler(ABC):
             if value is not None:
                 result[name] = value
         return result
+
+    def normalize_usage(self, usage: _UsageLike | Mapping[str, JSONValue] | None) -> TokenUsage:
+        """Normalize a provider-specific usage response into a platform-irrelevant TokenUsage.
+
+        Override this in each handler to handle provider-specific fields.
+        The default implementation handles OpenAI-compatible and Anthropic-like dict shapes.
+        """
+        raw = self._usage_to_dict(usage)
+        if not raw:
+            return TokenUsage()
+
+        # Flatten nested details (OpenAI: prompt_tokens_details.cached_tokens, etc.).
+        for key, value in list(raw.items()):
+            if isinstance(value, dict):
+                for nested_key, nested_value in value.items():
+                    if isinstance(nested_value, (int, float)):
+                        raw[nested_key] = int(nested_value)
+
+        return TokenUsage(
+            input_tokens=int(raw.get("input_tokens", raw.get("prompt_tokens", 0)) or 0),
+            output_tokens=int(raw.get("output_tokens", raw.get("completion_tokens", 0)) or 0),
+            total_tokens=int(raw.get("total_tokens", 0) or 0),
+            cached_tokens=int(
+                raw.get("cached_tokens", raw.get("cache_read_input_tokens", 0)) or 0
+                + raw.get("cache_creation_input_tokens", 0) or 0
+            ),
+            reasoning_tokens=int(raw.get("reasoning_tokens", 0) or 0),
+        )
 
     def _parse_arguments(self, arguments: str | Mapping[str, JSONValue] | None) -> JSONObject:
         if isinstance(arguments, dict):
