@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from llmfetcher.tools.ctf_tools import create_ctf_tools
+from core.ctf_tools import create_ctf_tools
 
 
 def _tool_map(root: Path):
