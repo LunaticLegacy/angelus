@@ -303,130 +303,127 @@ class Agent:
             return bool(stop_callback and stop_callback())
 
         # 在整个 agent 执行轮开始前，加入用户当前输入。
-        try:    
-            turn: int = 0
-            # 轮次开始。
-            while turn < max_turns:
-                turn += 1
-                if _should_stop():
-                    break
+        turn: int = 0
+        # 轮次开始。
+        while turn < max_turns:
+            turn += 1
+            if _should_stop():
+                break
 
-                # TODO: 这里每一次都会重新 build 一次旧信息。
-                # 如果我要采用线性上下文，我只需要增量。
-                # 如果我要让 agent 自己控制上下文，我要怎么做？？
+            # TODO: 这里每一次都会重新 build 一次旧信息。
+            # 如果我要采用线性上下文，我只需要增量。
+            # 如果我要让 agent 自己控制上下文，我要怎么做？？
 
-                if self.context_mode == "graph":
-                    active_window_before_bundle = self.llm_context_handler.get_active_ids_window()
+            if self.context_mode == "graph":
+                active_window_before_bundle = self.llm_context_handler.get_active_ids_window()
 
-                    # 在图式上下文模式下，为本次主模型调用构造显式上下文包。
-                    context_bundle = await self._build_main_context_bundle(
-                        user_input_context=user_input_context,
-                        turn=turn,
-                        temperature=temperature,
-                        verbose_info=verbose_info,
-                    )
-
-                    if verbose_info:
-                        print(f"[Agent] Active window before graph bundle: {active_window_before_bundle}")
-                        print(f"[Agent] Main context bundle ids: {context_bundle.ordered_ids()}")
-
-                    prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages(context_bundle)
-                else:
-                    if verbose_info:
-                        print(f"[Agent] Current active linear context IDs before agent round: {self.llm_context_handler.active_ids}")
-                    prev_messages = await self._build_prev_messages()
-
-                if verbose_info:
-                    print(f"\n[Agent] ====== Executing Turn: {turn} ======")
-                    print(f"[Agent] Provider: {self.llm_handler.provider}")
-                    print(f"[Agent] Tool count: {len(request_tools)}")
-                    print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
-
-                if _should_stop():
-                    break
-
-                # ---- 调用 LLM - 这里采用异步执行 ----
-                response: LLMOutput = await self.llm_handler.fetch(
-                    msg=msg,
-                    system_prompt=self.system_prompt,
+                # 在图式上下文模式下，为本次主模型调用构造显式上下文包。
+                context_bundle = await self._build_main_context_bundle(
+                    user_input_context=user_input_context,
+                    turn=turn,
                     temperature=temperature,
-                    max_tokens=max_tokens,
-                    prev_messages=prev_messages if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
-                    tools=request_tools if request_tools else None,  # 传递工具信息
+                    verbose_info=verbose_info,
                 )
-
-                # 然后查看工具内容，如果有工具的话。
-                message: str = response.text    # 本轮文本
-                
-                # 现在的 tool call 被抽象为了当前包体的中间层（见类型 `LLMToolCall`），已和供应商无关
-                tool_calls: List[LLMToolCall] = response.tool_calls
-
-                executing_result: List[str] = await self._handle_tool_calls(tool_calls, max_concurrent_calls=self.max_concurrent_tools)
-
-                # 记录本轮的信息？？
-                self._record_assistant_round_in_state(message, tool_calls)
-
-                if _should_stop():
-                    final_content = final_content or response.text
-                    break
-
-                # 将工具执行结果放进来。
-                # 这一块东西不会进入上下文，而是被 agent 实例自己记录。
-                tool_record_round: List[ToolExecutionRecord] = [
-                    ToolExecutionRecord(
-                        name=tool_info.name,
-                        arguments=tool_info.arguments,
-                        result=tool_result
-                    ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
-                ]
-                self.tool_call_history.append(tool_calls)
-
-                # 拼接上下文。
-                # 这里才会包括工具。
-                now_assistant_context: LLMContext = LLMContext(
-                    role="assistant",
-                    content=message,  # 文本
-                    tool_call_info=[str(i) for i in tool_record_round],
-                )
-
-                # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
-                # 先打标签，再加进来。
-                if (self.context_mode == "graph"):
-                    now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
-                    await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
-                        context=now_assistant_context,
-                        verbose_info=verbose_info,
-                    )
-                
-                # 将信息加入当前上下文。
-                await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
 
                 if verbose_info:
-                    print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
-                    print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
+                    print(f"[Agent] Active window before graph bundle: {active_window_before_bundle}")
+                    print(f"[Agent] Main context bundle ids: {context_bundle.ordered_ids()}")
 
-                # 检测上下文长度，并压缩之。
-                if self.llm_context_handler.context_len() > max_context_size:
-                    print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
-                    print(f"[Agent] Context exceeded, compressing history...")
-                    while self.llm_context_handler.context_len() > max_context_size:
-                        compressed = await self._archive_old_active_context(verbose_info=verbose_info)
-                        if not compressed:
-                            break
-
-                # 判断是否结束？
-                # 传统：如果没有 tool call，则立即结束。
-                if len(tool_record_round) == 0:
-                    final_content = message
-                    break
-                if _should_stop():
-                    final_content = final_content or response.text
-                    break
-
+                prev_messages: Optional[List[LLMInfo]] = await self._build_prev_messages(context_bundle)
             else:
-                raise MaxTurnsExceededError(f"Agent round exceeded max_turns={max_turns}.")
-        finally:
-            self._round_task_tags = None
+                if verbose_info:
+                    print(f"[Agent] Current active linear context IDs before agent round: {self.llm_context_handler.active_ids}")
+                prev_messages = await self._build_prev_messages()
+
+            if verbose_info:
+                print(f"\n[Agent] ====== Executing Turn: {turn} ======")
+                print(f"[Agent] Provider: {self.llm_handler.provider}")
+                print(f"[Agent] Tool count: {len(request_tools)}")
+                print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
+
+            if _should_stop():
+                break
+
+            # ---- 调用 LLM - 这里采用异步执行 ----
+            response: LLMOutput = await self.llm_handler.fetch(
+                msg=msg,
+                system_prompt=self.system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                prev_messages=prev_messages if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
+                tools=request_tools if request_tools else None,  # 传递工具信息
+            )
+
+            # 然后查看工具内容，如果有工具的话。
+            message: str = response.text    # 本轮文本
+            
+            # 现在的 tool call 被抽象为了当前包体的中间层（见类型 `LLMToolCall`），已和供应商无关
+            tool_calls: List[LLMToolCall] = response.tool_calls
+
+            executing_result: List[str] = await self._handle_tool_calls(tool_calls, verbose_info=verbose_info, max_concurrent_calls=self.max_concurrent_tools)
+
+            # 记录本轮的信息？？
+            self._record_assistant_round_in_state(message, tool_calls)
+
+            if _should_stop():
+                final_content = final_content or response.text
+                break
+
+            # 将工具执行结果放进来。
+            # 这一块东西不会进入上下文，而是被 agent 实例自己记录。
+            tool_record_round: List[ToolExecutionRecord] = [
+                ToolExecutionRecord(
+                    name=tool_info.name,
+                    arguments=tool_info.arguments,
+                    result=tool_result
+                ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
+            ]
+            self.tool_call_history.append(tool_calls)
+
+            # 拼接上下文。
+            # 这里才会包括工具。
+            now_assistant_context: LLMContext = LLMContext(
+                role="assistant",
+                content=message,  # 文本
+                tool_call_info=[str(i) for i in tool_record_round],
+            )
+
+            # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
+            # 先打标签，再加进来。
+            if (self.context_mode == "graph"):
+                now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
+                await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
+                    context=now_assistant_context,
+                    verbose_info=verbose_info,
+                )
+            
+            # 将信息加入当前上下文。
+            await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
+
+            if verbose_info:
+                print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
+                print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
+
+            # 检测上下文长度，并压缩之。
+            if self.llm_context_handler.context_len() > max_context_size:
+                print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
+                print(f"[Agent] Context exceeded, compressing history...")
+                while self.llm_context_handler.context_len() > max_context_size:
+                    compressed = await self._archive_old_active_context(verbose_info=verbose_info)
+                    if not compressed:
+                        break
+
+            # 判断是否结束？
+            # 传统：如果没有 tool call，则立即结束。
+            if len(tool_record_round) == 0:
+                final_content = message
+                break
+            if _should_stop():
+                final_content = final_content or response.text
+                break
+
+        else:
+            raise MaxTurnsExceededError(f"Agent round exceeded max_turns={max_turns}.")
 
         return final_content
     
