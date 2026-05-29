@@ -5,8 +5,8 @@ import json
 import re
 import time
 from types import CoroutineType
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Set, Literal
-from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Tuple, Set, Literal
+from dataclasses import asdict
 
 from .llm_fetcher import LLMFetcher
 from .llm_context import (
@@ -28,6 +28,8 @@ from .llm_types import (
     ToolList,
     AgentMessage,
     AgentState,
+    AgentStateTurnEvent,
+    AgentStateUpdate,
     ToolExecutionRecord,
     LLMOutput,
     LLMToolCall,
@@ -42,7 +44,10 @@ from .llm_types import (
     ContextBundle
 )
 
+from .prompt import CONTEXT_SELECTION_PROMPT_TEMPLATE, AGENT_STATE_MACHINE_SYSTEM_PROMPT
+
 from .streamers import Streamer, ThinkColorStreamer
+from .agent_state import AgentStateMachine
 
 
 class Agent:
@@ -70,14 +75,13 @@ class Agent:
             tools: 本 Agent 初始使用的工具。
             max_concurrent_tools: 工具并发最大数量。
             round_compress_threshold: 当有 N 轮未触发压缩上下文时，压缩上下文。
-            round_compress_keep_tail: 当压缩上下文时，保留最后 N 轮信息。
+            round_compress_keep_tail: 当压缩上下文时，保留最后 N 轮信息。在触发上下文选择的场合，也会保留最后 N 轮信息，作为近期信息。（TODO: 考虑将第二个职责分离到另一个 `Agent.__init__` 的参数里）
             context_selection_interval: 仅当 context_mode = 'graph' 时有效。每 N 轮执行一次上下文选择。
             context_selection_min_active_items: 仅当 context_mode = 'graph' 时有效，决定触发上下文选择的最小项目数。
             context_selection_min_active_chars: 仅当 context_mode = 'graph' 时有效，决定触发上下文选择的最小字符数。
             tool_result_summary_threshold_chars: 仅当 context_mode = 'graph' 时有效，当工具返回结果长度超过此阈值时，将立即归档该工具信息，并总结此轮。
-            compression_profile: Default context-compression profile shared by
-                                 automatic archiving and explicit compression calls.
-            context_mode: `linear` 将使用传统线性上下文机制， `graph` 模式下启用实验性上下文机制。
+            compression_profile: 决定在特定应用场景（或工作领域）内的上下文压缩配置，将被用于自动归档信息，以及显式上下文
+            context_mode: `linear` 将使用传统线性上下文机制，`graph` 模式下启用实验性上下文机制。
         """
 
         # 先初始化所有输入参数。
@@ -97,7 +101,7 @@ class Agent:
         # 系统默认的 provider 和后端回退机制 - 这俩好像也可以删
 
         self.tool_registry = ToolRegistry() # 注册工具。
-        self.agent_state = AgentState()     # 当前 agent 状态
+        self.state_machine = AgentStateMachine(self.llm_handler)
 
         # 上下文管理器。
         self.llm_context_handler = LLMContextHandler(
@@ -120,6 +124,16 @@ class Agent:
             tool: Tool
             for tool in tools:
                 self.tool_registry.register(tool)
+
+    @property
+    def agent_state(self) -> AgentState:
+        """Compatibility view of the state-machine snapshot."""
+        return self.state_machine.state
+
+    @agent_state.setter
+    def agent_state(self, state: AgentState) -> None:
+        """Replace the state-machine snapshot during restore/migration."""
+        self.state_machine.state = state if isinstance(state, AgentState) else AgentState()
 
     def _register_builtin_tools(self) -> None:
         """
@@ -310,9 +324,7 @@ class Agent:
             if _should_stop():
                 break
 
-            # TODO: 这里每一次都会重新 build 一次旧信息。
-            # 如果我要采用线性上下文，我只需要增量。
-            # 如果我要让 agent 自己控制上下文，我要怎么做？？
+            # 预处理工作流
 
             if self.context_mode == "graph":
                 active_window_before_bundle = self.llm_context_handler.get_active_ids_window()
@@ -344,7 +356,7 @@ class Agent:
             if _should_stop():
                 break
 
-            # ---- 调用 LLM - 这里采用异步执行 ----
+            # ---- 主工作流内容 ----
             response: LLMOutput = await self.llm_handler.fetch(
                 msg=msg,
                 system_prompt=self.system_prompt,
@@ -356,21 +368,14 @@ class Agent:
 
             # 然后查看工具内容，如果有工具的话。
             message: str = response.text    # 本轮文本
-            
+            if verbose_info:
+                print(f"[Agent] LLM response: \n -----------\n{message}\n -----------")
+
             # 现在的 tool call 被抽象为了当前包体的中间层（见类型 `LLMToolCall`），已和供应商无关
             tool_calls: List[LLMToolCall] = response.tool_calls
 
             executing_result: List[str] = await self._handle_tool_calls(tool_calls, verbose_info=verbose_info, max_concurrent_calls=self.max_concurrent_tools)
 
-            # 记录本轮的信息？？
-            self._record_assistant_round_in_state(message, tool_calls)
-
-            if _should_stop():
-                final_content = final_content or response.text
-                break
-
-            # 将工具执行结果放进来。
-            # 这一块东西不会进入上下文，而是被 agent 实例自己记录。
             tool_record_round: List[ToolExecutionRecord] = [
                 ToolExecutionRecord(
                     name=tool_info.name,
@@ -378,6 +383,24 @@ class Agent:
                     result=tool_result
                 ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
             ]
+
+            # 状态机 — 仅在 graph 模式下启用，linear 模式跳过后端 LLM 调用以减少延迟。
+            if self.context_mode == "graph":
+                await self.state_machine.update_from_turn(
+                    AgentStateTurnEvent(
+                        user_goal=msg,
+                        turn=turn,
+                        assistant_message=message,
+                        tool_records=tool_record_round,
+                        stop_requested=_should_stop(),
+                    ),
+                    temperature=temperature,
+                )
+
+            if _should_stop():
+                final_content = final_content or response.text
+                break
+
             self.tool_call_history.append(tool_calls)
 
             # 拼接上下文。
@@ -404,8 +427,8 @@ class Agent:
                 print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
                 print(f"[Agent] Tag to Context index: {self.llm_context_handler.tag_to_context}")
 
-            # 检测上下文长度，并压缩之。
-            if self.llm_context_handler.context_len() > max_context_size:
+            # 检测上下文长度，并压缩之 — 仅在 graph 模式下启用。
+            if self.context_mode == "graph" and self.llm_context_handler.context_len() > max_context_size:
                 print(f"[Agent] Current context length: {self.llm_context_handler.context_len()} / {max_context_size}")
                 print(f"[Agent] Context exceeded, compressing history...")
                 while self.llm_context_handler.context_len() > max_context_size:
@@ -439,131 +462,126 @@ class Agent:
         turn: int,
         verbose_info: bool = False,
         temperature: float = 0.4,
+        agent_state_text: Optional[str] = None,
     ) -> Optional[List[int]]:
-        """Ask the model to reseat the active context window for one turn.
-        TODO: 该类方法本身的方法论需要权衡，如果要用 llm 作为选择器，可能会太重。
+        """Reselect the graph-mode active context window for one agent turn.
 
-        Notes:
-            This hook runs at the beginning of selected turns. It first retrieves
-            a smaller candidate pool, then asks the model to choose the minimum
-            sufficient subset from that pool only.
+        This method is state-aware: it passes the current agent state-machine
+        snapshot both into candidate retrieval and into the final selector
+        prompt. The selector still cannot choose arbitrary history; it can only
+        select ids from the retrieved candidate closure.
 
         Args:
-            task_msg: User-visible task text for the current round.
+            user_input_context: User-visible task context for the current round.
             turn: One-based turn number inside the current agent round.
             verbose_info: Whether diagnostic messages should be printed.
             temperature: Sampling temperature used by helper model calls.
+            agent_state_text: Rendered state-machine snapshot. When omitted,
+                the method renders `self.agent_state` at call time.
 
         Returns:
             The applied active context ids when reselection succeeds, otherwise
             `None` when reselection is skipped or rejected.
         """
-        # 如果当前模式不是 graph，或当前的 llm_context_handler 不支持检索，则不返回。
+        # Skip selector work unless graph retrieval is enabled for this agent.
         if self.context_mode != "graph" or not self.llm_context_handler.retrieval_enabled:
             return None
 
-        # 决定：是否执行上下文选择？
+        # Respect interval and size thresholds before spending model calls.
         if not self._should_trigger_context_selection(turn):
             return None
 
-        # 寻找满足用户当前输入的备选 id
+        # Render state once so retrieval and selector judgment share the same snapshot.
+        resolved_agent_state_text = agent_state_text if agent_state_text is not None else str(self.agent_state)
+        current_task_text = getattr(user_input_context, "content", str(user_input_context))
+
+        # Retrieve a state-aware candidate pool before asking the selector to rank it.
         candidate_ids = await self._retrieve_context_candidates_for_task(
             user_input_context=user_input_context,
             temperature=temperature,
-            recent_tail_len=self.round_compress_keep_tail   # TODO: 这里有争议，先标记上 todo 再说
+            agent_state_text=resolved_agent_state_text,
         )
         if verbose_info:
             print(f"[Agent] Context selection found {len(candidate_ids)} candidates: {candidate_ids}")
+
+        # Keep the existing active window when retrieval cannot produce a useful pool.
         if not candidate_ids:
             if verbose_info:
                 print("[Agent] Context selection found no retrieval candidates; keeping current active window.")
             return None
-
-        # 如果找不到目标上下文的 id
+        
+        # Expand compacted candidates into their selectable descendants while preserving stable order.
         candidate_listing_ids = self._candidate_closure_ids(candidate_ids)
-        context_listing = await self.llm_context_handler.get_now_context_as_str(
+        
+        # Render only the candidate closure, because the selector must not see unrestricted history.
+        context_listing = await self.llm_context_handler.get_now_abstract_as_str(
             candidate_listing_ids,
             preserve_order=True,
         )
+
+        # Abort selection if every candidate serializes to an empty listing.
         if not context_listing.strip():
             if verbose_info:
                 print("[Agent] Candidate context listing is empty; keeping current active window.")
             return None
 
-        # 建立一个 prompt，用于确定上下文窗口。
-        # 这块的 prompt 可能吃了上下文注入，以至于这东西直接变成了第二个解题器。
-        selection_prompt = f"""
-You are selecting the best active context window for the current agent round.
-
-Current task:
-{user_input_context.content}
-
-Available context entries:
-{context_listing}
-
-Return only strict JSON in this format:
-{{"items": [
-  {{"id": 12, "view": "raw", "reason": "need exact tool result"}},
-  {{"id": 18, "view": "compacted", "reason": "summary is enough"}}
-]}}
-
-Rules:
-- Select only the ids needed for the current task.
-- Prefer compacted entries when the summary is sufficient.
-- Select raw entries only when you need the original details that are not fully preserved in a compacted summary.
-- You may choose descendants of listed compacted entries when exact original details are needed.
-- You may select raw entries, compacted entries, or both, but avoid selecting both unless you truly need both representations.
-- Backward-compatible {{"ids": [1, 2, 3]}} is accepted, but prefer the items format.
-- Do not explain.
-""".strip()
+        # Build a state-aware prompt that lets the selector align context with phase and next actions.
+        selection_prompt = CONTEXT_SELECTION_PROMPT_TEMPLATE.format(
+            agent_state_text=resolved_agent_state_text,
+            current_task=current_task_text,
+            context_listing=context_listing,
+        )
 
         if verbose_info:
             print(f"[Agent] Triggering periodic context selection at turn {turn}.")
         
-        # 在这里直接和 agent 进行聊天，并对话。
-        selection_output = await self.chat_once(
-            selection_prompt,
+        # Call the selector as a plain LLM helper with no tools or chat history.
+        selection_output = await self.llm_handler.fetch(
+            msg=selection_prompt,
             temperature=temperature,
-            use_history=False,
-            use_tools=False,
-            save_context=False,
-            tag_context=False,
         )
 
-        # 解析来自 agent 的选择结果。
+        # Parse the selector's JSON response into typed id/view choices.
         selected_views = self._parse_selection_views(selection_output.text)
         selected_ids = [item.id for item in selected_views]
         if verbose_info:
             print(f"[Agent] Original selection output as: {selection_output.text}")
             print(f"[Agent] Selection output as: {selected_views}")
 
+        # Treat empty selector output as a no-op rather than clearing context.
         if not selected_ids:
             if verbose_info:
                 print("[Agent] Context selection returned no valid ids; keeping current active window.")
             return None
 
+        # Enforce that the model can only choose ids from the candidate closure.
         allowed_ids = set(candidate_listing_ids)
         filtered_ids = [
             context_id
             for context_id in selected_ids
             if context_id in allowed_ids
         ]
+
+        # Reject hallucinated ids instead of silently activating unrelated history.
         if not filtered_ids:
             if verbose_info:
                 print("[Agent] Context selection returned ids outside candidates; keeping current active window.")
             return None
 
-        # 归一化这些 id，但默认保留压缩条目本身，不强制展开成原文。
+        # Normalize ids while keeping compacted entries compact unless raw descendants were selected.
         normalized_selected_ids = self.llm_context_handler.expand_active_selection_ids(
             filtered_ids,
             expand_compacted_sources=False,
             keep_compacted_entries=True,
         )
+
+        # Guard against normalization eliminating every selected id.
         if not normalized_selected_ids:
             if verbose_info:
                 print("[Agent] Normalized active selection is empty; keeping current active window.")
             return None
 
+        # Mirror the accepted selection into the context manager's active cache.
         applied_ids = self.llm_context_handler.set_active_ids(normalized_selected_ids)
 
         if verbose_info:
@@ -578,32 +596,44 @@ Rules:
         temperature: float,
         verbose_info: bool = False,
     ) -> ContextBundle:
-        """
-        Build the explicit context bundle for one main LLM turn.
+        """Build the explicit prompt context bundle for one main LLM turn.
         
         Args:
-            task_msg: 任务。（一般来自用户输入）
-            turn: 当前轮数。
-            temperature: 模型温度。
-            verbose_info: 是否输出详细推理信息。
+            user_input_context: User-visible task context for the current round.
+            turn: One-based turn number inside the current agent round.
+            temperature: Sampling temperature passed into helper model calls.
+            verbose_info: Whether diagnostic messages should be printed.
+
+        Returns:
+            A `ContextBundle` that pins the rendered agent state, includes any
+            state-aware selector output, and preserves a recent active tail.
         """
-        active_ids = self.llm_context_handler.get_active_ids_window()
-        recent_tail_ids = stable_unique_ids(active_ids[-2:])
+        # Snapshot the rendered state once so selector and main prompt share the same state.
+        agent_state_text = str(self.agent_state)
+
+        # Preserve a recent active tail independently from selector output for local continuity.
+        active_ids: List[int] = self.llm_context_handler.get_active_ids_window()
+        recent_tail_ids: List[int] = stable_unique_ids(active_ids[-self.round_compress_keep_tail:])
+
+        # Start empty; selector output is optional and should not imply clearing active context.
         selected_ids: List[int] = []
 
-        # 选择 id
+        # Let the state-aware selector reseat long-range context when thresholds allow it.
         maybe_selected_ids = await self._maybe_run_context_selection(
             user_input_context=user_input_context,
             turn=turn,
             verbose_info=verbose_info,
             temperature=temperature,
+            agent_state_text=agent_state_text,
         )
+
+        # Deduplicate accepted selector ids while preserving model-chosen order.
         if maybe_selected_ids:
             selected_ids = stable_unique_ids(maybe_selected_ids)
         
-        # 返回上下文包体。
+        # Return the prompt bundle consumed by `_build_prev_messages`.
         return ContextBundle(
-            state_text=str(self.agent_state),   # 重载 str 方法实现
+            state_text=agent_state_text,
             selected_ids=selected_ids,
             recent_ids=recent_tail_ids,
         )
@@ -614,77 +644,94 @@ Rules:
         """
         closure_ids: List[int] = []
         for context_id in candidate_ids:
+            # 如果不在时间线里
             if context_id not in self.llm_context_handler.context_timeline_dict:
                 continue
+
+            # 加入条目，如果是压缩后上下文，则将被压缩后的东西全部加入到这里……？
             closure_ids.append(context_id)
+
+            # 寻找所有被压缩后上下文的子条目。
             entry = self.llm_context_handler.context_timeline_dict[context_id]
             if isinstance(entry, LLMContextCompacted):
                 closure_ids.extend(sorted(self.llm_context_handler.get_descendant_ids(context_id)))
+        
+        # 去重并返回。
         return stable_unique_ids(closure_ids)
 
     async def _retrieve_context_candidates_for_task(
         self,
         user_input_context: LLMContext,
         temperature: float = 0.4,
-        recent_tail_len: int = 4,
+        agent_state_text: Optional[str] = None,
     ) -> List[int]:
-        """Retrieve prompt-selectable context ids for the current task.
+        """Retrieve prompt-selectable context ids for the current task and state.
 
         Args:
-            task_msg: User-visible task text for the current round.
+            user_input_context: User-visible task context for the current round.
             temperature: Sampling temperature used by helper tagging calls.
-            recent_tail_len: Number of recent active context ids to preserve.
+            agent_state_text: Rendered state-machine snapshot used to broaden
+                summary retrieval toward current phase, facts, failed actions,
+                do-not-repeat constraints, and next actions.
 
         Returns:
-            A sorted candidate id list containing any expanded retrieval hits and
-            a recent active tail preserved for local continuity.
+            A stable candidate id list expanded from retrieval hits. The caller
+            is responsible for adding recent-tail continuity separately.
         """
 
+        # Retrieval candidates only exist in graph mode with indexes enabled.
         if self.context_mode != "graph" or not self.llm_context_handler.retrieval_enabled:
             return []
 
-        # 选择最后若干轮的上下文表示当前进度
-        active_ids: List[int] = self.llm_context_handler.get_active_ids_window()
-        recent_tail_ids = active_ids[-recent_tail_len:]
+        # Normalize the task text because older internal tests may pass a raw string.
+        current_task_text = getattr(user_input_context, "content", str(user_input_context))
 
-        # 将用户输入转为上下文标签；优先使用 round 开始时缓存好的结果。
-        task_tags = await self._get_round_task_tags(user_input_context, temperature=temperature)
+        # Build a state-aware summary query without mutating the original user context.
+        retrieval_query_parts = [current_task_text]
+        if agent_state_text:
+            retrieval_query_parts.append(agent_state_text)
+        retrieval_query = "\n\n".join(part for part in retrieval_query_parts if part)
 
-        # 寻找同时满足输入标签和输入摘要的索引。
+        # Convert the current user input into cached task tags for tag-index retrieval.
+        task_tags: List[str] = await self._get_round_task_tags(user_input_context, temperature=temperature)
+
+        # Prefer candidates that satisfy both task tags and state-aware summary text.
         intersected_hits: Optional[List[LLMInfo]] = None
+
+        # Only run the AND query when task tags exist.
         if task_tags:
             intersected_hits = await self.llm_context_handler.find_context_by_summary_and_tags(
-                summary_query=user_input_context.content,
+                summary_query=retrieval_query,
                 tags=task_tags,
                 blur_summary=True,
                 blur_tags=True,
             )
         
-        # 然后分别查询标签和摘要。
-        # 标签
+        # Retrieve tag-only hits as a fallback path when the intersection is empty.
         tag_hits = None
         if task_tags:
             tag_hits: Optional[List[LLMInfo]] = await self.llm_context_handler.find_context_by_tags(
                 tags=task_tags,
                 blur=True,
             )
-        # 摘要
+
+        # Retrieve summary hits from compacted context using both task and state text.
         summary_hits: Optional[List[LLMInfo]] = await self.llm_context_handler.find_context_by_summary(
-            summary_query=user_input_context.content,
+            summary_query=retrieval_query,
             blur=True,
             include_raw=False,
             include_compacted=True,
         )
 
-        # Keep compacted hits compact by default; if the selector later needs
-        # raw provenance, it can explicitly choose those raw ids.
+        # Prefer expanded ids from the tag-summary intersection when available.
         candidate_ids: List[int] = []
-        if intersected_hits: # 如果找到交集内容
+        if intersected_hits:
             intersect_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(intersected_hits)
             if intersect_id:
                 candidate_ids.extend(intersect_id)
 
-        else:   # 没找到交集内容，则分别找
+        # Fall back to the union of tag hits and summary hits when no intersection exists.
+        else:
             if tag_hits:
                 tag_hit_id: Optional[List[int]] = self.llm_context_handler.expand_retrieval_hit_ids(tag_hits)
                 if tag_hit_id:
@@ -694,8 +741,7 @@ Rules:
                 if summary_hit_id:
                     candidate_ids.extend(summary_hit_id)
         
-        # 然后添加最近几轮的上下文
-        candidate_ids.extend(recent_tail_ids)
+        # Return stable ids so repeated selector calls see deterministic candidate order.
         return stable_unique_ids(candidate_ids)
 
     async def _cache_round_task_tags(
@@ -703,10 +749,19 @@ Rules:
         user_input_context: LLMContext,
         temperature: float = 0.4,
     ) -> List[str]:
-        """Cache the current round's task tags before context selection begins."""
+        """
+        保存标签。
+
+        Args:
+            user_input_context: 用户输入上下文。
+            temperature: 模型采样温度，用于进行标签/摘要的生成。
+        """
+
+        # 如果不使用图式上下文，或不允许上标签，则不执行本函数。
         if self.context_mode != "graph" or not self.llm_context_handler.enable_tagging:
             return []
-
+        
+        # 上标签。
         probe_context = await self.llm_context_handler.tagify_context(
             user_input_context,
             temperature=temperature,
@@ -719,8 +774,12 @@ Rules:
         temperature: float = 0.4,
     ) -> List[str]:
         """
-        Return the cached task tags for the current round, computing them on demand if needed.
-        TODO: 这个好像真可以用。
+        返回任务标签。
+        如果没有当前任务的标签，则进行 llm call 以获取之。
+
+        Args:
+            user_input_context: 用户输入上下文。
+            temperature: 模型采样温度，用于进行标签/摘要的生成。
         """
         if self._round_task_tags is None:
             self._round_task_tags = await self._cache_round_task_tags(
@@ -728,32 +787,31 @@ Rules:
                 temperature=temperature,
             )
         return self._round_task_tags
-
-
-    def _parse_selection_timelines(self, content: str) -> List[int]:
+    def _parse_selection_views(self, content: str) -> List[ContextSelectionView]:
         """
-        Extract selected context ids from a strict JSON response.
+        Extract selector choices from JSON for context selection views.
         
         Args:
             content: 输入的 JSON 内容，该内容会直接来自上下文选择器。
         """
-        return [item.id for item in self._parse_selection_views(content)]
-
-    def _parse_selection_views(self, content: str) -> List[ContextSelectionView]:
-        """Extract selector choices from new `items` or legacy `ids` JSON."""
+        # 如果没东西
         if not content.strip():
             return []
 
         candidates: List[str] = [content.strip()]
-        candidates.extend(match.group(0) for match in re.finditer(r"\{.*?\}", content, flags=re.DOTALL))
+        candidates.extend(match.group(0) for match in re.finditer(r"\{.*?\}", content, flags=re.DOTALL))    # 从原始内容里……我日 你在读取什么？？
 
+        # 对于每一个条目
         for candidate in candidates:
+            # 如果无法转为 json 则跳过
             try:
                 payload = json.loads(candidate)
             except json.JSONDecodeError:
                 continue
 
+            # 条目，可能是 dict
             items = payload.get("items")
+            # 如果 items 的类型是列表
             if isinstance(items, list):
                 parsed_items: List[ContextSelectionView] = []
                 for item in items:
@@ -774,7 +832,7 @@ Rules:
                         )
                     )
                 return parsed_items
-
+            
             ids = payload.get("ids")
             if not isinstance(ids, list):
                 ids = payload.get("timelines")
@@ -789,6 +847,23 @@ Rules:
                     view: ContextView = "compacted" if isinstance(entry, LLMContextCompacted) else "raw"
                     parsed_ids.append(ContextSelectionView(id=context_id, view=view))
                 return parsed_ids
+
+            # Schema 3: single item {"id": X, "view": Y, "reason": Z}
+            # This matches the format the LLM selector actually outputs in practice.
+            try:
+                context_id = int(payload.get("id"))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            view_value = payload.get("view", "raw")
+            view: ContextView = "compacted" if view_value == "compacted" else "raw"
+            reason = payload.get("reason")
+            return [
+                ContextSelectionView(
+                    id=context_id,
+                    view=view,
+                    reason=str(reason) if reason is not None else None,
+                )
+            ]
         return []
 
     def _should_trigger_context_selection(self, turn: int) -> bool:
@@ -890,10 +965,13 @@ Rules:
             上下文内容。如果没有上下文，则返回空白内容。
         """
         if self.llm_context_handler.empty and not (bundle and bundle.state_text.strip()):
-            return None
-
+            return []
+            
+        # 如果有 bundle 内容
         if bundle is not None:
             history_msg: List[LLMInfo] = []
+
+            # 在有当前状态文本的场合，加入当前状态
             if bundle.state_text.strip():
                 history_msg.append(
                     LLMContext(
@@ -903,233 +981,33 @@ Rules:
                         tags=["agent_state"],
                     )
                 )
-
+            # 获取各个状态的 id
             ordered_ids = bundle.ordered_ids()
             if ordered_ids:
-                context_info = await self.llm_context_handler.get_now_context(
+                # 获取上下文信息，保留顺序
+                context_info: Optional[LLMContextInfo] = await self.llm_context_handler.get_now_context(
                     ordered_ids,
                     preserve_order=True,
                 )
                 if context_info:
                     history_msg.extend(context_info.items)
 
-            return history_msg or None
+            return history_msg or []
         
         # 这部分已经被 llm_context 实现。
-        history_msg_raw: Optional[LLMContextInfo] = await self.llm_context_handler.get_now_active_context()
-        if not history_msg_raw:
-            history_msg = []
         else:
-            history_msg = history_msg_raw.items
-        
-        return history_msg
+            history_msg_raw: Optional[LLMContextInfo] = await self.llm_context_handler.get_now_active_context()
+            if not history_msg_raw:
+                history_msg = []
+            else:
+                history_msg = history_msg_raw.items
+            
+            return history_msg
 
-
-    # ---------------------------
-    # 状态机相关
-    # 本段函数开始，将是 agent 状态机相关的处理器。
-    # ---------------------------
-
-    def _record_tool_round_in_state(
-        self,
-        tool_calls: List[LLMToolCall],
-        executing_result: List[str],
-    ) -> None:
-        """Add concise tool execution facts to the persistent agent state."""
-        if not tool_calls:
-            return
-
-        self.agent_state.phase = "tool_execution"
-        for tool_call, result in zip(tool_calls, executing_result):
-            result_text = str(result or "").replace("\n", " ").strip()
-            if len(result_text) > 240:
-                result_text = f"{result_text[:237]}..."
-            fact = f"Executed {tool_call.name}: {result_text or '(empty result)'}"
-            self._append_agent_state_item("facts", fact, limit=24)
-
-            if result_text.lower().startswith("error:"):
-                failed_action = f"{tool_call.name}({json.dumps(tool_call.arguments, ensure_ascii=False)})"
-                self._append_agent_state_item("failed_actions", failed_action, limit=12)
-                self._append_agent_state_item("do_not_repeat", failed_action, limit=12)
-
-    def _record_assistant_round_in_state(
-        self,
-        message: str,
-        tool_calls: List[LLMToolCall],
-    ) -> None:
-        """
-        Record structured assistant state updates into the persistent Agent state.
-
-        This method intentionally avoids natural-language chunking. It only
-        consumes a structured JSON payload when the assistant emits one, then
-        merges the payload into the existing AgentState schema.
-        """
-        text = str(message or "").strip()
-        parsed_update = self._parse_agent_state_update(text) if text else None
-        if parsed_update:
-            self._apply_agent_state_update(parsed_update)
-
-        if tool_calls:
-            planned_tools = ", ".join(tool.name for tool in tool_calls)
-            self._append_agent_state_item("next_actions", f"Call tools: {planned_tools}", limit=12)
-            if not parsed_update or "phase" not in parsed_update:
-                self.agent_state.phase = "reasoning"
-        elif text:
-            if not parsed_update or "phase" not in parsed_update:
-                self.agent_state.phase = "answering"
-        elif not parsed_update:
-            # No structured update and no assistant text: keep the phase as-is.
-            return
-
-    def _parse_agent_state_update(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parse a structured AgentState update from assistant output."""
-        if not text.strip():
-            return None
-
-        payload = self._load_json_object(text)
-        if payload is None:
-            return None
-
-        if not isinstance(payload, dict):
-            return None
-
-        update = payload.get("state_updates")
-        if isinstance(update, dict):
-            payload = update
-
-        normalized: Dict[str, Any] = {}
-        for key in (
-            "task",
-            "phase",
-            "facts",
-            "key_facts",
-            "hypotheses",
-            "artifacts",
-            "credentials",
-            "known_routes",
-            "failed_actions",
-            "failed_attempts",
-            "do_not_repeat",
-            "next_actions",
-        ):
-            if key in payload:
-                normalized[key] = payload[key]
-
-        return normalized or None
-
-    def _load_json_object(self, text: str) -> Optional[object]:
-        """Load a JSON object from raw text or fenced JSON content."""
-        candidate_texts = [text.strip()]
-        fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
-        candidate_texts.extend(block.strip() for block in fenced_blocks if block.strip())
-
-        for candidate in candidate_texts:
-            try:
-                payload = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                return payload
-        return None
-
-    def _apply_agent_state_update(self, update: Mapping[str, Any]) -> None:
-        """Merge a structured state update into the persistent AgentState."""
-        task = update.get("task")
-        if isinstance(task, str) and task.strip():
-            self.agent_state.task = task.strip()
-
-        phase = update.get("phase")
-        if isinstance(phase, str) and phase.strip():
-            self.agent_state.phase = phase.strip()
-
-        list_field_map: Dict[str, str] = {
-            "facts": "facts",
-            "key_facts": "facts",
-            "hypotheses": "hypotheses",
-            "failed_actions": "failed_actions",
-            "do_not_repeat": "do_not_repeat",
-            "next_actions": "next_actions",
-        }
-        for source_field, target_field in list_field_map.items():
-            values = update.get(source_field)
-            if isinstance(values, list):
-                for value in values:
-                    if isinstance(value, str):
-                        self._append_agent_state_item(target_field, value, limit=24 if target_field == "facts" else 12)
-                    elif isinstance(value, dict):
-                        self._append_agent_state_item(
-                            target_field,
-                            json.dumps(value, ensure_ascii=False, sort_keys=True),
-                            limit=24 if target_field == "facts" else 12,
-                        )
-
-        failed_attempts = update.get("failed_attempts")
-        if isinstance(failed_attempts, list):
-            for item in failed_attempts:
-                if not isinstance(item, dict):
-                    continue
-                action = str(item.get("action", "")).strip()
-                reason = str(item.get("reason", "")).strip()
-                evidence = str(item.get("evidence", "")).strip()
-                summary_parts = [part for part in (action, reason, evidence) if part]
-                if summary_parts:
-                    failed_action = " | ".join(summary_parts)
-                    self._append_agent_state_item("failed_actions", failed_action, limit=12)
-                    self._append_agent_state_item("do_not_repeat", failed_action, limit=12)
-
-        artifacts = update.get("artifacts")
-        if isinstance(artifacts, dict):
-            for key, value in artifacts.items():
-                if not isinstance(key, str):
-                    continue
-                self.agent_state.artifacts[key] = str(value)
-        elif isinstance(artifacts, list):
-            for index, item in enumerate(artifacts, start=1):
-                if not isinstance(item, dict):
-                    continue
-                artifact_key = str(item.get("path") or item.get("name") or item.get("id") or f"artifact_{index}")
-                self.agent_state.artifacts[artifact_key] = json.dumps(item, ensure_ascii=False, sort_keys=True)
-
-        credentials = update.get("credentials")
-        if isinstance(credentials, list):
-            for item in credentials:
-                if isinstance(item, dict):
-                    normalized = {str(key): str(value) for key, value in item.items()}
-                    if normalized not in self.agent_state.credentials:
-                        self.agent_state.credentials.append(normalized)
-
-        known_routes = update.get("known_routes")
-        if isinstance(known_routes, dict):
-            for key, value in known_routes.items():
-                if isinstance(key, str):
-                    self.agent_state.known_routes[key] = str(value)
-
-    def _append_agent_state_item(
-        self, 
-        field_name: str, 
-        value: str, 
-        *, 
-        limit: int
-    ) -> None:
-        """
-        Append a unique non-empty string to an AgentState list field.
-
-        来了来了，codex 又开始霍霍 agent 状态了。
-        TODO: 现在需要紧急明确 agent state schema 的内容，包括从提示词方面。
-        TODO for TODO: 删掉所有这个函数。
-        """
-        normalized = " ".join(str(value or "").split())
-        if not normalized:
-            return
-        target = getattr(self.agent_state, field_name)
-        if normalized in target:
-            return
-        target.append(normalized)
-        setattr(self.agent_state, field_name, target[-limit:])
 
     def _render_agent_state(self):
-        """对一个旧接口的兼容：将 agent_state 转换成字符串。"""
-        return str(self.agent_state)
+        """Compatibility renderer for the current state-machine snapshot."""
+        return self.state_machine.render()
     
     # ====================================================================
     # Tool handlers
@@ -1172,7 +1050,6 @@ Rules:
                 )
             # 然后等待
             executing_result = await asyncio.gather(*executing_tools)
-            self._record_tool_round_in_state(tool_calls, executing_result)
         return executing_result
 
 

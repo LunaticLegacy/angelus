@@ -6,7 +6,8 @@ from .llm_fetcher import LLMFetcher, LLMOutput
 from .prompt import (
     CONTEXT_COMPACT_PROMPT_TEMPLATE,
     MEMORY_CONCLUDE_PROMPT_TEMPLATE, 
-    TAGIFY_CONTEXT_PROMPT
+    TAGIFY_CONTEXT_PROMPT,
+    CONTEXT_SELECTION_PROMPT_TEMPLATE
 )
 from .llm_types import (
     LLMContext, 
@@ -20,7 +21,8 @@ from .llm_types import (
 from .utils_function import (
     normalize_context_mode,
     sanitize_tags,
-    stable_unique_ids
+    stable_unique_ids,
+    parse_tags_and_abstracts
 )
 
 
@@ -63,15 +65,22 @@ class ContextIndex:
 
     @staticmethod
     def _normalize_text(text: str) -> str:
-        """Normalize text before it is indexed or matched."""
+        """
+        Normalize text before it is indexed or matched.
+        在查询文本之前，先进行标准化。（转为小写，并移除标点符号）
+        """
         return " ".join(str(text or "").lower().split())
 
     @classmethod
     def _tokenize(cls, text: str) -> List[str]:
-        """Split normalized text into tokens used by the postings index."""
+        """
+        Split normalized text into tokens used by the postings index.
+        将文本进行分词，并返回分词后的结果。
+        """
         normalized = cls._normalize_text(text)
         if not normalized:
             return []
+        # 使用 re 正则表达式匹配
         return re.findall(r"[a-z0-9_]+", normalized)
 
     @classmethod
@@ -84,7 +93,10 @@ class ContextIndex:
 
     @classmethod
     def _sampled_ngrams(cls, text: str, size: int = 3, max_terms: int = 12) -> List[str]:
-        """Sample representative ngrams from a query without generating all of them."""
+        """
+        Sample representative ngrams from a query without generating all of them.
+        """
+        # 标准化。
         normalized = cls._normalize_text(text)
         if len(normalized) < size:
             return [normalized] if normalized else []
@@ -101,7 +113,10 @@ class ContextIndex:
 
     @classmethod
     def _query_terms(cls, text: str, *, max_ngrams: int = 12) -> List[str]:
-        """Build a compact query term set for postings lookups."""
+        """
+        Build a compact query term set for postings lookups.
+        查询什么？
+        """
         normalized = cls._normalize_text(text)
         if not normalized:
             return []
@@ -109,6 +124,7 @@ class ContextIndex:
         terms: List[str] = []
         seen: Set[str] = set()
 
+        # 进行索引
         for token in cls._tokenize(normalized):
             if token not in seen:
                 seen.add(token)
@@ -191,8 +207,15 @@ class ContextIndex:
         index: Dict[str, Set[int]],
         terms: List[str],
     ) -> Set[int]:
-        """Return ids that contain every supplied term."""
+        """
+        Return ids that contain every supplied term.
+        Args:
+            index: Postings index to query.
+            terms: List of query terms to match.
+        """
+        # 我去，这……干啥呢？！
         buckets: List[Set[int]] = []
+        
         for term in terms:
             bucket = index.get(term)
             if bucket is None:
@@ -201,7 +224,8 @@ class ContextIndex:
         if not buckets:
             return set()
         buckets.sort(key=len)
-        candidate_ids = set(buckets[0])
+
+        candidate_ids: Set = set(buckets[0])
         for bucket in buckets[1:]:
             candidate_ids.intersection_update(bucket)
             if not candidate_ids:
@@ -237,19 +261,29 @@ class ContextIndex:
         return candidate_ids.intersection(allowed_ids)
 
     def candidate_tag_ids(self, tags: List[str], *, blur: bool = False) -> Set[int]:
-        """Return candidate ids for a tag query."""
+        """
+        Return candidate ids for a tag query.
+        
+        Args:
+            tags: List of tags to query.
+            blur: Whether to use fuzzy matching for tag queries.
+        """
+        # 先清洗标签。
         normalized_tags = sanitize_tags(tags, max_tags=max(12, len(tags)))
         if not normalized_tags:
             return set()
-
+        
+        # 然后匹配 id
         matched_ids: Set[int] = set()
         for query_tag in normalized_tags:
+            # 在启用模糊搜索的场合
             if blur:
                 query_terms = self._query_terms(query_tag, max_ngrams=6)
                 candidate_ids = self._candidate_ids_for_terms(self.tag_postings, query_terms)
                 matched_ids.update(candidate_ids)
-                continue
-            matched_ids.update(self.tag_exact_postings.get(query_tag, set()))
+            else:
+                # 否则，精确匹配
+                matched_ids.update(self.tag_exact_postings.get(query_tag, set()))
         return matched_ids
 
     def compacted_ids_for_source_ids(self, source_ids: List[int]) -> Set[int]:
@@ -543,6 +577,25 @@ class LLMContextHandler:
             lines.append(str(context))
 
         return "\n".join(lines)
+    
+    async def transcribe_context_abstarct_to_str(
+        self,
+        contexts: LLMContextInfo
+    ) -> str:
+        """
+        将上下文的摘要信息转为字符串。
+
+        Args:
+            contexts: 上下文信息。
+        
+        Return:
+            str: 被抽象后的上下文信息。
+        """
+        lines: List[str] = []
+        for context in contexts.items:
+            lines.append(context.abstract_msg)
+        
+        return "\n".join(lines)
 
     async def get_now_context_as_str(
         self,
@@ -551,7 +604,7 @@ class LLMContextHandler:
         preserve_order: bool = False,
     ) -> str:
         """
-        获取当前上下文，以字符串格式。
+        获取当前上下文全部格式，以字符串格式。
 
         Args:
             timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
@@ -564,17 +617,29 @@ class LLMContextHandler:
             return ""
 
         return await self.transcribe_context_to_str(info)
-
-    async def get_now_active_context_as_str(self) -> str:
-        """
-        Alias: 
-            get_content_as_single_str()
-        """
-        return await self.get_now_context_as_str()
     
+    async def get_now_abstract_as_str(
+        self,
+        timeline_id_list: Optional[List[int]] = None,
+        *,
+        preserve_order: bool = False,
+    ) -> str:
+        """
+        获取当前上下文全部格式，以字符串格式。
+
+        Args:
+            timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
+
+        Returns:
+            返回当前上下文，以单个字符串格式。如果为空则返回空字符串。
+        """
+        info = await self.get_now_context(timeline_id_list, preserve_order=preserve_order)
+        if info is None:
+            return ""
+        return await self.transcribe_context_abstarct_to_str(info)
 
     async def compress_context(
-        self,
+        self,   
         timeline_id_list: Optional[List[int]] = None,
         temperature: float = 0.3,
         compression_profile: Optional[ContextCompressionProfile] = None,
@@ -625,7 +690,6 @@ class LLMContextHandler:
         )
         response: LLMOutput = await self.llm_handler.fetch(
             msg=prompt,
-            fallback_order=self.fallback_order,
             temperature=temperature
         )
         # 压缩
@@ -714,8 +778,7 @@ class LLMContextHandler:
 
         prompt = MEMORY_CONCLUDE_PROMPT_TEMPLATE.format(lines=lines)
         response = await self.llm_handler.fetch(
-            msg=prompt,
-            fallback_order=self.fallback_order,
+            msg=prompt
         )
         memory = response.content or None
         if memory and self.enable_memory and self.memory_list is not None:
@@ -775,7 +838,10 @@ class LLMContextHandler:
         temperature: float = 0.0
     ) -> LLMContext:
         """
-        为一个上下文历史加入标签，标签化功能必须在允许标签化时才可使用。
+        为一个上下文历史加入标签（和摘要）。
+        
+        Notes:
+            必须在允许标签化时才可使用。
 
         Args:
             context: 等待加标签的上下文。
@@ -799,19 +865,27 @@ class LLMContextHandler:
             return context
         
         # 标签
-        tags: LLMOutput = await self.llm_handler.fetch(
+        tags_and_abstracts: LLMOutput = await self.llm_handler.fetch(
             msg=tag_source, 
             system_prompt=TAGIFY_CONTEXT_PROMPT, 
             temperature=temperature
         )
-        parsed_tags = re.findall(r"[a-zA-Z][a-zA-Z0-9_]{1,40}", tags.content.lower())
-        context.tags = sanitize_tags(
-            [
-                tag
-                for tag in parsed_tags
-                if tag not in {"tag_1", "tag_2", "tag_3", "tag_4", "tag_5"}
-            ]
+        # 当前输出 schema：
+        """
+        {
+            "tags": ["lowercase_snake_case_tag"],
+            "summary": "brief summary"
+        }
+        """
+        # 解析
+        parsed_tags, abstract_msg = parse_tags_and_abstracts(
+            tags_and_abstracts.content
         )
+
+        context.tags = parsed_tags
+        context.abstract_msg = abstract_msg
+        
+
         return context
     
     async def find_context_by_tags(
@@ -909,7 +983,7 @@ class LLMContextHandler:
         根据标签和摘要，从被压缩后的上下文内容里，查询原始上下文。
 
         Notes:
-            - 如果要多次搜索的话，时间复杂度可能高达 O(nn)
+            - 如果要多次搜索的话，时间复杂度可能高达 O(nn) - 检查是否已被修复。
             - 这是最小实现，且该实现表达的关系为 "AND"。
 
         Args:
@@ -918,13 +992,16 @@ class LLMContextHandler:
             blur_summary: 是否模糊搜索摘要
             blur_tags: 是否模糊搜索标签
         """
+        # 如果不允许通过标签反查，通常是上下文模式选择为 graph
         if not self.retrieval_enabled:
             return None
-
+        
+        # 获取标签
         tag_ids = self.context_index.candidate_tag_ids(tags, blur=blur_tags)
         if not tag_ids:
             return None
-
+        
+        # 查询摘要
         summary_ids = self.context_index.candidate_text_ids(
             summary_query,
             include_raw=False,
@@ -968,7 +1045,7 @@ class LLMContextHandler:
 
         Args:
             items: 在查询环节中被命中的条目。
-            expand_compacted: 决定：压缩后的内容是否可被选择。
+            expand_compacted: 决定：从被摘要的内容里抽取 ID。
             include_hit_id_for_compacted: 压缩后的内容被选择时，是否保留压缩后的 id。
 
         Returns:
@@ -1062,27 +1139,43 @@ class LLMContextHandler:
         return stable_unique_ids(expanded_ids)
 
     def get_descendant_ids(self, context_id: int) -> Set[int]:
-        """Return raw and nested compacted ids represented by one compacted id."""
+        """
+        从目标（被压缩后的）上下文条目里，寻找所有原始信息条目。
+
+        Args:
+            context_id: 目标条目 ID。
+        
+        Returns:
+            所有原始信息条目的 ID，但不包含输入的条目 ID。
+        """
+        # 确认当前需选择的条目是等待压缩的东西。
         entry = self.context_timeline_dict.get(context_id)
         if not isinstance(entry, LLMContextCompacted):
             return set()
-
+        
+        # 手动栈，迭代。
         descendants: Set[int] = set()
         stack: List[LLMInfo] = list(entry.source)
+
+        # 先将本压缩后条目的所有后续条目入栈。
         for source_id in entry.source_timeline:
             if source_id in self.context_timeline_dict:
                 descendants.add(source_id)
-
+        
+        # 然后开始。
         while stack:
             item = stack.pop()
+            # 如果在
             if item.timeline in self.context_timeline_dict:
                 descendants.add(item.timeline)
+            # 如果要继续向下走，深度优先便利。
             if isinstance(item, LLMContextCompacted):
                 for source_id in item.source_timeline:
                     if source_id in self.context_timeline_dict:
                         descendants.add(source_id)
                 stack.extend(item.source)
-
+        
+        # 原始 ID 将不被包含。
         descendants.discard(context_id)
         return descendants
 

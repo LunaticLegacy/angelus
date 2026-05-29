@@ -108,17 +108,19 @@ LLMContextValue = Union[
 @dataclass
 class LLMContext:
     """One chat message."""
-    role: Literal["system", "user", "assistant"]   # 角色，有效值：system, user, assistant
+    role: str | Literal["system", "user", "assistant"]   # 角色，实际有效值：system, user, assistant
     content: str    # 内容
     timeline: int = -1   # 时间线 id
-    tool_call_info: Optional[List[str]] = None  # 调度了什么工具，可选，且有可能调度了不止一件工具。
-    tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
+    abstract_msg: str = ""   # 新增：摘要内容
+    tool_call_info: Optional[List[str]] = None  # 本轮调度了什么工具，有什么结果。可选，且有可能调度了不止一件工具。
+    tags: List[str] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextValue]:
         d: Dict[str, LLMContextValue] = {
             "timeline": self.timeline,
             "role": self.role,  
             "content": self.content,
+            "abstract": self.abstract_msg,
         }
 
         # schema: 必须保证工具调度的信息和结果信息同时存在。
@@ -128,7 +130,7 @@ class LLMContext:
         if self.tags:
             d["tags"] =  self.tags
 
-        return d    
+        return d
 
     def __str__(self) -> str:
         parts = [
@@ -140,7 +142,7 @@ class LLMContext:
             parts.append("User context won't contains tool call info.")
         else:
             if self.tool_call_info:
-                parts.append(f"Tool call info: {self.tool_call_info}")
+                parts.append(f"Tool call info in this round: {self.tool_call_info}")
             if self.tags:
                 parts.append(f"Tags: {self.tags}")
 
@@ -149,6 +151,9 @@ class LLMContext:
         
         if self.content != "":
             parts.append(f"Content: {self.content if self.content else 'None'}")
+        
+        if self.abstract_msg != "":
+            parts.append(f"Abstract: {self.abstract_msg if self.abstract_msg else 'None'}")
 
         return ", ".join(parts)
 
@@ -177,7 +182,7 @@ class LLMContextCompacted:
     source: List[Union[LLMContext, "LLMContextCompacted"]]    # 直接参与本次压缩的条目，可包含原始条目或更早的摘要条目。
     source_timeline: List[int] # 展平后的原始来源时间线 id，而非“本次压缩输入条目”的 id。
     timeline: int = -1   # 时间线 id
-    tags: Optional[List[str]] = field(default_factory=list)   # 用于保存本上下文内容的标签。
+    tags: List[str] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextCompactedValue]:
         """Serialize the compacted entry into a JSON-friendly dictionary.
@@ -288,22 +293,30 @@ class ContextSelectionView:
 @dataclass
 class AgentState:
     """
-    Agent 当前状态机。语义：
+    Durable state snapshot maintained by the Agent state-machine manager.
 
     Attributes:
-        task: 任务描述
-        phase: 任务阶段
-        facts: 事实列表
-        hypotheses: 假设列表
-        artifacts: 工件列表
-        credentials: 凭证列表
-        known_routes: 已知路由列表
-        failed_actions: 失败动作列表，储存现在失败的动作。
-        do_not_repeat: 不重复列表，让 agent 不再重复执行。
-        next_actions: 下一步动作列表
+        version: State schema version.
+        revision: Monotonic revision incremented after each accepted update.
+        task: Task description.
+        phase: Current coarse workflow phase.
+        summary: Compact state-machine summary for prompt injection.
+        facts: Verified observations.
+        hypotheses: Unverified but useful theories.
+        artifacts: Named files, outputs, or produced values.
+        credentials: Discovered credentials or secret-like records.
+        known_routes: Known endpoints, entrypoints, or interaction routes.
+        failed_actions: Failed actions with reasons.
+        do_not_repeat: Specific actions that should not be repeated.
+        next_actions: Concrete executable next steps.
+        transitions: Recent state transition audit entries.
+        updated_at: Unix timestamp for the last accepted update.
     """
+    version: int = 2
+    revision: int = 0
     task: str = ""
     phase: str = "initial"
+    summary: str = ""
     facts: list[str] = field(default_factory=list)
     hypotheses: list[str] = field(default_factory=list)
     artifacts: dict[str, str] = field(default_factory=dict)
@@ -312,14 +325,19 @@ class AgentState:
     failed_actions: list[str] = field(default_factory=list)
     do_not_repeat: list[str] = field(default_factory=list)
     next_actions: list[str] = field(default_factory=list)
+    transitions: list[dict[str, str]] = field(default_factory=list)
+    updated_at: float = 0.0
 
     def __str__(self) -> str:
         """
-        将当前 agent 状态转为字符串。
+        Render the state-machine snapshot for prompt injection.
         """
         sections: List[str] = ["[Agent State]"]
+        sections.append(f"Revision: {self.revision}")
         sections.append(f"Task: {self.task or '(unset)'}")
         sections.append(f"Phase: {self.phase}")
+        if self.summary:
+            sections.append(f"Summary: {self.summary}")
 
         def add_list(label: str, values: List[str]) -> None:
             if values:
@@ -337,7 +355,37 @@ class AgentState:
             sections.append(f"Credentials: {json.dumps(self.credentials, ensure_ascii=False)}")
         if self.known_routes:
             sections.append(f"Known routes: {json.dumps(self.known_routes, ensure_ascii=False)}")
+        if self.transitions:
+            sections.append(f"Recent transitions: {json.dumps(self.transitions[-5:], ensure_ascii=False)}")
         return "\n".join(sections)
+
+
+@dataclass
+class AgentStateTurnEvent:
+    """One completed main-agent turn submitted to the state manager."""
+
+    user_goal: str
+    turn: int
+    assistant_message: str = ""
+    tool_records: list["ToolExecutionRecord"] = field(default_factory=list)
+    stop_requested: bool = False
+
+
+@dataclass
+class AgentStateUpdate:
+    """Structured patch returned by the state-manager subagent."""
+
+    phase: str = ""
+    summary: str = ""
+    facts: list[str] = field(default_factory=list)
+    hypotheses: list[str] = field(default_factory=list)
+    artifacts: dict[str, str] = field(default_factory=dict)
+    credentials: list[dict[str, str]] = field(default_factory=list)
+    known_routes: dict[str, str] = field(default_factory=dict)
+    failed_actions: list[str] = field(default_factory=list)
+    do_not_repeat: list[str] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+    transition: str = ""
 
 @dataclass
 class ContextBundle:
@@ -420,6 +468,7 @@ class MaxTurnsExceededError(AgentExecutionError):
 
 ContextMode = Literal["linear", "graph"]
 
+# 停止标签 - 这些东西一般都是一些无效介词
 STOP_TAGS: Set[str] = {
     "about",
     "after",
