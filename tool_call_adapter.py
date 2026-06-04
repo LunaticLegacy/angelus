@@ -10,6 +10,7 @@ Supported providers:
 """
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from enum import Enum
@@ -40,6 +41,120 @@ class NormalizedToolCall:
             "tool": self.tool_name,
             "arguments": self.arguments,
         }
+
+
+_XML_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+    re.DOTALL,
+)
+
+
+def _parse_tool_call_payload(payload: str) -> Optional[NormalizedToolCall]:
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    name = parsed.get("name")
+    if not name:
+        return None
+
+    arguments = parsed.get("arguments", {})
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {}
+
+    return NormalizedToolCall(
+        tool_name=str(name),
+        arguments=arguments if isinstance(arguments, dict) else {},
+        source=ToolCallSource.CUSTOM_JSON,
+    )
+
+
+def _iter_json_object_spans(text: str):
+    start: Optional[int] = None
+    depth = 0
+    in_string = False
+    escape = False
+
+    for index, char in enumerate(text):
+        if start is None:
+            if char == "{":
+                start = index
+                depth = 1
+                in_string = False
+                escape = False
+            continue
+
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                yield start, index + 1
+                start = None
+
+
+def parse_xml_tool_calls(text: str) -> List[NormalizedToolCall]:
+    """Extract Qwen-style tool calls from raw text.
+
+    Supports both the documented ``<tool_call>...</tool_call>`` wrapper and
+    bare JSON objects emitted by some ONNX Runtime / Qwen generations.
+    """
+    calls: List[NormalizedToolCall] = []
+    for match in _XML_TOOL_CALL_RE.finditer(text):
+        call = _parse_tool_call_payload(match.group(1))
+        if call is not None:
+            calls.append(call)
+
+    # Some backends emit bare JSON tool calls without the XML wrapper, often
+    # embedded inside explanatory text or code fences.
+    seen_payloads: set[str] = set()
+    for start, end in _iter_json_object_spans(text):
+        candidate = text[start:end].strip()
+        if candidate in seen_payloads:
+            continue
+        seen_payloads.add(candidate)
+        call = _parse_tool_call_payload(candidate)
+        if call is not None:
+            calls.append(call)
+
+    return calls
+
+
+def strip_xml_tool_calls(text: str) -> str:
+    """Remove Qwen-style tool-call payloads from raw text."""
+    without_xml = _XML_TOOL_CALL_RE.sub("", text)
+    spans: list[tuple[int, int]] = []
+    for start, end in _iter_json_object_spans(without_xml):
+        candidate = without_xml[start:end].strip()
+        if _parse_tool_call_payload(candidate) is not None:
+            spans.append((start, end))
+
+    if not spans:
+        return without_xml.strip()
+
+    chars = list(without_xml)
+    for start, end in reversed(spans):
+        for index in range(start, end):
+            chars[index] = ""
+    return "".join(chars).strip()
 
 
 def normalize_tool_calls(
