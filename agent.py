@@ -18,7 +18,10 @@ from .llm_context import (
     LLMContextInfo,
     stable_unique_ids,
 )
-from .tool_call_adapter import ToolCallSource, normalize_tool_calls
+from .tool_call_adapter import (
+    parse_xml_tool_calls,
+    strip_xml_tool_calls,
+)
 from .tool import Tool, ToolRegistry
 from .tools.builtin_tools import create_builtin_tools
 
@@ -205,10 +208,12 @@ class Agent:
         *,
         system_prompt: Optional[str] = None,
         temperature: float = 0.4,
+        max_tokens: int = 4096,
         use_history: bool = True,
         use_tools: bool = False,
         save_context: bool = True,
         tag_context: bool = True,
+        streamer: Optional[Streamer | Callable[[str], int | None]] = None,
     ) -> LLMOutput:
         """
         Execute exactly one LLM chat request.
@@ -217,6 +222,17 @@ class Agent:
         cases where the caller wants to inspect raw `LLMOutput.tool_calls`.
 
         建议在调试 agent 系统时使用本方法。
+
+        Args:
+            msg: 用户输入。
+            system_prompt: 可选的系统提示词覆盖。
+            temperature: 采样温度。
+            max_tokens: 最大输出 token 数。
+            use_history: 是否使用历史上下文。
+            use_tools: 是否注入工具定义。
+            save_context: 是否将本轮对话保存到上下文。
+            tag_context: 是否对保存的上下文执行标签化。
+            streamer: 可选的流式输出处理器。提供时启用流式生成。
         """
 
         prev_message: Optional[List[LLMInfo]] = await self._build_prev_messages() if use_history else None
@@ -228,13 +244,44 @@ class Agent:
             resolved_system_prompt = self.system_prompt
         
         # 拉取本轮回复内容。
-        output: LLMOutput = await self.llm_handler.fetch(
-            msg=msg,
-            system_prompt=resolved_system_prompt,
-            temperature=temperature,
-            prev_messages=prev_message if prev_message else None,
-            tools=request_tools if request_tools else None,
-        )
+        if streamer:
+            collected: list[str] = []
+            async for chunk in self.llm_handler.fetch_stream(
+                msg=msg,
+                system_prompt=resolved_system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                prev_messages=prev_message if prev_message else None,
+                tools=request_tools if request_tools else None,
+            ):
+                if chunk:
+                    collected.append(chunk)
+                    streamer(chunk)
+            response_text = "".join(collected)
+            streamed_tool_calls = [
+                LLMToolCall(
+                    name=tool_call.tool_name,
+                    arguments=tool_call.arguments,
+                    call_id=tool_call.call_id,
+                    source=tool_call.source.value,
+                )
+                for tool_call in parse_xml_tool_calls(response_text)
+            ]
+            output = LLMOutput(
+                content=strip_xml_tool_calls(response_text) if streamed_tool_calls else response_text,
+                provider=self.llm_handler.provider,
+                backend_name=self.llm_handler.default_backend_config.name,
+                model=self.llm_handler.default_backend_config.model,
+                tool_calls=streamed_tool_calls,
+            )
+        else:
+            output: LLMOutput = await self.llm_handler.fetch(
+                msg=msg,
+                system_prompt=resolved_system_prompt,
+                temperature=temperature,
+                prev_messages=prev_message if prev_message else None,
+                tools=request_tools if request_tools else None,
+            )
 
         # tool call 是模型无关的东西
         resolved_tool_calls = output.tool_calls
@@ -257,13 +304,13 @@ class Agent:
     async def run_agent_round(
         self,
         msg: str,
-        streamer: Optional[Streamer | Callable[[str], int | None]] = lambda x: print(x, end="", flush=True),
         verbose_info: bool = False,
         max_turns: int = 8,
         max_context_size: int = 131072,
         temperature: float = 0.4,
         max_tokens: int = 4096,
         stop_callback: Optional[Callable[[], bool]] = None,
+        streamer: Optional[Streamer | Callable[[str], int | None]] = None,
     ) -> str:
         """
         进行一整个轮次的 Agent 执行轮。
@@ -279,7 +326,7 @@ class Agent:
 
         Args:
             msg: 本 agent 的本次输入。
-            streamer: 流式输出的处理器，如果无处理器则默认正常颜色输出。
+            streamer: 可选的流式输出处理器。提供时启用流式生成。
             verbose_info: 为 True 时，打印每轮调用、tool_calls、结果等调试信息。
             max_turns: 最大轮次上限。
             temperature: 采样温度，透传给底层 LLM 请求。
@@ -357,23 +404,57 @@ class Agent:
                 break
 
             # ---- 主工作流内容 ----
-            response: LLMOutput = await self.llm_handler.fetch(
-                msg=msg,
-                system_prompt=self.system_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                prev_messages=prev_messages if prev_messages else None,  # 这东西又是个 optional，我类型是对的，估计是插件bug
-                tools=request_tools if request_tools else None,  # 传递工具信息
-            )
+            if streamer:
+                collected: list[str] = []
+                async for chunk in self.llm_handler.fetch_stream(
+                    msg=msg,
+                    system_prompt=self.system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    prev_messages=prev_messages if prev_messages else None,
+                    tools=request_tools if request_tools else None,
+                ):
+                    if chunk:
+                        collected.append(chunk)
+                        streamer(chunk)
+                else:
+                    print() # 在循环结束的场合，换行
+                response_text = "".join(collected)
+                streamed_tool_calls = [
+                    LLMToolCall(
+                        name=tool_call.tool_name,
+                        arguments=tool_call.arguments,
+                        call_id=tool_call.call_id,
+                        source=tool_call.source.value,
+                    )
+                    for tool_call in parse_xml_tool_calls(response_text)
+                ]
+                response = LLMOutput(
+                    content=strip_xml_tool_calls(response_text) if streamed_tool_calls else response_text,
+                    provider=self.llm_handler.provider,
+                    backend_name=self.llm_handler.default_backend_config.name,
+                    model=self.llm_handler.default_backend_config.model,
+                    tool_calls=streamed_tool_calls,
+                )
+            else:
+                response: LLMOutput = await self.llm_handler.fetch(
+                    msg=msg,
+                    system_prompt=self.system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    prev_messages=prev_messages if prev_messages else None,
+                    tools=request_tools if request_tools else None,
+                )
 
             # 然后查看工具内容，如果有工具的话。
             message: str = response.text    # 本轮文本
-            if verbose_info:
+            if verbose_info and not streamer:
                 print(f"[Agent] LLM response: \n -----------\n{message}\n -----------")
 
             # 现在的 tool call 被抽象为了当前包体的中间层（见类型 `LLMToolCall`），已和供应商无关
             tool_calls: List[LLMToolCall] = response.tool_calls
 
+            # 处理工具调用
             executing_result: List[str] = await self._handle_tool_calls(tool_calls, verbose_info=verbose_info, max_concurrent_calls=self.max_concurrent_tools)
 
             tool_record_round: List[ToolExecutionRecord] = [
@@ -1033,8 +1114,9 @@ class Agent:
         """
         executing_tools: List[CoroutineType] = []
         executing_result: List[str] = []
+
         if verbose_info:            
-            print(f"[Agent] Parsed tool calls: {len(tool_calls)}")
+            print(f"[Agent] Parsed tool call numbers: {len(tool_calls)}")
             if tool_calls:
                 for idx, tool in enumerate(tool_calls, start=1):
                     print(f"[Agent] Tool call {idx}: {tool.to_execution_format()}")

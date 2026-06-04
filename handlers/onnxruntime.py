@@ -46,7 +46,8 @@ def _ensure_cuda_runtime() -> bool:
                 pass
     return loaded
 
-from ..llm_types import LLMBackendConfig, LLMOutput, TokenUsage
+from ..llm_types import LLMBackendConfig, LLMOutput, LLMToolCall, TokenUsage
+from ..tool_call_adapter import parse_xml_tool_calls, strip_xml_tool_calls
 from ._tool_schemas import to_openai_tool_schemas
 from .base import LLMBackendHandler, ToolDefinition, ToolSchema
 
@@ -57,6 +58,7 @@ from .base import LLMBackendHandler, ToolDefinition, ToolSchema
 JSONValue: TypeAlias = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 JSONObject: TypeAlias = dict[str, JSONValue]
 StreamQueueItem: TypeAlias = str | BaseException
+ToolCallDict: TypeAlias = dict[str, JSONValue]
 
 
 class _StreamSentinel:
@@ -71,6 +73,7 @@ class _ONNXCompletionResponse:
     raw: str = ""
     usage: JSONObject = field(default_factory=dict)
     stop_reason: Optional[str] = None
+    tool_calls: list[ToolCallDict] = field(default_factory=list)
 
 
 # ── Device resolution ───────────────────────────────────────────────────
@@ -229,8 +232,11 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
         config = self.generation_config(temperature=temperature, max_tokens=max_tokens)
 
         # Encode the chat into input token IDs using the model's chat template.
-        # onnxruntime-genai 0.14.x split encode_chat into apply_chat_template + encode
-        prompt = self.tokenizer.apply_chat_template(json.dumps(history))
+        # Pass tool definitions so the template injects <tools> XML for Qwen.
+        prompt = self.tokenizer.apply_chat_template(
+            json.dumps(history),
+            tools=json.dumps(tools) if tools else None,
+        )
         input_ids = self.tokenizer.encode(prompt)
 
         # Build generator parameters.
@@ -251,7 +257,21 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
         output_ids = generator.get_sequence(0)
         content = self.tokenizer.decode(output_ids)
 
-        return _ONNXCompletionResponse(content=content)
+        # Parse <tool_call> blocks from the output (Qwen3 format)
+        tool_calls = [
+            {
+                "name": call.tool_name,
+                "arguments": call.arguments,
+            }
+            for call in parse_xml_tool_calls(content)
+        ]
+        clean_content = strip_xml_tool_calls(content) if tool_calls else content
+
+        return _ONNXCompletionResponse(
+            content=clean_content,
+            raw=content,
+            tool_calls=tool_calls,
+        )
 
     # ── Streaming ───────────────────────────────────────────────────────
 
@@ -291,6 +311,20 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
     # ── Response normalisation ──────────────────────────────────────────
 
     def normalize_completion_response(self, response) -> LLMOutput:
+        # Parse tool calls from the Qwen3-style <tool_call> blocks
+        raw_tool_calls = getattr(response, "tool_calls", None) or []
+        tool_calls: list[LLMToolCall] = []
+        for tc in raw_tool_calls:
+            name = tc.get("name", "")
+            arguments = tc.get("arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            if name:
+                tool_calls.append(LLMToolCall(name=name, arguments=arguments))
+
         return LLMOutput(
             content=self._coerce_content_to_text(
                 self._read_field(response, "content", response)
@@ -299,6 +333,7 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
             backend_name=self.backend.name,
             model=self.backend.model,
             role="assistant",
+            tool_calls=tool_calls,
             stop_reason=self._read_field(response, "stop_reason", None),
             usage=self.normalize_usage(self._read_field(response, "usage", None)),
         )
