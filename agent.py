@@ -148,13 +148,9 @@ class Agent:
     @property
     def system_prompt(self) -> str:
         """
-        该函数会拼装系统提示词，和工具提示词。
+        该函数会拼装系统提示词，但不再拼装工具提示词——工具将被直接交给 llm fetcher 处理。
         """
         prompt: str = self._base_system_prompt
-
-        hint: Optional[str] = self.tool_registry.get_prompt_hint()  # 获取所有工具提示。
-        if hint:
-            prompt = f"{prompt}\n{hint}"    # 拼接提示，随后返回数据。
         return prompt
     
     @property
@@ -342,21 +338,23 @@ class Agent:
         if not self.agent_state.task:
             self.agent_state.task = msg
         
+        # 保存输入。
         user_input_context: LLMContext = LLMContext(
             role="user",
             timeline=0,
             content=msg,
             tags=["user_request"]
         )
-
-        self._round_task_tags = await self._cache_round_task_tags(
-            user_input_context=user_input_context,
-            temperature=temperature,
-        )
-
         await self.context_manager.add_context(
             user_input_context,
             append_to_active=True
+        )
+
+
+        # 以及，获取用户输入的标签信息。
+        self._round_task_tags = await self._cache_round_task_tags(
+            user_input_context=user_input_context,
+            temperature=temperature,
         )
 
         # 规定一个应当停止的东西。
@@ -372,7 +370,6 @@ class Agent:
                 break
 
             # 预处理工作流
-
             if self.context_mode == "graph":
                 active_window_before_bundle = self.llm_context_handler.get_active_ids_window()
 
