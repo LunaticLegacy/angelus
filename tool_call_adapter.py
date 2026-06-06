@@ -49,16 +49,8 @@ _XML_TOOL_CALL_RE = re.compile(
 )
 
 
-def _parse_tool_call_payload(payload: str) -> Optional[NormalizedToolCall]:
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(parsed, dict):
-        return None
-
-    name = parsed.get("name")
+def _parse_tool_call_dict(parsed: Dict[str, Any]) -> Optional[NormalizedToolCall]:
+    name = parsed.get("name") or parsed.get("tool")
     if not name:
         return None
 
@@ -74,6 +66,34 @@ def _parse_tool_call_payload(payload: str) -> Optional[NormalizedToolCall]:
         arguments=arguments if isinstance(arguments, dict) else {},
         source=ToolCallSource.CUSTOM_JSON,
     )
+
+
+def _parse_tool_call_payloads(payload: str) -> List[NormalizedToolCall]:
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(parsed, dict):
+        return []
+
+    raw_calls = parsed.get("tool_calls")
+    if isinstance(raw_calls, list):
+        calls: List[NormalizedToolCall] = []
+        for raw_call in raw_calls:
+            if isinstance(raw_call, dict):
+                call = _parse_tool_call_dict(raw_call)
+                if call is not None:
+                    calls.append(call)
+        return calls
+
+    call = _parse_tool_call_dict(parsed)
+    return [call] if call is not None else []
+
+
+def _parse_tool_call_payload(payload: str) -> Optional[NormalizedToolCall]:
+    calls = _parse_tool_call_payloads(payload)
+    return calls[0] if calls else None
 
 
 def _iter_json_object_spans(text: str):
@@ -119,9 +139,7 @@ def parse_xml_tool_calls(text: str) -> List[NormalizedToolCall]:
     """
     calls: List[NormalizedToolCall] = []
     for match in _XML_TOOL_CALL_RE.finditer(text):
-        call = _parse_tool_call_payload(match.group(1))
-        if call is not None:
-            calls.append(call)
+        calls.extend(_parse_tool_call_payloads(match.group(1)))
 
     # Some backends emit bare JSON tool calls without the XML wrapper, often
     # embedded inside explanatory text or code fences.
@@ -131,9 +149,7 @@ def parse_xml_tool_calls(text: str) -> List[NormalizedToolCall]:
         if candidate in seen_payloads:
             continue
         seen_payloads.add(candidate)
-        call = _parse_tool_call_payload(candidate)
-        if call is not None:
-            calls.append(call)
+        calls.extend(_parse_tool_call_payloads(candidate))
 
     return calls
 

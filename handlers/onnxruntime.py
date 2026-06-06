@@ -6,6 +6,7 @@ import ctypes
 import json
 import os
 import queue
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence, TypeAlias
@@ -130,6 +131,39 @@ def _resolve_search_options(
     return options
 
 
+_THINK_DIRECTIVE_RE = re.compile(r"(?<!\S)/(no_)?think(?!\S)")
+
+
+def _coerce_chat_template_context(value: Any) -> dict[str, Any]:
+    """Return backend ``extra_context`` as template keyword arguments."""
+    if not isinstance(value, dict):
+        return {}
+    context = dict(value)
+    context.pop("tools", None)
+    return context
+
+
+def _infer_enable_thinking(messages: Sequence[dict[str, str]]) -> Optional[bool]:
+    """Infer Qwen thinking mode from the last explicit prompt directive."""
+    enable_thinking: Optional[bool] = None
+    for message in messages:
+        content = str(message.get("content", ""))
+        for match in _THINK_DIRECTIVE_RE.finditer(content):
+            enable_thinking = match.group(1) is None
+    return enable_thinking
+
+
+def _apply_thinking_prefix(prompt: str, context: dict[str, Any]) -> str:
+    """Inject Qwen3's no-thinking prefix after ORT renders the chat template."""
+    if context.get("enable_thinking") is not False:
+        return prompt
+
+    no_think_prefix = "<think>\n\n</think>\n\n"
+    if prompt.endswith(no_think_prefix):
+        return prompt
+    return prompt + no_think_prefix
+
+
 # ── Handler ─────────────────────────────────────────────────────────────
 
 
@@ -154,6 +188,10 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
     ``extra["generation_config"]``
         Optional dict of search options forwarded to
         ``GeneratorParams.set_search_options``.
+    ``extra["extra_context"]``
+        Optional chat-template context.  For Qwen3,
+        ``{"enable_thinking": False}`` appends the empty thinking block that
+        disables thinking for each generated assistant turn.
     """
 
     provider_names = frozenset({"onnxruntime", "ort"})
@@ -217,6 +255,17 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
         )
         return base
 
+    def chat_template_context(
+        self,
+        messages: Sequence[dict[str, str]],
+    ) -> dict[str, Any]:
+        context = _coerce_chat_template_context(self.backend.extra.get("extra_context"))
+        if "enable_thinking" not in context:
+            inferred = _infer_enable_thinking(messages)
+            if inferred is not None:
+                context["enable_thinking"] = inferred
+        return context
+
     # ── Completion (entry point) ────────────────────────────────────────
 
     def create_completion(
@@ -237,6 +286,7 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
             json.dumps(history),
             tools=json.dumps(tools) if tools else None,
         )
+        prompt = _apply_thinking_prefix(prompt, self.chat_template_context(history))
         input_ids = self.tokenizer.encode(prompt)
 
         # Build generator parameters.
