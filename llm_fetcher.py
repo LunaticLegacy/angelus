@@ -205,7 +205,7 @@ class LLMFetcher:
 
                 if isinstance(item, LLMContext):
                     role = item.role
-                    content = str(item)
+                    content = item.content
                 elif isinstance(item, LLMContextCompacted):
                     role = "user"
                     content = str(item)

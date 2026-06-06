@@ -129,11 +129,12 @@ LLMContextValue = Union[
 @dataclass
 class LLMContext:
     """One chat message."""
-    role: str | Literal["system", "user", "assistant"]   # 角色，实际有效值：system, user, assistant
+    role: str | Literal["system", "user", "assistant", "tool"]   # 角色，实际有效值：system, user, assistant, tool
     content: str    # 内容
     timeline: int = -1   # 时间线 id
     abstract_msg: str = ""   # 新增：摘要内容
     tool_call_info: Optional[List[str]] = None  # 本轮调度了什么工具，有什么结果。可选，且有可能调度了不止一件工具。
+    tool_call_result: Optional[List[str]] = None  # 工具执行返回值，供回放给模型。
     tags: List[str] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextValue]:
@@ -147,6 +148,9 @@ class LLMContext:
         # schema: 必须保证工具调度的信息和结果信息同时存在。
         if self.tool_call_info:
             d["tool_call_info"] = self.tool_call_info
+
+        if self.tool_call_result:
+            d["tool_call_result"] = self.tool_call_result
 
         if self.tags:
             d["tags"] =  self.tags
@@ -164,6 +168,8 @@ class LLMContext:
         else:
             if self.tool_call_info:
                 parts.append(f"Tool call info in this round: {self.tool_call_info}")
+            if self.tool_call_result:
+                parts.append(f"Tool call result in this round: {self.tool_call_result}")
             if self.tags:
                 parts.append(f"Tags: {self.tags}")
 
