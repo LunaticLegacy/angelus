@@ -394,6 +394,9 @@ class Agent:
                     print(f"[Agent] Current active linear context IDs before agent round: {self.llm_context_handler.active_ids}")
                 prev_messages = await self._build_prev_messages()
 
+                if self.llm_context_handler.context_len() > max_context_size:
+                    await self.llm_context_handler.compress_context()
+
             if verbose_info:
                 print(f"\n[Agent] ====== Executing Turn: {turn} ======")
                 print(f"[Agent] Provider: {self.llm_handler.provider}")
