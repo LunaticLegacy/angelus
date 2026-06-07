@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from abc import ABC, abstractmethod
 
@@ -48,6 +49,29 @@ class Streamer(ABC):
                     continue
                 keep = self._possible_marker_prefix_len(self.buffer, marker)
             else:
+                json_start = self.buffer.find("{")
+                if json_start != -1:
+                    json_end = self._find_json_object_end(self.buffer, json_start)
+                    if json_end is None:
+                        if json_start > 0:
+                            self._emit(self.buffer[:json_start])
+                            self.buffer = self.buffer[json_start:]
+                        return
+
+                    candidate = self.buffer[json_start:json_end]
+                    if self._looks_like_tool_call_json(candidate):
+                        if json_start > 0:
+                            self._emit(self.buffer[:json_start])
+                        self.buffer = self.buffer[json_end:]
+                        self.mode = "tool"
+                        self._emit(candidate)
+                        self.mode = "text"
+                        continue
+
+                    self._emit(self.buffer[:json_end])
+                    self.buffer = self.buffer[json_end:]
+                    continue
+
                 think_idx = self.buffer.find(self.START)
                 tool_idx = self.buffer.find(self.TOOL_START)
                 next_marker = None
@@ -112,6 +136,50 @@ class Streamer(ABC):
                     keep = max(keep, n)
                     break
         return keep
+
+    @staticmethod
+    def _find_json_object_end(text: str, start: int) -> int | None:
+        depth = 0
+        in_string = False
+        escape = False
+
+        for index in range(start, len(text)):
+            char = text[index]
+            if index == start and char == "{":
+                depth = 1
+                continue
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+
+        return None
+
+    @staticmethod
+    def _looks_like_tool_call_json(candidate: str) -> bool:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            return False
+
+        if not isinstance(parsed, dict):
+            return False
+
+        return bool(parsed.get("name") or parsed.get("tool") or parsed.get("tool_calls"))
 
     def get_tokens(self) -> int:
         return self.token_counter

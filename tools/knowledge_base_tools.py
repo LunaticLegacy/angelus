@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from ..tool import Tool
+from ..rag_module.knowledge import KnowledgeBase
 
-def create_knowledge_tools(knowledge_base=None):
+def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None):
     """Create knowledge base search and retrieval tools.
     
     Args:
