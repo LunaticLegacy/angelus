@@ -53,6 +53,17 @@ from .streamers import Streamer, ThinkColorStreamer
 from .agent_state import AgentStateMachine
 
 
+ORT_TOOL_CALL_CONTRACT = """
+Tool calling contract:
+- If the user explicitly asks you to use a tool, or the answer depends on current/local system information, call an available tool before answering.
+- To call a tool, output exactly one tool call and no explanatory prose:
+<tool_call>
+{"name": "<tool_name>", "arguments": {<arguments_json>}}
+</tool_call>
+- After tool results are provided, use them to answer the user.
+"""
+
+
 class Agent:
     def __init__(
         self,
@@ -117,6 +128,7 @@ class Agent:
 
         # 工具调用历史
         self.tool_call_history: List[List[LLMToolCall]] = []
+        self.tool_call_result_history: List[List[str]] = []
         self._round_task_tags: Optional[List[str]] = None
 
         # 注册内嵌工具，供 LLM 控制上下文信息
@@ -148,9 +160,13 @@ class Agent:
     @property
     def system_prompt(self) -> str:
         """
-        该函数会拼装系统提示词，但不再拼装工具提示词——工具将被直接交给 llm fetcher 处理。
+        该函数会拼装系统提示词。工具 schema 仍交给 llm fetcher 处理；
+        本地 ORT/Qwen 额外需要一个轻量契约来稳定触发工具调用。
         """
         prompt: str = self._base_system_prompt
+        provider = getattr(self.llm_handler, "provider", "")
+        if provider in {"onnxruntime", "ort"} and self.tool_registry.tools:
+            prompt = prompt.rstrip() + "\n\n" + ORT_TOOL_CALL_CONTRACT.strip()
         return prompt
     
     @property
@@ -235,9 +251,7 @@ class Agent:
 
         request_tools = self.tool_registry.tools if use_tools else []
 
-        resolved_system_prompt = system_prompt
-        if resolved_system_prompt is None:
-            resolved_system_prompt = self.system_prompt
+        resolved_system_prompt = system_prompt or self.system_prompt
         
         # 拉取本轮回复内容。
         if streamer:
@@ -345,18 +359,7 @@ class Agent:
             content=msg,
             tags=["user_request"]
         )
-        await self.context_manager.add_context(
-            user_input_context,
-            append_to_active=True
-        )
-
-
-        # 以及，获取用户输入的标签信息。
-        self._round_task_tags = await self._cache_round_task_tags(
-            user_input_context=user_input_context,
-            temperature=temperature,
-        )
-
+        
         # 规定一个应当停止的东西。
         def _should_stop() -> bool:
             return bool(stop_callback and stop_callback())
@@ -480,6 +483,7 @@ class Agent:
                 break
 
             self.tool_call_history.append(tool_calls)
+            self.tool_call_result_history.append(executing_result)
 
             # 拼接上下文。
             # 这里才会包括工具。
@@ -500,6 +504,18 @@ class Agent:
             
             # 将信息加入当前上下文。
             await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
+
+            # 将工具结果回放为独立的 tool 消息，供下一轮模型读取。
+            for tool_info, tool_result in zip(tool_calls, executing_result):
+                tool_context = LLMContext(
+                    role="tool",
+                    content=tool_result,
+                    tool_call_info=[str(tool_info.to_execution_format())],
+                    tool_call_result=[tool_result],
+                )
+                if self.context_mode == "graph":
+                    tool_context = await self.llm_context_handler.tagify_context(tool_context, temperature)
+                await self.llm_context_handler.add_context(tool_context, append_to_active=True)
 
             if verbose_info:
                 print(f"[Agent] Current active context IDs after agent round: {self.llm_context_handler.active_ids}")
