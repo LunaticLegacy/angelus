@@ -128,13 +128,29 @@ LLMContextValue = Union[
 
 @dataclass
 class LLMContext:
-    """One chat message."""
+    """One chat message or tool-mediated prompt fragment.
+
+    Attributes:
+        role: Message role passed to the backend.
+        content: Rendered prompt content for the message.
+        timeline: Monotonic timeline id assigned by the context handler.
+        abstract_msg: Optional short abstract used by compressed contexts.
+        tool_call_info: Serialized tool call payloads without raw results.
+        tool_call_ids: Provider tool-call ids used to pair tool responses.
+        content_reasoning: Optional reasoning text paired with the visible
+            assistant content.
+        tool_result_facts: Compressed facts derived from tool results. These
+            are the only tool-result details meant to flow into LLM input.
+        tags: Retrieval tags attached to the context entry.
+    """
     role: str | Literal["system", "user", "assistant", "tool"]   # 角色，实际有效值：system, user, assistant, tool
     content: str    # 内容
     timeline: int = -1   # 时间线 id
     abstract_msg: str = ""   # 新增：摘要内容
-    tool_call_info: Optional[List[str]] = None  # 本轮调度了什么工具，有什么结果。可选，且有可能调度了不止一件工具。
-    tool_call_result: Optional[List[str]] = None  # 工具执行返回值，供回放给模型。
+    content_reasoning: Optional[str] = None  # 与 content 分离的推理/思考内容。
+    tool_call_info: Optional[List[str]] = None  # 本轮调度了什么工具。可选，且有可能调度了不止一件工具。
+    tool_call_ids: Optional[List[str]] = None   # 对应的 provider tool call id，供回放 tool 消息时对齐。
+    tool_result_facts: Optional[List[str]] = None  # 压缩后的工具结果事实，只保留可注入 LLM 的摘要信息。
     tags: List[str] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextValue]:
@@ -145,12 +161,18 @@ class LLMContext:
             "abstract": self.abstract_msg,
         }
 
+        if self.content_reasoning:
+            d["content_reasoning"] = self.content_reasoning
+
         # schema: 必须保证工具调度的信息和结果信息同时存在。
         if self.tool_call_info:
             d["tool_call_info"] = self.tool_call_info
 
-        if self.tool_call_result:
-            d["tool_call_result"] = self.tool_call_result
+        if self.tool_call_ids:
+            d["tool_call_ids"] = self.tool_call_ids
+
+        if self.tool_result_facts:
+            d["tool_result_facts"] = self.tool_result_facts
 
         if self.tags:
             d["tags"] =  self.tags
@@ -166,10 +188,14 @@ class LLMContext:
         if self.role == "user":
             parts.append("User context won't contains tool call info.")
         else:
+            if self.content_reasoning:
+                parts.append(f"Content reasoning: {self.content_reasoning}")
             if self.tool_call_info:
                 parts.append(f"Tool call info in this round: {self.tool_call_info}")
-            if self.tool_call_result:
-                parts.append(f"Tool call result in this round: {self.tool_call_result}")
+            if self.tool_call_ids:
+                parts.append(f"Tool call ids in this round: {self.tool_call_ids}")
+            if self.tool_result_facts:
+                parts.append(f"Tool result facts in this round: {self.tool_result_facts}")
             if self.tags:
                 parts.append(f"Tags: {self.tags}")
 
@@ -389,12 +415,23 @@ class AgentState:
 
 @dataclass
 class AgentStateTurnEvent:
-    """One completed main-agent turn submitted to the state manager."""
+    """One completed main-agent turn submitted to the state manager.
+
+    Attributes:
+        user_goal: Current user-facing goal for the round.
+        turn: One-based turn number inside the round.
+        assistant_message: The assistant's raw reply for the turn.
+        tool_records: Raw tool execution records for the turn.
+        tool_result_facts: Compressed tool-result facts derived from the raw
+            tool records.
+        stop_requested: Whether the round was asked to stop early.
+    """
 
     user_goal: str
     turn: int
     assistant_message: str = ""
     tool_records: list["ToolExecutionRecord"] = field(default_factory=list)
+    tool_result_facts: list["ToolResultFact"] = field(default_factory=list)
     stop_requested: bool = False
 
 
@@ -452,6 +489,60 @@ class ToolExecutionRecord:
 
     def __str__(self) -> str:
         return f"name: {self.name}, args: {self.arguments}, result: {self.result}"
+
+@dataclass
+class ToolResultFact:
+    """Compressed tool output promoted into durable facts.
+
+    Attributes:
+        tool_name: Name of the tool that produced the result.
+        summary: One short operational sentence describing the useful result.
+        facts: Atomic fact statements extracted from the raw tool output.
+        evidence: Raw or lightly truncated tool output retained as evidence for
+            storage and inspection only; it is not forwarded back into prompts.
+        status: Normalized status marker such as ``success``, ``error``, or
+            ``unknown``.
+        tool_call_id: Optional provider tool call identifier associated with
+            this result.
+        tags: Retrieval-friendly tags derived from the tool result.
+    """
+
+    tool_name: str
+    summary: str = ""
+    facts: list[str] = field(default_factory=list)
+    evidence: str = ""
+    status: str = "unknown"
+    tool_call_id: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the fact bundle into JSON-friendly data."""
+        return {
+            "tool_name": self.tool_name,
+            "summary": self.summary,
+            "facts": list(self.facts),
+            "evidence": self.evidence,
+            "status": self.status,
+            "tool_call_id": self.tool_call_id,
+            "tags": list(self.tags),
+        }
+
+    def to_context_text(self) -> str:
+        """Render the compressed fact bundle as prompt-ready text."""
+        lines = [f"tool={self.tool_name}", f"status={self.status}"]
+        if self.summary:
+            lines.append(f"summary={self.summary}")
+        if self.facts:
+            lines.append("facts:")
+            lines.extend(f"- {fact}" for fact in self.facts if fact)
+        if self.tags:
+            lines.append(f"tags={self.tags}")
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        """Render a compact debug string for the summarized tool result."""
+        return self.to_context_text()
+
 
 @dataclass
 class ToolResultRef:

@@ -7,18 +7,22 @@ from .prompt import (
     CONTEXT_COMPACT_PROMPT_TEMPLATE,
     MEMORY_CONCLUDE_PROMPT_TEMPLATE, 
     TAGIFY_CONTEXT_PROMPT,
-    CONTEXT_SELECTION_PROMPT_TEMPLATE
+    CONTEXT_SELECTION_PROMPT_TEMPLATE,
+    TOOL_RESULT_FACT_PROMPT,
 )
 from .llm_types import (
     LLMContext, 
     LLMContextCompacted, 
     LLMContextInfo, 
     LLMInfo, 
+    ToolExecutionRecord,
+    ToolResultFact,
     ContextMode, 
     STOP_TAGS    
 )
 
 from .utils_function import (
+    extract_first_json_object,
     normalize_context_mode,
     sanitize_tags,
     stable_unique_ids,
@@ -355,6 +359,10 @@ class LLMContextHandler:
         if self.enable_memory:
             self.memory_list = []
 
+        # 工具结果事实不会被压缩为普通上下文，而是保留为更短的
+        # 可检索、可喂给状态机的事实层记录。
+        self.tool_result_facts: List[ToolResultFact] = []
+
 
         # ========= 标签索引和查询机制 ==========
         # k: tag: str 当前标签, v: List[int] 具有当前标签的信息
@@ -376,6 +384,11 @@ class LLMContextHandler:
         from disk and then refreshed with the persisted task configuration.
         Switching to linear clears retrieval-only indexes while keeping the
         timeline store and active ids intact.
+        TODO: 包括该函数在内的其他所有函数，删掉 enable_tagging 参数。当使用图式上下文时自动要求匹配。
+
+        Args:
+            context_mode: literal for 'linear' and 'graph'.
+            enable_tagging:
         """
         next_mode = normalize_context_mode(context_mode)
         requested_tagging = self.enable_tagging if enable_tagging is None else enable_tagging
@@ -415,6 +428,7 @@ class LLMContextHandler:
 
         if self.enable_tagging and self.tag_to_context is not None:
             self.tag_to_context.clear() # pyright: ignore
+        self.tool_result_facts.clear()
 
     def set_active_ids(self, context_ids: Optional[List[int]] = None) -> List[int]:
         """
@@ -646,6 +660,7 @@ class LLMContextHandler:
     ) -> bool:
         """
         压缩当前全部未压缩上下文，或压缩给定时间线 id 对应的条目。
+        todo: 思考：压缩上下文为什么要用 llm？这不会太长了吧。
 
         Args:
             timeline_id_list: 可选返回的上下文内容的时间线 id 列表。
@@ -751,6 +766,19 @@ class LLMContextHandler:
 
         return True
 
+    async def search_context_by_keyword(
+        self, 
+        keywords: str
+    ) -> Optional[LLMContextInfo]:
+        """
+        基于关键词结合标签，查询上下文信息。
+
+        Args:
+            keywords: 关键字信息表达式，使用搜索引擎同款。
+            mode: 
+        """
+        pass
+
     # ====================================================================
     # Memory System
     # 记忆是不会改变的。
@@ -823,6 +851,147 @@ class LLMContextHandler:
             # 同上
             self.memory_list.clear()    # pyright: ignore
 
+    def copy_tool_result_facts(self) -> List[ToolResultFact]:
+        """Return a shallow copy of the compressed tool-result facts."""
+        return list(self.tool_result_facts)
+
+    def get_tool_result_facts(self) -> Tuple[ToolResultFact, ...]:
+        """Return the compressed tool-result facts as an immutable tuple."""
+        return tuple(self.tool_result_facts)
+
+    def clear_tool_result_facts(self) -> None:
+        """Remove every stored tool-result fact from the handler."""
+        self.tool_result_facts.clear()
+
+    async def compress_tool_result(
+        self,
+        record: ToolExecutionRecord,
+        *,
+        tool_call_id: Optional[str] = None,
+        temperature: float = 0.0,
+    ) -> Optional[ToolResultFact]:
+        """Compress one tool execution result into durable facts.
+
+        Args:
+            record: Tool execution record containing the tool name, arguments,
+                and raw string result to compress.
+            temperature: Sampling temperature used for the summarizer call.
+
+        Returns:
+            A compressed tool-result fact bundle, or ``None`` when the tool
+            name is missing.
+        """
+        tool_name = str(record.name or "").strip()
+        raw_result = str(record.result or "").strip()
+        if not tool_name:
+            return None
+
+        if not raw_result:
+            fact = ToolResultFact(
+                tool_name=tool_name,
+                summary="(empty result)",
+                facts=["(empty result)"],
+                evidence="",
+                status="unknown",
+                tool_call_id=tool_call_id,
+                tags=sanitize_tags([tool_name]),
+            )
+            self.tool_result_facts.append(fact)
+            return fact
+
+        prompt = TOOL_RESULT_FACT_PROMPT.format(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id or "",
+            tool_result=raw_result,
+        )
+        response = await self.llm_handler.fetch(
+            msg="",
+            system_prompt=prompt,
+            temperature=temperature,
+        )
+        payload = extract_first_json_object(response.content)
+
+        status = "error" if raw_result.lower().startswith("error:") else "unknown"
+        summary = ""
+        facts: List[str] = []
+        tags: List[str] = []
+
+        if isinstance(payload, dict):
+            raw_summary = payload.get("summary", "")
+            if isinstance(raw_summary, str):
+                summary = " ".join(raw_summary.split())[:200]
+
+            raw_facts = payload.get("facts", [])
+            if isinstance(raw_facts, list):
+                for item in raw_facts:
+                    if isinstance(item, str):
+                        normalized = " ".join(item.split())
+                        if normalized:
+                            facts.append(normalized)
+
+            raw_tags = payload.get("tags", [])
+            if isinstance(raw_tags, list):
+                tags = sanitize_tags([str(tag) for tag in raw_tags])
+
+            raw_status = payload.get("status", status)
+            if isinstance(raw_status, str):
+                normalized_status = raw_status.strip().lower()
+                if normalized_status in {"success", "error", "unknown"}:
+                    status = normalized_status
+
+        if not summary:
+            summary = raw_result[:200]
+            if len(raw_result) > 200:
+                summary = summary[:197].rstrip() + "..."
+
+        if not facts and summary:
+            facts = [summary]
+
+        if not tags:
+            tags = sanitize_tags([tool_name])
+
+        fact = ToolResultFact(
+            tool_name=tool_name,
+            summary=summary,
+            facts=facts,
+            evidence=raw_result,
+            status=status,
+            tool_call_id=tool_call_id,
+            tags=tags,
+        )
+        self.tool_result_facts.append(fact)
+        return fact
+
+    async def compress_tool_result_records(
+        self,
+        records: List[ToolExecutionRecord],
+        *,
+        tool_call_ids: Optional[List[Optional[str]]] = None,
+        temperature: float = 0.0,
+    ) -> List[ToolResultFact]:
+        """Compress a batch of tool execution results into facts.
+
+        Args:
+            records: Tool execution records to compress, in execution order.
+            tool_call_ids: Optional provider tool-call ids aligned with
+                ``records``; missing ids are stored as ``None``.
+            temperature: Sampling temperature used for each compression call.
+
+        Returns:
+            A list of compressed fact bundles in the same order as ``records``.
+        """
+        compressed: List[ToolResultFact] = []
+        ids = list(tool_call_ids or [])
+        for index, record in enumerate(records):
+            fact = await self.compress_tool_result(
+                record,
+                tool_call_id=ids[index] if index < len(ids) else None,
+                temperature=temperature,
+            )
+            if fact is not None:
+                compressed.append(fact)
+        return compressed
+
     # ====================================================================
     # Tag System
     # 从这里，将开始标签化查询系统的构建。
@@ -856,8 +1025,12 @@ class LLMContextHandler:
         tag_source_parts: List[str] = []
         if context.content.strip():
             tag_source_parts.append(context.content.strip())
+        if context.content_reasoning:
+            tag_source_parts.append(context.content_reasoning.strip())
         if context.tool_call_info:
             tag_source_parts.extend(context.tool_call_info)
+        if context.tool_result_facts:
+            tag_source_parts.extend(context.tool_result_facts)
 
         tag_source = "\n".join(part for part in tag_source_parts if part.strip())
         if not tag_source.strip():
@@ -870,13 +1043,7 @@ class LLMContextHandler:
             system_prompt=TAGIFY_CONTEXT_PROMPT, 
             temperature=temperature
         )
-        # 当前输出 schema：
-        """
-        {
-            "tags": ["lowercase_snake_case_tag"],
-            "summary": "brief summary"
-        }
-        """
+
         # 解析
         parsed_tags, abstract_msg = parse_tags_and_abstracts(
             tags_and_abstracts.content

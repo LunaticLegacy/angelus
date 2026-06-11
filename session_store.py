@@ -10,12 +10,13 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .agent import Agent
 from .llm_context import LLMContextHandler
-from .llm_types import LLMContext, LLMContextCompacted
+from .llm_types import LLMContext, LLMContextCompacted, ToolResultFact
 
 
 SESSION_ID_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
@@ -56,6 +57,7 @@ class JsonSessionStore:
                     "context_count": len(data.get("contexts", [])),
                     "compacted_count": len(data.get("compacted_contexts", [])),
                     "memory_count": len(data.get("memories", [])),
+                    "tool_result_fact_count": len(data.get("tool_result_facts", [])),
                 }
             )
         return sessions
@@ -88,8 +90,10 @@ class JsonSessionStore:
                 "context_id": context_id,
                 "role": context.role,
                 "content": context.content,
+                "content_reasoning": context.content_reasoning or "",
                 "tool_call_info": context.tool_call_info or [],
-                "tool_call_result": context.tool_call_result or [],
+                "tool_call_ids": context.tool_call_ids or [],
+                "tool_result_facts": context.tool_result_facts or [],
                 "tags": context.tags or [],
                 "uncompacted": context_id in handler.context_dict_uncompacted,
             }
@@ -100,11 +104,12 @@ class JsonSessionStore:
             {
                 "context_id": context_id,
                 "abstract_msg": context.abstract_msg,
-                "source_ids": context.source_ids,
+                "source_timeline": context.source_timeline,
                 "tags": context.tags or [],
             }
             for context_id, context in sorted(handler.context_dict_compacted.items())
         ]
+        tool_result_facts = [asdict(fact) for fact in handler.tool_result_facts]
 
         data = {
             "version": 1,
@@ -113,9 +118,10 @@ class JsonSessionStore:
             "updated_at": now,
             "system_prompt": agent._base_system_prompt,
             "provider": agent.provider,
-            "memories": list(agent.memory_list),
+            "memories": list(agent.memory_list or []),
             "contexts": contexts,
             "compacted_contexts": compacted,
+            "tool_result_facts": tool_result_facts,
             "next_context_id": handler.now_context_id,
         }
         path.write_text(
@@ -135,13 +141,39 @@ class JsonSessionStore:
         agent.memory_list = list(data.get("memories", []))
         agent.tool_call_history = []
         agent.tool_call_result_history = []
+        handler.tool_result_facts = [
+            ToolResultFact(
+                tool_name=str(item.get("tool_name", "")),
+                summary=str(item.get("summary", "")),
+                facts=[str(fact) for fact in item.get("facts", []) if str(fact).strip()],
+                evidence=str(item.get("evidence", "")),
+                status=str(item.get("status", "unknown")),
+                tool_call_id=(
+                    str(item.get("tool_call_id")).strip()
+                    if item.get("tool_call_id") is not None and str(item.get("tool_call_id")).strip()
+                    else None
+                ),
+                tags=list(item.get("tags") or []),
+            )
+            for item in data.get("tool_result_facts", [])
+            if isinstance(item, dict) and str(item.get("tool_name", "")).strip()
+        ]
 
         for item in data.get("contexts", []):
+            legacy_tool_results = list(item.get("tool_call_result") or [])
+            tool_result_facts = list(item.get("tool_result_facts") or [])
+            content = str(item.get("content", ""))
+            content_reasoning = str(item.get("content_reasoning", item.get("reasoning_content", ""))) or None
+            if legacy_tool_results and not tool_result_facts and str(item.get("role", "")) == "tool":
+                tool_result_facts = ["legacy tool result omitted during migration"]
+                content = "legacy tool result omitted during migration"
             context = LLMContext(
                 role=str(item.get("role", "")),
-                content=str(item.get("content", "")),
+                content=content,
+                content_reasoning=content_reasoning,
                 tool_call_info=list(item.get("tool_call_info") or []),
-                tool_call_result=list(item.get("tool_call_result") or []),
+                tool_call_ids=list(item.get("tool_call_ids") or []),
+                tool_result_facts=tool_result_facts,
                 tags=list(item.get("tags") or []),
             )
             context_id = int(item.get("context_id", handler.now_context_id))
@@ -153,10 +185,11 @@ class JsonSessionStore:
             )
 
         for item in data.get("compacted_contexts", []):
+            source_timeline = item.get("source_timeline", item.get("source_ids", []))
             compacted = LLMContextCompacted(
                 abstract_msg=str(item.get("abstract_msg", "")),
                 source=[],
-                source_ids=[int(source_id) for source_id in item.get("source_ids", [])],
+                source_timeline=[int(source_id) for source_id in source_timeline],
                 tags=list(item.get("tags") or []),
             )
             context_id = int(item.get("context_id", handler.now_context_id))
@@ -182,6 +215,7 @@ class JsonSessionStore:
         handler.context_dict_compacted.clear()
         handler.reverse_tag_dict.clear()
         handler.now_context_id = 0
+        handler.tool_result_facts.clear()
 
     def _insert_context(
         self,

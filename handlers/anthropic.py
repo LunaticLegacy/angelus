@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Iterable, Mapping, Optional, Sequence
 
 from ..llm_types import LLMOutput, LLMToolCall
@@ -131,6 +132,42 @@ class AnthropicHandler(LLMBackendHandler):
 
     def iter_stream_text(self, response, *, output_reasoning: bool) -> Iterable[str]:
         in_thinking = False
+        streamed_tool_calls: dict[int, dict[str, object | None]] = {}
+
+        def _read_tool_block_field(block: object | Mapping[str, JSONValue] | None, name: str, default: object | JSONValue | None = None):
+            return self._read_field(block, name, default)
+
+        def _merge_tool_call(
+            index: int,
+            *,
+            call_id: object | JSONValue | None = None,
+            name: object | JSONValue | None = None,
+            input_payload: object | JSONValue | None = None,
+        ) -> None:
+            entry = streamed_tool_calls.setdefault(
+                index,
+                {
+                    "name": "",
+                    "call_id": None,
+                    "input_dict": None,
+                    "input_fragments": [],
+                },
+            )
+            if name:
+                entry["name"] = str(name).strip()
+            if call_id:
+                entry["call_id"] = str(call_id).strip() or None
+
+            if isinstance(input_payload, dict):
+                existing_dict = entry.get("input_dict")
+                merged = dict(existing_dict) if isinstance(existing_dict, dict) else {}
+                merged.update(input_payload)
+                entry["input_dict"] = merged
+            elif isinstance(input_payload, str) and input_payload.strip():
+                fragments = entry.setdefault("input_fragments", [])
+                if isinstance(fragments, list):
+                    fragments.append(input_payload)
+
         for chunk in response:
             if isinstance(chunk, dict):
                 event_type = chunk.get("type")
@@ -158,6 +195,14 @@ class AnthropicHandler(LLMBackendHandler):
                                 yield "\n<think>\n"
                                 in_thinking = True
                             yield reasoning
+                    elif block_type == "tool_use":
+                        index = self._read_field(chunk, "index", len(streamed_tool_calls))
+                        _merge_tool_call(
+                            int(index),
+                            call_id=self._read_field(block, "id", None),
+                            name=self._read_field(block, "name", None),
+                            input_payload=self._read_field(block, "input", None),
+                        )
                     continue
 
                 case "content_block_delta":
@@ -176,6 +221,14 @@ class AnthropicHandler(LLMBackendHandler):
                                 yield "\n<think>\n"
                                 in_thinking = True
                             yield reasoning
+                    elif delta_type in {"input_json_delta", "tool_use_delta", "input_json"}:
+                        index = self._read_field(chunk, "index", None)
+                        if index is None:
+                            index = len(streamed_tool_calls)
+                        payload = self._read_field(delta, "partial_json", None)
+                        if payload is None:
+                            payload = self._read_field(delta, "input", None)
+                        _merge_tool_call(int(index), input_payload=payload)
                     continue
 
                 case "text_delta":
@@ -197,3 +250,48 @@ class AnthropicHandler(LLMBackendHandler):
 
         if in_thinking:
             yield "\n</think>\n"
+
+        if streamed_tool_calls:
+            for index in sorted(streamed_tool_calls):
+                entry = streamed_tool_calls[index]
+                name = str(entry.get("name", "") or "").strip()
+                if not name:
+                    continue
+                raw_arguments = entry.get("input_dict")
+                fragments = entry.get("input_fragments", [])
+                if isinstance(raw_arguments, dict):
+                    parsed_fragments: dict[str, object] = {}
+                    if isinstance(fragments, list) and fragments:
+                        payload = "".join(str(fragment) for fragment in fragments).strip()
+                        if payload:
+                            try:
+                                parsed = json.loads(payload)
+                            except json.JSONDecodeError:
+                                parsed = {}
+                            if isinstance(parsed, dict):
+                                parsed_fragments.update(parsed)
+                    if parsed_fragments:
+                        merged = dict(raw_arguments)
+                        merged.update(parsed_fragments)
+                        raw_arguments = merged
+                elif isinstance(fragments, list) and fragments:
+                    raw_arguments = "".join(str(fragment) for fragment in fragments).strip()
+                arguments = raw_arguments
+                if isinstance(raw_arguments, str):
+                    try:
+                        parsed = json.loads(raw_arguments)
+                    except json.JSONDecodeError:
+                        parsed = {}
+                    arguments = parsed if isinstance(parsed, dict) else {}
+                elif not isinstance(raw_arguments, dict):
+                    arguments = {}
+                payload = {
+                    "name": name,
+                    "arguments": arguments,
+                }
+                call_id = entry.get("call_id")
+                if call_id:
+                    payload["call_id"] = call_id
+                yield "\n<tool_call>\n"
+                yield json.dumps(payload, ensure_ascii=False)
+                yield "\n</tool_call>\n"

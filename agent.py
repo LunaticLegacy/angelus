@@ -41,6 +41,7 @@ from .llm_types import (
     EmptyModelResponseError,
     NoToolCallError,
     MaxTurnsExceededError, ToolResultRef,
+    ToolResultFact,
     # 上下文管理
     ContextView,
     ContextSelectionView,
@@ -156,6 +157,24 @@ class Agent:
         """
         for tool in create_builtin_tools(agent=self):
             self.tool_registry.register(tool)
+
+    @staticmethod
+    def _split_reasoning_from_stream_text(text: str) -> tuple[str, str]:
+        """Split streamed think blocks from visible assistant content."""
+        reasoning_parts: list[str] = []
+        content_parts: list[str] = []
+        cursor = 0
+        pattern = re.compile(r"<think>\s*(.*?)\s*</think>", flags=re.DOTALL | re.IGNORECASE)
+        for match in pattern.finditer(text or ""):
+            content_parts.append(text[cursor:match.start()])
+            reasoning = match.group(1).strip()
+            if reasoning:
+                reasoning_parts.append(reasoning)
+            cursor = match.end()
+        content_parts.append(text[cursor:])
+        content = "".join(content_parts).strip()
+        reasoning = "\n".join(reasoning_parts).strip()
+        return reasoning, content
 
     @property
     def system_prompt(self) -> str:
@@ -303,9 +322,9 @@ class Agent:
                 role=output.role or "assistant",    # pyright: ignore
                 content=output.text,
                 tool_call_info=tool_call_info,
+                tool_call_ids=[tool_call.call_id or "" for tool_call in resolved_tool_calls] or None,
             )
-            if tag_context:
-                context = await self.llm_context_handler.tagify_context(context)
+
             await self.llm_context_handler.add_context(context)
 
         return output
@@ -324,7 +343,6 @@ class Agent:
     ) -> str:
         """
         进行一整个轮次的 Agent 执行轮。
-        TODO: 这一个函数里压进去了太多屎山，需要拆解。
 
         核心特性：
         - 多轮工具调用循环：LLM 可在一次 agent 轮内连续调用多个工具，
@@ -342,6 +360,7 @@ class Agent:
             temperature: 采样温度，透传给底层 LLM 请求。
             max_tokens: 最大输出 token 数，透传给底层 LLM 请求。
             stop_callback: 可选，用于确定是否停止运行的回调函数。该函数返回 True 时则停止执行。
+            streamer: 一个用于对外输出流式内容的函数。本函数将使用其 __call__ 方法进行输出。
 
         Returns:
             LLM 生成的完整回复文本。
@@ -416,6 +435,7 @@ class Agent:
                     max_tokens=max_tokens,
                     prev_messages=prev_messages if prev_messages else None,
                     tools=request_tools if request_tools else None,
+                    output_reasoning=True
                 ):
                     if chunk:
                         collected.append(chunk)
@@ -423,6 +443,7 @@ class Agent:
                 else:
                     print() # 在循环结束的场合，换行
                 response_text = "".join(collected)
+                response_reasoning, response_text = self._split_reasoning_from_stream_text(response_text)
                 streamed_tool_calls = [
                     LLMToolCall(
                         name=tool_call.tool_name,
@@ -437,6 +458,7 @@ class Agent:
                     provider=self.llm_handler.provider,
                     backend_name=self.llm_handler.default_backend_config.name,
                     model=self.llm_handler.default_backend_config.model,
+                    reasoning_content=response_reasoning,
                     tool_calls=streamed_tool_calls,
                 )
             else:
@@ -468,18 +490,27 @@ class Agent:
                 ) for (tool_info, tool_result) in zip(tool_calls, executing_result)
             ]
 
-            # 状态机 — 仅在 graph 模式下启用，linear 模式跳过后端 LLM 调用以减少延迟。
-            if self.context_mode == "graph":
-                await self.state_machine.update_from_turn(
-                    AgentStateTurnEvent(
-                        user_goal=msg,
-                        turn=turn,
-                        assistant_message=message,
-                        tool_records=tool_record_round,
-                        stop_requested=_should_stop(),
-                    ),
-                    temperature=temperature,
-                )
+            # 压缩工具信息。
+            tool_result_facts: List[ToolResultFact] = []
+
+            tool_result_facts = await self.llm_context_handler.compress_tool_result_records(
+                tool_record_round,
+                tool_call_ids=[tool_call.call_id for tool_call in tool_calls],
+                temperature=temperature,
+            )
+
+            # 更新状态消息。
+            await self.state_machine.update_from_turn(
+                AgentStateTurnEvent(
+                    user_goal=msg,
+                    turn=turn,
+                    assistant_message=message,
+                    tool_records=tool_record_round,
+                    tool_result_facts=tool_result_facts,
+                    stop_requested=_should_stop(),
+                ),
+                temperature=temperature,
+            )
 
             if _should_stop():
                 final_content = final_content or response.text
@@ -493,31 +524,32 @@ class Agent:
             now_assistant_context: LLMContext = LLMContext(
                 role="assistant",
                 content=message,  # 文本
-                tool_call_info=[str(i) for i in tool_record_round],
+                content_reasoning=response.reasoning_content or None,
+                tool_call_info=[str(tool_info.to_execution_format()) for tool_info in tool_calls],
+                tool_call_ids=[tool_call.call_id or "" for tool_call in tool_calls] or None,
+                tool_result_facts=[fact.to_context_text() for fact in tool_result_facts] or None,
             )
 
             # 然后将其加入自身上下文中。注意：加入新的上下文后，激活上下文窗口也需要变。
-            # 先打标签，再加进来。
-            if (self.context_mode == "graph"):
-                now_assistant_context = await self.llm_context_handler.tagify_context(now_assistant_context, temperature)
-                await self._maybe_archive_long_round_context(   # 检测长轮次上下文，并压缩之。
-                    context=now_assistant_context,
-                    verbose_info=verbose_info,
-                )
+            # 这个函数疑似性能瓶颈，注意。
+            await self._maybe_archive_long_round_context(   # 检测长度过长的上下文，并压缩之。
+                context=now_assistant_context,
+                verbose_info=verbose_info,
+            )
             
             # 将信息加入当前上下文。
             await self.llm_context_handler.add_context(now_assistant_context, append_to_active=True)  # 添加到当前上下文中，并加入到当前激活上下文窗口内。
 
             # 将工具结果回放为独立的 tool 消息，供下一轮模型读取。
             for tool_info, tool_result in zip(tool_calls, executing_result):
+                fact = tool_result_facts.pop(0) if tool_result_facts else None
                 tool_context = LLMContext(
                     role="tool",
-                    content=tool_result,
+                    content=fact.to_context_text() if fact is not None else "",
                     tool_call_info=[str(tool_info.to_execution_format())],
-                    tool_call_result=[tool_result],
+                    tool_call_ids=[tool_info.call_id or ""],
+                    tool_result_facts=[fact.to_context_text()] if fact is not None else None,
                 )
-                if self.context_mode == "graph":
-                    tool_context = await self.llm_context_handler.tagify_context(tool_context, temperature)
                 await self.llm_context_handler.add_context(tool_context, append_to_active=True)
 
             if verbose_info:
@@ -633,6 +665,7 @@ class Agent:
             print(f"[Agent] Triggering periodic context selection at turn {turn}.")
         
         # Call the selector as a plain LLM helper with no tools or chat history.
+        #
         selection_output = await self.llm_handler.fetch(
             msg=selection_prompt,
             temperature=temperature,

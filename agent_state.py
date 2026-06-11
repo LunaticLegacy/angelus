@@ -17,7 +17,10 @@ from .prompt import (
 )
 
 class AgentStateMachine:
-    """Maintain AgentState through a dedicated LLM-backed state subagent."""
+    """
+    Maintain AgentState through a dedicated LLM-backed state subagent.
+    Wait, I need the semantic for this.
+    """
 
     def __init__(self, llm_handler: LLMFetcher, state: Optional[AgentState] = None) -> None:
         self.llm_handler = llm_handler
@@ -29,7 +32,11 @@ class AgentStateMachine:
         *,
         temperature: float = 0.0,
     ) -> AgentState:
-        """Ask the state subagent to update the durable AgentState."""
+        """Ask the state subagent to update the durable AgentState.
+
+        The serialized prompt payload strips raw tool results and only forwards
+        tool names/arguments plus compressed tool-result facts.
+        """
         if not self.state.task and event.user_goal.strip():
             self.state.task = event.user_goal.strip()
 
@@ -55,7 +62,24 @@ class AgentStateMachine:
                 "user_goal": event.user_goal,
                 "turn": event.turn,
                 "assistant_message": event.assistant_message,
-                "tool_records": [asdict(record) for record in event.tool_records],
+                "tool_records": [
+                    {
+                        "name": record.name,
+                        "arguments": record.arguments,
+                    }
+                    for record in event.tool_records
+                ],
+                "tool_result_facts": [
+                    {
+                        "tool_name": fact.tool_name,
+                        "summary": fact.summary,
+                        "facts": list(fact.facts),
+                        "status": fact.status,
+                        "tool_call_id": fact.tool_call_id,
+                        "tags": list(fact.tags),
+                    }
+                    for fact in event.tool_result_facts
+                ],
                 "stop_requested": event.stop_requested,
             },
         }
@@ -118,11 +142,18 @@ class AgentStateMachine:
     def _fallback_update(self, event: AgentStateTurnEvent) -> AgentStateUpdate:
         failed_actions: List[str] = []
         facts: List[str] = []
-        for record in event.tool_records:
-            result_text = self._compact(record.result)
-            facts.append(f"Tool {record.name} returned: {result_text or '(empty result)'}")
-            if result_text.lower().startswith("error:"):
-                failed_actions.append(f"{record.name}({json.dumps(record.arguments, ensure_ascii=False)}) -> {result_text}")
+        for tool_fact in event.tool_result_facts:
+            if tool_fact.summary:
+                facts.append(f"Tool {tool_fact.tool_name} fact: {tool_fact.summary}")
+            facts.extend(
+                f"Tool {tool_fact.tool_name} fact: {fact}"
+                for fact in tool_fact.facts
+                if fact
+            )
+            if tool_fact.status.lower() == "error":
+                failed_actions.append(
+                    f"{tool_fact.tool_name}({tool_fact.tool_call_id or ''}) -> {tool_fact.summary or 'error'}"
+                )
 
         phase = "tool_execution" if event.tool_records else "answering"
         next_actions = [f"Review results from: {', '.join(record.name for record in event.tool_records)}"] if event.tool_records else []

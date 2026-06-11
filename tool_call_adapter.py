@@ -64,6 +64,7 @@ def _parse_tool_call_dict(parsed: Dict[str, Any]) -> Optional[NormalizedToolCall
     return NormalizedToolCall(
         tool_name=str(name),
         arguments=arguments if isinstance(arguments, dict) else {},
+        call_id=str(parsed.get("call_id") or parsed.get("id") or "").strip() or None,
         source=ToolCallSource.CUSTOM_JSON,
     )
 
@@ -138,12 +139,16 @@ def parse_xml_tool_calls(text: str) -> List[NormalizedToolCall]:
     bare JSON objects emitted by some ONNX Runtime / Qwen generations.
     """
     calls: List[NormalizedToolCall] = []
+    seen_payloads: set[str] = set()
     for match in _XML_TOOL_CALL_RE.finditer(text):
-        calls.extend(_parse_tool_call_payloads(match.group(1)))
+        payload = match.group(1).strip()
+        if payload in seen_payloads:
+            continue
+        seen_payloads.add(payload)
+        calls.extend(_parse_tool_call_payloads(payload))
 
     # Some backends emit bare JSON tool calls without the XML wrapper, often
     # embedded inside explanatory text or code fences.
-    seen_payloads: set[str] = set()
     for start, end in _iter_json_object_spans(text):
         candidate = text[start:end].strip()
         if candidate in seen_payloads:

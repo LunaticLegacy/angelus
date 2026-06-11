@@ -8,8 +8,11 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import asyncio
 from typing import (
+    Any,
     AsyncGenerator,
     Dict,
     List,
@@ -186,19 +189,33 @@ class LLMFetcher:
         msg: str,
         prev_messages: Optional[List[LLMInfo]] = None,
         system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """构造发给后端的统一消息列表。"""
-        messages: List[Dict[str, str]] = []
+        messages: List[Dict[str, Any]] = []
+
+        def _parse_tool_call_info(raw: str) -> Optional[dict[str, Any]]:
+            try:
+                parsed = ast.literal_eval(raw)
+            except (ValueError, SyntaxError):
+                return None
+            if not isinstance(parsed, dict):
+                return None
+            return parsed
+
+        def _tool_call_id_for(item: LLMContext, index: int) -> str:
+            if item.tool_call_ids and index < len(item.tool_call_ids):
+                value = str(item.tool_call_ids[index]).strip()
+                if value:
+                    return value
+            return f"legacy_tool_call_{item.timeline}_{index}"
 
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        
-        if msg:
-            messages.append({"role": "user", "content": msg})
 
         if prev_messages:
             # 历史上下文已经被上层整理成统一的可渲染对象。
             # 这里不做 provider 侧的结构理解，只负责把上下文转成消息序列。
+            pending_tool_call_ids: set[str] = set()
             for item in prev_messages:
                 role: Optional[str] = None
                 content: Optional[str] = None
@@ -206,12 +223,74 @@ class LLMFetcher:
                 if isinstance(item, LLMContext):
                     role = item.role
                     content = item.content
+                    if item.content_reasoning:
+                        reasoning = item.content_reasoning.strip()
+                        if reasoning:
+                            reasoning_block = f"<think>\n{reasoning}\n</think>"
+                            content = f"{reasoning_block}\n{content}" if content else reasoning_block
+                    if role == "assistant" and item.tool_call_info:
+                        tool_calls: list[dict[str, Any]] = []
+                        for index, raw_tool_call in enumerate(item.tool_call_info):
+                            parsed = _parse_tool_call_info(raw_tool_call)
+                            if not parsed:
+                                continue
+                            tool_name = str(parsed.get("tool") or parsed.get("name") or "").strip()
+                            if not tool_name:
+                                continue
+                            arguments = parsed.get("arguments", {})
+                            if not isinstance(arguments, dict):
+                                arguments = {}
+                            tool_calls.append(
+                                {
+                                    "id": _tool_call_id_for(item, index),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                                    },
+                                }
+                            )
+                        if tool_calls:
+                            pending_tool_call_ids = {
+                                str(tool_call.get("id") or "").strip()
+                                for tool_call in tool_calls
+                                if str(tool_call.get("id") or "").strip()
+                            }
+                            messages.append({
+                                "role": "assistant",
+                                "content": content or None,
+                                "tool_calls": tool_calls,
+                            })
+                            continue
+                        pending_tool_call_ids.clear()
+                    if role == "tool":
+                        if not content and item.tool_result_facts:
+                            content = "\n".join(item.tool_result_facts)
+                        tool_call_id = ""
+                        if item.tool_call_ids:
+                            tool_call_id = str(item.tool_call_ids[0]).strip()
+                        if not tool_call_id:
+                            tool_call_id = f"legacy_tool_call_{item.timeline}_0"
+                        if tool_call_id not in pending_tool_call_ids:
+                            continue
+                        pending_tool_call_ids.discard(tool_call_id)
+                        messages.append({
+                            "role": "tool",
+                            "content": content,
+                            "tool_call_id": tool_call_id,
+                        })
+                        continue
+                    pending_tool_call_ids.clear()
                 elif isinstance(item, LLMContextCompacted):
                     role = "user"
                     content = str(item)
+                    pending_tool_call_ids.clear()
 
                 if role:
                     messages.append({"role": role, "content": content or ""})
+
+        if msg:
+            messages.append({"role": "user", "content": msg})
 
         return messages
 
