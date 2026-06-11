@@ -45,6 +45,7 @@ from .llm_context import (
     LLMContextHandler,
     LLMContext,
     LLMContextCompacted,
+    LLMContextSnapshot,
 )
 
 # ============================================================================
@@ -148,6 +149,7 @@ __all__ = [
     "LLMContextHandler",
     "LLMContext",
     "LLMContextCompacted",
+    "LLMContextSnapshot",
 
     # Swarm orchestration
     "AgentSwarm",

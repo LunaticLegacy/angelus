@@ -1,6 +1,9 @@
+import hashlib
+import math
+import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple
 
 from .llm_fetcher import LLMFetcher, LLMOutput
 from .prompt import (
@@ -17,6 +20,7 @@ from .llm_types import (
     LLMInfo, 
     ToolExecutionRecord,
     ToolResultFact,
+    LLMContextSnapshot,
     ContextMode, 
     STOP_TAGS    
 )
@@ -301,6 +305,336 @@ class ContextIndex:
         return matched_ids
 
 
+class ContextSemanticIndex:
+    """Maintain an in-memory vector-like index for semantic context retrieval.
+
+    The index prefers an ephemeral Chroma collection when available, but it can
+    fall back to a deterministic pure-Python embedding path when the optional
+    vector dependencies or model weights are unavailable. That keeps semantic
+    retrieval usable in offline test environments while still allowing richer
+    embeddings in production.
+    """
+
+    def __init__(
+        self,
+        *,
+        embedding_model_name: Optional[str] = None,
+        collection_name: str = "llmfetcher_context",
+    ) -> None:
+        """Initialize the semantic index.
+
+        Args:
+            embedding_model_name: Optional sentence-transformers model name or
+                local path. When omitted, the index falls back to a hashed
+                embedding representation instead of loading a heavy model.
+            collection_name: Name used for the ephemeral Chroma collection.
+        """
+        self.embedding_model_name = (embedding_model_name or os.getenv("LLMFETCHER_CONTEXT_EMBEDDING_MODEL", "")).strip() or None
+        self.collection_name = collection_name
+        self.clear()
+        self._sentence_transformer_class: Optional[Any] = None
+        self._embedding_model: Any = None
+        self._embedding_model_error = ""
+        self._chromadb_module: Any = None
+        self._chroma_client: Any = None
+        self._chroma_collection: Any = None
+
+    def clear(self) -> None:
+        """Reset all derived semantic vectors and transient collection state."""
+        self.raw_ids: Set[int] = set()
+        self.compacted_ids: Set[int] = set()
+        self.text_by_id: Dict[int, str] = {}
+        self.kind_by_id: Dict[int, str] = {}
+        self.vector_by_id: Dict[int, List[float]] = {}
+        self._chroma_client = None
+        self._chroma_collection = None
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """Normalize text before encoding or similarity matching."""
+        return " ".join(str(text or "").lower().split())
+
+    @staticmethod
+    def _build_context_text(context: LLMInfo) -> str:
+        """Build a semantic document for one context entry."""
+        parts: List[str] = []
+        if isinstance(context, LLMContextCompacted):
+            parts.append(f"summary: {context.abstract_msg}")
+            if context.tags:
+                parts.append(f"tags: {' '.join(context.tags)}")
+            if context.source_timeline:
+                parts.append(f"source_timeline: {' '.join(str(item) for item in context.source_timeline)}")
+            return "\n".join(part for part in parts if part.strip())
+
+        if context.role:
+            parts.append(f"role: {context.role}")
+        if context.content:
+            parts.append(f"content: {context.content}")
+        if context.content_reasoning:
+            parts.append(f"reasoning: {context.content_reasoning}")
+        if context.abstract_msg:
+            parts.append(f"abstract: {context.abstract_msg}")
+        if context.tool_call_info:
+            parts.append("tool_call_info: " + "\n".join(context.tool_call_info))
+        if context.tool_result_facts:
+            parts.append("tool_result_facts: " + "\n".join(context.tool_result_facts))
+        if context.tags:
+            parts.append(f"tags: {' '.join(context.tags)}")
+        return "\n".join(part for part in parts if part.strip())
+
+    def _load_sentence_transformer(self) -> Optional[Any]:
+        """Lazily load a sentence-transformers model when configured."""
+        if self._embedding_model is not None:
+            return self._embedding_model
+        if self._embedding_model_error:
+            return None
+        if not self.embedding_model_name:
+            return None
+
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except Exception as exc:  # pragma: no cover - depends on environment
+            self._embedding_model_error = f"{type(exc).__name__}: {exc}"
+            return None
+
+        try:
+            model_source = self._resolve_model_source(self.embedding_model_name)
+            self._sentence_transformer_class = SentenceTransformer
+            self._embedding_model = SentenceTransformer(model_source, local_files_only=True)
+        except Exception as exc:  # pragma: no cover - depends on environment
+            self._embedding_model_error = f"{type(exc).__name__}: {exc}"
+            self._embedding_model = None
+        return self._embedding_model
+
+    @staticmethod
+    def _resolve_model_source(model_name: str) -> str:
+        """Resolve a configured model name to a local path when possible."""
+        normalized = model_name.strip()
+        if not normalized:
+            return "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+        candidate_path = os.path.expanduser(normalized)
+        if os.path.exists(candidate_path):
+            return os.path.abspath(candidate_path)
+        return normalized
+
+    @staticmethod
+    def _hash_token_vector(text: str, dimension: int = 384) -> List[float]:
+        """Build a deterministic fallback embedding from token and n-gram hashes."""
+        normalized = ContextSemanticIndex._normalize_text(text)
+        if not normalized:
+            return [0.0] * dimension
+
+        vector = [0.0] * dimension
+        tokens = re.findall(r"[a-z0-9_]+", normalized) or [normalized]
+        features: List[str] = list(tokens)
+        features.extend(
+            normalized[index:index + 3]
+            for index in range(max(0, len(normalized) - 2))
+        )
+
+        for feature in features:
+            digest = hashlib.sha256(feature.encode("utf-8")).digest()
+            bucket = int.from_bytes(digest[:4], "big") % dimension
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[bucket] += sign
+
+        norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+        return [value / norm for value in vector]
+
+    def _encode_texts(self, texts: Sequence[str]) -> List[List[float]]:
+        """Encode texts into normalized vectors using the configured backend."""
+        normalized_texts = [self._normalize_text(text) for text in texts]
+        if not normalized_texts:
+            return []
+
+        model = self._load_sentence_transformer()
+        if model is not None:
+            vectors = model.encode(
+                list(normalized_texts),
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            if hasattr(vectors, "tolist"):
+                return vectors.tolist()
+            return [list(vector) for vector in vectors]
+
+        return [self._hash_token_vector(text) for text in normalized_texts]
+
+    def _ensure_chroma_collection(self) -> Optional[Any]:
+        """Create the ephemeral Chroma collection on first use."""
+        if self._chroma_collection is not None:
+            return self._chroma_collection
+
+        try:
+            if self._chromadb_module is None:
+                import chromadb  # type: ignore
+
+                self._chromadb_module = chromadb
+        except Exception:  # pragma: no cover - optional dependency
+            self._chromadb_module = None
+            return None
+
+        try:
+            client_factory = getattr(self._chromadb_module, "EphemeralClient", None)
+            if callable(client_factory):
+                self._chroma_client = client_factory()
+            else:  # pragma: no cover - fallback path for older Chroma versions
+                self._chroma_client = self._chromadb_module.Client()
+
+            self._chroma_collection = self._chroma_client.get_or_create_collection(
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"},
+            )
+        except Exception:  # pragma: no cover - optional dependency
+            self._chroma_client = None
+            self._chroma_collection = None
+        return self._chroma_collection
+
+    def index_context(self, context: LLMInfo) -> None:
+        """Index one raw or compacted context entry for semantic retrieval."""
+        context_id = context.timeline
+        semantic_text = self._build_context_text(context)
+        if not semantic_text.strip():
+            return
+
+        if isinstance(context, LLMContextCompacted):
+            self.compacted_ids.add(context_id)
+            kind = "compacted"
+        else:
+            self.raw_ids.add(context_id)
+            kind = "raw"
+
+        self.text_by_id[context_id] = semantic_text
+        self.kind_by_id[context_id] = kind
+
+        vector = self._encode_texts([semantic_text])[0]
+        self.vector_by_id[context_id] = vector
+
+        collection = self._ensure_chroma_collection()
+        if collection is not None:
+            try:
+                collection.upsert(
+                    ids=[str(context_id)],
+                    embeddings=[vector],
+                    documents=[semantic_text],
+                    metadatas=[{"kind": kind}],
+                )
+            except Exception:  # pragma: no cover - optional dependency
+                self._chroma_collection = None
+
+    def _search_with_chroma(
+        self,
+        query_vector: List[float],
+        *,
+        top_k: int,
+        include_raw: bool,
+        include_compacted: bool,
+        allowed_ids: Optional[Set[int]] = None,
+    ) -> List[int]:
+        """Query the Chroma-backed index and normalize its response."""
+        collection = self._ensure_chroma_collection()
+        if collection is None:
+            return []
+
+        candidate_count = max(top_k, min(len(self.vector_by_id), top_k * 4))
+        try:
+            response = collection.query(
+                query_embeddings=[query_vector],
+                n_results=candidate_count,
+                include=["metadatas", "documents", "distances"],
+            )
+        except Exception:  # pragma: no cover - optional dependency
+            return []
+
+        ids = (response.get("ids") or [[]])[0]
+        metadatas = (response.get("metadatas") or [[]])[0]
+        distances = (response.get("distances") or [[]])[0]
+
+        ranked: List[Tuple[int, float]] = []
+        for raw_id, metadata, distance in zip(ids, metadatas, distances):
+            try:
+                context_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            kind = str(metadata.get("kind", "raw")) if isinstance(metadata, dict) else "raw"
+            if kind == "raw" and not include_raw:
+                continue
+            if kind == "compacted" and not include_compacted:
+                continue
+            if allowed_ids is not None and context_id not in allowed_ids:
+                continue
+            score = 1.0 / (1.0 + float(distance or 0.0))
+            ranked.append((context_id, score))
+
+        ranked.sort(key=lambda item: (-item[1], item[0]))
+        return [context_id for context_id, _ in ranked[:top_k]]
+
+    def _search_locally(
+        self,
+        query_vector: List[float],
+        *,
+        top_k: int,
+        include_raw: bool,
+        include_compacted: bool,
+        allowed_ids: Optional[Set[int]] = None,
+    ) -> List[int]:
+        """Query the in-memory vector cache without Chroma."""
+        ranked: List[Tuple[int, float]] = []
+        query_norm = math.sqrt(sum(value * value for value in query_vector)) or 1.0
+        for context_id, vector in self.vector_by_id.items():
+            kind = self.kind_by_id.get(context_id, "raw")
+            if kind == "raw" and not include_raw:
+                continue
+            if kind == "compacted" and not include_compacted:
+                continue
+            if allowed_ids is not None and context_id not in allowed_ids:
+                continue
+
+            numerator = sum(left * right for left, right in zip(query_vector, vector))
+            vector_norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+            score = numerator / (query_norm * vector_norm)
+            if score > 0:
+                ranked.append((context_id, score))
+
+        ranked.sort(key=lambda item: (-item[1], item[0]))
+        return [context_id for context_id, _ in ranked[:top_k]]
+
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        include_raw: bool = True,
+        include_compacted: bool = True,
+        allowed_ids: Optional[Set[int]] = None,
+    ) -> List[int]:
+        """Return semantic nearest-neighbour ids for one query."""
+        normalized_query = self._normalize_text(query)
+        if not normalized_query:
+            return []
+
+        query_vector = self._encode_texts([normalized_query])[0]
+        if self._chroma_collection is not None:
+            chroma_ids = self._search_with_chroma(
+                query_vector,
+                top_k=top_k,
+                include_raw=include_raw,
+                include_compacted=include_compacted,
+                allowed_ids=allowed_ids,
+            )
+            if chroma_ids:
+                return chroma_ids
+        return self._search_locally(
+            query_vector,
+            top_k=top_k,
+            include_raw=include_raw,
+            include_compacted=include_compacted,
+            allowed_ids=allowed_ids,
+        )
+
+
 class LLMContextHandler:
     """Manage stored conversation context, summaries, and lightweight retrieval.
 
@@ -317,6 +651,7 @@ class LLMContextHandler:
         enable_tagging: bool = False,
         compression_profile: Optional[ContextCompressionProfile] = None,
         context_mode: ContextMode = "graph",
+        semantic_embedding_model: Optional[str] = None,
     ):
         """Initialize the context handler.
 
@@ -330,6 +665,9 @@ class LLMContextHandler:
             context_mode: `linear` disables retrieval/tagging and keeps a
                 chronological active context with summarization; `graph`
                 enables the experimental retrieval/selection helpers.
+            semantic_embedding_model: Optional sentence-transformers model name
+                or local path used for in-memory semantic retrieval. When
+                omitted, the handler uses a deterministic fallback embedding.
         """
         self.llm_handler = llm_handler        
         self.compression_profile = compression_profile or ContextCompressionProfile()
@@ -351,6 +689,9 @@ class LLMContextHandler:
 
         # Derive fast lookup structures from the full timeline store.
         self.context_index = ContextIndex()
+        self.semantic_index = ContextSemanticIndex(
+            embedding_model_name=semantic_embedding_model,
+        )
 
         # ========= 记忆机制 =========
         # 记忆不会被压缩。
@@ -395,14 +736,23 @@ class LLMContextHandler:
         self.context_mode = next_mode
         self.retrieval_enabled = next_mode == "graph"
         self.enable_tagging = bool(requested_tagging and self.retrieval_enabled)
+        self._rebuild_indexes()
+
+    def _rebuild_indexes(self) -> None:
+        """Rebuild the derived text, semantic, and tag indexes from scratch."""
         self.context_index.clear()
+        self.semantic_index.clear()
         self.tag_to_context = {} if self.enable_tagging else None
-        if self.retrieval_enabled:
-            for context_id in sorted(self.context_timeline_dict):
-                self.context_index.index_context(
-                    self.context_timeline_dict[context_id],
-                    tag_to_context=self.tag_to_context if self.enable_tagging else None,
-                )
+        if not self.retrieval_enabled:
+            return
+
+        for context_id in sorted(self.context_timeline_dict):
+            entry = self.context_timeline_dict[context_id]
+            self.context_index.index_context(
+                entry,
+                tag_to_context=self.tag_to_context if self.enable_tagging else None,
+            )
+            self.semantic_index.index_context(entry)
 
     # ====================================================================
     # Basic System
@@ -425,6 +775,7 @@ class LLMContextHandler:
         self.active_ids.clear()
         self.now_context_id = 1
         self.context_index.clear()
+        self.semantic_index.clear()
 
         if self.enable_tagging and self.tag_to_context is not None:
             self.tag_to_context.clear() # pyright: ignore
@@ -513,6 +864,7 @@ class LLMContextHandler:
                 context,
                 tag_to_context=self.tag_to_context if self.enable_tagging else None,
             )
+            self.semantic_index.index_context(context)
 
         # 加入当前活跃上下文窗口
         if append_to_active:
@@ -753,6 +1105,7 @@ class LLMContextHandler:
                 compacted_info,
                 tag_to_context=self.tag_to_context if self.enable_tagging else None,
             )
+            self.semantic_index.index_context(compacted_info)
         
         # 然后更改激活上下文
         selected_id_set = set(target_ids)
@@ -771,13 +1124,36 @@ class LLMContextHandler:
         keywords: str
     ) -> Optional[LLMContextInfo]:
         """
-        基于关键词结合标签，查询上下文信息。
+        基于关键词和语义索引查询上下文信息。
 
         Args:
             keywords: 关键字信息表达式，使用搜索引擎同款。
-            mode: 
         """
-        pass
+        if not self.retrieval_enabled:
+            return None
+
+        normalized_query = self.context_index._normalize_text(keywords)
+        if not normalized_query:
+            return None
+
+        semantic_ids = self.semantic_index.search(
+            normalized_query,
+            top_k=8,
+            include_raw=True,
+            include_compacted=True,
+        )
+        if not semantic_ids:
+            semantic_ids = sorted(self.context_index.candidate_text_ids(
+                normalized_query,
+                include_raw=True,
+                include_compacted=True,
+            ))
+
+        if not semantic_ids:
+            return None
+
+        info = await self.get_now_context(semantic_ids, preserve_order=True)
+        return info
 
     # ====================================================================
     # Memory System
@@ -862,6 +1238,293 @@ class LLMContextHandler:
     def clear_tool_result_facts(self) -> None:
         """Remove every stored tool-result fact from the handler."""
         self.tool_result_facts.clear()
+
+    @staticmethod
+    def _serialize_tool_result_fact(fact: ToolResultFact) -> Dict[str, Any]:
+        """Serialize one tool-result fact bundle into JSON-friendly data."""
+        return fact.to_dict()
+
+    @staticmethod
+    def _deserialize_tool_result_fact(payload: Mapping[str, Any]) -> ToolResultFact:
+        """Rebuild a tool-result fact bundle from exported JSON data."""
+        return ToolResultFact(
+            tool_name=str(payload.get("tool_name", "")).strip(),
+            summary=str(payload.get("summary", "")),
+            facts=[
+                str(item).strip()
+                for item in payload.get("facts", [])
+                if str(item).strip()
+            ],
+            evidence=str(payload.get("evidence", "")),
+            status=str(payload.get("status", "unknown")) or "unknown",
+            tool_call_id=(
+                str(payload.get("tool_call_id")).strip()
+                if payload.get("tool_call_id") is not None and str(payload.get("tool_call_id")).strip()
+                else None
+            ),
+            tags=[
+                str(item).strip()
+                for item in payload.get("tags", [])
+                if str(item).strip()
+            ],
+        )
+
+    @staticmethod
+    def _serialize_context_entry(context: LLMInfo) -> Dict[str, Any]:
+        """Serialize one timeline entry into a JSON-friendly record."""
+        if isinstance(context, LLMContextCompacted):
+            source_ids = [
+                source.timeline
+                for source in context.source
+                if getattr(source, "timeline", -1) >= 0
+            ]
+            return {
+                "context_id": context.timeline,
+                "kind": "compacted",
+                "abstract_msg": context.abstract_msg,
+                "source_ids": source_ids,
+                "source_timeline": list(context.source_timeline),
+                "tags": list(context.tags),
+            }
+
+        return {
+            "context_id": context.timeline,
+            "kind": "raw",
+            "role": context.role,
+            "content": context.content,
+            "timeline": context.timeline,
+            "abstract_msg": context.abstract_msg,
+            "content_reasoning": context.content_reasoning,
+            "tool_call_info": list(context.tool_call_info or []),
+            "tool_call_ids": list(context.tool_call_ids or []),
+            "tool_result_facts": list(context.tool_result_facts or []),
+            "tags": list(context.tags or []),
+        }
+
+    def export_context(self) -> LLMContextSnapshot:
+        """Export the handler state into a JSON-friendly snapshot.
+
+        Returns:
+            A snapshot object that contains timeline entries, active ids,
+            memories, compressed tool-result facts, and handler metadata.
+        """
+        contexts = [
+            self._serialize_context_entry(self.context_timeline_dict[context_id])
+            for context_id in sorted(self.context_timeline_dict)
+        ]
+        memories = list(self.memory_list or []) if self.enable_memory else []
+        return LLMContextSnapshot(
+            schema_version=1,
+            context_mode=self.context_mode,
+            now_context_id=self.now_context_id,
+            active_ids=list(self.active_ids),
+            contexts=contexts,
+            memories=memories,
+            tool_result_facts=[
+                self._serialize_tool_result_fact(fact)
+                for fact in self.tool_result_facts
+            ],
+            enable_memory=self.enable_memory,
+            enable_tagging=self.enable_tagging,
+        )
+
+    def _apply_snapshot_contexts(self, contexts: Sequence[Mapping[str, Any]]) -> None:
+        """Insert serialized context records before rebuilding derived indexes."""
+        compacted_source_map: Dict[int, List[int]] = {}
+        for item in contexts:
+            try:
+                context_id = int(item.get("context_id", item.get("timeline", -1)))
+            except (TypeError, ValueError):
+                continue
+            if context_id < 0:
+                continue
+
+            kind = str(item.get("kind", "raw")).strip().lower()
+            if kind == "compacted":
+                source_timeline: List[int] = []
+                for source_id in item.get("source_timeline", []):
+                    try:
+                        source_timeline.append(int(source_id))
+                    except (TypeError, ValueError):
+                        continue
+                source_ids: List[int] = []
+                for source_id in item.get("source_ids", []):
+                    try:
+                        source_ids.append(int(source_id))
+                    except (TypeError, ValueError):
+                        continue
+                compacted = LLMContextCompacted(
+                    abstract_msg=str(item.get("abstract_msg", "")),
+                    source=[],
+                    source_timeline=source_timeline,
+                    tags=[
+                        str(tag).strip()
+                        for tag in item.get("tags", [])
+                        if tag is not None and str(tag).strip()
+                    ],
+                    timeline=context_id,
+                )
+                self.context_timeline_dict[context_id] = compacted
+                compacted_source_map[context_id] = source_ids
+                continue
+
+            context = LLMContext(
+                role=str(item.get("role", "")),
+                content=str(item.get("content", "")),
+                timeline=context_id,
+                abstract_msg=str(item.get("abstract_msg", "")),
+                content_reasoning=(
+                    str(item.get("content_reasoning")).strip()
+                    if item.get("content_reasoning") is not None and str(item.get("content_reasoning")).strip()
+                    else None
+                ),
+                tool_call_info=[
+                    str(value)
+                    for value in item.get("tool_call_info", [])
+                    if value is not None and str(value).strip()
+                ] or None,
+                tool_call_ids=[
+                    str(value)
+                    for value in item.get("tool_call_ids", [])
+                    if value is not None and str(value).strip()
+                ] or None,
+                tool_result_facts=[
+                    str(value)
+                    for value in item.get("tool_result_facts", [])
+                    if value is not None and str(value).strip()
+                ] or None,
+                tags=[
+                    str(tag).strip()
+                    for tag in item.get("tags", [])
+                    if tag is not None and str(tag).strip()
+                ],
+            )
+            self.context_timeline_dict[context_id] = context
+
+        for compacted_id, source_ids in compacted_source_map.items():
+            entry = self.context_timeline_dict.get(compacted_id)
+            if not isinstance(entry, LLMContextCompacted):
+                continue
+            entry.source = [
+                self.context_timeline_dict[source_id]
+                for source_id in source_ids
+                if source_id in self.context_timeline_dict
+            ]
+
+    @staticmethod
+    def _normalize_legacy_snapshot_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """Convert older session-store payloads into the current snapshot shape."""
+        contexts: List[Dict[str, Any]] = []
+        for item in payload.get("contexts", []):
+            if not isinstance(item, dict):
+                continue
+            contexts.append(
+                {
+                    "context_id": item.get("context_id", item.get("timeline", -1)),
+                    "kind": "raw",
+                    "role": item.get("role", ""),
+                    "content": item.get("content", ""),
+                    "timeline": item.get("context_id", item.get("timeline", -1)),
+                    "abstract_msg": item.get("abstract_msg", item.get("abstract", "")),
+                    "content_reasoning": item.get("content_reasoning", item.get("reasoning_content", "")),
+                    "tool_call_info": list(item.get("tool_call_info", [])),
+                    "tool_call_ids": list(item.get("tool_call_ids", [])),
+                    "tool_result_facts": list(item.get("tool_result_facts", [])),
+                    "tags": list(item.get("tags", [])),
+                }
+            )
+
+        for item in payload.get("compacted_contexts", []):
+            if not isinstance(item, dict):
+                continue
+            contexts.append(
+                {
+                    "context_id": item.get("context_id", item.get("timeline", -1)),
+                    "kind": "compacted",
+                    "abstract_msg": item.get("abstract_msg", ""),
+                    "source_ids": list(item.get("source_ids", item.get("source_timeline", []))),
+                    "source_timeline": list(item.get("source_timeline", item.get("source_ids", []))),
+                    "tags": list(item.get("tags", [])),
+                }
+            )
+
+        return {
+            "schema_version": payload.get("version", payload.get("schema_version", 1)),
+            "context_mode": payload.get("context_mode", payload.get("mode", "graph")),
+            "now_context_id": payload.get("next_context_id", payload.get("now_context_id", 1)),
+            "active_ids": list(payload.get("active_ids", [])),
+            "contexts": contexts,
+            "memories": list(payload.get("memories", [])),
+            "tool_result_facts": list(payload.get("tool_result_facts", [])),
+            "enable_memory": bool(payload.get("enable_memory", True)),
+            "enable_tagging": bool(payload.get("enable_tagging", False)),
+        }
+
+    def import_context(
+        self,
+        payload: LLMContextSnapshot | Mapping[str, Any],
+        *,
+        replace: bool = True,
+    ) -> LLMContextSnapshot:
+        """Restore handler state from an exported snapshot or mapping.
+
+        Args:
+            payload: Exported snapshot object or JSON-friendly mapping.
+            replace: Whether to discard the current in-memory timeline before
+                loading the supplied snapshot.
+
+        Returns:
+            The normalized snapshot that was applied to the handler.
+        """
+        if isinstance(payload, LLMContextSnapshot):
+            snapshot = payload
+        else:
+            raw_payload = dict(payload)
+            if "compacted_contexts" in raw_payload:
+                raw_payload = self._normalize_legacy_snapshot_payload(raw_payload)
+            snapshot = LLMContextSnapshot.from_dict(raw_payload)
+
+        if replace:
+            self.context_timeline_dict.clear()
+            self.active_ids.clear()
+            self.now_context_id = 1
+            self.context_index.clear()
+            self.semantic_index.clear()
+            if self.enable_tagging and self.tag_to_context is not None:
+                self.tag_to_context.clear()
+            self.tool_result_facts.clear()
+
+        self.context_mode = normalize_context_mode(snapshot.context_mode)
+        self.retrieval_enabled = self.context_mode == "graph"
+        self.enable_memory = snapshot.enable_memory
+        self.enable_tagging = bool(snapshot.enable_tagging and self.retrieval_enabled)
+        self.tag_to_context = {} if self.enable_tagging else None
+        self.memory_list = list(snapshot.memories) if self.enable_memory else None
+        self.tool_result_facts = [
+            self._deserialize_tool_result_fact(item)
+            for item in snapshot.tool_result_facts
+            if isinstance(item, dict)
+        ]
+
+        self._apply_snapshot_contexts(snapshot.contexts)
+        self.active_ids = stable_unique_ids(
+            [
+                context_id
+                for context_id in snapshot.active_ids
+                if context_id in self.context_timeline_dict
+            ]
+        )
+
+        if self.context_timeline_dict:
+            self.now_context_id = max(
+                max(self.context_timeline_dict.keys()) + 1,
+                snapshot.now_context_id,
+            )
+        else:
+            self.now_context_id = max(1, snapshot.now_context_id)
+
+        self._rebuild_indexes()
+        return snapshot
 
     async def compress_tool_result(
         self,
@@ -1090,6 +1753,34 @@ class LLMContextHandler:
             for context_id in ordered_ids
         ]
 
+    async def find_context_by_semantic(
+        self,
+        semantic_query: str,
+        *,
+        top_k: int = 8,
+        include_raw: bool = True,
+        include_compacted: bool = True,
+    ) -> Optional[List[LLMInfo]]:
+        """Find context entries by semantic vector similarity."""
+        if not self.retrieval_enabled:
+            return None
+
+        matched_ids = self.semantic_index.search(
+            semantic_query,
+            top_k=top_k,
+            include_raw=include_raw,
+            include_compacted=include_compacted,
+        )
+        if not matched_ids:
+            return None
+
+        matched_items = [
+            self.context_timeline_dict[context_id]
+            for context_id in matched_ids
+            if context_id in self.context_timeline_dict
+        ]
+        return matched_items or None
+
     async def find_context_by_summary(
         self,
         summary_query: str,
@@ -1098,7 +1789,7 @@ class LLMContextHandler:
         include_compacted: bool = True,
     ) -> Optional[List[LLMInfo]]:
         """
-        根据摘要文本或正文内容检索上下文。
+        根据摘要文本、正文内容或语义相似度检索上下文。
 
         Args:
             summary_query: 待搜索的摘要关键词。
@@ -1111,6 +1802,17 @@ class LLMContextHandler:
         """
         if not self.retrieval_enabled:
             return None
+        normalized_query = self.context_index._normalize_text(summary_query)
+        if blur:
+            semantic_hits = await self.find_context_by_semantic(
+                normalized_query,
+                top_k=8,
+                include_raw=include_raw,
+                include_compacted=include_compacted,
+            )
+            if semantic_hits:
+                return semantic_hits
+
         candidate_ids = self.context_index.candidate_text_ids(
             summary_query,
             include_raw=include_raw,
@@ -1119,7 +1821,6 @@ class LLMContextHandler:
         if not candidate_ids:
             return None
 
-        normalized_query = self.context_index._normalize_text(summary_query)
         matched_items: List[LLMInfo] = []
         for context_id in sorted(candidate_ids):
             entry = self.context_timeline_dict.get(context_id)
@@ -1147,7 +1848,7 @@ class LLMContextHandler:
         blur_tags: bool = False,
     ) -> Optional[List[LLMInfo]]:
         """
-        根据标签和摘要，从被压缩后的上下文内容里，查询原始上下文。
+        根据标签和摘要，从上下文内容里查询同时满足两种信号的条目。
 
         Notes:
             - 如果要多次搜索的话，时间复杂度可能高达 O(nn) - 检查是否已被修复。
@@ -1169,15 +1870,30 @@ class LLMContextHandler:
             return None
         
         # 查询摘要
-        summary_ids = self.context_index.candidate_text_ids(
-            summary_query,
-            include_raw=False,
-            include_compacted=True,
-        )
+        used_semantic_summary = False
+        if blur_summary:
+            summary_ids = set(
+                self.semantic_index.search(
+                    summary_query,
+                    top_k=max(8, len(tag_ids)),
+                    include_raw=False,
+                    include_compacted=True,
+                    allowed_ids=tag_ids,
+                )
+            )
+            used_semantic_summary = bool(summary_ids)
+        else:
+            summary_ids = self.context_index.candidate_text_ids(
+                summary_query,
+                include_raw=False,
+                include_compacted=True,
+            )
+        if not summary_ids:
+            summary_ids = set()
         if not summary_ids:
             return None
 
-        intersected_ids = sorted(tag_ids & summary_ids)
+        intersected_ids = sorted(tag_ids & set(summary_ids))
 
         # 没东西
         if not intersected_ids:
@@ -1189,6 +1905,10 @@ class LLMContextHandler:
             entry = self.context_timeline_dict.get(context_id)
             if entry is None:
                 continue
+            if used_semantic_summary:
+                matched_items.append(entry)
+                continue
+
             target_text = self.context_index.normalized_text_by_id.get(context_id, "")
             if not target_text:
                 continue

@@ -468,6 +468,70 @@ class ContextBundle:
 
 
 @dataclass
+class LLMContextSnapshot:
+    """JSON-friendly export/import payload for one handler context store.
+
+    Attributes:
+        schema_version: Snapshot schema version used for migrations.
+        context_mode: Current handler mode at the time of export.
+        now_context_id: Next timeline id to allocate after restore.
+        active_ids: Active-window timeline ids.
+        contexts: Serialized raw and compacted timeline entries.
+        memories: Persistent memory strings stored on the handler.
+        tool_result_facts: Serialized compressed tool-result fact bundles.
+        enable_memory: Whether memory collection was enabled when exported.
+        enable_tagging: Whether tag indexing was enabled when exported.
+    """
+
+    schema_version: int = 1
+    context_mode: ContextMode = "graph"
+    now_context_id: int = 1
+    active_ids: list[int] = field(default_factory=list)
+    contexts: list[JsonObject] = field(default_factory=list)
+    memories: list[str] = field(default_factory=list)
+    tool_result_facts: list[JsonObject] = field(default_factory=list)
+    enable_memory: bool = True
+    enable_tagging: bool = False
+
+    def to_dict(self) -> JsonObject:
+        """Serialize the snapshot into JSON-compatible data."""
+        return {
+            "schema_version": self.schema_version,
+            "context_mode": self.context_mode,
+            "now_context_id": self.now_context_id,
+            "active_ids": list(self.active_ids),
+            "contexts": list(self.contexts),
+            "memories": list(self.memories),
+            "tool_result_facts": list(self.tool_result_facts),
+            "enable_memory": self.enable_memory,
+            "enable_tagging": self.enable_tagging,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: JsonObject) -> "LLMContextSnapshot":
+        """Build a snapshot from a JSON-friendly mapping."""
+        active_ids: list[int] = []
+        for item in payload.get("active_ids", []):
+            try:
+                active_id = int(item)
+            except (TypeError, ValueError):
+                continue
+            active_ids.append(active_id)
+
+        return cls(
+            schema_version=int(payload.get("schema_version", 1)),
+            context_mode=str(payload.get("context_mode", "graph")) or "graph",
+            now_context_id=int(payload.get("now_context_id", 1)),
+            active_ids=active_ids,
+            contexts=[item for item in payload.get("contexts", []) if isinstance(item, dict)],
+            memories=[str(item) for item in payload.get("memories", []) if str(item).strip()],
+            tool_result_facts=[item for item in payload.get("tool_result_facts", []) if isinstance(item, dict)],
+            enable_memory=bool(payload.get("enable_memory", True)),
+            enable_tagging=bool(payload.get("enable_tagging", False)),
+        )
+
+
+@dataclass
 class AgentMessage:
     """定义一个 Agent 的对话轮使用的内容，好像再也用不上了"""
     provider: str   # 后端 handler 的提供商
