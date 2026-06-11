@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from .models import KnowledgeHit
+from .prompt import MESSAGE_NOT_HIT, MESSAGE_HIT_HEADER, MESSAGE_HIT_END
 
+from typing import List
 
 class TaskContextBuilder:
     """Formats retrieval results into task-oriented prompt context.
@@ -23,7 +25,7 @@ class TaskContextBuilder:
         # this formatter easy to test in isolation.
         self.strategy_prefix = strategy_prefix
 
-    def build(self, hits: list[KnowledgeHit]) -> str:
+    def build(self, hits: List[KnowledgeHit]) -> str:
         """Build system-prompt context from ranked knowledge hits.
 
         Args:
@@ -36,7 +38,7 @@ class TaskContextBuilder:
         # Preserve the old no-hit behavior so agents still receive a clear manual
         # search instruction when prefetch retrieval fails.
         if not hits:
-            return '未找到匹配当前任务的知识条目。需要时可调用 `search_knowledge` 手动检索。'
+            return MESSAGE_NOT_HIT
 
         # Split strategy hits from normal knowledge hits so strategy cards remain
         # first in the generated prompt context.
@@ -44,26 +46,31 @@ class TaskContextBuilder:
         knowledge_hits = [hit for hit in hits if not hit.path.startswith(self.strategy_prefix)]
 
         # Start with the original policy sentence that defines source priority for
-        # the downstream agent.
-        lines = ['以下是与当前任务最相关的本地知识摘要。使用顺序必须是：解题策略优先，本地专题知识第二，互联网资料第三。']
+        # the downstream agent.a message
+        lines: List[str] = []
+        lines.append(MESSAGE_HIT_HEADER)
 
         # Render strategy hits first because they are intended to control overall
         # solving approach rather than provide isolated facts.
         if strategy_hits:
-            lines.append('优先策略：')
+            lines.append('Strategies: ')
             for index, hit in enumerate(strategy_hits, start=1):
-                lines.append(f'{index}. {hit.title} ({hit.path})')
+                chunk_suffix = f' / {hit.chunk_title}' if hit.chunk_title else ''
+                chunk_span = f' chunk {hit.chunk_index + 1}' if hit.chunk_key else ''
+                lines.append(f'{index}. {hit.title}{chunk_suffix} ({hit.path}{chunk_span})')
                 lines.append(f'   {hit.excerpt}')
 
         # Render non-strategy knowledge after strategy cards, preserving the old
         # two-section prompt layout.
         if knowledge_hits:
-            lines.append('相关知识：')
+            lines.append('Relative knowledges: ')
             for index, hit in enumerate(knowledge_hits, start=1):
-                lines.append(f'{index}. {hit.title} ({hit.path})')
+                chunk_suffix = f' / {hit.chunk_title}' if hit.chunk_title else ''
+                chunk_span = f' chunk {hit.chunk_index + 1}' if hit.chunk_key else ''
+                lines.append(f'{index}. {hit.title}{chunk_suffix} ({hit.path}{chunk_span})')
                 lines.append(f'   {hit.excerpt}')
 
         # Append the original escalation rule so local retrieval remains preferred
         # over web search in the agent's subsequent workflow.
-        lines.append('如果策略卡和本地知识仍不足以支撑下一步，再调用 `search_knowledge` 细化检索；只有本地策略与知识都不够时，才升级到 `search_web`。')
+        lines.append(MESSAGE_HIT_END)
         return '\n'.join(lines)

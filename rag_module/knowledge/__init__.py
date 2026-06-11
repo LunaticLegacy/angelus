@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from .facade import KnowledgeBase
-from .models import KnowledgeDocument, KnowledgeHit, KnowledgeIndexEntry, RetrievalQuery, VectorHit
+from .models import KnowledgeChunk, KnowledgeDocument, KnowledgeHit, KnowledgeIndexEntry, RetrievalQuery, VectorHit
 
 __all__ = [
     'KnowledgeBase',
+    'KnowledgeChunk',
     'KnowledgeDocument',
     'KnowledgeHit',
     'KnowledgeIndexEntry',

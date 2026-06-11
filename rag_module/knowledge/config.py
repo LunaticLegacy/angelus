@@ -38,12 +38,14 @@ class KnowledgeConfig:
     context_limit: int = 3
     excerpt_chars: int = 320
     embedding_max_chars: int = 24000    # 这个值默认为 6000，实际操作时建议直接改。
+    chunk_max_chars: int = 1800
+    chunk_overlap_chars: int = 240
     semantic_candidates: int = 24
     strategy_prefix: str = 'kb/strategy/'
     index_filename: str = '.vector_index.json'
     chroma_dirname: str = '.chroma'
     collection_name: str = 'knowledge_base'
-    manifest_version: int = 2
+    manifest_version: int = 3
     semantic_backend: str = 'chromadb+sentence-transformers'
 
     @classmethod
@@ -74,12 +76,23 @@ class KnowledgeConfig:
         local_only_raw = os.getenv('POFPCTF_KB_MODEL_LOCAL_ONLY', '').strip().lower()
         local_only = local_only_raw in {'1', 'true', 'yes', 'on'}
 
+        def read_int_env(name: str, default: int) -> int:
+            raw = os.getenv(name, '').strip()
+            if not raw:
+                return default
+            try:
+                return max(0, int(raw))
+            except ValueError:
+                return default
+
         # Construct the immutable config with all constants in one place so
         # downstream components do not import settings from the facade.
         return cls(
             root=resolved_root,
             embedding_model_name=model_name or 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
             local_files_only=local_only,
+            chunk_max_chars=read_int_env('POFPCTF_KB_CHUNK_MAX_CHARS', 1800) or 1800,
+            chunk_overlap_chars=read_int_env('POFPCTF_KB_CHUNK_OVERLAP_CHARS', 240),
         )
 
     @property

@@ -7,6 +7,22 @@ implementation lives in the `knowledge` package.
 
 from __future__ import annotations
 
-from .knowledge import KnowledgeBase, KnowledgeHit, KnowledgeIndexEntry
+from .knowledge import (
+    KnowledgeBase,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeHit,
+    KnowledgeIndexEntry,
+    RetrievalQuery,
+    VectorHit,
+)
 
-__all__ = ['KnowledgeBase', 'KnowledgeHit', 'KnowledgeIndexEntry']
+__all__ = [
+    'KnowledgeBase',
+    'KnowledgeChunk',
+    'KnowledgeDocument',
+    'KnowledgeHit',
+    'KnowledgeIndexEntry',
+    'RetrievalQuery',
+    'VectorHit',
+]
