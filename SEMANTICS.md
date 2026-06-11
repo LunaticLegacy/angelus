@@ -7,9 +7,10 @@
 - `handlers/_tool_schemas.py` centralizes the translation from executable `Tool` objects and legacy schema dictionaries into provider-ready tool payloads. OpenAI-compatible and OpenVINO handlers reuse the OpenAI-style helper, while Anthropic maps that intermediate schema into `input_schema`.
 - `agent.py` consumes `LLMOutput` instead of reading OpenAI or Anthropic SDK response layouts directly in the main agent loop.
 - `agent.py` accepts an optional `ContextCompressionProfile` so task orchestration layers can choose compression behavior without hard-coding domain schemas inside the generic agent loop.
-- `llm_context.py` stores conversation context, tracks an ordered `active_ids` compatibility/cache window, and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
-- `llm_context.py` now updates its derived retrieval indexes only when contexts are written or compressed; there is no separate tag-index refresh helper anymore.
-- `llm_context.py` now owns `ContextCompressionProfile`, which carries the task label, domain schema, and prompt template used to compress context entries.
+- `agent.py` accepts an optional semantic embedding model name or path so the in-memory context index can use sentence-transformers when available without coupling the agent to a disk-backed RAG package.
+- `llm_context.py` stores conversation context, tracks an ordered `active_ids` compatibility/cache window, owns the in-memory semantic/context indexes, and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
+- `llm_context.py` now updates its derived retrieval indexes only when contexts are written, compressed, imported, or reconfigured; there is no separate tag-index refresh helper anymore.
+- `llm_context.py` now owns `ContextCompressionProfile` and `LLMContextSnapshot`, which carry the task compression profile and the JSON-friendly context export/import schema.
 - `agent.py` builds main-turn history through `AgentStateMachine -> AgentState -> ContextBundle -> _build_prev_messages(...)`; `active_ids` is no longer the sole source of prompt context for the main LLM turn.
 - `tools/builtin_tools.py` provides Agent-bound management tools for reading, listing, compressing context, and managing persistent memories.
 - `tools/ctf_tools.py` now only provides workspace-scoped CTF filesystem helpers, `tools/workspace_knowledge_tools.py` provides workspace knowledge search/read helpers, and `rag_module/tools/knowledge_base_tools.py` provides the RAG knowledge base tools; `tools/__init__.py` exports them under explicit names to avoid mixing the two knowledge-tool families.
@@ -32,6 +33,7 @@
 - `LLMContextPair`: compatibility container for older imports. New agent persistence stores user and assistant messages as separate `LLMContext` entries.
 - `LLMContextCompressed`: compatibility alias for `LLMContextCompacted`.
 - `ContextCompressionProfile`: immutable-style configuration bundle for context compression. It carries `task_type`, `domain_schema`, and `prompt_template`.
+- `LLMContextSnapshot`: JSON-friendly export/import payload for one context handler. It carries the handler mode, active ids, serialized context records, memories, and compressed tool-result facts.
 - `AgentState`: durable task-progress snapshot pinned into every main LLM turn. It stores schema version, revision, task, phase, summary, facts, hypotheses, artifacts, credentials, routes, failed actions, do-not-repeat entries, next actions, recent transitions, and update time.
 - `AgentStateTurnEvent`: completed main-agent turn submitted to the state-machine manager. It carries the user goal, turn number, assistant message, raw tool execution records kept only in memory, compressed tool-result facts, and stop flag.
 - `AgentStateUpdate`: structured patch accepted from the state-manager subagent before it is merged into `AgentState`.
@@ -41,6 +43,7 @@
 - `LLMContextCompacted`: one compressed summary entry. Its string form now includes the compacted entry's own `timeline` id in addition to `source_timeline`, so context-selection prompts expose valid selectable ids instead of provenance ids only.
 - `ToolResultFact`: compressed tool-result bundle. It carries the originating tool name, a short summary, atomic facts extracted from the raw output, the raw evidence text for storage, a normalized status, optional tool call id, and retrieval tags. The evidence field is not forwarded back into LLM prompts.
 - `ContextIndex`: derived in-memory inverted index for context retrieval. It stores normalized text, token/character-gram postings, tag postings, and compacted-to-source links so lookup methods can avoid scanning the whole timeline.
+- `ContextSemanticIndex`: in-memory vector-style context index. It stores semantic documents, normalized embeddings, and optional ephemeral Chroma state so retrieval can rank context by similarity without disk persistence.
 
 ## Functions
 
@@ -90,6 +93,8 @@
 - `LLMContextHandler.get_now_context(..., preserve_order=False)`: serializes selected context ids from the full timeline store. The default keeps legacy timeline sorting; `preserve_order=True` returns entries in caller-supplied order for `ContextBundle` rendering.
 - `LLMContextHandler.get_now_context_as_str(..., preserve_order=False)`: stringifies `get_now_context(...)` with the same ordering option for selector prompts and debug reads.
 - `LLMContextHandler.compress_context(...)`: compresses all still-uncompacted raw entries when ids are omitted, or compresses any explicitly selected timeline ids when ids are supplied. It resolves an explicit compression profile or falls back to the handler's default profile, then renders the profile's prompt template with `task_type`, `domain_schema`, and selected context text before storing the new compacted entry and updating compacted-source indexes.
+- `LLMContextHandler.export_context() -> LLMContextSnapshot`: serializes the full handler state into a JSON-friendly snapshot with serialized contexts, memories, tool-result facts, active ids, and metadata.
+- `LLMContextHandler.import_context(...) -> LLMContextSnapshot`: restores handler state from a snapshot or legacy mapping, rebuilds raw/compacted/context semantic indexes, and restores memories and tool-result facts.
 - Context compression is archival rather than destructive: compressed entries leave the active window and are replaced by one compacted summary entry using stable id deduplication, but the original raw entries remain in the manager's full timeline store and can still be revisited later by their original ids.
 - `LLMContextHandler.get_descendant_ids(...)`: recursively returns raw and nested compacted descendants represented by one compacted id for selector candidate-closure validation.
 - `stable_unique_ids(...)`: removes duplicate timeline ids without changing first-seen order.
@@ -100,9 +105,11 @@
 - `LLMContextHandler.copy_tool_result_facts(...)`: returns a shallow copy of the compressed tool-result facts.
 - `LLMContextHandler.get_tool_result_facts(...)`: returns the compressed tool-result facts as an immutable tuple.
 - `LLMContextHandler.clear_tool_result_facts(...)`: clears all stored tool-result fact bundles.
-- `LLMContextHandler.find_context_by_summary(...)`: uses the derived text postings index to narrow candidates, then validates the normalized summary query against compacted abstracts and optionally raw content bodies before returning matching timeline entries in timeline order.
+- `LLMContextHandler.find_context_by_semantic(...)`: returns semantic nearest-neighbour hits from the in-memory vector index, preferring the ephemeral Chroma store when available and falling back to a deterministic pure-Python embedding cache.
+- `LLMContextHandler.search_context_by_keyword(...)`: uses semantic retrieval first, then falls back to the text postings index when no vector hit is available.
+- `LLMContextHandler.find_context_by_summary(...)`: uses semantic retrieval first when blur matching is enabled, then falls back to the derived text postings index and exact string validation for legacy behaviour.
 - `LLMContextHandler.find_context_by_tags(...)`: uses exact or fuzzy tag postings to return matching timeline entries without scanning all tags in the handler.
-- `LLMContextHandler.find_context_by_summary_and_tags(...)`: intersects the indexed tag-hit timeline set with the indexed summary-hit timeline set so callers can retrieve only entries matching both retrieval signals without scanning the full timeline.
+- `LLMContextHandler.find_context_by_summary_and_tags(...)`: intersects the indexed tag-hit timeline set with the summary-hit timeline set, using semantic summary retrieval when blur matching is enabled, so callers can retrieve only entries matching both retrieval signals without scanning the full timeline.
 - `LLMContextHandler.expand_retrieval_hit_ids(...)`: turns retrieval-hit objects into selectable timeline ids by preserving raw hit ids, optionally keeping compacted hit ids, and expanding compacted summaries back to their flattened `source_timeline` provenance chain.
 - `LLMContextHandler.expand_active_selection_ids(...)`: normalizes selector-chosen ids into active-window ids while preserving compacted summaries by default; raw provenance expansion only happens when a caller explicitly opts in.
 - `LLMContextHandler.find_compacted_entries_by_source_ids(...)`: looks up compacted summary ids through the derived source-to-compacted index so resource restoration can keep summary entries active alongside restored raw context.
