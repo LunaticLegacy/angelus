@@ -80,6 +80,7 @@ class Agent:
         tool_result_summary_threshold_chars: int = 8192,
         compression_profile: Optional[ContextCompressionProfile] = None,
         context_mode: ContextMode = "linear",
+        semantic_embedding_model: Optional[str] = None,
     ):
         """
         初始化 Agent，绑定 LLM 处理器、系统提示词和可选工具列表。
@@ -97,6 +98,8 @@ class Agent:
             tool_result_summary_threshold_chars: 仅当 context_mode = 'graph' 时有效，当工具返回结果长度超过此阈值时，将立即归档该工具信息，并总结此轮。
             compression_profile: 决定在特定应用场景（或工作领域）内的上下文压缩配置，将被用于自动归档信息，以及显式上下文
             context_mode: `linear` 将使用传统线性上下文机制，`graph` 模式下启用实验性上下文机制。
+            semantic_embedding_model: Optional sentence-transformers model name
+                or local path used by the in-memory semantic context index.
         """
 
         # 先初始化所有输入参数。
@@ -125,6 +128,7 @@ class Agent:
             enable_tagging=self.context_mode == "graph",    # 图式上下文才启用检索标签
             compression_profile=self.compression_profile,
             context_mode=self.context_mode,
+            semantic_embedding_model=semantic_embedding_model,
         )
 
         # 工具调用历史
