@@ -9,7 +9,7 @@ from ...llm_types import JsonObject
 from .config import KnowledgeConfig
 from .markdown_loader import MarkdownKnowledgeLoader
 from .manifest_store import KnowledgeManifestStore
-from .models import KnowledgeIndexEntry
+from .models import KnowledgeChunk, KnowledgeIndexEntry
 from .text_utils import TextTools
 from .vector_store import ChromaVectorStore
 from .embedding_model import EmbeddingModelProvider
@@ -67,7 +67,7 @@ class VectorIndexManager:
         # Handle missing knowledge roots without trying to read or create index
         # files, matching the old unavailable behavior.
         if not self.loader.available():
-            self.manifest.meta = self.manifest.build_meta(entry_count=0, backend_ready=False, last_error='')
+            self.manifest.meta = self.manifest.build_meta(entry_count=0, chunk_count=0, backend_ready=False, last_error='')
             return {}
 
         # Load current documents once so freshness checks and potential rebuilds
@@ -75,7 +75,12 @@ class VectorIndexManager:
         documents = self.loader.load_documents()
         if not force and self.config.index_path.exists():
             loaded = self.manifest.load(self.config.index_path)
-            if loaded is not None and self.manifest.is_fresh(loaded, documents):
+            if (
+                loaded is not None
+                and self.manifest.meta.version == self.config.manifest_version
+                and self.manifest.is_fresh(loaded, documents)
+                and self.manifest.meta.chunk_count > 0
+            ):
                 return loaded
         return self.rebuild_vector_index(documents=documents)
 
@@ -92,7 +97,7 @@ class VectorIndexManager:
         # Keep unavailable roots as a no-op that still resets manifest metadata to
         # a known disabled state.
         if not self.loader.available():
-            self.manifest.meta = self.manifest.build_meta(entry_count=0, backend_ready=False, last_error='')
+            self.manifest.meta = self.manifest.build_meta(entry_count=0, chunk_count=0, backend_ready=False, last_error='')
             return {}
 
         # Reuse caller-provided documents when available so ensure/rebuild does
@@ -102,9 +107,11 @@ class VectorIndexManager:
         ids: list[str] = []
         semantic_documents: list[str] = []
         metadatas: list[dict[str, str]] = []
+        chunk_count = 0
 
         # Convert parsed Markdown documents into manifest entries and vector-store
-        # payloads while preserving old path, fingerprint, and excerpt semantics.
+        # payloads while preserving document freshness and adding chunk-level
+        # semantic payloads for retrieval.
         for document in source_documents:
             relative_path = document.repository_relative_path
             fingerprint = self.manifest.fingerprint_document(document)
@@ -120,15 +127,25 @@ class VectorIndexManager:
                 excerpt=excerpt,
                 document_id=document_id,
             )
-            ids.append(document_id)
-            semantic_documents.append(
-                self.text.build_semantic_document(
-                    title=document.title,
-                    relative_path=relative_path,
-                    content=document.content,
+            document_chunks: list[KnowledgeChunk] = self.text.chunk_document(document)
+            for chunk in document_chunks:
+                ids.append(chunk.chunk_key)
+                semantic_documents.append(self.text.build_chunk_semantic_document(chunk))
+                metadatas.append(
+                    {
+                        'path': relative_path,
+                        'source_path': chunk.source_path,
+                        'source_title': chunk.source_title,
+                        'chunk_key': chunk.chunk_key,
+                        'chunk_index': str(chunk.chunk_index),
+                        'chunk_title': chunk.chunk_title,
+                        'heading_path': chunk.heading_path,
+                        'start_line': str(chunk.start_line),
+                        'end_line': str(chunk.end_line),
+                        'fingerprint': fingerprint,
+                    }
                 )
-            )
-            metadatas.append({'path': relative_path, 'title': document.title, 'fingerprint': fingerprint})
+            chunk_count += len(document_chunks)
 
         # Rebuild the vector backend as a best-effort operation; failures are
         # recorded in the manifest while keyword fallback remains usable.
@@ -142,7 +159,7 @@ class VectorIndexManager:
 
         # Save the manifest regardless of backend success so keyword search can
         # still use cached metadata and report useful status.
-        self.manifest.save(entries, backend_ready=backend_ready, last_error=last_error)
+        self.manifest.save(entries, chunk_count=chunk_count, backend_ready=backend_ready, last_error=last_error)
         return entries
 
     def vector_status(self) -> JsonObject:
@@ -175,6 +192,7 @@ class VectorIndexManager:
             'backend': self.config.semantic_backend,
             'embedding_model': self.config.embedding_model_name,
             'entry_count': len(entries),
+            'chunk_count': int(self.manifest.meta.chunk_count),
             'backend_ready': bool(self.manifest.meta.backend_ready),
             'query_mode': 'hybrid' if self.manifest.meta.backend_ready else 'keyword_fallback',
             'dependencies_installed': dependency_ok,
@@ -182,21 +200,21 @@ class VectorIndexManager:
             'last_error': last_error,
         }
 
-    def semantic_candidate_limit(self, limit: int, entry_count: int) -> int:
+    def semantic_candidate_limit(self, limit: int, chunk_count: int) -> int:
         """Calculate the number of vector candidates to request.
 
         Args:
             limit: Final requested hit count.
-            entry_count: Number of indexed documents available in the manifest.
+            chunk_count: Number of indexed semantic chunks available in the manifest.
 
         Returns:
             Bounded semantic candidate count.
         """
         # Preserve the old candidate policy: at least configured semantic
         # candidates, at least 8x requested hits, and never more than entry count.
-        if entry_count <= 0:
+        if chunk_count <= 0:
             return 0
-        return max(1, min(entry_count, max(int(limit) * 8, self.config.semantic_candidates)))
+        return max(1, min(chunk_count, max(int(limit) * 8, self.config.semantic_candidates)))
 
     def format_error(self, exc: Exception) -> str:
         """Format an exception into a compact diagnostic string.

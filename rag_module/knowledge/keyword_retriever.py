@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .models import KnowledgeDocument
+from pathlib import Path
+
+from .models import KnowledgeChunk, KnowledgeDocument
 from .text_utils import TextTools
 
 
@@ -62,7 +64,34 @@ class KeywordRetriever:
                 score += 12
             if term in path_lower:
                 score += 8
-            occurrences = content_lower.count(term)
+            occurrences: int = content_lower.count(term) # 匹配关键词的次数
             if occurrences:
                 score += min(occurrences, 6) * 3
         return score
+
+    def score_chunk(self, chunk: KnowledgeChunk, terms: list[str]) -> int:
+        """Score a chunk using deterministic keyword matching.
+
+        Args:
+            chunk: Chunk produced from a parsed markdown document.
+            terms: Normalized keyword terms extracted from the query.
+
+        Returns:
+            Integer keyword score for the chunk body and its metadata.
+        """
+        # Reuse the document scorer by folding in the source title, chunk title,
+        # heading path, and body content so chunk hits still benefit from the
+        # old lexical ranking model.
+        combined_title = ' '.join(
+            value
+            for value in [chunk.source_title, chunk.chunk_title, chunk.heading_path]
+            if value
+        )
+        synthetic_document = KnowledgeDocument(
+            absolute_path=Path(chunk.source_path),
+            root_relative_path=chunk.source_path,
+            repository_relative_path=chunk.source_path,
+            title=combined_title or chunk.source_title,
+            content=chunk.content,
+        )
+        return self.score_document(synthetic_document, terms)

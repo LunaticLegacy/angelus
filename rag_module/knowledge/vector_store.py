@@ -109,7 +109,7 @@ class ChromaVectorStore:
             limit: Maximum number of vector candidates to request.
 
         Returns:
-            Dictionary keyed by repository-relative path. Missing or unavailable
+            Dictionary keyed by stable chunk identifier. Missing or unavailable
             vector backends return an empty dictionary.
         """
         # Reject empty semantic queries and non-positive limits before touching
@@ -142,19 +142,26 @@ class ChromaVectorStore:
         documents = raw_documents[0] if raw_documents else []
         distances = raw_distances[0] if raw_distances else []
 
-        # Convert each valid Chroma row into a path-keyed vector hit, dropping
+        # Convert each valid Chroma row into a chunk-keyed vector hit, dropping
         # malformed rows without failing the full query.
         semantic_hits: dict[str, VectorHit] = {}
         for index, metadata in enumerate(metadatas):
             if not isinstance(metadata, dict):
                 continue
-            relative_path = str(metadata.get('path', '')).strip()
-            if not relative_path:
+            source_path = str(metadata.get('source_path', metadata.get('path', ''))).strip()
+            if not source_path:
                 continue
             document = str(documents[index] if index < len(documents) else '')
             distance = distances[index] if index < len(distances) else None
-            semantic_hits[relative_path] = VectorHit(
-                path=relative_path,
+            chunk_key = str(metadata.get('chunk_key', metadata.get('document_id', ''))).strip() or source_path
+            semantic_hits[chunk_key] = VectorHit(
+                path=source_path,
+                chunk_key=chunk_key,
+                chunk_index=int(metadata.get('chunk_index', index) or 0),
+                chunk_title=str(metadata.get('chunk_title', '')).strip(),
+                heading_path=str(metadata.get('heading_path', '')).strip(),
+                start_line=int(metadata.get('start_line', 0) or 0),
+                end_line=int(metadata.get('end_line', 0) or 0),
                 score=self.distance_to_similarity(distance),
                 excerpt=self.text.excerpt_from_semantic_document(document),
             )

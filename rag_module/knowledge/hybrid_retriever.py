@@ -6,7 +6,7 @@ from .config import KnowledgeConfig
 from .index_manager import VectorIndexManager
 from .keyword_retriever import KeywordRetriever
 from .markdown_loader import MarkdownKnowledgeLoader
-from .models import KnowledgeHit, RetrievalQuery
+from .models import KnowledgeChunk, KnowledgeHit, RetrievalQuery, VectorHit
 from .task_policy import TaskRetrievalPolicy
 from .text_utils import TextTools
 from .vector_store import ChromaVectorStore
@@ -63,56 +63,66 @@ class HybridRetriever:
         """
         # Preserve the original behavior where retrieval ensures the manifest is
         # present and fresh before semantic candidates are requested.
-        manifest_entries = self.index_manager.ensure_vector_index()
-        semantic_limit = self.index_manager.semantic_candidate_limit(query.limit, len(manifest_entries))
+        manifest_entries = self.index_manager.ensure_vector_index() # <- 每次调用索引之前会检查一次……？这个东西可能会影响性能，可以选择加个if
+        semantic_limit = self.index_manager.semantic_candidate_limit(query.limit, int(self.index_manager.manifest.meta.chunk_count))
 
         # Query the vector backend only when the manifest says the backend was
         # built successfully; otherwise rely on keyword-only fallback.
-        semantic_hits = {}
-        if self.index_manager.manifest.meta.backend_ready:
+        semantic_hits: dict[str, VectorHit] = {}
+        if self.index_manager.manifest.meta.backend_ready and semantic_limit > 0:
             semantic_hits = self.vector_store.query(query.query_text, limit=semantic_limit)
 
-        # Score every current document so keyword matches outside semantic top-k
-        # can still win when their lexical relevance is strong.
+        # Score every current chunk so semantic retrieval, lexical scoring, and
+        # task policy boosts all operate on the same retrieval granularity.
         hits: list[KnowledgeHit] = []
         for document in self.loader.load_documents():
-            keyword_score = float(self.keyword.score_document(document, query.terms))
-            if query.task_type:
-                keyword_score += float(self.policy.boost_for_task_type(document, query.task_type))
-
-            # Merge optional semantic score with deterministic score using the
-            # same multiplicative weighting as the old implementation.
-            semantic_hit = semantic_hits.get(document.repository_relative_path)
-            vector_score = float(semantic_hit.score if semantic_hit is not None else 0.0)
-            combined_score = keyword_score + (vector_score * query.semantic_multiplier)
-            if combined_score <= 0:
-                continue
-
-            # Build the best available excerpt in the original priority order:
-            # live keyword excerpt, semantic excerpt, then manifest excerpt.
             manifest_entry = manifest_entries.get(document.repository_relative_path)
-            excerpt = self.text.build_excerpt(document.content, query.terms)
-            if not excerpt and semantic_hit is not None:
-                excerpt = semantic_hit.excerpt.strip()
-            if not excerpt and manifest_entry is not None:
-                excerpt = manifest_entry.excerpt
+            document_chunks: list[KnowledgeChunk] = self.text.chunk_document(document)
+            for chunk in document_chunks:
+                keyword_score = float(self.keyword.score_chunk(chunk, query.terms))
+                if query.task_type:
+                    keyword_score += float(self.policy.boost_for_chunk(chunk, query.task_type))
 
-            # Append the final hit with rounded scores to match the old public
-            # dataclass values.
-            hits.append(
-                KnowledgeHit(
-                    path=document.repository_relative_path,
-                    title=document.title,
-                    score=round(combined_score, 4),
-                    excerpt=excerpt,
-                    keyword_score=round(keyword_score, 4),
-                    vector_score=round(vector_score, 4),
+                # Merge the optional semantic score with the deterministic
+                # chunk score using the same multiplicative weighting as the old
+                # implementation.
+                semantic_hit = semantic_hits.get(chunk.chunk_key)
+                vector_score = float(semantic_hit.score if semantic_hit is not None else 0.0)
+                combined_score = keyword_score + (vector_score * query.semantic_multiplier)
+                if combined_score <= 0:
+                    continue
+
+                # Build the best available excerpt in the original priority
+                # order: live chunk excerpt, semantic excerpt, then manifest
+                # document excerpt.
+                excerpt = self.text.build_excerpt(chunk.content, query.terms)
+                if not excerpt and semantic_hit is not None:
+                    excerpt = semantic_hit.excerpt.strip()
+                if not excerpt and manifest_entry is not None:
+                    excerpt = manifest_entry.excerpt
+
+                # Append the final hit with chunk metadata so callers can render
+                # results at the same granularity that was indexed.
+                hits.append(
+                    KnowledgeHit(
+                        path=document.repository_relative_path,
+                        title=document.title,
+                        score=round(combined_score, 4),
+                        excerpt=excerpt,
+                        chunk_key=chunk.chunk_key,
+                        chunk_index=chunk.chunk_index,
+                        chunk_title=chunk.chunk_title,
+                        heading_path=chunk.heading_path,
+                        start_line=chunk.start_line,
+                        end_line=chunk.end_line,
+                        keyword_score=round(keyword_score, 4),
+                        vector_score=round(vector_score, 4),
+                    )
                 )
-            )
 
         # Sort with the old tie-breakers: final score, vector score, shorter path,
         # then lexical path order for deterministic output.
-        hits.sort(key=lambda item: (-item.score, -item.vector_score, len(item.path), item.path))
+        hits.sort(key=lambda item: (-item.score, -item.vector_score, len(item.path), item.path, item.chunk_index))
         return hits[: max(1, min(int(query.limit), 10))]
 
     def fallback_hits_for_task_type(self, task_type: str, *, limit: int) -> list[KnowledgeHit]:
@@ -125,6 +135,7 @@ class HybridRetriever:
         Returns:
             Ranked fallback hits using deterministic seed scores.
         """
+        print(f"Falling back to hits for task type {task_type}.")
         # Retrieve policy-defined fallback paths and default terms once so each
         # fallback document uses consistent excerpt selection.
         fallback_paths = self.policy.fallback_paths(task_type)

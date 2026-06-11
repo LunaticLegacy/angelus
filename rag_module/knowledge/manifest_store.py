@@ -28,7 +28,7 @@ class KnowledgeManifestStore:
         # Store configuration and initialize metadata to an empty-but-valid state
         # so status calls have deterministic fields before the manifest is read.
         self.config = config
-        self.meta = self.build_meta(entry_count=0, backend_ready=False, last_error='')
+        self.meta = self.build_meta(entry_count=0, chunk_count=0, backend_ready=False, last_error='')
 
     def load(self, path: Path | None = None) -> dict[str, KnowledgeIndexEntry] | None:
         """Load index entries from the manifest file.
@@ -64,6 +64,7 @@ class KnowledgeManifestStore:
             or self.config.embedding_model_name,
             backend_ready=bool(payload.get('backend_ready')),
             entry_count=int(payload.get('entry_count', 0) or 0),
+            chunk_count=int(payload.get('chunk_count', 0) or 0),
             last_error=str(payload.get('last_error', '')).strip(),
         )
 
@@ -89,6 +90,7 @@ class KnowledgeManifestStore:
         self,
         entries: dict[str, KnowledgeIndexEntry],
         *,
+        chunk_count: int,
         backend_ready: bool,
         last_error: str,
     ) -> None:
@@ -106,6 +108,7 @@ class KnowledgeManifestStore:
         # state always match the payload being serialized.
         self.meta = self.build_meta(
             entry_count=len(entries),
+            chunk_count=chunk_count,
             backend_ready=backend_ready,
             last_error=last_error,
         )
@@ -121,11 +124,12 @@ class KnowledgeManifestStore:
         # inspection of Chinese titles and paths.
         self.config.index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
 
-    def build_meta(self, *, entry_count: int, backend_ready: bool, last_error: str) -> ManifestMeta:
+    def build_meta(self, *, entry_count: int, chunk_count: int, backend_ready: bool, last_error: str) -> ManifestMeta:
         """Build manifest metadata using configured constants.
 
         Args:
             entry_count: Number of indexed entries.
+            chunk_count: Number of chunk-level semantic entries.
             backend_ready: Whether the semantic backend is considered usable.
             last_error: Last backend or rebuild error string.
 
@@ -140,6 +144,7 @@ class KnowledgeManifestStore:
             embedding_model=self.config.embedding_model_name,
             backend_ready=backend_ready,
             entry_count=entry_count,
+            chunk_count=chunk_count,
             last_error=last_error.strip(),
         )
 

@@ -1,4 +1,6 @@
-"""Facade class for local knowledge-base indexing and retrieval."""
+"""
+Facade class for local knowledge-base indexing and retrieval.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from .index_manager import VectorIndexManager
 from .keyword_retriever import KeywordRetriever
 from .manifest_store import KnowledgeManifestStore
 from .markdown_loader import MarkdownKnowledgeLoader
-from .models import KnowledgeHit, KnowledgeIndexEntry
+from .models import KnowledgeChunk, KnowledgeHit, KnowledgeIndexEntry, RetrievalQuery
 from .task_policy import TaskRetrievalPolicy
 from .text_utils import TextTools
 from .vector_store import ChromaVectorStore
@@ -29,6 +31,7 @@ class KnowledgeBase:
     """
 
     DEFAULT_RESULT_LIMIT = 5
+    DEFAULT_RESULT_MAX_LIMIT = 1000
     DEFAULT_CONTEXT_LIMIT = 3
     DEFAULT_EXCERPT_CHARS = 320
     DEFAULT_EMBEDDING_MAX_CHARS = 6000
@@ -37,7 +40,7 @@ class KnowledgeBase:
     INDEX_FILENAME = '.vector_index.json'
     CHROMA_DIRNAME = '.chroma'
     COLLECTION_NAME = 'knowledge_base'
-    MANIFEST_VERSION = 2
+    MANIFEST_VERSION = 3
     SEMANTIC_BACKEND = 'chromadb+sentence-transformers'
     DEFAULT_EMBEDDING_MODEL = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
 
@@ -54,15 +57,16 @@ class KnowledgeBase:
         self.config = KnowledgeConfig.from_environment(root)    # 初始化配置
         self.root = self.config.root    # 初始化根目录
 
-        # 从你设置中导出工具。
+        # 从设置中导出工具。
         self.embedding_model_name: str = self.config.embedding_model_name    # 从设置项，初始化嵌入模型名称
         self.local_files_only: bool = self.config.local_files_only    # 从设置项，初始化本地文件模式：允许从本地文件系统加载嵌入模型
 
         # Create pure helpers and filesystem services before retrieval services so
         # each downstream component can depend on a narrow collaborator.
-        self.text = TextTools(
+        self.text_tool = TextTools(
             excerpt_chars=self.config.excerpt_chars,
             embedding_max_chars=self.config.embedding_max_chars,    # 6000？
+            chunk_max_chars=self.config.chunk_max_chars,
         )
         self.loader = MarkdownKnowledgeLoader(self.config.root)
         self.manifest = KnowledgeManifestStore(self.config)
@@ -70,11 +74,11 @@ class KnowledgeBase:
         # Initialize optional semantic backend wrappers lazily; construction here
         # does not import ChromaDB or sentence-transformers.
         self.embeddings = EmbeddingModelProvider(self.config)
-        self.vector_store = ChromaVectorStore(self.config, self.embeddings, self.text)
+        self.vector_store = ChromaVectorStore(self.config, self.embeddings, self.text_tool)
 
         # Initialize retrieval policy and retrievers after shared helpers exist so
         # task search and freeform search use the same normalization rules.
-        self.keyword = KeywordRetriever(self.text)
+        self.keyword = KeywordRetriever(self.text_tool)  # 关键词获取
         self.policy = TaskRetrievalPolicy(self.keyword, self.config.root)
         self.index_manager = VectorIndexManager(
             config=self.config,
@@ -82,7 +86,7 @@ class KnowledgeBase:
             manifest=self.manifest,
             vector_store=self.vector_store,
             embeddings=self.embeddings,
-            text=self.text,
+            text=self.text_tool,
         )
         self.hybrid = HybridRetriever(
             config=self.config,
@@ -91,7 +95,7 @@ class KnowledgeBase:
             vector_store=self.vector_store,
             index_manager=self.index_manager,
             policy=self.policy,
-            text=self.text,
+            text=self.text_tool,
         )
         self.context_builder = TaskContextBuilder(strategy_prefix=self.config.strategy_prefix)
 
@@ -112,7 +116,7 @@ class KnowledgeBase:
         Args:
             query: User query text used for keyword and semantic retrieval.
             limit: Maximum number of final results. Values are clamped to the old
-                public range of 1 to 10.
+                public range of 1 to 1000.
 
         Returns:
             Ranked list of `KnowledgeHit` objects. Returns an empty list when the
@@ -125,7 +129,7 @@ class KnowledgeBase:
 
         # Let task policy normalize limits and terms so freeform search and
         # task-aware search share one internal query representation.
-        retrieval_query = self.policy.build_freeform_query(query, limit=limit, max_limit=10)
+        retrieval_query: RetrievalQuery | None = self.policy.build_freeform_query(query, limit=limit, max_limit=self.DEFAULT_RESULT_MAX_LIMIT)
         if retrieval_query is None:
             return []
         return self.hybrid.search(retrieval_query)
@@ -144,6 +148,7 @@ class KnowledgeBase:
         Args:
             task_name: Human-readable task name.
             task_type: CTF task type such as `RE`, `PWN`, or `WEB`.
+                TODO: task type should be edited to "specified domain", not only for CTF.
             target: Challenge target, URL, filename, or equivalent task target.
             file_descriptions: Description of task files supplied to the agent.
             limit: Maximum number of context hits. Values are clamped to the old
@@ -196,7 +201,7 @@ class KnowledgeBase:
             limit: Maximum number of retrieved hits to include.
 
         Returns:
-            Chinese prompt-context string preserving the old strategy-first layout.
+            Prompt-context string preserving the old strategy-first layout.
         """
         # Reuse the public task-search API so context formatting always reflects
         # the same retrieval behavior exposed to other callers.
@@ -294,3 +299,91 @@ class KnowledgeBase:
             if content is not None:
                 results[path] = content
         return results
+
+    def get_chunk(
+        self,
+        path: str,
+        *,
+        chunk_key: str = '',
+        chunk_index: int | None = None,
+    ) -> KnowledgeChunk | None:
+        """Retrieve one chunk from a knowledge document.
+
+        Args:
+            path: Repository-relative path of the source Markdown document.
+            chunk_key: Optional stable chunk identifier returned by search.
+            chunk_index: Optional zero-based chunk ordinal within the document.
+
+        Returns:
+            The matching `KnowledgeChunk`, or `None` when the document or chunk
+            cannot be found.
+        """
+        if not self.available():
+            return None
+
+        # Reuse the same path normalisation rules as full-text lookup so chunk
+        # retrieval stays consistent with the existing public document API.
+        normalized_path = path
+        if normalized_path.startswith('kb/'):
+            normalized_path = normalized_path[3:]
+        doc_path: Path = self.root / normalized_path
+        if not doc_path.exists() or not doc_path.is_file():
+            return None
+
+        try:
+            document = self.loader.read_document(doc_path)
+        except Exception:
+            return None
+
+        # Chunk the live document and then resolve by chunk key first because it
+        # is stable across ranking and tool calls. Fallback to chunk index when
+        # the caller only knows ordinal position.
+        chunks = self.text_tool.chunk_document(document)
+        if chunk_key:
+            for chunk in chunks:
+                if chunk.chunk_key == chunk_key:
+                    return chunk
+
+        if chunk_index is not None and 0 <= chunk_index < len(chunks):
+            return chunks[chunk_index]
+
+        # For single-chunk documents, returning the only chunk is convenient and
+        # matches the intuitive "give me the content" behavior.
+        if not chunk_key and chunk_index is None and len(chunks) == 1:
+            return chunks[0]
+        return None
+
+    def get_chunk_text(
+        self,
+        path: str,
+        *,
+        chunk_key: str = '',
+        chunk_index: int | None = None,
+    ) -> str | None:
+        """Retrieve the raw Markdown content for one chunk.
+
+        Args:
+            path: Repository-relative path of the source Markdown document.
+            chunk_key: Optional stable chunk identifier returned by search.
+            chunk_index: Optional zero-based chunk ordinal within the document.
+
+        Returns:
+            The raw chunk content string, or `None` if the chunk is missing.
+        """
+        chunk = self.get_chunk(path, chunk_key=chunk_key, chunk_index=chunk_index)
+        return None if chunk is None else chunk.content
+
+    def get_chunk_text_from_hit(self, hit: KnowledgeHit) -> str | None:
+        """Retrieve chunk text for one ranked retrieval hit.
+
+        Args:
+            hit: Ranked chunk hit returned by `search()` or `search_for_task()`.
+
+        Returns:
+            Raw chunk content, or `None` if the source document cannot be read.
+        """
+        return self.get_chunk_text(
+            hit.path,
+            chunk_key=hit.chunk_key,
+            chunk_index=hit.chunk_index,
+        )

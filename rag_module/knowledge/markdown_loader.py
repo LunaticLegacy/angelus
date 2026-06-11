@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fnmatch import fnmatchcase
 from pathlib import Path
 from collections.abc import Iterable
 
@@ -40,11 +41,14 @@ class MarkdownKnowledgeLoader:
         """Yield Markdown files that should be treated as knowledge entries.
 
         The method preserves the old exclusion rules for `index.md`, root
-        `README.md`, and files under `templates/`.
+        `README.md`, files under `templates/`, and any path matched by the
+        knowledge-root `.kbignore` file.
 
         Yields:
             Absolute paths to Markdown entry files in deterministic sorted order.
         """
+        ignore_patterns = self._load_ignore_patterns()
+
         # Iterate through sorted Markdown paths so manifests and search results
         # remain deterministic across platforms.
         for candidate in sorted(self.root.rglob('*.md')):
@@ -60,6 +64,8 @@ class MarkdownKnowledgeLoader:
             if parts[0] == 'templates':
                 continue
             if candidate.name == 'README.md' and len(parts) == 1:
+                continue
+            if self._is_ignored_path(relative.as_posix(), ignore_patterns):
                 continue
             yield candidate
 
@@ -130,3 +136,51 @@ class MarkdownKnowledgeLoader:
         # Return the heading-derived or fallback title without further semantic
         # normalization to preserve old display behavior.
         return title
+
+    def _load_ignore_patterns(self) -> list[str]:
+        """Load repository-level `.kbignore` patterns.
+
+        Returns:
+            Ordered ignore patterns, or an empty list when the file does not
+            exist or cannot be read.
+        """
+        ignore_file = self.root / '.kbignore'
+        try:
+            raw_lines = ignore_file.read_text(encoding='utf-8').splitlines()
+        except OSError:
+            return []
+
+        patterns: list[str] = []
+        for line in raw_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            patterns.append(stripped.replace('\\', '/'))
+        return patterns
+
+    def _is_ignored_path(self, root_relative: str, patterns: list[str]) -> bool:
+        """Return whether a path matches any configured `.kbignore` pattern."""
+        for pattern in patterns:
+            if self._match_ignore_pattern(root_relative, pattern):
+                return True
+        return False
+
+    def _match_ignore_pattern(self, path: str, pattern: str) -> bool:
+        """Match one path against a `.kbignore` pattern.
+
+        Directory patterns ending in `/` match the directory itself and any
+        descendant path. Other patterns use glob matching.
+        """
+        normalized_path = path.replace('\\', '/')
+        normalized_pattern = pattern.replace('\\', '/')
+
+        if normalized_pattern.endswith('/'):
+            directory = normalized_pattern.rstrip('/')
+            return normalized_path == directory or normalized_path.startswith(directory + '/')
+
+        if fnmatchcase(normalized_path, normalized_pattern):
+            return True
+
+        # Allow directory-style matches without a trailing slash so a pattern
+        # like `kb/case-studies/drafts` still ignores the subtree.
+        return normalized_path == normalized_pattern or normalized_path.startswith(normalized_pattern + '/')

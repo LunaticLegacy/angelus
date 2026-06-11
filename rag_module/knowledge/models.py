@@ -13,12 +13,18 @@ from ...llm_types import JsonObject
 class KnowledgeHit:
     """Represents one final knowledge-base retrieval result.
 
-    This model is returned by public retrieval APIs after keyword scores, vector
-    scores, and task-specific boosts have been merged.
+    This model is returned by public retrieval APIs after chunk-level keyword
+    scores, vector scores, and task-specific boosts have been merged.
 
     Attributes:
-        path: Repository-relative path of the matched knowledge document.
-        title: Human-readable title extracted from the Markdown document.
+        path: Repository-relative path of the source Markdown document.
+        title: Human-readable title extracted from the source document.
+        chunk_key: Stable chunk identifier used by the vector index.
+        chunk_index: Zero-based chunk ordinal within the source document.
+        chunk_title: Short title or heading label for the chunk.
+        heading_path: Hierarchical Markdown heading path for the chunk.
+        start_line: First source line covered by the chunk.
+        end_line: Last source line covered by the chunk.
         score: Final fused score used for result ranking.
         excerpt: Short text excerpt suitable for prompt injection or display.
         keyword_score: Contribution from deterministic keyword matching.
@@ -29,6 +35,12 @@ class KnowledgeHit:
     title: str
     score: float
     excerpt: str
+    chunk_key: str = ''
+    chunk_index: int = 0
+    chunk_title: str = ''
+    heading_path: str = ''
+    start_line: int = 0
+    end_line: int = 0
     keyword_score: float = 0.0
     vector_score: float = 0.0
 
@@ -91,6 +103,59 @@ class KnowledgeDocument:
 
 
 @dataclass(frozen=True)
+class KnowledgeChunk:
+    """Represents one chunk produced from a source Markdown document.
+
+    The chunk is the retrieval unit stored in the semantic vector backend. The
+    source document remains the unit of freshness checking and file retrieval.
+
+    Attributes:
+        source_path: Repository-relative path of the source Markdown document.
+        source_title: Title extracted from the source Markdown document.
+        chunk_key: Stable chunk identifier derived from the source path and span.
+        chunk_index: Zero-based chunk ordinal within the source document.
+        chunk_title: Short title or heading label for the chunk.
+        heading_path: Hierarchical Markdown heading path for the chunk.
+        start_line: First source line covered by the chunk.
+        end_line: Last source line covered by the chunk.
+        content: Raw Markdown text belonging to the chunk.
+    """
+
+    source_path: str
+    source_title: str
+    chunk_key: str
+    chunk_index: int
+    chunk_title: str
+    heading_path: str
+    start_line: int
+    end_line: int
+    content: str
+
+
+@dataclass(frozen=True)
+class MarkdownBlock:
+    """Represent one logical block extracted from Markdown content.
+
+    Attributes:
+        kind: Block category such as `heading`, `text`, `code`, or `table`.
+        text: Normalized Markdown text for the block.
+        start_line: First source line covered by the block, using 1-based line
+            numbers from the original document.
+        end_line: Last source line covered by the block, using 1-based line
+            numbers from the original document.
+        level: Optional heading level for `heading` blocks.
+        info: Optional fenced-code info string or parser metadata.
+    """
+
+    kind: str
+    text: str
+    start_line: int
+    end_line: int
+    level: int | None = None
+    info: str | None = None
+
+
+@dataclass(frozen=True)
 class VectorHit:
     """Represents one semantic retrieval result from the vector backend.
 
@@ -98,12 +163,24 @@ class VectorHit:
     retriever is responsible for merging it with keyword scores and documents.
 
     Attributes:
-        path: Repository-relative Markdown path returned from vector metadata.
+        path: Repository-relative path of the source Markdown document.
+        chunk_key: Stable chunk identifier returned from vector metadata.
+        chunk_index: Zero-based chunk ordinal within the source document.
+        chunk_title: Short title or heading label for the chunk.
+        heading_path: Hierarchical Markdown heading path for the chunk.
+        start_line: First source line covered by the chunk.
+        end_line: Last source line covered by the chunk.
         score: Similarity score normalized into the range `[0.0, 1.0]`.
         excerpt: Best-effort excerpt derived from the stored semantic document.
     """
 
     path: str
+    chunk_key: str
+    chunk_index: int
+    chunk_title: str
+    heading_path: str
+    start_line: int
+    end_line: int
     score: float
     excerpt: str
 
@@ -120,6 +197,7 @@ class RetrievalQuery:
         terms: Normalized keyword terms used by deterministic scoring.
         limit: Maximum number of final hits requested by the caller.
         task_type: Optional CTF task type used for policy-specific boosts.
+            TODO: this task type should be edited to "specified domain", not only for CTF.
         semantic_multiplier: Weight applied to vector scores during fusion.
     """
 
@@ -143,6 +221,7 @@ class ManifestMeta:
         embedding_model: Embedding model name or local path used by the index.
         backend_ready: Whether the vector backend was successfully built.
         entry_count: Number of indexed Markdown documents.
+        chunk_count: Number of indexed semantic chunks.
         last_error: Last rebuild or dependency error, if one was recorded.
     """
 
@@ -151,6 +230,7 @@ class ManifestMeta:
     embedding_model: str
     backend_ready: bool
     entry_count: int
+    chunk_count: int
     last_error: str
 
     def to_dict(self) -> dict[str, Any]:

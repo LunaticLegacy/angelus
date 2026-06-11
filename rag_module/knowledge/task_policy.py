@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import KnowledgeDocument, RetrievalQuery
+from .models import KnowledgeChunk, KnowledgeDocument, RetrievalQuery
 from .keyword_retriever import KeywordRetriever
 
 
@@ -13,6 +13,8 @@ class TaskRetrievalPolicy:
 
     This class contains CTF task semantics that should not live in the generic
     knowledge-base or vector-store layers.
+
+    TODO: This class should become an interface, which enables user to implement their own policies.
     """
 
     def __init__(self, keyword: KeywordRetriever, root: Path) -> None:
@@ -69,6 +71,7 @@ class TaskRetrievalPolicy:
         Args:
             task_name: Human-readable task name.
             task_type: CTF task type such as `RE`.
+                TODO: This is the general-using task type.
             target: Task target URL, binary name, or challenge-specific target.
             file_descriptions: User-facing descriptions of attached files.
             limit: Requested maximum context hit count.
@@ -139,16 +142,40 @@ class TaskRetrievalPolicy:
         Returns:
             Integer boost added to keyword score.
         """
+        return self._boost_for_path_and_text(
+            task_type=task_type,
+            relative_path=document.root_relative_path,
+            combined_text=f'{document.absolute_path.name} {document.title}',
+        )
+
+    def boost_for_chunk(self, chunk: KnowledgeChunk, task_type: str) -> int:
+        """Return an additional deterministic boost for a chunk hit.
+
+        Args:
+            chunk: Chunk produced from a parsed knowledge document.
+            task_type: CTF task type associated with the query.
+
+        Returns:
+            Integer boost added to the chunk's keyword score.
+        """
+        return self._boost_for_path_and_text(
+            task_type=task_type,
+            relative_path=chunk.source_path,
+            combined_text=f'{chunk.source_title} {chunk.chunk_title} {chunk.heading_path}',
+        )
+
+    def _boost_for_path_and_text(self, *, task_type: str, relative_path: str, combined_text: str) -> int:
+        """Apply the old task-specific heuristic to path and text metadata."""
         # Normalize task type and textual features once before applying the old
         # RE-specific scoring rules.
         normalized = (task_type or '').strip().upper()
-        combined = f'{document.absolute_path.name} {document.title}'.lower()
-        relative_path = document.root_relative_path.replace('\\', '/').lower()
+        combined = combined_text.lower()
+        normalized_path = relative_path.replace('\\', '/').lower()
         score = 0
 
         # Strategy documents are globally preferred for task searches, matching
         # the previous behavior.
-        if relative_path.startswith('strategy/'):
+        if normalized_path.startswith('strategy/') or '/strategy/' in normalized_path:
             score += 24
 
         # Preserve the original RE-specific boost for triage, packers, unpacking,
@@ -156,7 +183,7 @@ class TaskRetrievalPolicy:
         if normalized == 'RE':
             if 'triage' in combined or 'pack' in combined or 'unpack' in combined or 'obfusc' in combined:
                 score += 10
-            if relative_path.startswith('strategy/'):
+            if normalized_path.startswith('strategy/') or '/strategy/' in normalized_path:
                 score += 20
         return score
 
