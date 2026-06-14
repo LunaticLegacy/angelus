@@ -70,6 +70,7 @@ class Agent:
         self,
         llm_handler: LLMFetcher,
         system_prompt: str,
+        use_state: bool = False,
         tools: Optional[List[Tool]] = None,
         max_concurrent_tools: int = 1,
         round_compress_threshold: Optional[int] = None,
@@ -88,6 +89,7 @@ class Agent:
         Args:
             llm_handler: 已有的 LLM fetcher 实例。
             system_prompt: 基础的系统提示词。（推荐在这里注入 skill）
+            use_state: 是否使用任务状态？
             tools: 本 Agent 初始使用的工具。
             max_concurrent_tools: 工具并发最大数量。
             round_compress_threshold: 当有 N 轮未触发压缩上下文时，压缩上下文。
@@ -107,6 +109,7 @@ class Agent:
         self.llm_handler = llm_handler  # 用于处理 llm api 通信相关的东西。
         self.compression_profile = compression_profile
         self.max_concurrent_tools = max_concurrent_tools    # 本 agent 最大可并发多少工具。
+        self.use_state = use_state
         
         self.round_compress_threshold = round_compress_threshold
         self.round_compress_keep_tail = round_compress_keep_tail
@@ -372,8 +375,10 @@ class Agent:
 
         request_tools = self.tool_registry.tools
         final_content: str = ""
-        if not self.agent_state.task:
-            self.agent_state.task = msg
+
+        if self.use_state:
+            if not self.agent_state.task:
+                self.agent_state.task = msg
         
         # 保存输入。
         user_input_context: LLMContext = LLMContext(
@@ -448,6 +453,8 @@ class Agent:
                     print() # 在循环结束的场合，换行
                 response_text = "".join(collected)
                 response_reasoning, response_text = self._split_reasoning_from_stream_text(response_text)
+
+                # 这个是啥意思？？
                 streamed_tool_calls = [
                     LLMToolCall(
                         name=tool_call.tool_name,
@@ -495,6 +502,8 @@ class Agent:
             ]
 
             # 压缩工具信息。
+            self.context_selection_min_active_chars
+
             tool_result_facts: List[ToolResultFact] = []
 
             tool_result_facts = await self.llm_context_handler.compress_tool_result_records(
@@ -504,17 +513,18 @@ class Agent:
             )
 
             # 更新状态消息。
-            await self.state_machine.update_from_turn(
-                AgentStateTurnEvent(
-                    user_goal=msg,
-                    turn=turn,
-                    assistant_message=message,
-                    tool_records=tool_record_round,
-                    tool_result_facts=tool_result_facts,
-                    stop_requested=_should_stop(),
-                ),
-                temperature=temperature,
-            )
+            if self.use_state:
+                await self.state_machine.update_from_turn(
+                    AgentStateTurnEvent(
+                        user_goal=msg,
+                        turn=turn,
+                        assistant_message=message,
+                        tool_records=tool_record_round,
+                        tool_result_facts=tool_result_facts,
+                        stop_requested=_should_stop(),
+                    ),
+                    temperature=temperature,
+                )
 
             if _should_stop():
                 final_content = final_content or response.text
@@ -599,10 +609,10 @@ class Agent:
     ) -> Optional[List[int]]:
         """Reselect the graph-mode active context window for one agent turn.
 
-        This method is state-aware: it passes the current agent state-machine
-        snapshot both into candidate retrieval and into the final selector
-        prompt. The selector still cannot choose arbitrary history; it can only
-        select ids from the retrieved candidate closure.
+        规划：
+        1. 需要在采用图式上下文的场合才可使用 - 该功能专门为图式上下文准备。
+        2. 选择上下文时，需要输入的东西是这些东西的全部摘要……吗？
+
 
         Args:
             user_input_context: User-visible task context for the current round.
@@ -821,7 +831,7 @@ class Agent:
         current_task_text = getattr(user_input_context, "content", str(user_input_context))
 
         # Build a state-aware summary query without mutating the original user context.
-        retrieval_query_parts = [current_task_text]
+        retrieval_query_parts: List[str] = [current_task_text]
         if agent_state_text:
             retrieval_query_parts.append(agent_state_text)
         retrieval_query = "\n\n".join(part for part in retrieval_query_parts if part)
@@ -921,6 +931,7 @@ class Agent:
                 temperature=temperature,
             )
         return self._round_task_tags
+    
     def _parse_selection_views(self, content: str) -> List[ContextSelectionView]:
         """
         Extract selector choices from JSON for context selection views.

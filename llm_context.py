@@ -3,7 +3,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Protocol, Sequence, Set, Tuple, TYPE_CHECKING
 
 from .llm_fetcher import LLMFetcher, LLMOutput
 from .prompt import (
@@ -33,6 +33,60 @@ from .utils_function import (
     parse_tags_and_abstracts
 )
 
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+
+
+class _SentenceTransformerLike(Protocol):
+    def encode(
+        self,
+        sentences: Sequence[str] | str,
+        *,
+        convert_to_numpy: bool,
+        normalize_embeddings: bool,
+        show_progress_bar: bool,
+    ) -> object:
+        ...
+
+
+class _ChromaCollectionLike(Protocol):
+    def upsert(
+        self,
+        *,
+        ids: Sequence[str],
+        embeddings: Sequence[Sequence[float]],
+        documents: Sequence[str],
+        metadatas: Sequence[Mapping[str, str]],
+    ) -> None:
+        ...
+
+    def query(
+        self,
+        *,
+        query_embeddings: Sequence[Sequence[float]],
+        n_results: int,
+        include: Sequence[str],
+    ) -> Mapping[str, Sequence[Sequence[object]]]:
+        ...
+
+
+class _ChromaClientLike(Protocol):
+    def get_or_create_collection(
+        self,
+        *,
+        name: str,
+        metadata: Mapping[str, str],
+    ) -> _ChromaCollectionLike:
+        ...
+
+
+class _ChromaDBModuleLike(Protocol):
+    def EphemeralClient(self) -> _ChromaClientLike:
+        ...
+
+    def Client(self) -> _ChromaClientLike:
+        ...
+
 
 @dataclass
 class ContextCompressionProfile:
@@ -50,11 +104,14 @@ class ContextCompressionProfile:
 
 
 class ContextIndex:
-    """Maintain inverted indexes for fast context and tag retrieval.
+    """
+    Maintain inverted indexes for fast context and tag retrieval.
 
     The handler keeps the full timeline store as the source of truth, while
     this helper stores derived postings lists and compacted-source links so
     lookup methods can avoid scanning the whole timeline on every query.
+    
+    本类生命周期和 LLMContextHandler 内，且每个 handler 实例只有一个。
     """
 
     def __init__(self) -> None:
@@ -62,20 +119,20 @@ class ContextIndex:
 
     def clear(self) -> None:
         """Reset every derived index."""
-        self.raw_ids: Set[int] = set()
-        self.compacted_ids: Set[int] = set()
-        self.normalized_text_by_id: Dict[int, str] = {}
-        self.text_postings: Dict[str, Set[int]] = {}
-        self.tag_exact_postings: Dict[str, Set[int]] = {}
-        self.tag_postings: Dict[str, Set[int]] = {}
-        self.source_to_compacted: Dict[int, Set[int]] = {}
-        self.compacted_to_sources: Dict[int, List[int]] = {}
+        self.raw_ids: Set[int] = set()                          #
+        self.compacted_ids: Set[int] = set()                    #
+        self.normalized_text_by_id: Dict[int, str] = {}         #
+        self.text_postings: Dict[str, Set[int]] = {}            #
+        self.tag_exact_postings: Dict[str, Set[int]] = {}       #
+        self.tag_postings: Dict[str, Set[int]] = {}             # 
+        self.source_to_compacted: Dict[int, Set[int]] = {}      # 正查表：原始上下文 -> 压缩后上下文
+        self.compacted_to_sources: Dict[int, List[int]] = {}    # 反查表：压缩后上下文 -> 原始上下文
 
     @staticmethod
     def _normalize_text(text: str) -> str:
         """
         Normalize text before it is indexed or matched.
-        在查询文本之前，先进行标准化。（转为小写，并移除标点符号）
+        在查询文本之前，先进行标准化。（对英文字母将转为小写，并移除标点符号）
         """
         return " ".join(str(text or "").lower().split())
 
@@ -89,11 +146,14 @@ class ContextIndex:
         if not normalized:
             return []
         # 使用 re 正则表达式匹配
-        return re.findall(r"[a-z0-9_]+", normalized)
+        return re.findall(r"[a-z0-9_\u4e00-\u9fff]+", normalized)
 
     @classmethod
     def _ngrams(cls, text: str, size: int = 3) -> List[str]:
-        """Generate fixed-size character ngrams from normalized text."""
+        """
+        Generate fixed-size character ngrams from normalized text.
+        TODO: 这里需要一个单元测试，检查行为模式。
+        """
         normalized = cls._normalize_text(text)
         if len(normalized) < size:
             return [normalized] if normalized else []
@@ -103,8 +163,9 @@ class ContextIndex:
     def _sampled_ngrams(cls, text: str, size: int = 3, max_terms: int = 12) -> List[str]:
         """
         Sample representative ngrams from a query without generating all of them.
+
         """
-        # 标准化。
+        # 标准化文本，针对输入内容。
         normalized = cls._normalize_text(text)
         if len(normalized) < size:
             return [normalized] if normalized else []
@@ -123,7 +184,7 @@ class ContextIndex:
     def _query_terms(cls, text: str, *, max_ngrams: int = 12) -> List[str]:
         """
         Build a compact query term set for postings lookups.
-        查询什么？
+        不对，这个函数行为怎么感觉不太对？
         """
         normalized = cls._normalize_text(text)
         if not normalized:
@@ -147,12 +208,17 @@ class ContextIndex:
 
     @staticmethod
     def _add_posting(index: Dict[str, Set[int]], term: str, context_id: int) -> None:
-        """Add one context id to a postings bucket."""
+        """
+        Add one context id to a postings bucket.
+        codex，不是哥们，你在这里整烂活？
+        """
         bucket = index.setdefault(term, set())
         bucket.add(context_id)
 
     def _add_terms(self, index: Dict[str, Set[int]], text: str, context_id: int) -> None:
-        """Index both word tokens and character ngrams for one text value."""
+        """
+        Index both word tokens and character ngrams for one text value.
+        """
         normalized = self._normalize_text(text)
         if not normalized:
             return
@@ -168,7 +234,9 @@ class ContextIndex:
         *,
         tag_to_context: Optional[Dict[str, List[int]]] = None,
     ) -> None:
-        """Index one raw or compacted context entry.
+        """
+        Index one raw or compacted context entry.
+        实际行为：根据一条 llm_info 创建索引，也会调度 index_tags 执行行动。
 
         Args:
             context: Raw or compacted context entry to index.
@@ -179,11 +247,14 @@ class ContextIndex:
         if isinstance(context, LLMContextCompacted):
             self.compacted_ids.add(context_id)
             self.compacted_to_sources[context_id] = list(context.source_timeline)
+            # 随后，将原 id 按时间线拉入
             for source_id in context.source_timeline:
                 self.source_to_compacted.setdefault(source_id, set()).add(context_id)
+            # 用摘要作为可搜索文本
             searchable_text = context.abstract_msg
         else:
             self.raw_ids.add(context_id)
+            # 用原始内容作为可搜索文本
             searchable_text = context.content
 
         self.normalized_text_by_id[context_id] = self._normalize_text(searchable_text)
@@ -196,7 +267,14 @@ class ContextIndex:
         *,
         tag_to_context: Optional[Dict[str, List[int]]] = None,
     ) -> None:
-        """Index the tags attached to one context entry."""
+        """
+        Index the tags attached to one context entry.
+        
+        Args:
+            context: 目标上下文。
+            tag_to_context: 可选，用于从标签查询上下文 id 的外部反查表。
+        """
+        # 先将标签洗一下。
         tags = sanitize_tags(context.tags)
         context.tags = tags
         if not tags:
@@ -251,6 +329,14 @@ class ContextIndex:
 
         The method uses postings lists as a coarse filter and leaves exact
         substring or equality validation to the caller.
+
+        Args:
+            query: 查询内容。
+            include_raw: 是否面对原始信息。
+            include_compatced: 是否面对被压缩后的信息。
+        
+        Returns:
+            目标上下文 id。
         """
         normalized_query = self._normalize_text(query)
         if not normalized_query:
@@ -332,12 +418,13 @@ class ContextSemanticIndex:
         self.embedding_model_name = (embedding_model_name or os.getenv("LLMFETCHER_CONTEXT_EMBEDDING_MODEL", "")).strip() or None
         self.collection_name = collection_name
         self.clear()
-        self._sentence_transformer_class: Optional[Any] = None
-        self._embedding_model: Any = None
+
+        self._sentence_transformer_class: Optional[type["SentenceTransformer"]] = None
+        self._embedding_model: Optional[_SentenceTransformerLike] = None
         self._embedding_model_error = ""
-        self._chromadb_module: Any = None
-        self._chroma_client: Any = None
-        self._chroma_collection: Any = None
+        self._chromadb_module: Optional[_ChromaDBModuleLike] = None
+        self._chroma_client: Optional[_ChromaClientLike] = None
+        self._chroma_collection: Optional[_ChromaCollectionLike] = None
 
     def clear(self) -> None:
         """Reset all derived semantic vectors and transient collection state."""
@@ -356,7 +443,15 @@ class ContextSemanticIndex:
 
     @staticmethod
     def _build_context_text(context: LLMInfo) -> str:
-        """Build a semantic document for one context entry."""
+        """
+        Build a semantic document for one context entry.
+        - 这个方法……嗯，需要分支条件。
+        - 对两个分支条件而言，我需要统一一份 __str__ 方法的 schema。
+    
+
+        Args:    
+            context: 目标上下文。
+        """
         parts: List[str] = []
         if isinstance(context, LLMContextCompacted):
             parts.append(f"summary: {context.abstract_msg}")
@@ -382,8 +477,10 @@ class ContextSemanticIndex:
             parts.append(f"tags: {' '.join(context.tags)}")
         return "\n".join(part for part in parts if part.strip())
 
-    def _load_sentence_transformer(self) -> Optional[Any]:
-        """Lazily load a sentence-transformers model when configured."""
+    def _load_sentence_transformer(self) -> Optional[_SentenceTransformerLike]:
+        """
+        在配置设置结束后，懒加载 sentence-transformer 模块。
+        """
         if self._embedding_model is not None:
             return self._embedding_model
         if self._embedding_model_error:
@@ -408,7 +505,11 @@ class ContextSemanticIndex:
 
     @staticmethod
     def _resolve_model_source(model_name: str) -> str:
-        """Resolve a configured model name to a local path when possible."""
+        """
+        Resolve a configured model name to a local path when possible.
+        如果输入的名字无效，则默认采用 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`。
+
+        """
         normalized = model_name.strip()
         if not normalized:
             return "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -420,7 +521,13 @@ class ContextSemanticIndex:
 
     @staticmethod
     def _hash_token_vector(text: str, dimension: int = 384) -> List[float]:
-        """Build a deterministic fallback embedding from token and n-gram hashes."""
+        """
+        Build a deterministic fallback embedding from token and n-gram hashes.
+        
+        Args:
+            text: 目标文本
+            dimension: 嵌入维度数？？
+        """
         normalized = ContextSemanticIndex._normalize_text(text)
         if not normalized:
             return [0.0] * dimension
@@ -443,7 +550,15 @@ class ContextSemanticIndex:
         return [value / norm for value in vector]
 
     def _encode_texts(self, texts: Sequence[str]) -> List[List[float]]:
-        """Encode texts into normalized vectors using the configured backend."""
+        """
+        Encode texts into normalized vectors using the configured backend.
+        
+        Args:
+            texts: 被 list 或 tuple 包含在内的一系列字符串。
+        
+        Returns:
+            每一个字符串对应的嵌入向量。
+        """
         normalized_texts = [self._normalize_text(text) for text in texts]
         if not normalized_texts:
             return []
@@ -462,8 +577,13 @@ class ContextSemanticIndex:
 
         return [self._hash_token_vector(text) for text in normalized_texts]
 
-    def _ensure_chroma_collection(self) -> Optional[Any]:
-        """Create the ephemeral Chroma collection on first use."""
+    def _ensure_chroma_collection(self) -> Optional[_ChromaCollectionLike]:
+        """
+        Create the ephemeral Chroma collection on first use.
+        
+        懒加载用。
+        该函数会在首次调用时，为本类创建 chroma 内容。否则导入 chromadb 作为模块内容。
+        """
         if self._chroma_collection is not None:
             return self._chroma_collection
 
@@ -473,6 +593,7 @@ class ContextSemanticIndex:
 
                 self._chromadb_module = chromadb
         except Exception:  # pragma: no cover - optional dependency
+            # 如果加载失败，则回退到 None
             self._chromadb_module = None
             return None
 
@@ -493,7 +614,10 @@ class ContextSemanticIndex:
         return self._chroma_collection
 
     def index_context(self, context: LLMInfo) -> None:
-        """Index one raw or compacted context entry for semantic retrieval."""
+        """
+        Index one raw or compacted context entry for semantic retrieval.
+        
+        """
         context_id = context.timeline
         semantic_text = self._build_context_text(context)
         if not semantic_text.strip():
@@ -533,7 +657,11 @@ class ContextSemanticIndex:
         include_compacted: bool,
         allowed_ids: Optional[Set[int]] = None,
     ) -> List[int]:
-        """Query the Chroma-backed index and normalize its response."""
+        """
+        Query the Chroma-backed index and normalize its response.
+        
+        
+        """
         collection = self._ensure_chroma_collection()
         if collection is None:
             return []
@@ -610,7 +738,16 @@ class ContextSemanticIndex:
         include_compacted: bool = True,
         allowed_ids: Optional[Set[int]] = None,
     ) -> List[int]:
-        """Return semantic nearest-neighbour ids for one query."""
+        """
+        Return semantic nearest-neighbour ids for one query.
+        
+        Args:
+            query: 搜索内容
+            top_k: 前k个选项？？
+            include_raw: 是否包括原始上下文
+            include_compacted: 是否包括被压缩后的上下文
+            allowrd_ids: 可选，输出结果仅允许在特定 id 列表内。
+        """
         normalized_query = self._normalize_text(query)
         if not normalized_query:
             return []
@@ -1534,6 +1671,8 @@ class LLMContextHandler:
         temperature: float = 0.0,
     ) -> Optional[ToolResultFact]:
         """Compress one tool execution result into durable facts.
+        该函数可直接改为并行……？似乎不太行，tool_result_facts 会竞态。
+        - 我需要做一个原子队列，应该是吧。
 
         Args:
             record: Tool execution record containing the tool name, arguments,
@@ -1633,6 +1772,7 @@ class LLMContextHandler:
         temperature: float = 0.0,
     ) -> List[ToolResultFact]:
         """Compress a batch of tool execution results into facts.
+        TODO: 该函数可改为并行版本，使用线程以减少开销。
 
         Args:
             records: Tool execution records to compress, in execution order.
@@ -1761,7 +1901,15 @@ class LLMContextHandler:
         include_raw: bool = True,
         include_compacted: bool = True,
     ) -> Optional[List[LLMInfo]]:
-        """Find context entries by semantic vector similarity."""
+        """
+        Find context entries by semantic vector similarity.
+        
+        Args:
+            semantic_query:
+            top_k:
+            include_raw:
+            include_compacted:
+        """
         if not self.retrieval_enabled:
             return None
 

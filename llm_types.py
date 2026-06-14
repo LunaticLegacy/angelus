@@ -30,6 +30,7 @@ class LLMBackendConfig:
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
+        """Render the backend config in a compact human-readable form."""
         return f"""
         LLMBackendConfig(
             Name: {self.name},
@@ -102,6 +103,7 @@ class LLMOutput:
         return self.content
 
     def __str__(self) -> str:
+        """Return the assistant content for debug printing and logging."""
         return self.content
 
 
@@ -154,6 +156,7 @@ class LLMContext:
     tags: List[str] = field(default_factory=list)   # 用于保存本上下文内容的标签。
 
     def to_dict(self) -> Dict[str, LLMContextValue]:
+        """Serialize the raw context entry into a JSON-friendly mapping."""
         d: Dict[str, LLMContextValue] = {
             "timeline": self.timeline,
             "role": self.role,  
@@ -180,6 +183,7 @@ class LLMContext:
         return d
 
     def __str__(self) -> str:
+        """Render the context entry as a debug-friendly single-line record."""
         parts = [
             "[LLM Context]",
             f"Role: {self.role}",
@@ -463,6 +467,7 @@ class ContextBundle:
     recent_ids: list[int] = field(default_factory=list)
 
     def ordered_ids(self) -> list[int]:
+        """Return pinned, selected, and recent ids with stable de-duplication."""
         from .utils_function import stable_unique_ids   # a partial import
         return stable_unique_ids(self.pinned_ids + self.selected_ids + self.recent_ids)
 
@@ -552,6 +557,7 @@ class ToolExecutionRecord:
     result: str
 
     def __str__(self) -> str:
+        """Render the execution record as a compact debug string."""
         return f"name: {self.name}, args: {self.arguments}, result: {self.result}"
 
 @dataclass

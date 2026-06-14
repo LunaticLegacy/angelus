@@ -30,8 +30,11 @@ def sanitize_tags(tags: Optional[List[str]], *, max_tags: int = 12) -> List[str]
     清洗标签，并返回一个“干净”的标签集。
 
     Args:
-        tags: 用于……做什么的？？
+        tags: 标签列表。
         max_tags: 最多返回多少个 tag
+
+    Returns:
+        如果有 tags，则返回标签，否则返回空白列表。
     """
     if not tags:
         return []

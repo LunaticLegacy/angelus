@@ -10,7 +10,7 @@ import os
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from ..tool import Tool
 

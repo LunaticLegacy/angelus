@@ -313,7 +313,7 @@ class LLMFetcher:
     ) -> None:
         total_retries = self._timeout_retry_count(backend)
         attempt_index = total_retries - retries_left
-        await asyncio.sleep(min(1.5, 0.25 * attempt_index))
+        await asyncio.sleep(1)
 
     async def fetch(
         self,
