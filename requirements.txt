@@ -8,3 +8,10 @@ anthropic>=0.100.0
 
 # Development dependencies (optional)
 # pytest>=7.0.0
+
+# knowledge database
+chromadb
+sentence-transformers     
+
+# markdown parser
+markdown-it-py

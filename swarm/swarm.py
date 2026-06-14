@@ -1,4 +1,7 @@
-"""Swarm-level orchestration: AgentSwarm holds ExecutionGraph + ThinkingGraph + ToolRegistry.
+"""
+TODO: 这个文件可能需要整体重做，先别动它。
+
+Swarm-level orchestration: AgentSwarm holds ExecutionGraph + ThinkingGraph + ToolRegistry.
 
 This module elevates ExecutionGraph from a standalone DAG runner into a
 first-class swarm container.  An AgentSwarm owns:

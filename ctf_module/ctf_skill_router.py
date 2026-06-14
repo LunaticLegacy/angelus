@@ -226,7 +226,7 @@ def build_ctf_skill_context(
     skills_root: str | Path,
     skill_ids: Iterable[str],
     *,
-    max_chars_per_skill: int = 24_000,
+    max_chars_per_skill: int = 100_000,
 ) -> str:
     """Load selected ``SKILL.md`` files into a prompt-ready context block."""
 

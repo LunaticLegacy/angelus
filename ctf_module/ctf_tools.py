@@ -10,7 +10,7 @@ import os
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional, List
 
 from ..tool import Tool
 
@@ -53,7 +53,7 @@ def create_ctf_tools(
     *,
     max_read_bytes: int = 200_000,
     default_flag_pattern: str = DEFAULT_FLAG_PATTERN,
-) -> List[Tool]:
+) -> list[Tool]:
     """Create safe local tools commonly useful for CTF challenge solving.
 
     The tools are intentionally scoped to ``workspace_root`` so agents can

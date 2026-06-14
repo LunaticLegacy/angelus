@@ -3,11 +3,11 @@ from __future__ import annotations
 import queue
 import threading
 from dataclasses import dataclass, field
-from types import ModuleType
-from typing import Callable, Iterable, Mapping, Optional, Protocol, Sequence, TypeAlias
+from typing import Iterable, Optional, Protocol, Sequence, TypeAlias
 
 from ..llm_types import LLMBackendConfig, LLMOutput
-from .base import JSONValue, JSONObject, ToolSchema, LLMBackendHandler
+from ._tool_schemas import to_openai_tool_schemas
+from .base import JSONValue, JSONObject, ToolDefinition, ToolSchema, LLMBackendHandler
 
 
 class _OpenVINOChatHistory(Protocol):
@@ -61,6 +61,15 @@ class OpenVINOHandler(LLMBackendHandler):
             device,
             **pipeline_kwargs,
         )
+
+    def prepare_tools(
+        self,
+        tools: Optional[Sequence[ToolDefinition]],
+    ) -> Optional[list[ToolSchema]]:
+        """Prepare tools for OpenVINO chat history/template consumption.
+        当前的实现采用的仍然是 openai 的 tool schema，这个……可以改。
+        """
+        return to_openai_tool_schemas(tools)
 
     def build_chat_history(
         self,
@@ -128,18 +137,7 @@ class OpenVINOHandler(LLMBackendHandler):
         )
 
     def call_generate(self, prompt_or_history: OpenVINOGenerateInputs, config: JSONObject) -> OpenVINOGenerateResult:
-        call_attempts = [
-            lambda: self.pipeline.generate(prompt_or_history, generation_config=config),
-        ]
-        last_type_error: Optional[TypeError] = None
-        for call in call_attempts:
-            try:
-                return call()
-            except TypeError as exc:
-                last_type_error = exc
-        if last_type_error is not None:
-            raise last_type_error
-        raise RuntimeError("OpenVINO generation failed before any call attempt.")
+        return self.pipeline.generate(prompt_or_history, generation_config=config)
 
     def create_stream(
         self,
@@ -184,7 +182,7 @@ class OpenVINOHandler(LLMBackendHandler):
             model=self.backend.model,
             role="assistant",
             stop_reason=self._read_field(response, "stop_reason", None),
-            usage=self._usage_to_dict(self._read_field(response, "usage", None)),
+            usage=self.normalize_usage(self._read_field(response, "usage", None)),
         )
 
     def iter_stream_text(self, response, *, output_reasoning: bool) -> Iterable[str]:

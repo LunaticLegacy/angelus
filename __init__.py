@@ -21,21 +21,13 @@ from .llm_fetcher import (
     LLMFetcher,
     LLMBackendConfig,
     LLMOutput,
-    LLMToolCall,
+    TokenUsage,
     LLMError,
     LLMTimeoutError,
     LLMBackendError,
 )
 from .agent import Agent
 from .tool import Tool, ToolRegistry
-from .ctf_module.ctf_skill_router import (
-    CTFSkill,
-    SkillClassification,
-    build_ctf_skill_context,
-    classify_ctf_challenge,
-    discover_ctf_skills,
-    enrich_prompt_with_ctf_skills,
-)
 from .thinking_graph import (
     ThinkingGraph,
     ThinkingNodeType,
@@ -49,9 +41,11 @@ from .thinking_graph import (
 # Context Management
 # ============================================================================
 from .llm_context import (
+    ContextCompressionProfile,
     LLMContextHandler,
     LLMContext,
     LLMContextCompacted,
+    LLMContextSnapshot,
 )
 
 # ============================================================================
@@ -99,8 +93,6 @@ from .handlers import (
 # ============================================================================
 from .tools.shell_tools import create_shell_tools
 from .tools.builtin_tools import create_builtin_tools
-from .tools.ctf_tools import create_ctf_tools
-from .tools.obscura_tools import create_obscura_tools
 
 # ============================================================================
 # Agent I/O (Optional - for advanced file operations)
@@ -130,6 +122,7 @@ __all__ = [
     "LLMFetcher",
     "LLMBackendConfig",
     "LLMOutput",
+    "TokenUsage",
     "LLMToolCall",
     "LLMError",
     "LLMTimeoutError",
@@ -142,12 +135,6 @@ __all__ = [
     "Agent",
     "Tool",
     "ToolRegistry",
-    "CTFSkill",
-    "SkillClassification",
-    "build_ctf_skill_context",
-    "classify_ctf_challenge",
-    "discover_ctf_skills",
-    "enrich_prompt_with_ctf_skills",
 
     # Thinking Graph
     "ThinkingGraph",
@@ -158,9 +145,11 @@ __all__ = [
     "ThinkingGraphTransactionRecord",
 
     # Context Management
+    "ContextCompressionProfile",
     "LLMContextHandler",
     "LLMContext",
     "LLMContextCompacted",
+    "LLMContextSnapshot",
 
     # Swarm orchestration
     "AgentSwarm",
@@ -185,8 +174,6 @@ __all__ = [
     # Tool factories
     "create_shell_tools",
     "create_builtin_tools",
-    "create_ctf_tools",
-    "create_obscura_tools",
 
     # Agent I/O
     "AgentFileIOManager",

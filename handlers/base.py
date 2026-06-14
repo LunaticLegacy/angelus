@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import ClassVar, Iterable, Mapping, Optional, Protocol, Sequence, TYPE_CHECKING, TypeAlias
+from typing import ClassVar, Iterable, Mapping, Optional, Protocol, Sequence, TYPE_CHECKING, TypeAlias, Type, Any
 
-from ..llm_types import LLMBackendConfig, LLMOutput, LLMToolCall
+from ..llm_types import LLMBackendConfig, LLMOutput, TokenUsage, Tool
 
 if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
     from .openvino import OpenVINOGenerateResult, OpenVINOHistory
@@ -14,9 +14,13 @@ if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
 JSONValue: TypeAlias = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 JSONObject: TypeAlias = dict[str, JSONValue]
 ToolSchema: TypeAlias = dict[str, JSONValue]
+ToolDefinition: TypeAlias = Tool | ToolSchema
 
 
 class _UsageLike(Protocol):
+    """
+    A protocol for a usage object.
+    """
     prompt_tokens: int | None
     completion_tokens: int | None
     total_tokens: int | None
@@ -29,18 +33,50 @@ class _UsageLike(Protocol):
 class LLMBackendHandler(ABC):
     """Base class for backend-specific request/response handlers."""
 
+    # Names of providers handled by this handler
     provider_names: ClassVar[frozenset[str]] = frozenset()
 
-    def __init__(self, fetcher: "LLMFetcher", backend: LLMBackendConfig) -> None:
+    def __init__(
+        self, 
+        fetcher: "LLMFetcher", 
+        backend: LLMBackendConfig
+    ) -> None:
+        """
+        Creates a new handler instance.
+
+        Args:
+            fetcher: The LLMFetcher instance that owns this handler.
+            backend: The configuration for the backend.
+        """
         self.fetcher = fetcher
         self.backend = backend
 
     @classmethod
-    def supports_backend(cls, backend: LLMBackendConfig) -> bool:
+    def supports_backend(
+        cls: Type["LLMBackendHandler"], 
+        backend: LLMBackendConfig
+    ) -> bool:
+        """
+        Args:
+            cls: The class to check. Should be a subclass of `LLMBackendHandler`.
+            backend: The backend configuration to check.
+        """
         return backend.provider in cls.provider_names
 
     @classmethod
-    def from_backend(cls, fetcher: "LLMFetcher", backend: LLMBackendConfig) -> "LLMBackendHandler":
+    def from_backend(
+        cls: Type["LLMBackendHandler"], 
+        fetcher: "LLMFetcher", 
+        backend: LLMBackendConfig
+    ) -> "LLMBackendHandler":
+        """
+        Create an instance from a backend config.
+
+        Args:
+            cls: The class to create. Should be a subclass of `LLMBackendHandler`.
+            fetcher: The LLMFetcher instance.
+            backend: The backend config.
+        """
         return cls(fetcher, backend)
 
     @classmethod
@@ -69,7 +105,7 @@ class LLMBackendHandler(ABC):
         max_tokens: int,
         stream: bool,
         tools: Optional[list[ToolSchema]] = None,
-    ):
+    ) -> Any:
         raise NotImplementedError
 
     @abstractmethod
@@ -79,12 +115,24 @@ class LLMBackendHandler(ABC):
     @abstractmethod
     def iter_stream_text(self, response, *, output_reasoning: bool) -> Iterable[str]:
         raise NotImplementedError
+    
+    @abstractmethod
+    def prepare_tools(
+        self,
+        tools: Optional[Sequence[ToolDefinition]],
+    ) -> Optional[list[ToolSchema]]:
+        """
+        Convert registry tools or prebuilt schemas into this provider's shape.
 
-    def convert_messages(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, JSONValue]], Optional[str]]:
-        return messages, None
+        Args:
+            tools: Runtime tools as `Tool` objects, or already serialized schema
+                dictionaries kept for compatibility with older callers.
 
-    def convert_tools(self, tools: list[ToolSchema]) -> list[ToolSchema]:
-        return tools
+        Returns:
+            Provider-specific schema dictionaries, or `None` when no tools were
+            supplied.
+        """
+        raise NotImplementedError
 
     def build_chat_history(
         self,
@@ -94,23 +142,29 @@ class LLMBackendHandler(ABC):
         return messages
 
     def generation_config(self, *, temperature: float, max_tokens: int) -> JSONObject:
+        """
+        Generate a JSON object for the LLM backend to use as a generation configuration.
+        Optional for inhereting classes.
+        """
         return {}
-
-    def call_generate(self, prompt_or_history, config: JSONObject):
-        raise NotImplementedError
 
     def result_text(self, result) -> str:
         return str(result)
-
-    def create_stream(self, prompt_or_history, config: JSONObject) -> Iterable[str]:
-        raise NotImplementedError
-
+    
     def _read_field(
         self,
         value: object | Mapping[str, JSONValue] | None,
         name: str,
         default: object | JSONValue | None = None,
     ) -> object | JSONValue | None:
+        """
+        Read a field from a value.
+
+        Args:
+            value: The value to read from.
+            name: The name of the field to read.
+            default: The default value to return if the field is not found.
+        """
         if isinstance(value, dict):
             return value.get(name, default)
         return getattr(value, name, default)
@@ -139,6 +193,10 @@ class LLMBackendHandler(ABC):
         return str(content)
 
     def _usage_to_dict(self, usage: _UsageLike | Mapping[str, JSONValue] | None) -> JSONObject:
+        """
+        Deprecated: use _normalize_usage() instead.
+        Kept for subclasses that may override this method.
+        """
         if usage is None:
             return {}
         if isinstance(usage, dict):
@@ -159,6 +217,34 @@ class LLMBackendHandler(ABC):
             if value is not None:
                 result[name] = value
         return result
+
+    def normalize_usage(self, usage: _UsageLike | Mapping[str, JSONValue] | None) -> TokenUsage:
+        """Normalize a provider-specific usage response into a platform-irrelevant TokenUsage.
+
+        Override this in each handler to handle provider-specific fields.
+        The default implementation handles OpenAI-compatible and Anthropic-like dict shapes.
+        """
+        raw = self._usage_to_dict(usage)
+        if not raw:
+            return TokenUsage()
+
+        # Flatten nested details (OpenAI: prompt_tokens_details.cached_tokens, etc.).
+        for key, value in list(raw.items()):
+            if isinstance(value, dict):
+                for nested_key, nested_value in value.items():
+                    if isinstance(nested_value, (int, float)):
+                        raw[nested_key] = int(nested_value)
+
+        return TokenUsage(
+            input_tokens=int(raw.get("input_tokens", raw.get("prompt_tokens", 0)) or 0),
+            output_tokens=int(raw.get("output_tokens", raw.get("completion_tokens", 0)) or 0),
+            total_tokens=int(raw.get("total_tokens", 0) or 0),
+            cached_tokens=int(
+                raw.get("cached_tokens", raw.get("cache_read_input_tokens", 0)) or 0
+                + raw.get("cache_creation_input_tokens", 0) or 0
+            ),
+            reasoning_tokens=int(raw.get("reasoning_tokens", 0) or 0),
+        )
 
     def _parse_arguments(self, arguments: str | Mapping[str, JSONValue] | None) -> JSONObject:
         if isinstance(arguments, dict):
@@ -198,53 +284,3 @@ class LLMBackendHandler(ABC):
             or getattr(delta, "thinking", None)
         )
         return str(reasoning) if reasoning is not None else None
-
-    def _normalize_openai_tool_calls(self, message: object | Mapping[str, JSONValue] | None) -> list[LLMToolCall]:
-        raw_calls = self._read_field(message, "tool_calls", None) or []
-        calls: list[LLMToolCall] = []
-        for raw_call in raw_calls:
-            function = self._read_field(raw_call, "function", {}) or {}
-            name = self._read_field(function, "name", "")
-            if not name:
-                continue
-            calls.append(
-                LLMToolCall(
-                    name=str(name),
-                    arguments=self._parse_arguments(self._read_field(function, "arguments", {})),
-                    call_id=self._read_field(raw_call, "id", None),
-                    source="openai_native",
-                )
-            )
-        return calls
-
-    def _normalize_anthropic_blocks(
-        self,
-        blocks: Iterable[object | Mapping[str, JSONValue]],
-    ) -> tuple[str, str, list[LLMToolCall]]:
-        text_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        tool_calls: list[LLMToolCall] = []
-
-        for block in blocks:
-            block_type = self._read_field(block, "type", None)
-            if block_type == "text":
-                text_parts.append(str(self._read_field(block, "text", "")))
-            elif block_type in {"thinking", "reasoning"}:
-                reasoning = self._read_field(block, "thinking", None)
-                if reasoning is None:
-                    reasoning = self._read_field(block, "text", "")
-                reasoning_parts.append(str(reasoning))
-            elif block_type == "tool_use":
-                name = self._read_field(block, "name", "")
-                if not name:
-                    continue
-                tool_calls.append(
-                    LLMToolCall(
-                        name=str(name),
-                        arguments=self._parse_arguments(self._read_field(block, "input", {})),
-                        call_id=self._read_field(block, "id", None),
-                        source="anthropic",
-                    )
-                )
-
-        return "".join(text_parts), "".join(reasoning_parts), tool_calls

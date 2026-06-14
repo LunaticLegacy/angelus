@@ -158,7 +158,7 @@ def create_ctf_tools(
     *,
     max_read_bytes: int = 200_000,
     default_flag_pattern: str = DEFAULT_FLAG_PATTERN,
-) -> List[Tool]:
+) -> list[Tool]:
     """Create safe local tools commonly useful for CTF challenge solving.
 
     The tools are intentionally scoped to ``workspace_root`` so agents can
@@ -229,6 +229,40 @@ def create_ctf_tools(
             handle.write(content)
         rel = path.relative_to(root)
         return f"Wrote {len(content)} characters to {rel}"
+
+    async def _patch_file(**kwargs: Any) -> str:
+        """Search-and-replace edit on a workspace file — the 'diff' primitive.
+
+        Only the changed text is sent to the tool; the rest stays on disk.
+        This is much faster than re-writing the whole file each iteration.
+        """
+        try:
+            path = _resolve_workspace_path(root, kwargs["path"])
+        except ValueError as exc:
+            return f"Error: {exc}"
+        if not path.is_file():
+            return f"Error: file not found: {path}"
+        old_string = str(kwargs.get("old_string", ""))
+        new_string = str(kwargs.get("new_string", ""))
+        if not old_string:
+            return "Error: old_string must not be empty"
+
+        content = path.read_text(encoding="utf-8")
+        if old_string not in content:
+            return (
+                f"Error: old_string not found in {path.relative_to(root)}. "
+                f"The file contains {len(content)} characters."
+            )
+        if content.count(old_string) > 1:
+            return (
+                f"Error: old_string appears {content.count(old_string)} times. "
+                "Include more context to make the match unique."
+            )
+
+        new_content = content.replace(old_string, new_string, 1)
+        path.write_text(new_content, encoding="utf-8")
+        rel = path.relative_to(root)
+        return f"Replaced 1 occurrence in {rel} ({len(new_content)} chars)"
 
     async def _fingerprint(**kwargs: Any) -> str:
         try:
@@ -326,6 +360,27 @@ def create_ctf_tools(
                 "required": ["path", "content"],
             },
             handler=_write_file,
+        ),
+        Tool(
+            name="file_patch",
+            description=(
+                "Edit a workspace file by replacing an exact text segment. "
+                "Use this to apply targeted changes without rewriting the whole file. "
+                "Include enough surrounding context in old_string to make the match unique."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path relative to workspace root."},
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact text to replace — include surrounding lines for uniqueness.",
+                    },
+                    "new_string": {"type": "string", "description": "Replacement text."},
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+            handler=_patch_file,
         ),
         Tool(
             name="ctf_file_fingerprint",

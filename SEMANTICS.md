@@ -2,14 +2,23 @@
 
 ## Architecture
 
-- `llm_fetcher.py` now acts as a backend-agnostic scheduler. It owns backend registration, fallback order, retries, rate limiting, and dispatch into backend handlers, but it no longer owns provider-specific request or response logic.
+- `llm_fetcher.py` now acts as a backend-agnostic scheduler. It owns backend registration, fallback order, retries, and dispatch into backend handlers, but it no longer owns provider-specific request, tool-call, or response parsing logic.
 - `handlers/` contains all backend-specific implementations. Each handler is a subclass of the same abstract base and is created through classmethod-based discovery.
+- `handlers/_tool_schemas.py` centralizes the translation from executable `Tool` objects and legacy schema dictionaries into provider-ready tool payloads. OpenAI-compatible and OpenVINO handlers reuse the OpenAI-style helper, while Anthropic maps that intermediate schema into `input_schema`.
 - `agent.py` consumes `LLMOutput` instead of reading OpenAI or Anthropic SDK response layouts directly in the main agent loop.
-- `llm_context.py` stores conversation context and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
+- `agent.py` accepts an optional `ContextCompressionProfile` so task orchestration layers can choose compression behavior without hard-coding domain schemas inside the generic agent loop.
+- `agent.py` accepts an optional semantic embedding model name or path so the in-memory context index can use sentence-transformers when available without coupling the agent to a disk-backed RAG package.
+- `llm_context.py` stores conversation context, tracks an ordered `active_ids` compatibility/cache window, owns the in-memory semantic/context indexes, and uses `LLMOutput.content` when it asks the fetcher to summarize or create memory.
+- `llm_context.py` now updates its derived retrieval indexes only when contexts are written, compressed, imported, or reconfigured; there is no separate tag-index refresh helper anymore.
+- `llm_context.py` now owns `ContextCompressionProfile` and `LLMContextSnapshot`, which carry the task compression profile and the JSON-friendly context export/import schema.
+- `agent.py` builds main-turn history through `AgentStateMachine -> AgentState -> ContextBundle -> _build_prev_messages(...)`; `active_ids` is no longer the sole source of prompt context for the main LLM turn.
 - `tools/builtin_tools.py` provides Agent-bound management tools for reading, listing, compressing context, and managing persistent memories.
-- `prompt.py` centralizes reusable prompt templates, prompt builders, and shared system prompts so model-facing text lives in one module.
+- `tools/ctf_tools.py` now only provides workspace-scoped CTF filesystem helpers, `tools/workspace_knowledge_tools.py` provides workspace knowledge search/read helpers, and `rag_module/tools/knowledge_base_tools.py` provides the RAG knowledge base tools; `tools/__init__.py` exports them under explicit names to avoid mixing the two knowledge-tool families.
+- Runtime-adapted hotplug tools are registered as ordinary `Tool` objects, and the workflow layer can whitelist them per task so the Agent loop does not need a separate execution path for JSON-manifest tools.
+- `prompt.py` centralizes reusable prompt templates, prompt builders, and shared system prompts so model-facing text lives in one module, while task-specific compression schemas can live in domain layers such as `core/ctf_prompt.py`.
 - `swarm/execution_graph.py` routes execution graph branches by label and can now fan out to multiple labeled downstream edges when a router returns more than one route.
-- `tool.py` now exposes OpenAI-style tool schemas for `custom_json` and `openvino` providers so prompt-based tool calling can still receive explicit schemas.
+- `tool.py` now owns only executable tool registration, lookup, execution, and provider-neutral tool enumeration. Provider-specific schema conversion belongs to backend handlers because one logical request may fallback across different providers.
+- `LLMFetcher` accepts runtime `Tool` objects or legacy prebuilt schema dictionaries. For each backend attempt, it asks that backend's handler to prepare tools in the selected provider's wire format.
 - `agent.py` can recover custom JSON tool calls from assistant text when native `tool_calls` are absent, then execute them through the normal tool loop.
 
 ## Types
@@ -17,39 +26,108 @@
 - `LLMBackendConfig`: input configuration for one backend. It carries provider name, model, key, optional API URL, timeout, retry count, and provider-specific `extra` kwargs.
 - `LLMToolCall`: backend-neutral tool call. Inputs are `name`, `arguments`, optional `call_id`, and optional `source`. Output helper `to_execution_format()` returns `{"tool": name, "arguments": arguments}` for `ToolRegistry`.
 - `LLMOutput`: backend-neutral non-stream response. It exposes `content`, `reasoning_content`, `tool_calls`, `usage`, provider/backend/model metadata, role, and stop reason. `text` and `str(output)` both return `content`.
-- `LLMBackendHandler`: abstract base for all backend handlers. Instances are created via classmethod discovery and are responsible for provider-specific completion creation, stream normalization, and response normalization. The base class also exposes optional provider-agnostic hooks such as message conversion, tool conversion, OpenVINO history building, generation config, and OpenVINO generation helpers.
+- `LLMBackendHandler`: abstract base for all backend handlers. Instances are created via classmethod discovery and are responsible for provider-specific completion creation, stream normalization, and response normalization. The base class still exposes provider-agnostic helpers for message conversion, content/usage extraction, and OpenVINO history/generation helpers, but tool-schema conversion now lives in `handlers/_tool_schemas.py`.
+- `ToolDefinition`: request-time union of executable `Tool` objects and legacy serialized `ToolSchema` dictionaries. Handlers normalize this union before SDK calls.
+- `ToolRegistry`: executable registry keyed by tool name. It returns registered `Tool` objects for runtime requests, still exposes OpenAI-compatible `schemas` for compatibility, and does not decide request-time provider format.
 - `OpenAIHandler`, `LiteLLMHandler`, `AnthropicHandler`, `OpenVINOHandler`: concrete backend handlers living in `handlers/`. They encapsulate client creation and provider-specific response parsing.
 - `LLMContextPair`: compatibility container for older imports. New agent persistence stores user and assistant messages as separate `LLMContext` entries.
 - `LLMContextCompressed`: compatibility alias for `LLMContextCompacted`.
+- `ContextCompressionProfile`: immutable-style configuration bundle for context compression. It carries `task_type`, `domain_schema`, and `prompt_template`.
+- `LLMContextSnapshot`: JSON-friendly export/import payload for one context handler. It carries the handler mode, active ids, serialized context records, memories, and compressed tool-result facts.
+- `AgentState`: durable task-progress snapshot pinned into every main LLM turn. It stores schema version, revision, task, phase, summary, facts, hypotheses, artifacts, credentials, routes, failed actions, do-not-repeat entries, next actions, recent transitions, and update time.
+- `AgentStateTurnEvent`: completed main-agent turn submitted to the state-machine manager. It carries the user goal, turn number, assistant message, raw tool execution records kept only in memory, compressed tool-result facts, and stop flag.
+- `AgentStateUpdate`: structured patch accepted from the state-manager subagent before it is merged into `AgentState`.
+- `ContextBundle`: per-call prompt context plan. It carries pinned state text plus pinned, selected, and recent timeline ids, and exposes `ordered_ids()` with stable deduplication.
+- `ContextSelectionView`: selector output item with an id, a `raw` or `compacted` view, and an optional reason. The agent still accepts legacy `{"ids": [...]}` selector JSON.
+- `LLMContext`: one raw context entry. It carries role, content, optional reasoning text, timeline id, optional tool-call info, optional compressed tool-result facts, and sanitized retrieval tags. Raw tool execution output no longer belongs in this schema.
+- `LLMContextCompacted`: one compressed summary entry. Its string form now includes the compacted entry's own `timeline` id in addition to `source_timeline`, so context-selection prompts expose valid selectable ids instead of provenance ids only.
+- `ToolResultFact`: compressed tool-result bundle. It carries the originating tool name, a short summary, atomic facts extracted from the raw output, the raw evidence text for storage, a normalized status, optional tool call id, and retrieval tags. The evidence field is not forwarded back into LLM prompts.
+- `ContextIndex`: derived in-memory inverted index for context retrieval. It stores normalized text, token/character-gram postings, tag postings, and compacted-to-source links so lookup methods can avoid scanning the whole timeline.
+- `ContextSemanticIndex`: in-memory vector-style context index. It stores semantic documents, normalized embeddings, and optional ephemeral Chroma state so retrieval can rank context by similarity without disk persistence.
 
 ## Functions
 
-- `LLMFetcher.fetch(...) -> LLMOutput`: builds messages, resolves fallback order, applies optional limiter, asks the selected handler to create a completion, then normalizes the handler response into `LLMOutput` before retrying fallback backends on failure.
-- `LLMFetcher.fetch_stream(...) -> AsyncGenerator[str, None]`: builds messages, resolves fallback order, asks the selected handler for a stream, and yields normalized text fragments. The scheduler no longer owns provider-specific stream parsing or rendering.
+- `LLMFetcher.backend_configs -> dict[str, LLMBackendConfig]`: returns a shallow copy of registered backend configs so callers can inspect routing without mutating scheduler state.
+- `LLMFetcher.fallback_order -> list[str]`: returns a copy of the current fallback order.
+- `LLMFetcher.default_backend_config -> LLMBackendConfig`: returns the backend used first when a request does not name a backend.
+- `LLMFetcher.provider -> str`: compatibility property exposing the default backend's provider.
+- `LLMFetcher.backend_providers -> dict[str, str]`: returns backend-name to provider-name mapping for UI/debug routing inspection.
+- `LLMFetcher.fetch(...) -> LLMOutput`: builds messages, resolves fallback order, asks the selected handler to prepare tools for that backend, creates a completion, then normalizes the handler response into `LLMOutput` before retrying fallback backends on failure.
+- `LLMFetcher.fetch_stream(...) -> AsyncGenerator[str, None]`: builds messages, resolves fallback order, asks the selected handler to prepare tools and create a stream, then yields normalized text fragments. The scheduler no longer owns provider-specific stream parsing or rendering.
 - `LLMBackendHandler.create_for_backend(...)`: discovers the right handler class by reading subclass class methods and instantiates the first handler that declares support for the backend provider.
+- `LLMBackendHandler.prepare_tools(...)`: abstract provider hook. Every concrete handler must override it to turn request `ToolDefinition` values into that provider's final tool schema shape, or `None` when no tools are supplied.
+- `OpenAICompatibleHandler._normalize_openai_tool_calls(...)`: local parser for OpenAI/LiteLLM `tool_calls` payloads.
+- `AnthropicHandler._normalize_anthropic_blocks(...)`: local parser for Anthropic content blocks, reasoning text, and `tool_use` blocks.
+- `handlers/_tool_schemas.to_openai_tool_schemas(...)`: shared helper that converts runtime `Tool` objects or legacy schema dictionaries into OpenAI-compatible function payloads.
+- `handlers/_tool_schemas.to_anthropic_tool_schemas(...)`: shared helper that converts the same tool inputs into Anthropic `input_schema` payloads.
 - `OpenAIHandler.create_completion(...)`: sends OpenAI-compatible chat-completion requests.
+- `OpenAICompatibleHandler.prepare_tools(...)`: delegates to the shared OpenAI-style tool schema helper.
 - `LiteLLMHandler.create_completion(...)`: sends LiteLLM completion requests using the shared OpenAI-compatible response path.
-- `AnthropicHandler.create_completion(...)`: converts OpenAI-style messages/tools into Anthropic format and calls the Anthropic SDK.
+- `AnthropicHandler.prepare_tools(...)`: delegates to the shared Anthropic tool schema helper.
+- `AnthropicHandler.create_completion(...)`: converts OpenAI-style messages into Anthropic format, receives handler-prepared Anthropic tools, and calls the Anthropic SDK.
+- `OpenVINOHandler.prepare_tools(...)`: delegates to the shared OpenAI-style tool schema helper for OpenVINO chat history/template consumption.
 - `OpenVINOHandler.create_completion(...)`: builds OpenVINO chat history, generation config, and streaming/non-streaming calls, then returns either a raw OpenVINO response wrapper or a stream iterator.
 - `OpenAICompatibleHandler.normalize_completion_response(...)`: converts OpenAI/LiteLLM `choices[0].message` layouts into `LLMOutput`.
 - `AnthropicHandler.normalize_completion_response(...)`: extracts text, reasoning, and `tool_use` blocks from Anthropic-compatible message content into `LLMOutput`.
 - `OpenVINOHandler.normalize_completion_response(...)`: converts OpenVINO output into `LLMOutput`.
-- `Agent.chat_once(...)`: performs exactly one `LLMFetcher.fetch()` call, optionally includes serialized history and tool schemas, optionally stores the assistant response, and never executes returned tool calls.
-- `Agent.run_agent_round(...)`: sends the user message on each tool-loop turn with the dynamic system prompt and serialized history, asks `LLMFetcher.fetch()` for `LLMOutput`, executes any native provider tool calls, stores assistant/tool context, and stops when a turn has no tool calls. It raises `MaxTurnsExceededError` if the loop reaches `max_turns`.
+- `Agent.chat_once(...)`: performs exactly one `LLMFetcher.fetch()` call, optionally includes serialized history and registered `Tool` objects, optionally stores the assistant response, and never executes returned tool calls.
+- `Agent.run_agent_round(...)`: sends the user message on each tool-loop turn with the dynamic system prompt, registered `Tool` objects, and bundle-rendered history, asks `LLMFetcher.fetch()` for `LLMOutput`, executes any native provider tool calls, stores assistant/tool context, and stops when a turn has no tool calls. In graph mode it snapshots the current active window, builds a `ContextBundle`, and renders messages from that bundle rather than treating `active_ids` and bundle ids as the same thing. It raises `MaxTurnsExceededError` if the loop reaches `max_turns`.
+- `Agent.run_agent_round(...)` submits one `AgentStateTurnEvent` to `AgentStateMachine` after each main-agent turn, after tool calls have completed and before the assistant/tool context is stored. The main agent no longer parses its own output as state, and the state prompt only receives tool names/arguments plus compressed tool-result facts.
+- `AgentStateMachine.update_from_turn(...)`: asks a dedicated state-manager subagent to produce a JSON `AgentStateUpdate` by calling `LLMFetcher.fetch()` with `AGENT_STATE_MACHINE_SYSTEM_PROMPT`, then merges the patch into the durable state snapshot. The prompt payload strips raw tool results and only forwards tool names/arguments plus compressed tool-result facts. If the subagent fails or returns invalid JSON, it applies a narrow deterministic fallback so the main agent can continue.
+- `AgentStateMachine.apply(...)`: increments state revision, updates phase/summary, merges unique bounded lists, maps artifacts/routes/credentials, and records a transition audit entry.
+- `Agent._build_main_context_bundle(...)`: snapshots the rendered `AgentState` once, preserves the recent active tail, optionally asks the state-aware selector for current-task ids, and returns a `ContextBundle` containing pinned state text, selected ids, and recent ids for one main LLM call.
+- `Agent._maybe_run_context_selection(...)`: passes the rendered state-machine snapshot into retrieval and the selector prompt, retrieves a narrowed candidate pool for the current task plus state, expands only candidate closure for compacted descendants, asks the model to choose `ContextSelectionView` items, rejects ids outside the candidate closure, and keeps compacted selections compact by default. It may mirror selected ids into `active_ids`, but callers use its return value instead of reading the cache back.
+- `Agent._candidate_closure_ids(...)`: returns candidate ids plus descendants of compacted candidate ids so the selector may choose exact raw children under a summary without gaining access to unrelated global timeline ids.
+- `Agent._retrieve_context_candidates_for_task(...)`: reuses the round-level cached task tags, builds a summary query from the current task plus rendered state-machine text, queries compacted summaries plus tag hits, prefers their intersection, keeps compacted hits compact in the candidate pool, and falls back to the retrieval union when needed.
+- `Agent._cache_round_task_tags(...)` and `Agent._get_round_task_tags(...)`: precompute the current round's task tags once, then reuse them during retrieval candidate selection so the same `task_msg` is not tagged repeatedly inside one agent round.
+- `Agent._build_prev_messages(...)`: accepts an optional `ContextBundle`. With a bundle, it renders state first as synthetic pinned context, then fetches pinned, selected, and recent context ids in bundle order. Without a bundle, it falls back to current active context for compatibility.
 - `Agent.run_agent_round(...)` also owns stream rendering when `stream=True`: it feeds each yielded chunk into the provided `Streamer`/callable before accumulating the final response text.
 - `Agent._register_builtin_tools(...)`: registers built-in tools returned by `create_builtin_tools(agent=self)` so handlers can call the Agent context and memory APIs.
 - `Agent._tagify_context(...)`: builds tag input from assistant text plus tool call/result records. Empty contexts get no tags; non-empty contexts are sent to the LLM with a strict comma-separated snake_case tag prompt, then parsed with a regex and capped at five tags.
+- `Agent.run_agent_round(...)` compresses tool results into `ToolResultFact` bundles before the state machine update and conversation replay, so downstream LLM prompts receive summarized facts instead of raw tool output. It also preserves assistant reasoning separately from visible assistant content when the backend supplies reasoning text or streamed `<think>` blocks.
 - `Agent._agent_message_from_output(...)`: builds diagnostics from `LLMOutput` without depending on SDK response objects.
 - `Agent._extract_response_text(...)`: returns `LLMOutput.content` for normalized responses and keeps legacy extraction as fallback for older callers.
-- `LLMContextHandler.add_context(...)`: stores a context entry, indexes it by object id, and indexes tags when present.
-- `LLMContextHandler.context_len() -> int`: returns the character length of active context only, counting uncompacted role/content/tool data/tags and compacted abstract/source_ids/tags without recursively counting compressed source objects.
-- `LLMContextHandler.get_content_as_single_str(...)`: serializes compacted and uncompacted context into text, including stored tool-call records and tool results for later Agent turns.
-- `LLMContextHandler.compress_context(...)`: sends serialized context to `LLMFetcher.fetch()` and reads the abstracted result from `response.content`.
+- `LLMContextHandler.add_context(...)`: stores a raw context entry in the full timeline store, assigns its timeline id, sanitizes tags, updates the derived inverted indexes, and optionally appends its id to the active window.
+- `LLMContextHandler.set_active_ids(...)`: replaces the active id window after filtering to known timeline ids and removing duplicates with first-seen order preserved.
+- `LLMContextHandler.context_len() -> int`: returns the character length of the active context window only, counting uncompacted role/content/tool data/tags and compacted abstract/source_uuid/source_timeline/tags without recursively counting compressed source objects.
+- `LLMContextHandler.get_now_context(..., preserve_order=False)`: serializes selected context ids from the full timeline store. The default keeps legacy timeline sorting; `preserve_order=True` returns entries in caller-supplied order for `ContextBundle` rendering.
+- `LLMContextHandler.get_now_context_as_str(..., preserve_order=False)`: stringifies `get_now_context(...)` with the same ordering option for selector prompts and debug reads.
+- `LLMContextHandler.compress_context(...)`: compresses all still-uncompacted raw entries when ids are omitted, or compresses any explicitly selected timeline ids when ids are supplied. It resolves an explicit compression profile or falls back to the handler's default profile, then renders the profile's prompt template with `task_type`, `domain_schema`, and selected context text before storing the new compacted entry and updating compacted-source indexes.
+- `LLMContextHandler.export_context() -> LLMContextSnapshot`: serializes the full handler state into a JSON-friendly snapshot with serialized contexts, memories, tool-result facts, active ids, and metadata.
+- `LLMContextHandler.import_context(...) -> LLMContextSnapshot`: restores handler state from a snapshot or legacy mapping, rebuilds raw/compacted/context semantic indexes, and restores memories and tool-result facts.
+- Context compression is archival rather than destructive: compressed entries leave the active window and are replaced by one compacted summary entry using stable id deduplication, but the original raw entries remain in the manager's full timeline store and can still be revisited later by their original ids.
+- `LLMContextHandler.get_descendant_ids(...)`: recursively returns raw and nested compacted descendants represented by one compacted id for selector candidate-closure validation.
+- `stable_unique_ids(...)`: removes duplicate timeline ids without changing first-seen order.
+- `sanitize_tags(...)`: lowercases tags, enforces a compact identifier regex, removes generic stop tags, stably dedupes, and caps the list.
 - `LLMContextHandler.generate_memory(...)`: asks the fetcher for a memory summary and returns `response.content` when present.
+- `LLMContextHandler.compress_tool_result(...)`: converts one raw tool execution result into a `ToolResultFact` by asking the fetcher for a summary/fact bundle, then stores the compressed fact on the handler. The raw evidence stays inside the returned `ToolResultFact` only for storage/inspection.
+- `LLMContextHandler.compress_tool_result_records(...)`: batch helper that compresses multiple tool execution records into fact bundles and stores each one on the handler.
+- `LLMContextHandler.copy_tool_result_facts(...)`: returns a shallow copy of the compressed tool-result facts.
+- `LLMContextHandler.get_tool_result_facts(...)`: returns the compressed tool-result facts as an immutable tuple.
+- `LLMContextHandler.clear_tool_result_facts(...)`: clears all stored tool-result fact bundles.
+- `LLMContextHandler.find_context_by_semantic(...)`: returns semantic nearest-neighbour hits from the in-memory vector index, preferring the ephemeral Chroma store when available and falling back to a deterministic pure-Python embedding cache.
+- `LLMContextHandler.search_context_by_keyword(...)`: uses semantic retrieval first, then falls back to the text postings index when no vector hit is available.
+- `LLMContextHandler.find_context_by_summary(...)`: uses semantic retrieval first when blur matching is enabled, then falls back to the derived text postings index and exact string validation for legacy behaviour.
+- `LLMContextHandler.find_context_by_tags(...)`: uses exact or fuzzy tag postings to return matching timeline entries without scanning all tags in the handler.
+- `LLMContextHandler.find_context_by_summary_and_tags(...)`: intersects the indexed tag-hit timeline set with the summary-hit timeline set, using semantic summary retrieval when blur matching is enabled, so callers can retrieve only entries matching both retrieval signals without scanning the full timeline.
+- `LLMContextHandler.expand_retrieval_hit_ids(...)`: turns retrieval-hit objects into selectable timeline ids by preserving raw hit ids, optionally keeping compacted hit ids, and expanding compacted summaries back to their flattened `source_timeline` provenance chain.
+- `LLMContextHandler.expand_active_selection_ids(...)`: normalizes selector-chosen ids into active-window ids while preserving compacted summaries by default; raw provenance expansion only happens when a caller explicitly opts in.
+- `LLMContextHandler.find_compacted_entries_by_source_ids(...)`: looks up compacted summary ids through the derived source-to-compacted index so resource restoration can keep summary entries active alongside restored raw context.
 - `create_builtin_tools(agent=None) -> List[Tool]`: creates built-in tools. The context and memory tools require an Agent binding; unbound calls raise a runtime error.
+- `ToolRegistry.register(tool) -> Tool`: stores a new executable tool by unique name and returns the same object for decorator-style registration.
+- `ToolRegistry.unregister(name) -> Tool`: removes and returns a registered tool, raising `KeyError` when the name is absent.
+- `ToolRegistry.get(name) -> Tool`: returns one registered tool, raising `KeyError` when absent.
+- `ToolRegistry.execute(name, arguments) -> Any`: resolves a tool by name and awaits its handler through `Tool.execute(...)`.
+- `ToolRegistry.tools -> list[Tool]`: returns registered executable tools in registration order; this is the preferred request-time input to `LLMFetcher`.
+- `ToolRegistry.to_openai_tool_schemas() -> list[dict]`: compatibility helper that serializes registered tools into OpenAI-compatible function schemas.
+- `ToolRegistry.schemas -> list[dict]`: compatibility alias for `to_openai_tool_schemas()`.
+- `ToolRegistry.get_schemas_for_provider(provider) -> list[dict]`: legacy provider-specific formatting shim retained for older callers; new code should rely on handler-level `prepare_tools(...)`.
+- `ToolRegistry.get_prompt_hint() -> str`: returns prompt text describing registered tools for custom JSON/prompt-mediated tool calling.
 - `context_list`: returns context ids, entry type, role/source ids, tags, and one-line previews. Inputs include optional `limit`, `include_compacted`, and `include_uncompacted`.
 - `context_read`: serializes selected context ids, or all context when `ids` is omitted, using the Agent's conversation summary API.
 - `context_compress`: compresses selected uncompacted context ids, or all uncompacted context when `ids` is omitted.
+- `context_select`: replaces the Agent's active context window with the selected context ids so later rounds only see that chosen history slice, preserving compacted summaries unless the caller explicitly selects raw provenance ids.
+- `context_status`: reports active ids, compacted ids, and recent timeline entries so the model can inspect its current memory state without depending on task-specific agent methods.
 - `memory_create`: generates and stores a persistent memory summary from selected context ids.
 - `memory_list`: returns indexed persistent memories stored on the Agent.
 - `memory_clear`: clears all persistent memories stored on the Agent.
@@ -57,5 +135,7 @@
 ## Compatibility Impact
 
 - Public `fetch()` still returns `LLMOutput`, but the provider-specific code path is now implemented by backend handlers instead of `LLMFetcher`.
+- Public `fetch()` and `fetch_stream()` still accept existing serialized tool schema dictionaries, but they now also accept `Tool` objects directly and convert them per selected backend.
 - Public `fetch_stream()` remains a text stream. The abstraction still covers Anthropic-style streaming events in addition to OpenAI-compatible chat deltas.
 - Legacy tool-call normalization can still accept `LLMOutput` via its `tool_calls` attribute.
+- `ToolRegistry.schemas` and `ToolRegistry.get_schemas_for_provider(...)` remain available for compatibility, but handler-level conversion is now the canonical architecture.
