@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List, Optional
 
 from .base import ContextHandler
@@ -8,7 +7,6 @@ from ..llm_types import (
     LLMContext,
     LLMContextCompacted,
     LLMOutput,
-    LLMToolCall,
     ToolInfo,
 )
 
@@ -17,20 +15,15 @@ class ContextHandlerLinear(ContextHandler):
     """A simple context handler that stores messages in a flat list.
 
     History is kept verbatim — no summarisation or compaction is applied.
+    Tool calls are kept as structured ``ToolInfo`` objects; the backend
+    handler is responsible for converting them to the provider-specific
+    wire format.
     """
 
     def __init__(
         self,
         max_context_threshold: int = 262144,
     ) -> None:
-        """Initialise the linear context handler.
-
-        Args:
-            max_context_threshold:
-                When the accumulated context size exceeds this value,
-                older messages are compacted into a single
-                ``LLMContextCompacted`` entry.  Defaults to 256K.
-        """
         super().__init__()
 
         self.compress_threshold: int = max_context_threshold
@@ -43,21 +36,13 @@ class ContextHandlerLinear(ContextHandler):
     def add_assistant_message(
         self,
         message: LLMOutput,
+        timeline: int,
         tool_results: Optional[Dict[str, str]] = None,
     ) -> None:
         """Append an LLM output to the conversation history.
 
         Each tool call in *message* is paired with its result from
-        *tool_results* (keyed by ``call_id``).  Later, when messages are
-        reconstructed via ``build_messages``, the assistant ``tool_calls``
-        block and any available tool results are emitted as separate
-        API turns.
-
-        Args:
-            message: The output from a previous LLM call.
-            tool_results:
-                Mapping from ``call_id`` to the execution result text.
-                Calls without a result entry are stored without a result.
+        *tool_results* (keyed by ``call_id``).
         """
         tool_calls: List[ToolInfo] = []
         for tc in message.tool_calls:
@@ -67,60 +52,46 @@ class ContextHandlerLinear(ContextHandler):
 
         self.messages.append(LLMContext(
             role=message.role,
+            timeline=timeline,
             content=message.content,
             content_reasoning=message.reasoning_content,
             tool_calls=tool_calls,
         ))
 
     def get_prev_messages(self) -> List[LLMContext | LLMContextCompacted]:
-        """Return the stored conversation history.
-
-        Returns:
-            The list of context entries accumulated so far.
-        """
+        """Return the stored conversation history."""
         result: List[LLMContext | LLMContextCompacted] = list(self.messages)
         if self.abstract is not None:
             result.insert(0, self.abstract)
         return result
 
-    def build_messages(
-        self,
-        msg: str,
-        system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Build the complete message list for an LLM request.
+    def build_messages(self) -> List[Dict[str, Any]]:
+        """Build context messages for an LLM request.
 
-        Combines the system prompt, stored conversation history, and the
-        current user message into a list of dicts compatible with
-        OpenAI-style chat completion APIs.
+        Returns stored conversation history only — the caller
+        (``LLMFetcher``) prepends the system prompt and appends the
+        current user message.
 
-        Tool call history is expanded into two turns per entry:
-        an assistant ``tool_calls`` message followed by ``{"role":
-        "tool", ...}`` result messages for every call that has a result.
+        Tool call data uses a flat structure:
+        ``{"id": ..., "name": ..., "arguments": {...}}`` — no
+        provider-specific wrapping.
 
-        Args:
-            msg: The current user message text.
-            system_prompt:
-                Optional system-level instruction prepended to the message
-                list.
+        Compacted context summaries (``LLMContextCompacted``) are
+        emitted with ``role: "system"``.
 
         Returns:
-            A list of message dicts (``{"role": ..., "content": ...}``),
-            with ``tool_calls`` embedded where applicable.
+            A list of message dicts.
         """
         messages: List[Dict[str, Any]] = []
 
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        for item in self.messages:
-            self._append_context_messages(messages, item)
-
-        if self.abstract is not None:
-            messages.append({"role": "user", "content": str(self.abstract)})
-
-        if msg:
-            messages.append({"role": "user", "content": msg})
+        for item in self.get_prev_messages():
+            if isinstance(item, LLMContext):
+                self._append_context_messages(messages, item)
+            elif isinstance(item, LLMContextCompacted):
+                messages.append({
+                    "role": "system",
+                    "content": str(item),
+                })
 
         return messages
 
@@ -131,15 +102,13 @@ class ContextHandlerLinear(ContextHandler):
         messages: List[Dict[str, Any]],
         item: LLMContext,
     ) -> None:
-        """Append API messages for a single ``LLMContext`` entry.
+        """Append backend-neutral messages for a single context entry.
 
-        For assistant entries with tool calls, this emits:
-        1. An assistant ``tool_calls`` message.
-        2. A ``{"role": "tool", ...}`` message for each call that has
-           a result, preserving the original order.
-
-        For all other entries a single ``{"role": ..., "content": ...}``
-        message is appended.
+        For assistant entries with tool calls this emits:
+        1. An assistant message with ``tool_calls`` as a list of
+           flat ``{"id", "name", "arguments"}`` dicts.
+        2. A ``{"role": "tool", ...}`` message per tool call that has
+           a result.
 
         Args:
             messages: The message list being built (mutated in place).
@@ -159,12 +128,19 @@ class ContextHandlerLinear(ContextHandler):
                 else reasoning_block
             )
 
-        # Assistant turn with tool calls → emit tool_calls + results.
+        # Assistant turn with tool calls.
         if role == "assistant" and item.tool_calls:
             messages.append({
                 "role": "assistant",
                 "content": content or None,
-                "tool_calls": _tool_calls_to_api_dicts(item.tool_calls),
+                "tool_calls": [
+                    {
+                        "id": ti.call.call_id or f"call_{i}",
+                        "name": ti.call.name,
+                        "arguments": ti.call.arguments,
+                    }
+                    for i, ti in enumerate(item.tool_calls)
+                ],
             })
             for ti in item.tool_calls:
                 if ti.result is not None:
@@ -177,32 +153,3 @@ class ContextHandlerLinear(ContextHandler):
             return
 
         messages.append({"role": role, "content": content or ""})
-
-
-def _tool_calls_to_api_dicts(
-    tool_calls: List[ToolInfo],
-) -> List[Dict[str, Any]]:
-    """Convert ``ToolInfo`` objects to OpenAI API ``tool_calls`` dicts.
-
-    Args:
-        tool_calls: Structured tool call objects (each wrapping an
-                    ``LLMToolCall``).
-
-    Returns:
-        A list of dicts in the standard API format
-        (``{"id": ..., "type": "function", "function": {...}}``).
-    """
-    result: List[Dict[str, Any]] = []
-    for index, ti in enumerate(tool_calls):
-        call_id = ti.call.call_id or f"call_{index}"
-        result.append({
-            "id": call_id,
-            "type": "function",
-            "function": {
-                "name": ti.call.name,
-                "arguments": json.dumps(
-                    ti.call.arguments, ensure_ascii=False
-                ),
-            },
-        })
-    return result

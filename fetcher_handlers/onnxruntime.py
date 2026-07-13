@@ -48,9 +48,47 @@ def _ensure_cuda_runtime() -> bool:
     return loaded
 
 from ..llm_types import LLMBackendConfig, LLMOutput, LLMToolCall, TokenUsage
-from ..tool_call_adapter import parse_xml_tool_calls, strip_xml_tool_calls
 from ._tool_schemas import to_openai_tool_schemas
 from .base import LLMBackendHandler, ToolDefinition, ToolSchemaDict
+
+
+# ── XML tool-call helpers (Qwen3 format) ────────────────────────────────
+
+
+@dataclass
+class _ParsedToolCall:
+    """Result of parsing a single ``<tool_call>`` block."""
+    tool_name: str
+    arguments: dict[str, Any]
+
+
+def _parse_xml_tool_calls(text: str) -> list[_ParsedToolCall]:
+    """Extract ``<tool_call>`` blocks containing JSON from *text*."""
+    import re
+    results: list[_ParsedToolCall] = []
+    for match in re.finditer(
+        r'<tool_call>\s*(\{.*?\})\s*</tool_call>', text, re.DOTALL
+    ):
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = str(data.get("name") or data.get("tool") or "")
+        if not name:
+            continue
+        arguments = data.get("arguments", {})
+        if not isinstance(arguments, dict):
+            arguments = {}
+        results.append(_ParsedToolCall(tool_name=name, arguments=arguments))
+    return results
+
+
+def _strip_xml_tool_calls(text: str) -> str:
+    """Remove ``<tool_call>`` XML blocks from *text*."""
+    import re
+    return re.sub(r'<tool_call>.*?</tool_call>', '', text, flags=re.DOTALL).strip()
 
 
 # ── Internal types ──────────────────────────────────────────────────────
@@ -313,9 +351,9 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
                 "name": call.tool_name,
                 "arguments": call.arguments,
             }
-            for call in parse_xml_tool_calls(content)
+            for call in _parse_xml_tool_calls(content)
         ]
-        clean_content = strip_xml_tool_calls(content) if tool_calls else content
+        clean_content = _strip_xml_tool_calls(content) if tool_calls else content
 
         return _ONNXCompletionResponse(
             content=clean_content,

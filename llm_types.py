@@ -118,7 +118,7 @@ class LLMOutput:
     backend_name: str           # 后端名称
     model: str                  # 模型名称
     role: str = "assistant"     # 角色，支持 "assistant"、"system" 和 "user"
-    reasoning_content: str = "" # 思考过程内容……？ 这东西和 AgentMessage 重复了……
+    reasoning_content: str = "" # 思考过程内容……
     tool_calls: List[LLMToolCall] = field(default_factory=list)
     stop_reason: Optional[str] = None
     usage: TokenUsage = field(default_factory=TokenUsage)
@@ -139,8 +139,8 @@ class LLMContext:
     """A single message in the conversation timeline."""
 
     role: str                                       # "assistant", "user", "system"
+    timeline: int                                   # timeline
     content: str                                    # text content
-    timeline: int                                   # timeline position
     content_reasoning: str = ""                     # reasoning content (e.g. <think>...</think>)
     tool_calls: List[ToolInfo] = field(default_factory=list)  # tool calls + their results
     tags: List[str] = field(default_factory=list)             # optional tags
@@ -220,3 +220,6 @@ class Tool:
         Tool schemas: {self.schemas.to_dict()}
     """
     
+@dataclass
+class ToolBatch:
+    pass

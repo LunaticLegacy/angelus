@@ -9,6 +9,47 @@ from .base import LLMBackendHandler, ToolDefinition, ToolSchemaDict
 
 
 class OpenAIHandler(LLMBackendHandler):
+    provider_names = frozenset({"openai"})
+
+    def __init__(self, fetcher, backend):
+        super().__init__(fetcher, backend)
+        import openai
+        self.client = openai.OpenAI(
+            api_key=backend.api_key,
+            base_url=backend.api_url,
+        )
+
+    @staticmethod
+    def _normalize_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Convert backend-neutral ``tool_calls`` to OpenAI format.
+
+        The context handler emits flat tool-call dicts
+        (``{"id", "name", "arguments"}``).  OpenAI's API requires
+        ``{"type": "function", "function": {"name": ..., "arguments": "..."}}``.
+        """
+        out: list[dict[str, Any]] = []
+        for msg in messages:
+            tc = msg.get("tool_calls")
+            if tc and isinstance(tc, list):
+                normalized: list[dict[str, Any]] = []
+                for call in tc:
+                    normalized.append({
+                        "id": call.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": call.get("name", ""),
+                            "arguments": json.dumps(
+                                call.get("arguments", {}),
+                                ensure_ascii=False,
+                            ),
+                        },
+                    })
+                msg = {**msg, "tool_calls": normalized}
+            out.append(msg)
+        return out
+
     def prepare_tools(
         self,
         tools: Optional[Sequence[ToolDefinition]],
@@ -159,6 +200,7 @@ class OpenAIHandler(LLMBackendHandler):
         stream: bool,
         tools: List["Tool"] = None,
     ):
+        messages = self._normalize_messages(messages)
         kwargs = {
             "model": self.backend.model,
             "messages": messages,

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from .base import LLMBackendConfig
-from .openao import OpenAICompatibleHandler
+from .openai import OpenAIHandler
 
 
-class LiteLLMHandler(OpenAICompatibleHandler):
+class LiteLLMHandler(OpenAIHandler):
     provider_names = frozenset({"litellm"})
 
     def __init__(self, fetcher, backend: LLMBackendConfig) -> None:

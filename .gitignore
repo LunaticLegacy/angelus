@@ -43,3 +43,7 @@ docs/_build/
 # Temporary files
 *.tmp
 *.temp
+
+# LLM
+.qwen
+.codex

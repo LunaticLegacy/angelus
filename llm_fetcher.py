@@ -14,9 +14,11 @@ lists via the ``context`` parameter.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import (
     Any,
     AsyncGenerator,
+    Generator,
     Dict,
     List,
     Optional,
@@ -257,11 +259,11 @@ class LLMFetcher:
     @staticmethod
     async def _sleep_before_retry() -> None:
         """Short fixed-duration sleep before retrying a timed-out request."""
-        await asyncio.sleep(1)
+        await time.sleep(1)
 
     # -- public API -------------------------------------------------------------
 
-    async def fetch(
+    def fetch(
         self,
         msg: str,
         system_prompt: Optional[str] = None,
@@ -337,14 +339,14 @@ class LLMFetcher:
                 except Exception as exc:
                     error = self._normalize_exception(backend, exc)
                     if isinstance(error, LLMTimeoutError):
-                        await self._sleep_before_retry()
+                        self._sleep_before_retry()
                         continue
                     backend_errors.append(str(error))
                     break
 
         raise LLMBackendError("; ".join(backend_errors))
 
-    async def fetch_stream(
+    def fetch_stream(
         self,
         msg: str,
         system_prompt: Optional[str] = None,
@@ -354,7 +356,7 @@ class LLMFetcher:
         context: Optional[ContextHandler] = None,
         backend_name: Optional[str] = None,
         tools: Optional[Sequence[ToolDefinition]] = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> Generator[str, None]:
         """Execute a streaming completion with backend fallback and retry.
 
         Behaviour is identical to ``fetch`` except that response text is
@@ -426,7 +428,7 @@ class LLMFetcher:
                         isinstance(error, LLMTimeoutError)
                         and not yielded_any
                     ):
-                        await self._sleep_before_retry()
+                        self._sleep_before_retry()
                         continue
                     if yielded_any:
                         raise error
@@ -460,10 +462,10 @@ class LLMFetcher:
     ) -> List[Dict[str, Any]]:
         """Build the message list, delegating to a context handler when available.
 
-        When *context* is provided, delegates to
-        ``context.build_messages(msg, system_prompt)``.  Otherwise
-        constructs a minimal one-shot message list from the given
-        parameters.
+        When *context* is provided, its ``build_messages()`` is called
+        to retrieve the stored conversation history.  The system prompt
+        and current user message are always appended by this method so
+        that the context handler stays focused purely on history.
 
         Args:
             msg: The current user message text.
@@ -473,12 +475,11 @@ class LLMFetcher:
         Returns:
             A list of message dicts ready for the backend handler.
         """
-        if context is not None:
-            return context.build_messages(msg, system_prompt)
-
         messages: List[Dict[str, Any]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        if context is not None:
+            messages.extend(context.build_messages())
         if msg:
             messages.append({"role": "user", "content": msg})
         return messages

@@ -16,6 +16,7 @@ class ContextHandler(ABC):
     def add_assistant_message(
         self,
         message: LLMOutput,
+        timeline: int,
         tool_results: Optional[Dict[str, str]] = None,
     ) -> None:
         """Record an LLM response into the conversation history.
@@ -31,22 +32,13 @@ class ContextHandler(ABC):
         """
 
     @abstractmethod
-    def build_messages(
-        self,
-        msg: str,
-        system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Build the complete message list for an LLM request.
+    def build_messages(self) -> List[Dict[str, Any]]:
+        """Build context messages for an LLM request.
 
-        Combines the system prompt, stored conversation history, and the
-        current user message into a list of dicts compatible with
-        OpenAI-style chat completion APIs.
-
-        Args:
-            msg: The current user message text.
-            system_prompt:
-                Optional system-level instruction prepended to the message
-                list.
+        Returns the stored conversation history (excluding system prompt
+        and the current user message) as a list of API-compatible dicts.
+        The caller (``LLMFetcher``) is responsible for prepending the
+        system prompt and appending the current user message.
 
         Returns:
             A list of message dicts (``{"role": ..., "content": ...}``),

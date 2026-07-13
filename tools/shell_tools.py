@@ -1,7 +1,7 @@
-import asyncio
 import os
 import re
 import shlex
+import subprocess
 from typing import Any, Dict, List, Optional
 
 from ..llm_types import Tool, ToolSchema, ToolParameter
@@ -13,21 +13,15 @@ def create_shell_tools(
     sandbox_cwd: Optional[str] = None,
 ) -> List[Tool]:
     """Create shell execution tool with security controls.
-    
+
     Args:
         allowed_commands: Whitelist of allowed command prefixes (e.g., ["ls", "cat", "grep"]).
                          If None, uses blacklist approach (less secure).
         max_timeout: Maximum allowed timeout in seconds (default: 60).
         sandbox_cwd: Restrict execution to this directory (prevents path traversal).
-    
+
     Returns:
         List containing the shell tool.
-    
-    Security Features:
-        - Command whitelist/blacklist validation
-        - Timeout limits
-        - Working directory restrictions
-        - Dangerous pattern detection
     """
 
     # Default blacklist for dangerous operations
@@ -41,7 +35,7 @@ def create_shell_tools(
         "sudo ", "su ",
     ]
 
-    async def _shell(**kwargs: Any) -> str:
+    def _shell(**kwargs: Any) -> str:
         command: str = kwargs["command"]
         timeout: float = min(kwargs.get("timeout", 30.0), max_timeout)
         requested_cwd: Optional[str] = kwargs.get("cwd")
@@ -50,7 +44,6 @@ def create_shell_tools(
         if sandbox_cwd:
             real_sandbox = os.path.realpath(sandbox_cwd)
             if requested_cwd:
-                # Ensure requested cwd is within sandbox
                 real_requested = os.path.realpath(requested_cwd)
                 if os.path.commonpath([real_sandbox, real_requested]) != real_sandbox:
                     return f"Error: working directory must be within sandbox ({sandbox_cwd})"
@@ -90,39 +83,29 @@ def create_shell_tools(
                     return f"Error: command '{base_cmd}' not in allowed list: {allowed_commands}"
 
         try:
-            proc = await asyncio.create_subprocess_shell(
+            proc = subprocess.run(
                 command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                capture_output=True,
+                shell=True,
+                text=True,
                 cwd=exec_cwd,
+                timeout=timeout,
                 env={
                     key: value
                     for key, value in os.environ.items()
                     if key not in ["SSH_AUTH_SOCK", "GPG_AGENT_INFO"]
                 },
             )
-            stdout_data, stderr_data = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            if proc.returncode is None:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except Exception:
-                    pass
+        except subprocess.TimeoutExpired:
             return f"Error: command timed out after {timeout} seconds"
         except Exception as exc:
             return f"Error: {exc}"
 
-        stdout_text = stdout_data.decode("utf-8", errors="replace") if stdout_data else ""
-        stderr_text = stderr_data.decode("utf-8", errors="replace") if stderr_data else ""
-
         lines: List[str] = []
-        if stdout_text:
-            lines.append("[stdout]\n" + stdout_text)
-        if stderr_text:
-            lines.append("[stderr]\n" + stderr_text)
+        if proc.stdout:
+            lines.append("[stdout]\n" + proc.stdout.rstrip("\n"))
+        if proc.stderr:
+            lines.append("[stderr]\n" + proc.stderr.rstrip("\n"))
         if proc.returncode != 0:
             lines.append(f"[exit code] {proc.returncode}")
 

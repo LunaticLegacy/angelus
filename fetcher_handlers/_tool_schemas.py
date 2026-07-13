@@ -5,12 +5,6 @@ from typing import Any, Mapping, Optional, Sequence
 from ..llm_types import Tool
 from .base import ToolDefinition, ToolSchemaDict
 
-
-def json_schema_object(value: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a plain JSON-schema object for SDK payloads."""
-    return dict(value)
-
-
 def tool_to_openai_schema(tool: Tool) -> ToolSchemaDict:
     """Serialize an executable tool into OpenAI-style function schema."""
     return {
