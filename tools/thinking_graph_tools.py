@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 from ..thinking_graph import ALLOWED_EDGE_SCHEMA, ThinkingEdgeType, ThinkingGraph, ThinkingNodeType
-from ..tool import Tool
+from ..llm_types import Tool, ToolSchema, ToolParameter
 
 
 def create_thinking_graph_tools(graph: ThinkingGraph) -> List[Tool]:
@@ -157,95 +157,59 @@ def create_thinking_graph_tools(graph: ThinkingGraph) -> List[Tool]:
         Tool(
             name="thinking_graph_add_node",
             description="Add a node to the thinking graph. Returns the new node ID.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "node_type": {
-                        "type": "string",
-                        "enum": [t.value for t in ThinkingNodeType],
-                        "description": "Node type",
-                    },
-                    "info": {"type": "string", "description": "Node content"},
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional tags",
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "default": 1.0,
-                    },
-                    "description": {"type": "string", "default": ""},
-                    "payload": {
-                        "type": "object",
-                        "description": "Optional structured metadata for this node.",
-                        "default": {},
-                    },
-                },
-                "required": ["node_type", "info"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="node_type", type="string", enum=[t.value for t in ThinkingNodeType], description="Node type", required=True),
+                    ToolParameter(name="info", type="string", description="Node content", required=True),
+                    ToolParameter(name="tags", type="array", description="Optional tags", required=False),
+                    ToolParameter(name="confidence", type="number", default=1.0, required=False),
+                    ToolParameter(name="description", type="string", default="", required=False),
+                    ToolParameter(name="payload", type="object", description="Optional structured metadata for this node.", default={}, required=False),
+                ],
+            ),
             handler=_add_node,
         ),
         Tool(
             name="thinking_graph_add_edge",
             description="Add an edge between two existing nodes. Returns the new edge ID.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "edge_type": {
-                        "type": "string",
-                        "enum": [t.value for t in ThinkingEdgeType],
-                        "description": "Edge type",
-                    },
-                    "source_id": {"type": "integer", "description": "Source node ID"},
-                    "target_id": {"type": "integer", "description": "Target node ID"},
-                    "strength": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "default": 1.0,
-                    },
-                    "description": {"type": "string", "default": ""},
-                },
-                "required": ["edge_type", "source_id", "target_id"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="edge_type", type="string", enum=[t.value for t in ThinkingEdgeType], description="Edge type", required=True),
+                    ToolParameter(name="source_id", type="integer", description="Source node ID", required=True),
+                    ToolParameter(name="target_id", type="integer", description="Target node ID", required=True),
+                    ToolParameter(name="strength", type="number", default=1.0, required=False),
+                    ToolParameter(name="description", type="string", default="", required=False),
+                ],
+            ),
             handler=_add_edge,
         ),
         Tool(
             name="thinking_graph_validate_context",
             description="Validate the local context around a node (incremental check).",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "node_id": {"type": "integer"},
-                    "max_hops": {"type": "integer", "minimum": 0, "default": 1},
-                },
-                "required": ["node_id"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="node_id", type="integer", required=True),
+                    ToolParameter(name="max_hops", type="integer", default=1, required=False),
+                ],
+            ),
             handler=_validate_context,
         ),
         Tool(
             name="thinking_graph_get_node_info",
             description="Get basic info of a node by ID.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "node_id": {"type": "integer"},
-                },
-                "required": ["node_id"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="node_id", type="integer", required=True),
+                ],
+            ),
             handler=_get_node_info,
         ),
         Tool(
             name="thinking_graph_get_usage",
             description="Get the usage guide of ThinkingGraph, including all node types and edge types.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
+            schemas=ToolSchema(
+                properties=[],
+            ),
             handler=_get_usage,
         ),
         Tool(
@@ -254,27 +218,19 @@ def create_thinking_graph_tools(graph: ThinkingGraph) -> List[Tool]:
                 "Query the schema rules of edge types. "
                 "Pass edge_type to query a specific edge; omit it to get all rules."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "edge_type": {
-                        "type": "string",
-                        "enum": [t.value for t in ThinkingEdgeType],
-                        "description": "Optional: specific edge type to query",
-                    },
-                },
-                "required": [],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="edge_type", type="string", enum=[t.value for t in ThinkingEdgeType], description="Optional: specific edge type to query", required=False),
+                ],
+            ),
             handler=_get_schema,
         ),
         Tool(
             name="thinking_graph_get_full_graph",
             description="Read the entire thinking graph. Returns a summary of all nodes and edges.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
+            schemas=ToolSchema(
+                properties=[],
+            ),
             handler=_get_full_graph,
         ),
     ]

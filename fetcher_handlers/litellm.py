@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .base import LLMBackendConfig
-from .openai_compat import OpenAICompatibleHandler
+from .openao import OpenAICompatibleHandler
 
 
 class LiteLLMHandler(OpenAICompatibleHandler):

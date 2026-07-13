@@ -50,7 +50,7 @@ def _ensure_cuda_runtime() -> bool:
 from ..llm_types import LLMBackendConfig, LLMOutput, LLMToolCall, TokenUsage
 from ..tool_call_adapter import parse_xml_tool_calls, strip_xml_tool_calls
 from ._tool_schemas import to_openai_tool_schemas
-from .base import LLMBackendHandler, ToolDefinition, ToolSchema
+from .base import LLMBackendHandler, ToolDefinition, ToolSchemaDict
 
 
 # ── Internal types ──────────────────────────────────────────────────────
@@ -222,7 +222,7 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
     def prepare_tools(
         self,
         tools: Optional[Sequence[ToolDefinition]],
-    ) -> Optional[list[ToolSchema]]:
+    ) -> Optional[list[ToolSchemaDict]]:
         return to_openai_tool_schemas(tools)
 
     # ── Chat history ────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
     def build_chat_history(
         self,
         messages: list[dict[str, str]],
-        tools: Optional[list[ToolSchema]] = None,
+        tools: Optional[list[ToolSchemaDict]] = None,
     ) -> list[dict[str, str]]:
         """Return messages as-is; the tokenizer's built-in chat template
         handles the formatting during ``tokenizer.encode_chat()``."""
@@ -275,7 +275,7 @@ class OnnxRuntimeGenAIHandler(LLMBackendHandler):
         temperature: float,
         max_tokens: int,
         stream: bool,
-        tools: Optional[list[ToolSchema]] = None,
+        tools: Optional[list[ToolSchemaDict]] = None,
     ):
         history = self.build_chat_history(messages, tools=tools)
         config = self.generation_config(temperature=temperature, max_tokens=max_tokens)

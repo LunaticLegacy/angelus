@@ -4,7 +4,7 @@ import re
 import shlex
 from typing import Any, Dict, List, Optional
 
-from ..tool import Tool
+from ..llm_types import Tool, ToolSchema, ToolParameter
 
 
 def create_shell_tools(
@@ -136,27 +136,13 @@ def create_shell_tools(
                 "Security restrictions apply: dangerous commands are blocked, "
                 "execution time is limited, and working directory may be restricted."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute.",
-                    },
-                    "timeout": {
-                        "type": "number",
-                        "minimum": 1.0,
-                        "maximum": max_timeout,
-                        "default": 30.0,
-                        "description": f"Maximum execution time in seconds (1-{max_timeout}).",
-                    },
-                    "cwd": {
-                        "type": "string",
-                        "description": "Optional working directory (may be restricted by security policy).",
-                    },
-                },
-                "required": ["command"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="command", type="string", description="The shell command to execute.", required=True),
+                    ToolParameter(name="timeout", type="number", description=f"Maximum execution time in seconds (1-{max_timeout}).", default=30.0, required=False),
+                    ToolParameter(name="cwd", type="string", description="Optional working directory (may be restricted by security policy).", required=False),
+                ],
+            ),
             handler=_shell,
         ),
     ]

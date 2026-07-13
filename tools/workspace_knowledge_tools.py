@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..rag_module.knowledge_base import KnowledgeBase
-from ..tool import Tool
+from ..llm_types import Tool, ToolSchema, ToolParameter
 
 
 def create_workspace_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[Tool]:
@@ -90,20 +90,12 @@ def create_workspace_knowledge_tools(knowledge_base: KnowledgeBase | None = None
                 "with titles, paths, and excerpts. Use this to find relevant strategy "
                 "documents or technical references."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query text"},
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 10,
-                        "default": 5,
-                        "description": "Maximum number of results (1-10)",
-                    },
-                },
-                "required": ["query"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="query", type="string", description="Search query text", required=True),
+                    ToolParameter(name="limit", type="integer", description="Maximum number of results (1-10)", default=5, required=False),
+                ],
+            ),
             handler=_search_knowledge,
         ),
         Tool(
@@ -113,19 +105,14 @@ def create_workspace_knowledge_tools(knowledge_base: KnowledgeBase | None = None
                 "path. Use this after search_knowledge to get complete details from a "
                 "promising result."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": (
-                            "Repository-relative path from search results (e.g., "
-                            "'reversing/README.md' or 'strategy/re-segmented-decode-short-circuit.md')"
-                        ),
-                    },
-                },
-                "required": ["path"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="path", type="string", description=(
+                        "Repository-relative path from search results (e.g., "
+                        "'reversing/README.md' or 'strategy/re-segmented-decode-short-circuit.md')"
+                    ), required=True),
+                ],
+            ),
             handler=_read_knowledge_full,
         ),
     ]

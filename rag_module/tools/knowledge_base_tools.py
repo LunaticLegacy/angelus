@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, List, Optional
 
-from ...tool import Tool
+from ...llm_types import Tool, ToolSchema, ToolParameter
 from ...rag_module.knowledge import KnowledgeBase
 
 
@@ -92,26 +92,22 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
         Tool(
             name="search_knowledge",
             description="Search the local knowledge base by query text. Returns ranked results with titles, paths, and excerpts. Use this to find relevant strategy documents or technical references.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query text"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5, "description": "Maximum number of results (1-10)"},
-                },
-                "required": ["query"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="query", type="string", description="Search query text", required=True),
+                    ToolParameter(name="limit", type="integer", default=5, description="Maximum number of results (1-10)", required=False),
+                ],
+            ),
             handler=_search_knowledge,
         ),
         Tool(
             name="read_knowledge_full",
             description="Read the full content of a knowledge document by its repository-relative path. Use this after search_knowledge to get complete details from a promising result.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Repository-relative path from search results (e.g., 'reversing/README.md' or 'strategy/re-segmented-decode-short-circuit.md')"},
-                },
-                "required": ["path"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="path", type="string", description="Repository-relative path from search results (e.g., 'reversing/README.md' or 'strategy/re-segmented-decode-short-circuit.md')", required=True),
+                ],
+            ),
             handler=_read_knowledge_full,
         ),
     ]

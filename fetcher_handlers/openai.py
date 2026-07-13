@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence, List
 
-from ..llm_types import LLMOutput, LLMToolCall
+from ..llm_types import LLMOutput, LLMToolCall, Tool
 from ._tool_schemas import to_openai_tool_schemas
-from .base import LLMBackendHandler, ToolDefinition, ToolSchema
+from .base import LLMBackendHandler, ToolDefinition, ToolSchemaDict
 
 
-class OpenAICompatibleHandler(LLMBackendHandler):
+class OpenAIHandler(LLMBackendHandler):
     def prepare_tools(
         self,
         tools: Optional[Sequence[ToolDefinition]],
-    ) -> Optional[list[ToolSchema]]:
+    ) -> Optional[list[ToolSchemaDict]]:
         """Prepare tools for OpenAI-compatible chat-completion APIs."""
         return to_openai_tool_schemas(tools)
 
@@ -149,3 +149,27 @@ class OpenAICompatibleHandler(LLMBackendHandler):
                 yield "\n<tool_call>\n"
                 yield json.dumps(payload, ensure_ascii=False)
                 yield "\n</tool_call>\n"
+                
+    def create_completion(
+        self,
+        *,
+        messages,
+        temperature: float,
+        max_tokens: int,
+        stream: bool,
+        tools: List["Tool"] = None,
+    ):
+        kwargs = {
+            "model": self.backend.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": stream,
+            "timeout": self.backend.timeout,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        kwargs.update(self.backend.extra)
+        return self.client.chat.completions.create(**kwargs)
+

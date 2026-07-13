@@ -5,7 +5,7 @@ from typing import Iterable, Mapping, Optional, Sequence
 
 from ..llm_types import LLMOutput, LLMToolCall
 from ._tool_schemas import to_anthropic_tool_schemas
-from .base import JSONValue, LLMBackendConfig, LLMBackendHandler, ToolDefinition, ToolSchema
+from .base import JSONValue, LLMBackendConfig, LLMBackendHandler, ToolDefinition, ToolSchemaDict
 
 
 class AnthropicHandler(LLMBackendHandler):
@@ -55,7 +55,7 @@ class AnthropicHandler(LLMBackendHandler):
     def prepare_tools(
         self,
         tools: Optional[Sequence[ToolDefinition]],
-    ) -> Optional[list[ToolSchema]]:
+    ) -> Optional[list[ToolSchemaDict]]:
         """Prepare tools for Anthropic's `input_schema` tool format."""
         return to_anthropic_tool_schemas(tools)
 

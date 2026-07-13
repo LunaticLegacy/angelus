@@ -2,8 +2,7 @@
 
 from typing import Any, List, Optional
 
-from ..llm_types import LLMContextCompacted
-from ..tool import Tool
+from ..llm_types import LLMContextCompacted, Tool, ToolSchema, ToolParameter
 
 
 def _parse_context_ids(raw_ids: Any) -> Optional[List[int]]:
@@ -204,113 +203,73 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
 
         return "\n".join(lines)
 
-    ids_schema = {
-        "description": "Context id, comma-separated context ids, or list of context ids.",
-        "anyOf": [
-            {"type": "integer"},
-            {"type": "string"},
-            {"type": "array", "items": {"type": "integer"}},
-        ],
-    }
-
     tools = [
         Tool(
             name="context_list",
             description="List available conversation context entries with ids, roles, tags, and previews.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of entries to return. Use 0 for no limit.",
-                        "default": 20,
-                    },
-                    "include_compacted": {
-                        "type": "boolean",
-                        "description": "Whether to include compacted summary entries.",
-                        "default": True,
-                    },
-                    "include_uncompacted": {
-                        "type": "boolean",
-                        "description": "Whether to include raw uncompacted entries.",
-                        "default": True,
-                    },
-                },
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="limit", type="integer", description="Maximum number of entries to return. Use 0 for no limit.", default=20, required=False),
+                    ToolParameter(name="include_compacted", type="boolean", description="Whether to include compacted summary entries.", default=True, required=False),
+                    ToolParameter(name="include_uncompacted", type="boolean", description="Whether to include raw uncompacted entries.", default=True, required=False),
+                ],
+            ),
             handler=_context_list,
         ),
         Tool(
             name="context_read",
             description="Read selected conversation context entries by id, or all entries when ids is omitted.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "ids": ids_schema,
-                },
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="ids", type="string", description="Context id, comma-separated context ids, or list of context ids.", required=False),
+                ],
+            ),
             handler=_context_read,
         ),
         Tool(
             name="context_compress",
             description="Compress selected uncompacted context entries, or all uncompacted entries when ids is omitted.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "ids": ids_schema,
-                },
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="ids", type="string", description="Context id, comma-separated context ids, or list of context ids.", required=False),
+                ],
+            ),
             handler=_context_compress,
         ),
         Tool(
             name="context_status",
             description="Show the current active context ids, archived compacted ids, and recent resource index coverage.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of recent timeline entries to include.",
-                        "default": 20,
-                    },
-                },
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="limit", type="integer", description="Maximum number of recent timeline entries to include.", default=20, required=False),
+                ],
+            ),
             handler=_context_status,
         ),
         Tool(
             name="memory_create",
             description="Create a persistent memory summary from selected context ids.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "ids": ids_schema,
-                },
-                "required": ["ids"],
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="ids", type="string", description="Context id, comma-separated context ids, or list of context ids.", required=True),
+                ],
+            ),
             handler=_memory_create,
         ),
         Tool(
             name="memory_list",
             description="List persistent memories stored on this Agent.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[],
+            ),
             handler=_memory_list,
         ),
         Tool(
             name="memory_clear",
             description="Clear all persistent memories stored on this Agent.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
+            schemas=ToolSchema(
+                properties=[],
+            ),
             handler=_memory_clear,
         ),
     ]
@@ -321,13 +280,11 @@ def create_builtin_tools(agent: Any = None) -> List[Tool]:
             Tool(
                 name="context_select",
                 description="Select the active conversation context entries by id for later Agent rounds.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "ids": ids_schema,
-                    },
-                    "additionalProperties": False,
-                },
+                schemas=ToolSchema(
+                    properties=[
+                        ToolParameter(name="ids", type="string", description="Context id, comma-separated context ids, or list of context ids.", required=False),
+                    ],
+                ),
                 handler=_context_select,
             ),
         )

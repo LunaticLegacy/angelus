@@ -1,4 +1,4 @@
-from .base import JSONValue, JSONObject, ToolDefinition, ToolSchema, LLMBackendHandler
+from .base import JSONValue, JSONObject, ToolDefinition, ToolSchemaDict, LLMBackendHandler
 from .openai import OpenAIHandler
 from .litellm import LiteLLMHandler
 from .anthropic import AnthropicHandler
@@ -9,7 +9,7 @@ __all__ = [
     "JSONValue",
     "JSONObject",
     "ToolDefinition",
-    "ToolSchema",
+    "ToolSchemaDict",
     "LLMBackendHandler",
     "OpenAIHandler",
     "LiteLLMHandler",

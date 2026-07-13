@@ -12,7 +12,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Optional, List
 
-from ..tool import Tool
+from ..llm_types import Tool, ToolSchema, ToolParameter
 
 
 DEFAULT_FLAG_PATTERN = r"(?i)\b(?:flag|ctf|elfctf)\{[^}\s]{1,200}\}"
@@ -183,82 +183,69 @@ def create_ctf_tools(
         Tool(
             name="ctf_list_files",
             description="List files under the local CTF workspace.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "default": "."},
-                    "max_depth": {"type": "integer", "minimum": 0, "default": 4},
-                    "include_hidden": {"type": "boolean", "default": False},
-                },
-                "required": [],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="path", type="string", default=".", required=False),
+                    ToolParameter(name="max_depth", type="integer", default=4, required=False),
+                    ToolParameter(name="include_hidden", type="boolean", default=False, required=False),
+                ],
+            ),
             handler=_list_files,
         ),
         Tool(
             name="ctf_read_file",
             description="Read a text or binary file from the CTF workspace with truncation.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "encoding": {"type": "string", "default": "auto"},
-                    "max_bytes": {"type": "integer", "minimum": 1, "default": max_read_bytes},
-                },
-                "required": ["path"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="path", type="string", required=True),
+                    ToolParameter(name="encoding", type="string", default="auto", required=False),
+                    ToolParameter(name="max_bytes", type="integer", default=max_read_bytes, required=False),
+                ],
+            ),
             handler=_read_file,
         ),
         Tool(
             name="ctf_write_file",
             description="Write a UTF-8 working file inside the CTF workspace.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "content": {"type": "string"},
-                    "append": {"type": "boolean", "default": False},
-                },
-                "required": ["path", "content"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="path", type="string", required=True),
+                    ToolParameter(name="content", type="string", required=True),
+                    ToolParameter(name="append", type="boolean", default=False, required=False),
+                ],
+            ),
             handler=_write_file,
         ),
         Tool(
             name="ctf_file_fingerprint",
             description="Return size, hashes, magic bytes, and printable ratio for a workspace file.",
-            parameters={
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="path", type="string", required=True),
+                ],
+            ),
             handler=_fingerprint,
         ),
         Tool(
             name="ctf_decode_text",
             description="Decode common CTF encodings: base64, hex, url, rot13, binary, decimal_bytes.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string"},
-                    "operation": {
-                        "type": "string",
-                        "enum": ["base64", "hex", "url", "rot13", "binary", "decimal_bytes"],
-                    },
-                },
-                "required": ["data", "operation"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="data", type="string", required=True),
+                    ToolParameter(name="operation", type="string", enum=["base64", "hex", "url", "rot13", "binary", "decimal_bytes"], required=True),
+                ],
+            ),
             handler=_decode_text,
         ),
         Tool(
             name="ctf_extract_flags",
             description="Extract candidate flags from text using a default or custom regex.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string"},
-                    "pattern": {"type": "string", "description": "Optional regex override"},
-                },
-                "required": ["text"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="text", type="string", required=True),
+                    ToolParameter(name="pattern", type="string", description="Optional regex override", required=False),
+                ],
+            ),
             handler=_extract_flags,
         ),
     ]

@@ -13,8 +13,8 @@ if TYPE_CHECKING:  # pragma: no cover - imported only for type checking
 
 JSONValue: TypeAlias = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
 JSONObject: TypeAlias = dict[str, JSONValue]
-ToolSchema: TypeAlias = dict[str, JSONValue]
-ToolDefinition: TypeAlias = Tool | ToolSchema
+ToolSchemaDict: TypeAlias = dict[str, JSONValue]
+ToolDefinition: TypeAlias = Tool | ToolSchemaDict
 
 
 class _UsageLike(Protocol):
@@ -104,7 +104,7 @@ class LLMBackendHandler(ABC):
         temperature: float,
         max_tokens: int,
         stream: bool,
-        tools: Optional[list[ToolSchema]] = None,
+        tools: Optional[list[ToolSchemaDict]] = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -120,7 +120,7 @@ class LLMBackendHandler(ABC):
     def prepare_tools(
         self,
         tools: Optional[Sequence[ToolDefinition]],
-    ) -> Optional[list[ToolSchema]]:
+    ) -> Optional[list[ToolSchemaDict]]:
         """
         Convert registry tools or prebuilt schemas into this provider's shape.
 
@@ -137,7 +137,7 @@ class LLMBackendHandler(ABC):
     def build_chat_history(
         self,
         messages: list[dict[str, str]],
-        tools: Optional[list[ToolSchema]] = None,
+        tools: Optional[list[ToolSchemaDict]] = None,
     ):
         return messages
 

@@ -16,7 +16,7 @@ import os
 import subprocess
 from typing import Any, Dict, List, Optional
 
-from ..tool import Tool
+from ..llm_types import Tool, ToolSchema, ToolParameter
 
 
 # ---------------------------------------------------------------------------
@@ -167,49 +167,17 @@ def create_obscura_tools() -> List[Tool]:
                 "and stealth mode. "
                 "This beorser is the FASTEST headless browser for you to fetch a URL."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Target URL to fetch",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["html", "text", "links"],
-                        "default": "text",
-                        "description": "Output extraction mode",
-                    },
-                    "selector": {
-                        "type": "string",
-                        "default": "",
-                        "description": "CSS selector to extract specific elements only",
-                    },
-                    "wait": {
-                        "type": "integer",
-                        "default": 3,
-                        "minimum": 0,
-                        "description": "Seconds to wait after initial page load",
-                    },
-                    "wait_until": {
-                        "type": "string",
-                        "enum": ["load", "domcontentloaded", "networkidle"],
-                        "default": "load",
-                        "description": "Page event to wait for before extraction",
-                    },
-                    "stealth": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Enable anti-detection stealth mode",
-                    },
-                    "eval_js": {
-                        "type": "string",
-                        "default": "",
-                        "description": "JavaScript expression to evaluate on the page",
-                    },
-                },
-                "required": ["url"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="url", type="string", description="Target URL to fetch", required=True),
+                    ToolParameter(name="mode", type="string", enum=["html", "text", "links"], default="text", description="Output extraction mode", required=False),
+                    ToolParameter(name="selector", type="string", default="", description="CSS selector to extract specific elements only", required=False),
+                    ToolParameter(name="wait", type="integer", default=3, description="Seconds to wait after initial page load", required=False),
+                    ToolParameter(name="wait_until", type="string", enum=["load", "domcontentloaded", "networkidle"], default="load", description="Page event to wait for before extraction", required=False),
+                    ToolParameter(name="stealth", type="boolean", default=False, description="Enable anti-detection stealth mode", required=False),
+                    ToolParameter(name="eval_js", type="string", default="", description="JavaScript expression to evaluate on the page", required=False),
+                ],
+            ),
             handler=_obscura_fetch_cli,
         ),
         Tool(
@@ -218,34 +186,14 @@ def create_obscura_tools() -> List[Tool]:
                 "Batch scrape multiple URLs using headless browser workers. "
                 "Outputs JSON with timing and per-page results."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "urls": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of URLs to scrape",
-                    },
-                    "concurrency": {
-                        "type": "integer",
-                        "default": 5,
-                        "minimum": 1,
-                        "description": "Number of parallel workers",
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "default": 30,
-                        "minimum": 1,
-                        "description": "Per-page timeout in seconds",
-                    },
-                    "eval_js": {
-                        "type": "string",
-                        "default": "",
-                        "description": "JS expression to evaluate on each page",
-                    },
-                },
-                "required": ["urls"],
-            },
+            schemas=ToolSchema(
+                properties=[
+                    ToolParameter(name="urls", type="array", description="List of URLs to scrape", required=True),
+                    ToolParameter(name="concurrency", type="integer", default=5, description="Number of parallel workers", required=False),
+                    ToolParameter(name="timeout", type="integer", default=30, description="Per-page timeout in seconds", required=False),
+                    ToolParameter(name="eval_js", type="string", default="", description="JS expression to evaluate on each page", required=False),
+                ],
+            ),
             handler=_obscura_scrape_cli,
         ),
     ]

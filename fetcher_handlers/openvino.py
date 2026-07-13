@@ -7,13 +7,13 @@ from typing import Iterable, Optional, Protocol, Sequence, TypeAlias
 
 from ..llm_types import LLMBackendConfig, LLMOutput
 from ._tool_schemas import to_openai_tool_schemas
-from .base import JSONValue, JSONObject, ToolDefinition, ToolSchema, LLMBackendHandler
+from .base import JSONValue, JSONObject, ToolDefinition, ToolSchemaDict, LLMBackendHandler
 
 
 class _OpenVINOChatHistory(Protocol):
     def append(self, item: dict[str, JSONValue]) -> None: ...
 
-    def set_tools(self, tools: Sequence[ToolSchema]) -> None: ...
+    def set_tools(self, tools: Sequence[ToolSchemaDict]) -> None: ...
 
     def set_extra_context(self, extra_context: JSONValue) -> None: ...
 
@@ -65,7 +65,7 @@ class OpenVINOHandler(LLMBackendHandler):
     def prepare_tools(
         self,
         tools: Optional[Sequence[ToolDefinition]],
-    ) -> Optional[list[ToolSchema]]:
+    ) -> Optional[list[ToolSchemaDict]]:
         """Prepare tools for OpenVINO chat history/template consumption.
         当前的实现采用的仍然是 openai 的 tool schema，这个……可以改。
         """
@@ -74,7 +74,7 @@ class OpenVINOHandler(LLMBackendHandler):
     def build_chat_history(
         self,
         messages: list[dict[str, str]],
-        tools: Optional[list[ToolSchema]] = None,
+        tools: Optional[list[ToolSchemaDict]] = None,
     ) -> OpenVINOHistory:
         chat_history_cls = getattr(self.ov_genai, "ChatHistory", None)
         history: OpenVINOHistory = chat_history_cls() if chat_history_cls is not None else []
