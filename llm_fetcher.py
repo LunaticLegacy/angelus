@@ -269,7 +269,7 @@ class LLMFetcher:
         system_prompt: Optional[str] = None,
         temperature: float = 0.4,
         max_tokens: int = 4096,
-        context: Optional[ContextHandler] = None,
+        context_handler: Optional[ContextHandler] = None,
         backend_name: Optional[str] = None,
         tools: Optional[Sequence[ToolDefinition]] = None,
     ) -> LLMOutput:
@@ -295,9 +295,9 @@ class LLMFetcher:
             max_tokens:
                 Maximum number of tokens in the generated response.
                 Defaults to 4096.
-            context:
-                A ``ContextHandler`` holding conversation history.  When
-                provided, its ``build_messages`` method is used to
+            context_handler:
+                A ``ContextHandler`` instance holding conversation history. 
+                When provided, its ``build_messages`` method is used to
                 construct the full message list including history.  Pass
                 ``None`` for stateless single-turn calls.
             backend_name:
@@ -319,7 +319,7 @@ class LLMFetcher:
                 All candidate backends have been exhausted without
                 producing a successful response.
         """
-        messages = self._build_messages(msg, system_prompt, context)
+        messages = self._build_messages(msg, system_prompt, context_handler)
         backend_errors: List[str] = []
 
         for backend in self._resolve_backends(backend_name, self.fallback_order):
@@ -353,7 +353,7 @@ class LLMFetcher:
         temperature: float = 0.4,
         max_tokens: int = 4096,
         output_reasoning: bool = False,
-        context: Optional[ContextHandler] = None,
+        context_handler: Optional[ContextHandler] = None,
         backend_name: Optional[str] = None,
         tools: Optional[Sequence[ToolDefinition]] = None,
     ) -> Generator[str, None]:
@@ -378,10 +378,11 @@ class LLMFetcher:
                 When ``True``, include the model's reasoning content in the
                 yielded text stream.  The exact format depends on the
                 backend handler.
-            context:
-                A ``ContextHandler`` holding conversation history.  When
-                provided, its ``build_messages`` method is used to
-                construct the full message list including history.
+            context_handler:
+                A ``ContextHandler`` instance holding conversation history. 
+                When provided, its ``build_messages`` method is used to
+                construct the full message list including history.  Pass
+                ``None`` for stateless single-turn calls.
             backend_name:
                 Explicit backend to use.  ``None`` means the default.
             tools:
@@ -399,7 +400,7 @@ class LLMFetcher:
                 A backend fails after partial output has already been
                 yielded.  The stream cannot continue.
         """
-        messages = self._build_messages(msg, system_prompt, context)
+        messages = self._build_messages(msg, system_prompt, context_handler)
         backend_errors: List[str] = []
 
         for backend in self._resolve_backends(backend_name, self.fallback_order):
@@ -482,4 +483,5 @@ class LLMFetcher:
             messages.extend(context.build_messages())
         if msg:
             messages.append({"role": "user", "content": msg})
+        
         return messages

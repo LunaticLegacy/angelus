@@ -1,8 +1,10 @@
-from typing import List, Any, Optional
+from typing import List, Any, Optional, Dict
+from pathlib import Path
 
 from .llm_fetcher import LLMBackendConfig, LLMFetcher, LLMBackendHandler
 from .llm_types import Tool, LLMOutput
 from .tool_handler import ToolHandler
+from .tool_executor import ToolExecutor
 from .context_handlers import ContextHandlerLinear, ContextHandler
 
 
@@ -13,28 +15,30 @@ class Agent:
         *,
         system_prompt: str,
         max_concurrency: int = 8,
-        max_context_threshold: int = 65536
+        max_context_threshold: int = 262144,
+        context_path: Optional[str | Path] = ""
     ):
         self.llm_fetcher = llm_fetcher
         self.system_prompt = system_prompt
         self.max_concurrency = max_concurrency
         self.max_context_threshold = max_context_threshold
-        
-        self.tool_handler: ToolHandler = ToolHandler(
+        self.context_path = Path(context_path) if context_path else None
+
+        self.tool_handler: ToolHandler = ToolHandler()
+        self.tool_executor: ToolExecutor = ToolExecutor(
             max_concurrency=self.max_concurrency
         )
         self.context_handler: ContextHandler = ContextHandlerLinear(
+            compacting_llmfetcher_handler=self.llm_fetcher,
             max_context_threshold=self.max_context_threshold
         )
-
-        self.instance_elapsed_rounds: int = 0
 
     def add_tool(
         self,
         tool: Tool,
     ) -> bool:
         return self.tool_handler.add_tool(tool=tool)
-    
+
     def add_tools(
         self,
         tools: List[Tool],
@@ -42,12 +46,12 @@ class Agent:
         results: List[bool] = [False for _ in range(len(tools))]
         for idx, tool in enumerate(tools):
             results[idx] = self.add_tool(tool=tool)
-        
+
         out = True
         for r in results:
             out *= r
-        
-        return out
+
+        return bool(out)
 
     def _build_prompt(self) -> str:
         return self.system_prompt + "\n" \
@@ -60,26 +64,53 @@ class Agent:
         temperature: float = 0.4,
         max_tokens: int = 32768,
         verbose: bool = False
-    ):
+    ) -> LLMOutput:
+        """
+        Run agent call.
 
+        Args:
+            message: user input's message.
+            max_rounds: maximum rounds for this.
+            temperature: temperature for model.
+            max_tokens: how much tokens does output generate (per turn).
+            verbose: whether to verbose debug info.
+
+        Returns:
+            Return the last round of the LLM agent.
+        """
+        # build prompts
         prompt: str = self._build_prompt()
-        tool_results: Optional[List[Any]] = None
+
+        # prepare for tool result and whether have tool call. When there's no tool call, finish the job.
+        tool_results: Optional[Dict[str, str]] = None
         have_tool_call: bool = False
 
-        for round in range(1, 1 + max_rounds):
-           
-            # prepare for round
-            self.instance_elapsed_rounds += 1
+        # load context
+        load_result: bool = self.context_handler.load(self.context_path)
+        if verbose:
+            if not load_result:
+                print("Context not loaded, check for whether file not exist or else issues.")
+            else:
+                print("Context loaded: ", self.context_path)
 
+        self.context_handler.add_user_message(
+            message=message
+        )
+
+        result: LLMOutput
+
+        for round in range(1, 1 + max_rounds):
+
+            # prepare for round
             if verbose:
                 print("=" * 10 + "  ROUND " + str(round) + "=" * 10)
 
             # fetch
-            result: LLMOutput = self.llm_fetcher.fetch(
+            result = self.llm_fetcher.fetch(
                 msg=message,
                 system_prompt=prompt,
                 temperature=temperature,
-                context=self.context_handler,
+                context_handler=self.context_handler,
                 max_tokens=max_tokens,
                 tools=self.tool_handler.get_all_tools(),
             )
@@ -91,10 +122,12 @@ class Agent:
                 print("Tool calls nums: ", len(result.tool_calls))
 
             # parse for tool call. batch execution.
-
             if result.tool_calls:  # List[LLMToolCall]
-                results: List[Any] = self.tool_handler.execute_batch(
+                handlers, arguments = self.tool_handler.get_handlers_and_arguments(
                     list(result.tool_calls)
+                )
+                results: List[Any] = self.tool_executor.execute_batch(
+                    handlers, arguments
                 )
                 tool_results = dict([
                     (tc.call_id or f"call_{i}", str(r))
@@ -104,19 +137,28 @@ class Agent:
             else:
                 tool_results = None
                 have_tool_call = False
-            
+
             if verbose:
                 print("\n", tool_results, "\n")
 
             # and add this into
             self.context_handler.add_assistant_message(
                 message=result,
-                timeline=self.instance_elapsed_rounds,
                 tool_results=tool_results,
             )
 
             if not have_tool_call:
                 break
 
-            
+        save_result: bool = self.context_handler.save(self.context_path)
+        if verbose:
+            if not save_result:
+                print("Context saving failed.")
+            else:
+                print("Context saved at: ", self.context_path)
 
+        return result
+
+    def close(self) -> None:
+        """Release sub-interpreter resources held by the tool executor."""
+        self.tool_executor.close()

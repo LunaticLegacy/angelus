@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 from ..llm_types import LLMOutput
 
@@ -11,12 +12,22 @@ class ContextHandler(ABC):
     ``build_messages`` serialises the stored state into the message format
     expected by ``LLMFetcher.fetch`` / ``fetch_stream``.
     """
+    @abstractmethod
+    def add_user_message(
+        self,
+        message: str,
+    ) -> None:
+        """
+        Append an User input to conversation history.
+
+        Args:
+            message: The original user input.
+        """
 
     @abstractmethod
     def add_assistant_message(
         self,
         message: LLMOutput,
-        timeline: int,
         tool_results: Optional[Dict[str, str]] = None,
     ) -> None:
         """Record an LLM response into the conversation history.
@@ -44,3 +55,28 @@ class ContextHandler(ABC):
             A list of message dicts (``{"role": ..., "content": ...}``),
             with ``tool_calls`` embedded where applicable.
         """
+
+    @abstractmethod
+    def save(self, path: str | Path) -> bool:
+        """
+        Save context from disk.
+
+        Args:
+            path: The path of saving the file.
+
+        Returns:
+            A boolean for indicate whether successfully saved or not.
+        """
+
+    @abstractmethod
+    def load(self, path: str | Path) -> bool:
+        """
+        Load context from disk.
+
+        Args:
+            path: Path to file.
+
+        Returns:
+            A boolean for indicate whether successfully saved or not.
+        """
+
