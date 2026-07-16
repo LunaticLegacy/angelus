@@ -2,7 +2,7 @@ from typing import List, Any, Optional, Dict
 from pathlib import Path
 
 from .llm_fetcher import LLMBackendConfig, LLMFetcher, LLMBackendHandler
-from .llm_types import Tool, LLMOutput
+from .llm_types import Tool, LLMOutput, TokenUsage
 from .tool_handler import ToolHandler
 from .tool_executor import ToolExecutor
 from .context_handlers import ContextHandlerLinear, ContextHandler
@@ -14,7 +14,7 @@ class Agent:
         llm_fetcher: LLMFetcher,
         *,
         system_prompt: str,
-        max_concurrency: int = 8,
+        max_concurrency: int = 3,
         max_context_threshold: int = 262144,
         context_path: Optional[str | Path] = ""
     ):
@@ -32,6 +32,9 @@ class Agent:
             compacting_llmfetcher_handler=self.llm_fetcher,
             max_context_threshold=self.max_context_threshold
         )
+
+        # Cumulative token usage across all rounds of the most recent run.
+        self.usage: TokenUsage = TokenUsage()
 
     def add_tool(
         self,
@@ -97,6 +100,9 @@ class Agent:
             message=message
         )
 
+        # Reset cumulative usage for this run.
+        self.usage = TokenUsage()
+
         result: LLMOutput
 
         for round in range(1, 1 + max_rounds):
@@ -114,6 +120,15 @@ class Agent:
                 max_tokens=max_tokens,
                 tools=self.tool_handler.get_all_tools(),
             )
+
+            # Accumulate token usage across rounds.
+            if result.usage:
+                u = result.usage
+                self.usage.input_tokens += u.input_tokens
+                self.usage.output_tokens += u.output_tokens
+                self.usage.total_tokens += u.total_tokens
+                self.usage.cached_tokens += u.cached_tokens
+                self.usage.reasoning_tokens += u.reasoning_tokens
 
             if verbose:
                 print(str(result))

@@ -268,7 +268,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Requires Python 3.10+.
+Requires Python 3.14+.
 
 ---
 

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmfetcher"
+version = "0.4.0"
+description = "Multi-agent LLM orchestration framework"
+requires-python = ">=3.14"
+authors = [
+    {name = "LunaticLegacy"},
+]
+dependencies = [
+    "openai>=1.0.0",
+    "anthropic>=0.100.0",
+    "litellm>=1.0.0",
+    "markdown-it-py",
+]
+
+[project.scripts]
+llmfetcher = "llmfetcher.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["llmfetcher*"]

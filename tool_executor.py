@@ -24,7 +24,10 @@ class ToolExecutor:
     actual callable and arguments, and doesn't care where they came from.
     """
 
-    def __init__(self, max_concurrency: int = 8) -> None:
+    def __init__(
+            self, 
+            max_concurrency: int = 3
+        ) -> None:
         self._pool: List[Interpreter] = [
             create_interpreter() for _ in range(max_concurrency)
         ]

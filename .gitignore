@@ -47,3 +47,6 @@ docs/_build/
 # LLM
 .qwen
 .codex
+
+# local llm workspace for testing
+worksapce/
