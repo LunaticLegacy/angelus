@@ -22,12 +22,36 @@ Additional features:
   routing nodes (``add_routing_node``) can be used as lightweight decision
   points without an Agent instance.
 
+Dynamic mutation at runtime
+---------------------------
+The graph supports **runtime mutation** during :meth:`ExecutionGraph.run`:
+
+- :meth:`dynamic_add_agent` / :meth:`dynamic_remove_agent`
+- :meth:`dynamic_add_connection`
+
+These are thread-safe and designed to be called from within an agent's tool
+handlers (e.g. a coordinator LLM dynamically spawning workers).
+
+A coordinator agent can build a sub-graph on the fly::
+
+    # Inside a coordinator's tool handler:
+    graph.dynamic_add_agent("worker_1", worker_agent)
+    graph.dynamic_add_connection("coordinator", "worker_1")
+
+When the coordinator finishes, the scheduler automatically activates its
+successors — including agents added dynamically during its execution.
+
+.. important::
+
+   Connections must be added **before** the source agent completes.
+   Adding a connection *from an already-finished agent* has no effect
+   because the source's successors have already been activated.
+
 Agents whose dependencies are satisfied are scheduled concurrently through a
 thread pool. Thread-based execution is appropriate for agents whose primary
 work consists of network or other I/O-bound operations.
 
-The graph must be acyclic. Mutating the graph while :meth:`ExecutionGraph.run`
-is executing is unsupported.
+The graph must be acyclic.
 """
 
 from __future__ import annotations
@@ -39,6 +63,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     wait,
 )
+import threading
 from typing import Any, Callable, Mapping
 
 from ..agent import Agent
@@ -106,6 +131,9 @@ class ExecutionGraph:
 
         # names of non-LLM routing-only nodes (no Agent instance)
         self._routing_nodes: set[str] = set()
+
+        # thread-safety lock for dynamic mutation during run()
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Graph construction  —  agents
@@ -389,6 +417,105 @@ class ExecutionGraph:
         return True
 
     # ------------------------------------------------------------------
+    # Dynamic mutation  —  thread-safe, usable during run()
+    # ------------------------------------------------------------------
+
+    def dynamic_add_agent(
+        self,
+        agent_name: str,
+        agent_instance: Agent,
+    ) -> str:
+        """Dynamically register an agent during execution.
+
+        Callable from within an agent's tool handler to create a new
+        worker agent at runtime while :meth:`run` is active.
+
+        Returns a status message for the calling LLM.
+        """
+        with self._lock:
+            if agent_name in self.agent_dict:
+                return f"Error: agent '{agent_name}' already exists"
+
+            self.agent_dict[agent_name] = agent_instance
+            self._successors[agent_name] = set()
+            self._predecessors[agent_name] = set()
+            return f"Agent '{agent_name}' created"
+
+    def dynamic_remove_agent(self, agent_name: str) -> str:
+        """Dynamically remove an agent and its edges during execution.
+
+        Returns a status message for the calling LLM.
+        """
+        with self._lock:
+            if agent_name not in self.agent_dict:
+                return f"Error: agent '{agent_name}' does not exist"
+
+            for predecessor in self._predecessors[agent_name]:
+                self._successors[predecessor].discard(agent_name)
+            for successor in self._successors[agent_name]:
+                self._predecessors[successor].discard(agent_name)
+
+            del self.agent_dict[agent_name]
+            del self._successors[agent_name]
+            del self._predecessors[agent_name]
+            self._mappers.pop(agent_name, None)
+            self._routers.pop(agent_name, None)
+            self._routing_nodes.discard(agent_name)
+
+            return f"Agent '{agent_name}' removed"
+
+    def dynamic_add_connection(self, source: str, target: str) -> str:
+        """Dynamically add a dependency edge during execution.
+
+        The edge is only effective if *source* has not yet completed
+        (i.e. the source agent is still running when this method is called).
+        After the source finishes, the scheduler automatically activates all
+        successors — including those added dynamically.
+
+        Returns a status message for the calling LLM.
+        """
+        with self._lock:
+            if source not in self.agent_dict:
+                return f"Error: source agent '{source}' does not exist"
+            if target not in self.agent_dict:
+                return f"Error: target agent '{target}' does not exist"
+            if source == target:
+                return "Error: an agent cannot connect to itself"
+            if target in self._successors[source]:
+                return f"Connection already exists: {source} -> {target}"
+
+            self._successors[source].add(target)
+            self._predecessors[target].add(source)
+            return f"Connected: {source} -> {target}"
+
+    def dynamic_get_info(self) -> str:
+        """Return the current graph state as a structured string.
+
+        Useful for LLM agents that need to inspect the graph topology
+        before deciding which agents to create or connect.
+        """
+        with self._lock:
+            lines = ["Current agents:"]
+            for name in sorted(self.agent_dict):
+                agent = self.agent_dict[name]
+                if agent is None:
+                    lines.append(f"  {name} (routing node)")
+                else:
+                    lines.append(f"  {name} (Agent)")
+            lines.append("")
+            lines.append("Current connections:")
+            for source in sorted(self._successors):
+                targets = sorted(self._successors[source])
+                if not targets:
+                    lines.append(f"  {source} -> (none)")
+                else:
+                    for target in targets:
+                        lines.append(f"  {source} -> {target}")
+            lines.append("")
+            lines.append(f"Concurrency limit: {self.max_concurrency_agents}")
+            return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
@@ -429,19 +556,20 @@ class ExecutionGraph:
         if not self.agent_dict:
             return {}
 
-        remaining_dependencies = {
-            name: len(self._predecessors[name])
-            for name in self.agent_dict
-        }
+        with self._lock:
+            remaining_dependencies = {
+                name: len(self._predecessors[name])
+                for name in self.agent_dict
+            }
 
-        ready = deque(
-            name
-            for name, dependency_count in remaining_dependencies.items()
-            if dependency_count == 0
-        )
+            ready = deque(
+                name
+                for name, dependency_count in remaining_dependencies.items()
+                if dependency_count == 0
+            )
 
-        if not ready:
-            raise ValueError("Execution graph contains a cycle")
+            if not ready:
+                raise ValueError("Execution graph contains a cycle")
 
         outputs: dict[str, Any] = {}
         running: dict[Future[Any], str] = {}
@@ -460,32 +588,35 @@ class ExecutionGraph:
 
                     # Non-LLM routing node: evaluate synchronously
                     if agent_name in self._routing_nodes:
-                        input_message = self._build_input(
-                            agent_name=agent_name,
-                            initial_message=message,
-                            outputs=outputs,
-                        )
+                        with self._lock:
+                            input_message = self._build_input(
+                                agent_name=agent_name,
+                                initial_message=message,
+                                outputs=outputs,
+                            )
                         # Store input as pseudo-output so downstream
                         # _build_input can reference it.
                         outputs[agent_name] = input_message
                         selected = self._routers[agent_name](input_message)
                         # Track intentionally skipped successors
                         selected_set = set(selected)
-                        for s in self._successors[agent_name]:
-                            if s not in selected_set:
-                                routed_out.add(s)
-                        self._activate(
-                            agent_name, selected,
-                            remaining_dependencies, ready,
-                        )
+                        with self._lock:
+                            for s in self._successors[agent_name]:
+                                if s not in selected_set:
+                                    routed_out.add(s)
+                            self._activate(
+                                agent_name, selected,
+                                remaining_dependencies, ready,
+                            )
                         # routing nodes leave no Agent-level output
                         continue
 
-                    input_message = self._build_input(
-                        agent_name=agent_name,
-                        initial_message=message,
-                        outputs=outputs,
-                    )
+                    with self._lock:
+                        input_message = self._build_input(
+                            agent_name=agent_name,
+                            initial_message=message,
+                            outputs=outputs,
+                        )
 
                     future = executor.submit(
                         self.agent_dict[agent_name].run,
@@ -516,32 +647,34 @@ class ExecutionGraph:
                         ) from exc
 
                     # Post-completion router or activate all successors
-                    if agent_name in self._routers:
-                        output_text = self._output_to_text(
-                            outputs[agent_name]
-                        )
-                        selected = self._routers[agent_name](output_text)
-                        selected_set = set(selected)
-                        for s in self._successors[agent_name]:
-                            if s not in selected_set:
-                                routed_out.add(s)
-                        self._activate(
-                            agent_name, selected,
-                            remaining_dependencies, ready,
-                        )
-                    else:
-                        self._activate(
-                            agent_name, self._successors[agent_name],
-                            remaining_dependencies, ready,
-                        )
+                    with self._lock:
+                        if agent_name in self._routers:
+                            output_text = self._output_to_text(
+                                outputs[agent_name]
+                            )
+                            selected = self._routers[agent_name](output_text)
+                            selected_set = set(selected)
+                            for s in self._successors[agent_name]:
+                                if s not in selected_set:
+                                    routed_out.add(s)
+                            self._activate(
+                                agent_name, selected,
+                                remaining_dependencies, ready,
+                            )
+                        else:
+                            self._activate(
+                                agent_name, self._successors[agent_name],
+                                remaining_dependencies, ready,
+                            )
 
         # --- final validation: detect deadlocks -------------------------
-        never_ran = [
-            n for n in self.agent_dict
-            if n not in outputs
-            and n not in self._routing_nodes
-            and n not in routed_out
-        ]
+        with self._lock:
+            never_ran = [
+                n for n in self.agent_dict
+                if n not in outputs
+                and n not in self._routing_nodes
+                and n not in routed_out
+            ]
         if never_ran:
             unresolved = {
                 n: remaining_dependencies.get(n, -1)
@@ -567,10 +700,22 @@ class ExecutionGraph:
         remaining_dependencies: dict[str, int],
         ready: deque[str],
     ) -> None:
-        """Decrement dependency counts and enqueue ready successors."""
+        """Decrement dependency counts and enqueue ready successors.
+
+        Handles both statically-registered and dynamically-added agents.
+        For dynamically-added agents (not yet in *remaining_dependencies*),
+        computes the full dependency count from :attr:`_predecessors`.
+        """
         for successor in successors:
             if successor in remaining_dependencies:
                 remaining_dependencies[successor] -= 1
+                if remaining_dependencies[successor] == 0:
+                    ready.append(successor)
+            elif successor in self.agent_dict:
+                # Dynamically-added agent — compute full dep count from
+                # current predecessors (one of which just completed).
+                deps = len(self._predecessors[successor])
+                remaining_dependencies[successor] = deps - 1
                 if remaining_dependencies[successor] == 0:
                     ready.append(successor)
 

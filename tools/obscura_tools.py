@@ -28,7 +28,7 @@ def _get_obscura_bin() -> str:
     return os.environ.get("OBSCURA_BIN", "obscura")
 
 
-async def _obscura_fetch_cli(**kwargs: Any) -> Dict[str, Any]:
+def _obscura_fetch_cli(**kwargs: Any) -> Dict[str, Any]:
     """Execute obscura fetch via CLI.
 
     Args:
@@ -85,7 +85,7 @@ async def _obscura_fetch_cli(**kwargs: Any) -> Dict[str, Any]:
     }
 
 
-async def _obscura_scrape_cli(**kwargs: Any) -> Dict[str, Any]:
+def _obscura_scrape_cli(**kwargs: Any) -> Dict[str, Any]:
     """Batch scraping via CLI.
     
     """

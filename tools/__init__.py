@@ -14,10 +14,12 @@ from importlib import import_module
 from typing import Any
 
 from .shell_tools import create_shell_tools
+from .spawn_tools import create_swarm_tools
 
 __all__ = [
     "create_shell_tools",
     "create_workspace_knowledge_tools",
     "create_obscura_tools",
+    "create_swarm_tools",
 ]
 

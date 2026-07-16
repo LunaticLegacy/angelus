@@ -104,6 +104,28 @@ class AgentSwarm:
         return self._graph.remove_router(agent_name)
 
     # ------------------------------------------------------------------
+    # Dynamic mutation  —  thread-safe, usable during run()
+    # ------------------------------------------------------------------
+
+    def dynamic_add_agent(
+        self, agent_name: str, agent_instance: Agent,
+    ) -> str:
+        """Dynamically register an ``Agent`` instance during execution."""
+        return self._graph.dynamic_add_agent(agent_name, agent_instance)
+
+    def dynamic_remove_agent(self, agent_name: str) -> str:
+        """Dynamically remove an agent and its edges during execution."""
+        return self._graph.dynamic_remove_agent(agent_name)
+
+    def dynamic_add_connection(self, source: str, target: str) -> str:
+        """Dynamically add a dependency edge during execution."""
+        return self._graph.dynamic_add_connection(source, target)
+
+    def dynamic_get_info(self) -> str:
+        """Return current graph state as a structured string."""
+        return self._graph.dynamic_get_info()
+
+    # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
