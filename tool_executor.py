@@ -1,36 +1,35 @@
 from __future__ import annotations
 
-import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.interpreters import (
-    Interpreter,
-    NotShareableError,
-    create as create_interpreter,
-)
 from typing import Any, Callable, Dict, List
 
 from .llm_types import LLMToolCall, Tool
 
 
 class ToolExecutor:
-    """Execute tool handlers, optionally in parallel across sub-interpreters.
+    """Execute tool handlers in parallel using a thread pool.
+
+    All tools in this system are I/O-bound (HTTP requests, subprocess,
+    file I/O) — the GIL is released during the actual I/O wait, so
+    ``ThreadPoolExecutor`` provides effective parallelism without the
+    complexity of sub-interpreters.
+
+    Benefits over sub-interpreters:
+    - ``KeyboardInterrupt`` propagates correctly (Ctrl+C works).
+    - Closures and lambdas work without fallback.
+    - No pickle/serialisation boundary.
+    - Full Python version compatibility.
 
     Single tools run in the calling thread.  Batches are dispatched across
-    a pool of sub-interpreters (each with its own GIL) for true CPU-level
-    parallelism.
-
-    The executor is decoupled from tool *registration* — it receives the
-    actual callable and arguments, and doesn't care where they came from.
+    the thread pool.
     """
 
     def __init__(
-            self, 
-            max_concurrency: int = 3
-        ) -> None:
-        self._pool: List[Interpreter] = [
-            create_interpreter() for _ in range(max_concurrency)
-        ]
+        self,
+        max_concurrency: int = 3,
+    ) -> None:
+        self._max_concurrency = max(max_concurrency, 1)
 
     # ------------------------------------------------------------------
     # Single execution
@@ -41,18 +40,7 @@ class ToolExecutor:
         handler: Callable[..., Any],
         arguments: Dict[str, Any],
     ) -> Any:
-        """Run a single tool handler in the calling thread.
-
-        Args:
-            handler: The tool's callable handler.
-            arguments: Keyword arguments forwarded to *handler*.
-
-        Returns:
-            Whatever the handler returns.
-
-        Raises:
-            Any exception raised by *handler* is propagated.
-        """
+        """Run a single tool handler in the calling thread."""
         return handler(**arguments)
 
     # ------------------------------------------------------------------
@@ -64,80 +52,57 @@ class ToolExecutor:
         handlers: List[Callable[..., Any] | None],
         arguments_list: List[Dict[str, Any]],
     ) -> List[Any]:
-        """Execute tool handlers in parallel across the sub-interpreter pool.
+        """Execute tool handlers in parallel using a thread pool.
 
-        Each handler runs in an isolated sub-interpreter with its own GIL.
         Results are returned in the same order as the input lists.
-
-        Handlers that are ``None`` are skipped — the result is set to
-        ``None`` (caller should handle resolution beforehand).
-
-        .. important::
-
-           The handler must be defined in an **importable module**
-           (not ``__main__``, not a closure) so the sub-interpreter can
-           resolve it.  Built-in functions and those from
-           standard-library / installed packages work without extra setup.
-           When a handler can't cross the interpreter boundary (e.g. a
-           lambda), the executor falls back to running it in the main
-           thread.
+        Handlers that are ``None`` are skipped (result remains ``None``).
+        Exceptions raised by a handler are caught and stored in the
+        results list as ``Exception`` instances.
 
         Args:
             handlers:
                 List of callables (or ``None``), one per batch item.
             arguments_list:
-                List of argument dicts, one per batch item.  Must be the
-                same length as *handlers*.
+                List of argument dicts, one per batch item.  Must be
+                the same length as *handlers*.
 
         Returns:
-            Results (or exception instances) in the same order as inputs.
+            Results in the same order as inputs.
         """
         n = len(handlers)
         if n == 0:
             return []
 
         results: List[Any] = [None] * n
-        free: queue.Queue[Interpreter] = queue.Queue()
-        for interp in self._pool:
-            free.put(interp)
-
         lock = threading.Lock()
 
-        def dispatch(idx: int, fn: Callable[..., Any], kwargs: Dict[str, Any]) -> None:
-            interp = free.get()
-            released = False
-            try:
-                result = interp.call(fn, **kwargs)
-                with lock:
-                    results[idx] = result
-            except NotShareableError:
-                # Can't cross interpreter boundary — fall back to main thread.
-                free.put(interp)
-                released = True
-                try:
-                    result = fn(**kwargs)
-                    with lock:
-                        results[idx] = result
-                except Exception as exc:
-                    with lock:
-                        results[idx] = exc
-            except Exception as exc:
-                with lock:
-                    results[idx] = exc
-            finally:
-                if not released:
-                    free.put(interp)
-
-        with ThreadPoolExecutor(max_workers=len(self._pool)) as executor:
+        with ThreadPoolExecutor(
+            max_workers=self._max_concurrency,
+        ) as executor:
             futures = []
+
             for idx in range(n):
                 fn = handlers[idx]
                 if fn is None:
-                    results[idx] = None
                     continue
+
+                def submit_one(
+                    i: int,
+                    handler: Callable[..., Any],
+                    kwargs: Dict[str, Any],
+                ) -> None:
+                    try:
+                        result = handler(**kwargs)
+                        with lock:
+                            results[i] = result
+                    except Exception as exc:
+                        with lock:
+                            results[i] = exc
+
                 futures.append(
-                    executor.submit(dispatch, idx, fn, arguments_list[idx])
+                    executor.submit(submit_one, idx, fn, arguments_list[idx])
                 )
+
             for _ in as_completed(futures):
                 pass
 
@@ -148,7 +113,5 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Shut down all sub-interpreters in the pool."""
-        for interp in self._pool:
-            interp.close()
-        self._pool.clear()
+        """Release resources.  (No-op — threads clean up on exit.)"""
+        pass

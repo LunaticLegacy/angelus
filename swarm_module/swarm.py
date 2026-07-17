@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping
 
 from ..agent import Agent
+from ..events import ExecutionHook
 from .execution_graph import (
     ExecutionGraph,
     MapperFn,
@@ -124,6 +125,17 @@ class AgentSwarm:
     def dynamic_get_info(self) -> str:
         """Return current graph state as a structured string."""
         return self._graph.dynamic_get_info()
+
+    # ------------------------------------------------------------------
+    # Hooks
+    # ------------------------------------------------------------------
+
+    def add_hook(self, hook: ExecutionHook) -> None:
+        """Register a hook that receives every :class:`ExecutionEvent`.
+
+        The hook is forwarded to the underlying :class:`ExecutionGraph`.
+        """
+        self._graph.add_hook(hook)
 
     # ------------------------------------------------------------------
     # Execution

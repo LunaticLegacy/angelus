@@ -67,6 +67,7 @@ import threading
 from typing import Any, Callable, Mapping
 
 from ..agent import Agent
+from ..events import ExecutionEvent, ExecutionHook
 
 
 MapperFn = Callable[[Mapping[str, Any]], str]
@@ -135,6 +136,41 @@ class ExecutionGraph:
         # thread-safety lock for dynamic mutation during run()
         self._lock = threading.Lock()
 
+        # hook system
+        self.hooks: list[ExecutionHook] = []
+        self._shutdown_requested = False
+
+    # -- hook registration -------------------------------------------------
+
+    def add_hook(self, hook: ExecutionHook) -> None:
+        """Register a hook that receives every :class:`ExecutionEvent`."""
+        self.hooks.append(hook)
+
+    def _emit(
+        self,
+        source: str,
+        agent_name: str,
+        event_type: str,
+        message: str = "",
+        data: Any = None,
+    ) -> None:
+        """Fire an event to all registered hooks.
+
+        A single failed hook does not crash the execution.
+        """
+        event = ExecutionEvent(
+            source=source,
+            agent_name=agent_name,
+            event_type=event_type,
+            message=message,
+            data=data,
+        )
+        for hook in self.hooks:
+            try:
+                hook(event)
+            except Exception:
+                pass  # hook must not crash the swarm
+
     # ------------------------------------------------------------------
     # Graph construction  —  agents
     # ------------------------------------------------------------------
@@ -162,6 +198,8 @@ class ExecutionGraph:
         self.agent_dict[agent_name] = agent_instance
         self._successors[agent_name] = set()
         self._predecessors[agent_name] = set()
+        # Tag the agent so its own hook events carry its graph name.
+        agent_instance._agent_name_in_graph = agent_name
         return True
 
     def add_routing_node(
@@ -425,13 +463,6 @@ class ExecutionGraph:
         agent_name: str,
         agent_instance: Agent,
     ) -> str:
-        """Dynamically register an agent during execution.
-
-        Callable from within an agent's tool handler to create a new
-        worker agent at runtime while :meth:`run` is active.
-
-        Returns a status message for the calling LLM.
-        """
         with self._lock:
             if agent_name in self.agent_dict:
                 return f"Error: agent '{agent_name}' already exists"
@@ -439,7 +470,10 @@ class ExecutionGraph:
             self.agent_dict[agent_name] = agent_instance
             self._successors[agent_name] = set()
             self._predecessors[agent_name] = set()
-            return f"Agent '{agent_name}' created"
+
+        self._emit("graph", agent_name, "dynamic:add_agent",
+                    f"Agent '{agent_name}' created")
+        return f"Agent '{agent_name}' created"
 
     def dynamic_remove_agent(self, agent_name: str) -> str:
         """Dynamically remove an agent and its edges during execution.
@@ -486,7 +520,13 @@ class ExecutionGraph:
 
             self._successors[source].add(target)
             self._predecessors[target].add(source)
-            return f"Connected: {source} -> {target}"
+
+        self._emit(
+            "graph", source, "dynamic:connect",
+            f"{source} -> {target}",
+            data={"source": source, "target": target},
+        )
+        return f"Connected: {source} -> {target}"
 
     def dynamic_get_info(self) -> str:
         """Return the current graph state as a structured string.
@@ -556,6 +596,10 @@ class ExecutionGraph:
         if not self.agent_dict:
             return {}
 
+        self._shutdown_requested = False
+
+        self._emit("graph", "", "graph:start", message)
+
         with self._lock:
             remaining_dependencies = {
                 name: len(self._predecessors[name])
@@ -573,16 +617,20 @@ class ExecutionGraph:
 
         outputs: dict[str, Any] = {}
         running: dict[Future[Any], str] = {}
-        routed_out: set[str] = set()  # successors intentionally skipped by routers
+        routed_out: set[str] = set()
 
         with ThreadPoolExecutor(
             max_workers=self.max_concurrency_agents
         ) as executor:
-            while ready or running:
+            while (
+                (ready or running)
+                and not self._shutdown_requested
+            ):
                 # --- submit ready agents up to the concurrency limit ----
                 while (
                     ready
                     and len(running) < self.max_concurrency_agents
+                    and not self._shutdown_requested
                 ):
                     agent_name = ready.popleft()
 
@@ -594,11 +642,8 @@ class ExecutionGraph:
                                 initial_message=message,
                                 outputs=outputs,
                             )
-                        # Store input as pseudo-output so downstream
-                        # _build_input can reference it.
                         outputs[agent_name] = input_message
                         selected = self._routers[agent_name](input_message)
-                        # Track intentionally skipped successors
                         selected_set = set(selected)
                         with self._lock:
                             for s in self._successors[agent_name]:
@@ -608,7 +653,6 @@ class ExecutionGraph:
                                 agent_name, selected,
                                 remaining_dependencies, ready,
                             )
-                        # routing nodes leave no Agent-level output
                         continue
 
                     with self._lock:
@@ -618,30 +662,49 @@ class ExecutionGraph:
                             outputs=outputs,
                         )
 
+                    self._emit(
+                        "graph", agent_name, "agent:submitted",
+                        message,
+                    )
+
                     future = executor.submit(
                         self.agent_dict[agent_name].run,
                         input_message,
                     )
                     running[future] = agent_name
 
-                if not running:
+                if not running or self._shutdown_requested:
                     break
 
-                # --- wait for at least one agent to finish --------------
+                # --- poll with timeout for Ctrl+C responsiveness -------
                 completed_futures, _ = wait(
                     running,
+                    timeout=0.5,
                     return_when=FIRST_COMPLETED,
                 )
+
+                if not completed_futures:
+                    # timeout — continue loop (allows shutdown check)
+                    continue
 
                 for future in completed_futures:
                     agent_name = running.pop(future)
 
                     try:
                         outputs[agent_name] = future.result()
+                        self._emit(
+                            "graph", agent_name, "agent:completed",
+                            f"Agent completed",
+                            data={"output_len": len(str(outputs[agent_name]))},
+                        )
                     except Exception as exc:
+                        self._emit(
+                            "graph", agent_name, "agent:failed",
+                            str(exc),
+                            data={"error": exc},
+                        )
                         for pending_future in running:
                             pending_future.cancel()
-
                         raise RuntimeError(
                             f"Agent {agent_name!r} failed"
                         ) from exc
@@ -686,6 +749,12 @@ class ExecutionGraph:
                     "Execution graph contains a cycle or unresolved "
                     f"dependencies: {unresolved}"
                 )
+
+        self._emit(
+            "graph", "", "graph:complete",
+            f"Swarm finished, {len(outputs)} agent(s) executed",
+            data={"agent_count": len(outputs), "agents": list(outputs.keys())},
+        )
 
         return outputs
 
