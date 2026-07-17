@@ -122,6 +122,18 @@ class AgentSwarm:
         """Dynamically add a dependency edge during execution."""
         return self._graph.dynamic_add_connection(source, target)
 
+    def dynamic_remove_connection(self, source: str, target: str) -> str:
+        """Dynamically remove a dependency edge during execution."""
+        return self._graph.dynamic_remove_connection(source, target)
+
+    def dynamic_set_mapper(self, agent_name: str, mode: str) -> str:
+        """Dynamically set a declarative predecessor-output mapper."""
+        return self._graph.dynamic_set_mapper(agent_name, mode)
+
+    def dynamic_set_router(self, agent_name: str, targets: list[str]) -> str:
+        """Dynamically set a fixed successor router."""
+        return self._graph.dynamic_set_router(agent_name, targets)
+
     def dynamic_get_info(self) -> str:
         """Return current graph state as a structured string."""
         return self._graph.dynamic_get_info()

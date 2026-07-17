@@ -470,6 +470,7 @@ class ExecutionGraph:
             self.agent_dict[agent_name] = agent_instance
             self._successors[agent_name] = set()
             self._predecessors[agent_name] = set()
+            agent_instance._agent_name_in_graph = agent_name
 
         self._emit("graph", agent_name, "dynamic:add_agent",
                     f"Agent '{agent_name}' created")
@@ -527,6 +528,71 @@ class ExecutionGraph:
             data={"source": source, "target": target},
         )
         return f"Connected: {source} -> {target}"
+
+    def dynamic_remove_connection(self, source: str, target: str) -> str:
+        """Remove one dependency edge while the graph is editable.
+
+        Args:
+            source: Existing predecessor agent name.
+            target: Existing successor agent name.
+
+        Returns:
+            Status text for the coordinator Agent.
+        """
+        with self._lock:
+            if source not in self.agent_dict or target not in self.agent_dict:
+                return f"Error: unknown agent in connection {source} -> {target}"
+            if target not in self._successors[source]:
+                return f"Connection does not exist: {source} -> {target}"
+            self._successors[source].remove(target)
+            self._predecessors[target].remove(source)
+        self._emit("graph", source, "dynamic:disconnect", f"{source} -/-> {target}", data={"source": source, "target": target})
+        return f"Disconnected: {source} -/-> {target}"
+
+    def dynamic_set_mapper(self, agent_name: str, mode: str) -> str:
+        """Set a safe declarative input aggregator on an Agent node.
+
+        Args:
+            agent_name: Target Agent receiving predecessor outputs.
+            mode: ``labelled``, ``concat``, or ``json``.
+
+        Returns:
+            Status text for the coordinator Agent.
+        """
+        import json
+        modes = {
+            "labelled": lambda outputs: "\n\n".join(f"[{name}]\n{value}" for name, value in sorted(outputs.items())),
+            "concat": lambda outputs: "\n\n".join(str(value) for _, value in sorted(outputs.items())),
+            "json": lambda outputs: json.dumps(outputs, ensure_ascii=False, indent=2),
+        }
+        if mode not in modes:
+            return f"Error: mapper mode must be one of {', '.join(sorted(modes))}"
+        with self._lock:
+            if agent_name not in self.agent_dict:
+                return f"Error: agent '{agent_name}' does not exist"
+            self._mappers[agent_name] = modes[mode]
+        self._emit("graph", agent_name, "dynamic:set_mapper", f"Mapper '{mode}' set on {agent_name}", data={"agent": agent_name, "mode": mode})
+        return f"Mapper '{mode}' set on {agent_name}"
+
+    def dynamic_set_router(self, agent_name: str, targets: list[str]) -> str:
+        """Set a declarative router selecting a fixed successor subset.
+
+        Args:
+            agent_name: Source Agent whose completion will route execution.
+            targets: Successor names to activate after source completion.
+
+        Returns:
+            Status text for the coordinator Agent.
+        """
+        with self._lock:
+            if agent_name not in self.agent_dict:
+                return f"Error: agent '{agent_name}' does not exist"
+            unknown = [target for target in targets if target not in self.agent_dict]
+            if unknown:
+                return f"Error: unknown router targets: {', '.join(unknown)}"
+            self._routers[agent_name] = lambda _output: list(targets)
+        self._emit("graph", agent_name, "dynamic:set_router", f"Router set on {agent_name}", data={"agent": agent_name, "targets": targets})
+        return f"Router set on {agent_name}: {', '.join(targets) or '(none)'}"
 
     def dynamic_get_info(self) -> str:
         """Return the current graph state as a structured string.

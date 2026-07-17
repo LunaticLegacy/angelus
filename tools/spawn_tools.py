@@ -94,6 +94,33 @@ def create_swarm_tools(
             return "Error: 'name' is required."
         return swarm.dynamic_remove_agent(name)
 
+    def _dynamic_remove_connection(**kwargs: Any) -> str:
+        """Remove a dependency edge from the editable graph."""
+        source = str(kwargs.get("source", ""))
+        target = str(kwargs.get("target", ""))
+        if not source or not target:
+            return "Error: both 'source' and 'target' are required."
+        return swarm.dynamic_remove_connection(source, target)
+
+    def _dynamic_set_mapper(**kwargs: Any) -> str:
+        """Set a declarative fan-in mapper on a target Agent."""
+        agent_name = str(kwargs.get("agent_name", ""))
+        mode = str(kwargs.get("mode", "labelled"))
+        if not agent_name:
+            return "Error: 'agent_name' is required."
+        return swarm.dynamic_set_mapper(agent_name, mode)
+
+    def _dynamic_set_router(**kwargs: Any) -> str:
+        """Set a fixed successor subset for a source Agent."""
+        agent_name = str(kwargs.get("agent_name", ""))
+        targets = kwargs.get("targets", [])
+        if isinstance(targets, str):
+            targets = [targets]
+        targets = [str(target) for target in targets]
+        if not agent_name:
+            return "Error: 'agent_name' is required."
+        return swarm.dynamic_set_router(agent_name, targets)
+
     def _dynamic_get_info(**kwargs: Any) -> str:
         """Return the current graph topology as structured text.
 
@@ -167,6 +194,36 @@ def create_swarm_tools(
                 ],
             ),
             handler=_dynamic_remove_agent,
+        ),
+        Tool(
+            name="dynamic_remove_connection",
+            description="Remove an existing dependency edge before the graph source completes.",
+            schemas=ToolSchema(properties=[
+                ToolParameter(name="source", type="string", description="Predecessor Agent name."),
+                ToolParameter(name="target", type="string", description="Successor Agent name."),
+            ]),
+            handler=_dynamic_remove_connection,
+        ),
+        Tool(
+            name="dynamic_set_mapper",
+            description=(
+                "Configure how a fan-in Agent receives predecessor outputs. "
+                "Use labelled for readable evidence, concat for plain text, or json for structured aggregation."
+            ),
+            schemas=ToolSchema(properties=[
+                ToolParameter(name="agent_name", type="string", description="Target Agent receiving gathered outputs."),
+                ToolParameter(name="mode", type="string", enum=["labelled", "concat", "json"], default="labelled", description="Declarative aggregation mode."),
+            ]),
+            handler=_dynamic_set_mapper,
+        ),
+        Tool(
+            name="dynamic_set_router",
+            description="Configure a source Agent to activate only the listed successor Agents after completion.",
+            schemas=ToolSchema(properties=[
+                ToolParameter(name="agent_name", type="string", description="Source Agent name."),
+                ToolParameter(name="targets", type="array", description="Successor Agent names to activate."),
+            ]),
+            handler=_dynamic_set_router,
         ),
         Tool(
             name="dynamic_get_info",
