@@ -111,6 +111,15 @@ class ExecutionGraph:
         self,
         max_concurrency_agents: int = 8,
     ) -> None:
+        """Initialize an empty dependency graph.
+
+        Args:
+            max_concurrency_agents: Maximum number of concurrently running
+                Agent nodes.
+
+        Raises:
+            ValueError: If the concurrency limit is not positive.
+        """
         if max_concurrency_agents <= 0:
             raise ValueError("max_concurrency_agents must be greater than zero")
 
@@ -463,6 +472,15 @@ class ExecutionGraph:
         agent_name: str,
         agent_instance: Agent,
     ) -> str:
+        """Register an Agent node while a graph run is active.
+
+        Args:
+            agent_name: Unique logical name for the new node.
+            agent_instance: Agent instance that executes when ready.
+
+        Returns:
+            Status text describing registration or a duplicate-name error.
+        """
         with self._lock:
             if agent_name in self.agent_dict:
                 return f"Error: agent '{agent_name}' already exists"

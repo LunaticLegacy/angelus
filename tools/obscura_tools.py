@@ -63,6 +63,15 @@ class WebSearchStore:
     """
 
     def __init__(self, path: str | Path, defaults: dict[str, Any] | None = None) -> None:
+        """Open or initialize the persistent search settings store.
+
+        Args:
+            path: SQLite database path shared with the Agent control plane.
+            defaults: Initial settings used when no saved settings exist.
+
+        Returns:
+            None.
+        """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.defaults = {**_DEFAULT_SEARCH_SETTINGS, **(defaults or {})}

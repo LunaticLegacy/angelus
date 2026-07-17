@@ -42,6 +42,14 @@ class AgentSwarm:
     """
 
     def __init__(self, max_concurrency_agents: int = 8) -> None:
+        """Create a public facade around an execution graph.
+
+        Args:
+            max_concurrency_agents: Maximum concurrent Agent executions.
+
+        Returns:
+            None.
+        """
         self._graph = ExecutionGraph(
             max_concurrency_agents=max_concurrency_agents,
         )

@@ -39,6 +39,18 @@ class Agent:
         max_context_threshold: int = 262144,
         context_path: Optional[str | Path] = "",
     ):
+        """Initialize one tool-using Agent.
+
+        Args:
+            llm_fetcher: Backend dispatcher used for model rounds.
+            system_prompt: Instructions supplied to the model.
+            max_concurrency: Maximum concurrent tool handlers.
+            max_context_threshold: Context size at which compaction starts.
+            context_path: Optional persisted context file path.
+
+        Returns:
+            None.
+        """
         self.llm_fetcher = llm_fetcher
         self.system_prompt = system_prompt
         self.max_concurrency = max_concurrency
@@ -96,6 +108,18 @@ class Agent:
         message: str = "",
         data: Any = None,
     ) -> None:
+        """Send one event to each registered hook, isolating hook failures.
+
+        Args:
+            source: Event source identifier.
+            agent_name: Stable graph name of the emitting Agent.
+            event_type: Machine-readable lifecycle event name.
+            message: Human-readable event description.
+            data: Optional structured event payload.
+
+        Returns:
+            None.
+        """
         event = ExecutionEvent(
             source=source,
             agent_name=agent_name,
@@ -112,9 +136,25 @@ class Agent:
     # -- tool registration ----------------------------------------------
 
     def add_tool(self, tool: Tool) -> bool:
+        """Register one callable tool on this Agent.
+
+        Args:
+            tool: Tool schema and handler exposed to the model.
+
+        Returns:
+            ``True`` when registration succeeds, otherwise ``False``.
+        """
         return self.tool_handler.add_tool(tool=tool)
 
     def add_tools(self, tools: List[Tool]) -> bool:
+        """Register a batch of tools in the supplied order.
+
+        Args:
+            tools: Tool definitions to register.
+
+        Returns:
+            ``True`` only when every registration succeeds.
+        """
         results: List[bool] = [False for _ in range(len(tools))]
         for idx, tool in enumerate(tools):
             results[idx] = self.add_tool(tool=tool)
@@ -127,6 +167,11 @@ class Agent:
     # -- internal --------------------------------------------------------
 
     def _build_prompt(self) -> str:
+        """Combine the system prompt and current tool descriptions.
+
+        Returns:
+            Complete model-facing system prompt text.
+        """
         return (
             self.system_prompt
             + "\n"
