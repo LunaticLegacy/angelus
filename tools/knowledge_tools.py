@@ -1,11 +1,11 @@
-"""Workspace-scoped knowledge-base search and retrieval tools."""
+"""Canonical synchronous knowledge-base search and retrieval tools."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from ..rag_module.knowledge_base import KnowledgeBase
 from ..llm_types import Tool, ToolSchema, ToolParameter
+from ..rag_module.knowledge_base import KnowledgeBase
 
 
 def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[Tool]:
@@ -23,8 +23,16 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
 
     kb = knowledge_base
 
-    async def _search_knowledge(**kwargs: Any) -> str:
-        """Search the knowledge base and return ranked results with excerpts."""
+    def _search_knowledge(**kwargs: Any) -> str:
+        """Search the knowledge base and format ranked result excerpts.
+
+        Args:
+            **kwargs: Tool arguments containing the required ``query`` string
+                and optional ``limit`` integer.
+
+        Returns:
+            Formatted search results or an error message.
+        """
         query = str(kwargs.get("query", "")).strip()
         limit = min(int(kwargs.get("limit", 5)), 10)
 
@@ -36,6 +44,7 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
             if not hits:
                 return f"No knowledge entries found for query: {query}"
 
+            # Format stable fields so the agent can select a path for full retrieval.
             lines = [f"Found {len(hits)} knowledge entries for query: {query}\n"]
             for index, hit in enumerate(hits, start=1):
                 lines.append(f"{index}. [{hit.score:.1f}] {hit.title}")
@@ -49,8 +58,16 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
         except Exception as exc:
             return f"Error searching knowledge base: {exc}"
 
-    async def _read_knowledge_full(**kwargs: Any) -> str:
-        """Read the full content of a knowledge document by its path."""
+    def _read_knowledge_full(**kwargs: Any) -> str:
+        """Read and format a knowledge document identified by its path.
+
+        Args:
+            **kwargs: Tool arguments containing the required document ``path``.
+
+        Returns:
+            The document text, truncated to the tool context limit, or an error
+            message.
+        """
         path = str(kwargs.get("path", "")).strip()
         if not path:
             return "Error: path parameter is required"
@@ -60,6 +77,7 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
             if content is None:
                 return f"Error: document not found or cannot be loaded: {path}"
 
+            # Bound full-document output before it enters the model context.
             max_chars = 15000
             truncated = len(content) > max_chars
             display_content = content[:max_chars] if truncated else content

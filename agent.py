@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import List, Any, Optional, Dict
 from pathlib import Path
 
@@ -9,6 +10,23 @@ from .tool_handler import ToolHandler
 from .tool_executor import ToolExecutor
 from .context_handlers import ContextHandlerLinear, ContextHandler
 from .events import ExecutionEvent, ExecutionHook
+
+
+def _tool_result_summary(value: Any, max_chars: int = 1200) -> str:
+    """Return a bounded tool-result string suitable for live event streams.
+
+    Args:
+        value: Raw value returned by a tool handler.
+        max_chars: Maximum number of characters retained in the summary.
+
+    Returns:
+        String form of ``value``, truncated with an explicit size marker when
+        it exceeds ``max_chars``.
+    """
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n[truncated; {len(text)} characters total]"
 
 
 class Agent:
@@ -45,8 +63,30 @@ class Agent:
     # -- hooks ----------------------------------------------------------
 
     def add_hook(self, hook: ExecutionHook) -> None:
-        """Register a hook that receives :class:`ExecutionEvent` records."""
+        """Register an execution-event receiver.
+
+        Args:
+            hook: Callback invoked synchronously for each agent event.
+
+        Returns:
+            None.
+        """
         self.hooks.append(hook)
+
+    def remove_hook(self, hook: ExecutionHook) -> bool:
+        """Unregister one execution-event receiver.
+
+        Args:
+            hook: Previously registered callback.
+
+        Returns:
+            ``True`` when the callback was removed, otherwise ``False``.
+        """
+        try:
+            self.hooks.remove(hook)
+        except ValueError:
+            return False
+        return True
 
     def _emit(
         self,
@@ -117,7 +157,24 @@ class Agent:
         """
         name = getattr(self, "_agent_name_in_graph", "")
 
-        self._emit("agent", name, "agent:start", message)
+        backend = self.llm_fetcher.default_backend_config
+        self._emit(
+            "agent",
+            name,
+            "agent:start",
+            message,
+            data={
+                "backend": {
+                    "name": backend.name,
+                    "provider": backend.provider,
+                    "model": backend.model,
+                },
+                "tools": [
+                    {"name": tool.name, "description": tool.description}
+                    for tool in self.tool_handler.get_all_tools()
+                ],
+            },
+        )
 
         prompt: str = self._build_prompt()
         tool_results: Optional[Dict[str, str]] = None
@@ -142,6 +199,7 @@ class Agent:
             if verbose:
                 print("=" * 10 + "  ROUND " + str(round_idx) + "=" * 10)
 
+            round_started_at = time.perf_counter()
             result = self.llm_fetcher.fetch(
                 msg=message,
                 system_prompt=prompt,
@@ -168,11 +226,28 @@ class Agent:
 
             # parse for tool call. batch execution.
             if result.tool_calls:
+                requested_calls = [
+                    {
+                        "call_id": tool_call.call_id or f"call_{index}",
+                        "name": tool_call.name,
+                        "args": tool_call.arguments,
+                    }
+                    for index, tool_call in enumerate(result.tool_calls)
+                ]
+                self._emit(
+                    "agent",
+                    name,
+                    "agent:tools_requested",
+                    f"Requested {len(requested_calls)} tool call(s)",
+                    data={"round": round_idx, "tool_calls": requested_calls},
+                )
+
                 handlers, arguments = (
                     self.tool_handler.get_handlers_and_arguments(
                         list(result.tool_calls),
                     )
                 )
+                tool_started_at = time.perf_counter()
                 results_list: List[Any] = self.tool_executor.execute_batch(
                     handlers, arguments,
                 )
@@ -183,6 +258,29 @@ class Agent:
                     )
                 ])
                 have_tool_call = True
+
+                # Publish bounded outcomes after every parallel tool batch.
+                completed_calls = []
+                for call, raw_result in zip(requested_calls, results_list):
+                    result_ok = not isinstance(raw_result, Exception)
+                    if isinstance(raw_result, dict) and raw_result.get("ok") is False:
+                        result_ok = False
+                    completed_calls.append({
+                        **call,
+                        "ok": result_ok,
+                        "result": _tool_result_summary(raw_result),
+                    })
+                self._emit(
+                    "agent",
+                    name,
+                    "agent:tools_completed",
+                    f"Completed {len(completed_calls)} tool call(s)",
+                    data={
+                        "round": round_idx,
+                        "duration_ms": round((time.perf_counter() - tool_started_at) * 1000),
+                        "tool_calls": completed_calls,
+                    },
+                )
             else:
                 tool_results = None
                 have_tool_call = False
@@ -202,6 +300,16 @@ class Agent:
                         "output": self.usage.output_tokens,
                         "total": self.usage.total_tokens,
                     },
+                    "round_usage": {
+                        "input": result.usage.input_tokens if result.usage else 0,
+                        "output": result.usage.output_tokens if result.usage else 0,
+                        "total": result.usage.total_tokens if result.usage else 0,
+                        "cached": result.usage.cached_tokens if result.usage else 0,
+                        "reasoning": result.usage.reasoning_tokens if result.usage else 0,
+                    },
+                    "duration_ms": round((time.perf_counter() - round_started_at) * 1000),
+                    "assistant_content": result.content,
+                    "reasoning_content": result.reasoning_content,
                 },
             )
 
