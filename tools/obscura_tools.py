@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 from ..llm_types import Tool, ToolSchema, ToolParameter
 
@@ -181,22 +181,25 @@ def _search_duckduckgo(query: str, max_results: int, timeout: int) -> dict[str, 
         dictionaries. Failures are returned as ``ok=False`` payloads.
     """
     try:
-        import requests
         from bs4 import BeautifulSoup
 
-        response = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "Chrome/124.0 Safari/537.36"
-                )
-            },
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        document = BeautifulSoup(response.text, "html.parser")
+        url = "https://html.duckduckgo.com/html/?q=" + quote_plus(query)
+        user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+        # Some deployments cannot reach DDG through Python's HTTP stack but can
+        # reach it through the system proxy configured for curl.
+        if os.environ.get("WEB_SEARCH_TRANSPORT", "curl") == "curl":
+            completed = subprocess.run(
+                ["curl", "-L", "--compressed", "--max-time", str(timeout), "-A", user_agent, url],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            document = BeautifulSoup(completed.stdout, "html.parser")
+        else:
+            import requests
+            response = requests.get(url, headers={"User-Agent": user_agent}, timeout=timeout)
+            response.raise_for_status()
+            document = BeautifulSoup(response.text, "html.parser")
 
         # Keep only organic result blocks and expose direct source URLs.
         results = []

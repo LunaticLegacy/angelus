@@ -38,6 +38,7 @@ class Agent:
         max_concurrency: int = 3,
         max_context_threshold: int = 262144,
         context_path: Optional[str | Path] = "",
+        context_handler: Optional[ContextHandler] = None,
     ):
         """Initialize one tool-using Agent.
 
@@ -47,6 +48,8 @@ class Agent:
             max_concurrency: Maximum concurrent tool handlers.
             max_context_threshold: Context size at which compaction starts.
             context_path: Optional persisted context file path.
+            context_handler: Optional custom context implementation, such as
+                ``RetrievedContextHandler``.
 
         Returns:
             None.
@@ -61,7 +64,7 @@ class Agent:
         self.tool_executor: ToolExecutor = ToolExecutor(
             max_concurrency=self.max_concurrency,
         )
-        self.context_handler: ContextHandler = ContextHandlerLinear(
+        self.context_handler: ContextHandler = context_handler or ContextHandlerLinear(
             compacting_llmfetcher_handler=self.llm_fetcher,
             max_context_threshold=self.max_context_threshold,
         )
