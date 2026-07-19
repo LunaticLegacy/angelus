@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>llmfetcher Console</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/"><span>✦</span> llmfetcher <small>console</small></a>
+      <section class="workspace-picker"><h2>工作空间</h2><div class="workspace-row"><select id="workspace" aria-label="选择工作空间"></select><button id="new-workspace" type="button" title="新建工作空间">＋</button></div><p id="workspace-note" class="workspace-note">会话与上下文按工作空间隔离。</p></section>
+      <section><h2>连接</h2>
+        <label>Provider <select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label>
+        <label>模型 <input id="model" placeholder="gpt-4.1-mini" /></label>
+        <label>API URL <input id="api-url" placeholder="https://api.openai.com/v1" /></label>
+        <label>API Key <input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label>
+      </section>
+      <section><h2>Agent</h2>
+        <label>系统提示词 <textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label>
+        <div class="pair"><label>温度 <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label><label>最大轮次 <input id="max-rounds" type="number" min="1" max="100" value="12" /></label></div>
+        <label>最大输出 token <input id="max-tokens" type="number" min="1" value="4096" /></label>
+        <label class="check"><input id="enable-shell" type="checkbox" /> 启用受限 Shell 工具</label>
+      </section>
+      <p class="privacy">密钥不会写入会话文件；对话上下文保存在本机。</p>
+    </aside>
+    <main>
+      <header><div><p class="eyebrow">LOCAL AGENT WORKBENCH</p><h1>与你的 Agent 一起工作</h1></div><div id="status" class="status idle">准备就绪</div></header>
+      <div id="chat" class="chat"><div class="welcome"><div class="spark">✦</div><h2>开始一个新对话</h2><p>配置模型后发送消息。工具调用、推理轮次和 token 用量会在右侧实时出现。</p></div></div>
+      <form id="composer"><textarea id="message" placeholder="给 Agent 一个任务…" rows="1" required></textarea><button id="send" type="submit" aria-label="发送">↑</button></form>
+    </main>
+    <aside class="activity"><div class="activity-head"><div><p class="eyebrow">LIVE TRACE</p><h2>执行动态</h2></div><button id="stop" class="text-button" disabled>停止</button></div><div id="metrics" class="metrics"><span>轮次 <b>—</b></span><span>Tokens <b>—</b></span><span>耗时 <b>—</b></span></div><div id="trace" class="trace"><p class="empty">运行中的 Agent 事件会显示在这里。</p></div></aside>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

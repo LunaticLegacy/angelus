@@ -55,6 +55,41 @@ The base dependencies install the OpenAI, Anthropic, and LiteLLM client
 libraries. Local OpenVINO and ONNX Runtime handlers require their respective
 runtime packages.
 
+## Web Console
+
+The repository includes a local, single-page frontend for chatting with an
+`Agent` and observing its execution. It exposes the same backend configuration,
+tool registration, budgets, event hooks, and cooperative stop controls used by
+the Python API.
+
+```bash
+pip install -e .
+llmfetcher-web
+```
+
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Configure a provider,
+model, optional API URL and key, then send a message. API keys are used only to
+start the active run and are not stored in the persisted chat context. Context
+files are saved locally under `.llmfetcher/sessions/`.
+
+The optional Shell switch exposes the existing restricted `shell` tool with its
+working directory limited to the process directory. Only enable it for models
+you trust with local-machine access.
+
+### Workspaces and CLI
+
+Each workspace has its own persistent chat context. Select one in the console,
+or manage it from the main CLI:
+
+```bash
+llmfetcher workspace list
+llmfetcher workspace create "产品研究"
+llmfetcher web --port 8765
+```
+
+`llmfetcher web` is equivalent to `llmfetcher-web`; the latter remains a
+convenient dedicated console entry point.
+
 ## Quick Start
 
 Create one text Agent. `Agent.run()` is synchronous and returns the final
@@ -346,9 +381,11 @@ PYTHONPATH="$(pwd)/.." python -m unittest discover -s tests -v
   dynamic workers created by `create_swarm_tools()` use the configured shared
   fetcher. There is no persisted `AgentProfile` that selects a visual, OCR, or
   text model by task capability.
-- **No library-level durable execution store.** `ExecutionGraph` and `TaskBus`
-  state live in memory. Applications can persist events and run state through
-  hooks, but graph checkpoint/recovery is not a built-in package feature.
+- **No in-flight execution recovery.** `ExecutionGraph.save()` / `load()`
+  persist a quiescent topology, Agent specifications, callback IDs, and
+  TaskBus mailbox state. They deliberately do not checkpoint running threads;
+  application-owned tools, custom contexts, mappers, and routers require safe
+  serializer/resolver registries.
 - **No generic middleware pipeline.** Policies such as model routing, tool
   approvals, retries, PII filtering, and budget enforcement currently belong
   in application code or individual tool handlers.

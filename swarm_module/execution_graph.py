@@ -63,12 +63,18 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     wait,
 )
+from dataclasses import asdict
+import json
+from pathlib import Path
 import threading
 from queue import Empty, SimpleQueue
 from typing import Any, Callable, Iterable, Mapping
 
 from ..agent import Agent, AgentRunControl, AgentRunStopped
+from ..context_handlers import ContextHandlerLinear
 from ..events import ExecutionEvent, ExecutionHook
+from ..llm_fetcher import LLMFetcher
+from ..llm_types import LLMBackendConfig
 from .task_bus import TaskAssignment, TaskBus, TaskReport
 
 
@@ -80,6 +86,18 @@ RouterFn = Callable[[str], list[str]]
 """Post-completion router: receives the agent's output text and returns the
 list of successor names that should be activated.  Successors not in the
 returned list are skipped for this run."""
+
+AgentSerializer = Callable[[str, Agent], dict[str, Any]]
+AgentResolver = Callable[[str, Mapping[str, Any]], Agent]
+CallbackSerializer = Callable[[str, str, Callable[..., Any]], str]
+CallbackResolver = Callable[[str, str, str], Callable[..., Any]]
+
+
+class GraphPersistenceError(ValueError):
+    """Raised when an ExecutionGraph cannot be safely saved or restored."""
+
+
+_SNAPSHOT_VERSION = 1
 
 
 class ExecutionGraph:
@@ -178,6 +196,191 @@ class ExecutionGraph:
             Multi-line summary suitable for ``print(graph)``.
         """
         return self.dynamic_get_info()
+
+    @staticmethod
+    def _default_agent_serializer(agent_name: str, agent: Agent) -> dict[str, Any]:
+        """Serialize a standard tool-free Agent into JSON-compatible config.
+
+        Args:
+            agent_name: Graph-local name used in validation errors.
+            agent: Agent whose LLM, context-path, and execution settings are saved.
+
+        Returns:
+            Versioned Agent specification that :meth:`_default_agent_resolver` restores.
+
+        Raises:
+            GraphPersistenceError: If tools or a custom context handler need an
+                application-supplied serializer.
+        """
+        if not isinstance(agent.context_handler, ContextHandlerLinear):
+            raise GraphPersistenceError(f"Agent {agent_name!r} uses custom context; provide agent_serializer")
+        if agent.tool_handler.get_all_tools():
+            raise GraphPersistenceError(f"Agent {agent_name!r} has tools; provide agent_serializer")
+        try:
+            result = {
+                "kind": "llmfetcher.agent.v1",
+                "backends": [asdict(item) for item in agent.llm_fetcher.backend_configs.values()],
+                "default_backend": agent.llm_fetcher.default_backend,
+                "system_prompt": agent.system_prompt,
+                "max_concurrency": agent.max_concurrency,
+                "max_context_threshold": agent.max_context_threshold,
+                "context_path": str(agent.context_path) if agent.context_path else None,
+                "default_max_rounds": agent.default_max_rounds,
+                "default_max_tokens": agent.default_max_tokens,
+            }
+            json.dumps(result)
+            return result
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise GraphPersistenceError(f"Cannot serialize Agent {agent_name!r}: {exc}") from exc
+
+    @staticmethod
+    def _default_agent_resolver(agent_name: str, spec: Mapping[str, Any]) -> Agent:
+        """Recreate a standard tool-free Agent from a persisted specification.
+
+        Args:
+            agent_name: Graph-local name used in validation errors.
+            spec: JSON-decoded standard Agent configuration.
+
+        Returns:
+            Reconstructed Agent without application tools.
+
+        Raises:
+            GraphPersistenceError: If ``spec`` is unsupported or malformed.
+        """
+        if spec.get("kind") != "llmfetcher.agent.v1":
+            raise GraphPersistenceError(f"Agent {agent_name!r} requires a custom agent_resolver")
+        try:
+            backends = [LLMBackendConfig(**dict(item)) for item in spec["backends"]]
+            return Agent(
+                llm_fetcher=LLMFetcher(backends, default_backend=spec.get("default_backend")),
+                system_prompt=str(spec["system_prompt"]), max_concurrency=int(spec["max_concurrency"]),
+                max_context_threshold=int(spec["max_context_threshold"]), context_path=spec.get("context_path"),
+                default_max_rounds=int(spec["default_max_rounds"]), default_max_tokens=int(spec["default_max_tokens"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise GraphPersistenceError(f"Invalid Agent spec for {agent_name!r}: {exc}") from exc
+
+    def to_snapshot(self, *, agent_serializer: AgentSerializer | None = None,
+                    callback_serializer: CallbackSerializer | None = None) -> dict[str, Any]:
+        """Create a JSON-compatible snapshot of a quiescent graph.
+
+        Args:
+            agent_serializer: Optional safe Agent-to-spec adapter. Required for tools/custom contexts.
+            callback_serializer: Required callback-to-stable-ID adapter when mappers or routers exist.
+
+        Returns:
+            Versioned topology, Agent specs, callback IDs, and TaskBus state.
+
+        Raises:
+            GraphPersistenceError: If executable application objects lack adapters.
+        """
+        serializer = agent_serializer or self._default_agent_serializer
+        with self._topology_lock:
+            nodes = []
+            for name in sorted(self.agent_dict):
+                if name in self._routing_nodes:
+                    nodes.append({"name": name, "kind": "routing"})
+                else:
+                    agent = self.agent_dict[name]
+                    if agent is None:
+                        raise GraphPersistenceError(f"Missing Agent instance for {name!r}")
+                    nodes.append({"name": name, "kind": "agent", "spec": serializer(name, agent)})
+            if (self._mappers or self._routers) and callback_serializer is None:
+                raise GraphPersistenceError("Graph callbacks require callback_serializer")
+            callbacks = {
+                "mappers": {name: callback_serializer(name, "mapper", fn) for name, fn in self._mappers.items()} if callback_serializer else {},
+                "routers": {name: callback_serializer(name, "router", fn) for name, fn in self._routers.items()} if callback_serializer else {},
+            }
+            snapshot = {
+                "version": _SNAPSHOT_VERSION, "max_concurrency_agents": self.max_concurrency_agents,
+                "nodes": nodes,
+                "edges": [{"source": source, "target": target} for source in sorted(self._successors) for target in sorted(self._successors[source])],
+                "callbacks": callbacks,
+                "router_scopes": {name: sorted(scope) for name, scope in self._router_scopes.items()},
+                "task_bus": self.task_bus.to_snapshot(), "task_by_agent": dict(self._task_by_agent), "task_by_id": dict(self._task_by_id),
+            }
+        try:
+            json.dumps(snapshot)
+        except (TypeError, ValueError) as exc:
+            raise GraphPersistenceError(f"Snapshot is not JSON-compatible: {exc}") from exc
+        return snapshot
+
+    def save(self, path: str | Path, *, agent_serializer: AgentSerializer | None = None,
+             callback_serializer: CallbackSerializer | None = None) -> Path:
+        """Atomically save a quiescent graph snapshot to ``path``.
+
+        Args:
+            path: Destination JSON file; parent directories are created.
+            agent_serializer: Optional Agent-to-spec adapter.
+            callback_serializer: Optional callback-to-ID adapter.
+
+        Returns:
+            Destination path after replacement.
+        """
+        destination = Path(path)
+        snapshot = self.to_snapshot(agent_serializer=agent_serializer, callback_serializer=callback_serializer)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        return destination
+
+    @classmethod
+    def load(cls, path: str | Path, *, agent_resolver: AgentResolver | None = None,
+             callback_resolver: CallbackResolver | None = None) -> "ExecutionGraph":
+        """Load a graph snapshot into a new quiescent ExecutionGraph.
+
+        Args:
+            path: JSON file previously created by :meth:`save`.
+            agent_resolver: Optional Agent spec resolver.
+            callback_resolver: Required to resolve every saved mapper/router ID.
+
+        Returns:
+            New graph ready to execute.
+
+        Raises:
+            GraphPersistenceError: If snapshot structure or required resolvers are invalid.
+        """
+        try:
+            snapshot = json.loads(Path(path).read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise GraphPersistenceError(f"Invalid graph snapshot JSON: {exc}") from exc
+        if not isinstance(snapshot, Mapping) or snapshot.get("version") != _SNAPSHOT_VERSION:
+            raise GraphPersistenceError("Unsupported graph snapshot version")
+        try:
+            graph = cls(int(snapshot["max_concurrency_agents"]))
+            nodes, edges = snapshot["nodes"], snapshot["edges"]
+            callbacks = snapshot.get("callbacks", {})
+            if not isinstance(nodes, list) or not isinstance(edges, list) or not isinstance(callbacks, Mapping):
+                raise ValueError("nodes, edges, and callbacks are required")
+            routers = callbacks.get("routers", {})
+            mappers = callbacks.get("mappers", {})
+            if not isinstance(routers, Mapping) or not isinstance(mappers, Mapping):
+                raise ValueError("callback maps must be objects")
+            resolver = agent_resolver or cls._default_agent_resolver
+            for node in nodes:
+                name, kind = str(node["name"]), node["kind"]
+                if kind == "agent":
+                    if not graph.add_agent(name, resolver(name, node["spec"])): raise ValueError(f"Duplicate node {name}")
+                elif kind == "routing":
+                    if callback_resolver is None or name not in routers: raise GraphPersistenceError(f"Routing node {name!r} needs callback_resolver")
+                    if not graph.add_routing_node(name, callback_resolver(name, "router", str(routers[name]))): raise ValueError(f"Duplicate node {name}")
+                else: raise ValueError(f"Unknown node kind {kind!r}")
+            for edge in edges:
+                graph.add_connection(str(edge["source"]), str(edge["target"]))
+            if (mappers or routers) and callback_resolver is None: raise GraphPersistenceError("Graph callbacks require callback_resolver")
+            for name, callback_id in mappers.items(): graph.set_mapper(str(name), callback_resolver(str(name), "mapper", str(callback_id)))
+            for name, callback_id in routers.items():
+                if name not in graph._routing_nodes: graph.set_router(str(name), callback_resolver(str(name), "router", str(callback_id)))
+            graph._router_scopes = {str(name): set(str(target) for target in targets) for name, targets in snapshot.get("router_scopes", {}).items()}
+            graph.task_bus = TaskBus.from_snapshot(snapshot.get("task_bus", {}))
+            graph._task_by_agent = {str(name): str(task_id) for name, task_id in snapshot.get("task_by_agent", {}).items()}
+            graph._task_by_id = {str(task_id): str(name) for task_id, name in snapshot.get("task_by_id", {}).items()}
+            return graph
+        except GraphPersistenceError:
+            raise
+        except (KeyError, TypeError, ValueError) as exc:
+            raise GraphPersistenceError(f"Invalid graph snapshot: {exc}") from exc
 
     # -- hook registration -------------------------------------------------
 

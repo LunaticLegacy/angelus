@@ -15,3 +15,5 @@ litellm>=1.0.0
 
 # markdown parser
 markdown-it-py
+fastapi>=0.115.0
+uvicorn>=0.30.0

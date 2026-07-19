@@ -15,10 +15,13 @@ dependencies = [
     "anthropic>=0.100.0",
     "litellm>=1.0.0",
     "markdown-it-py",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.scripts]
 llmfetcher = "llmfetcher.cli:main"
+llmfetcher-web = "llmfetcher.webapp:main"
 
 [tool.setuptools]
 package-dir = {llmfetcher = "."}

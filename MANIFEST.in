@@ -1,0 +1,1 @@
+recursive-include web *.html *.css *.js

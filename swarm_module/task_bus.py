@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
 @dataclass(frozen=True)
@@ -298,6 +298,102 @@ class TaskBus:
         """
         with self._condition:
             return dict(self._task_states)
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-compatible, point-in-time copy of TaskBus state.
+
+        The returned payload includes assignments, lifecycle states, reports,
+        and recipient inbox ordering. It contains no condition variables or
+        executable callbacks, so callers can include it in an execution-graph
+        snapshot. Callers must only snapshot a quiescent graph: a task marked
+        ``running`` cannot be resumed safely after process restart.
+
+        Returns:
+            Dictionary accepted by :meth:`from_snapshot`.
+        """
+        with self._condition:
+            # Copy immutable dataclasses while holding the bus lock so the four
+            # correlated indexes describe one consistent mailbox state.
+            return {
+                "assignments": [asdict(item) for item in self._assignments.values()],
+                "task_states": dict(self._task_states),
+                "reports": [asdict(item) for item in self._reports.values()],
+                "inboxes": {name: list(ids) for name, ids in self._inboxes.items()},
+            }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: Mapping[str, Any]) -> "TaskBus":
+        """Restore a TaskBus from :meth:`to_snapshot` output.
+
+        Args:
+            snapshot: JSON-decoded task mailbox data produced by
+                :meth:`to_snapshot`.
+
+        Returns:
+            A new TaskBus with immutable assignments and reports restored.
+
+        Raises:
+            ValueError: If the payload is malformed, internally inconsistent,
+                or represents an in-progress task.
+        """
+        assignments = snapshot.get("assignments", [])
+        states = snapshot.get("task_states", {})
+        reports = snapshot.get("reports", [])
+        inboxes = snapshot.get("inboxes", {})
+        if not all(isinstance(value, list) for value in (assignments, reports)):
+            raise ValueError("TaskBus snapshot assignments and reports must be lists")
+        if not isinstance(states, Mapping) or not isinstance(inboxes, Mapping):
+            raise ValueError("TaskBus snapshot indexes must be objects")
+
+        bus = cls()
+        try:
+            restored_assignments = {
+                item["id"]: TaskAssignment(
+                    id=str(item["id"]), recipient=str(item["recipient"]),
+                    reply_to=str(item["reply_to"]), objective=str(item["objective"]),
+                    handoff=str(item.get("handoff", "")),
+                    expected_artifacts=tuple(str(value) for value in item.get("expected_artifacts", [])),
+                    created_at=float(item["created_at"]),
+                )
+                for item in assignments
+            }
+            restored_reports = {
+                item["task_id"]: TaskReport(
+                    task_id=str(item["task_id"]), reporter=str(item["reporter"]),
+                    recipient=str(item["recipient"]), status=str(item["status"]),
+                    summary=str(item["summary"]),
+                    findings=tuple(str(value) for value in item.get("findings", [])),
+                    evidence=tuple(str(value) for value in item.get("evidence", [])),
+                    artifacts=tuple(str(value) for value in item.get("artifacts", [])),
+                    open_questions=tuple(str(value) for value in item.get("open_questions", [])),
+                    recommended_next_action=str(item.get("recommended_next_action", "")),
+                    created_at=float(item["created_at"]),
+                )
+                for item in reports
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid TaskBus snapshot record: {exc}") from exc
+
+        restored_states = {str(task_id): str(state) for task_id, state in states.items()}
+        if set(restored_states) != set(restored_assignments):
+            raise ValueError("TaskBus snapshot states must match assignment IDs")
+        if any(state == "running" for state in restored_states.values()):
+            raise ValueError("Cannot restore a TaskBus snapshot with running tasks")
+        if set(restored_reports) - set(restored_assignments):
+            raise ValueError("TaskBus snapshot report refers to an unknown task")
+
+        # Rebuild the indexes directly because the historical timestamps and
+        # terminal states must remain stable across a save/load round trip.
+        with bus._condition:
+            bus._assignments = restored_assignments
+            bus._task_states = restored_states
+            bus._reports = restored_reports
+            bus._inboxes = {
+                str(recipient): [str(task_id) for task_id in task_ids]
+                for recipient, task_ids in inboxes.items()
+                if isinstance(task_ids, list)
+            }
+        return bus
 
     @staticmethod
     def _normalize_items(values: Iterable[str]) -> tuple[str, ...]:
