@@ -64,10 +64,12 @@ from concurrent.futures import (
     wait,
 )
 import threading
-from typing import Any, Callable, Mapping
+from queue import Empty, SimpleQueue
+from typing import Any, Callable, Iterable, Mapping
 
-from ..agent import Agent
+from ..agent import Agent, AgentRunControl, AgentRunStopped
 from ..events import ExecutionEvent, ExecutionHook
+from .task_bus import TaskAssignment, TaskBus, TaskReport
 
 
 MapperFn = Callable[[Mapping[str, Any]], str]
@@ -125,7 +127,7 @@ class ExecutionGraph:
 
         self.max_concurrency_agents = max_concurrency_agents
 
-        self.agent_dict: dict[str, Agent] = {}
+        self.agent_dict: dict[str, Agent | None] = {}
 
         # source -> direct successors
         self._successors: dict[str, set[str]] = {}
@@ -139,21 +141,68 @@ class ExecutionGraph:
         # agent_name -> post-completion router
         self._routers: dict[str, RouterFn] = {}
 
+        # Router selection applies to successors present when the router was
+        # configured; later dynamic children remain eligible by default.
+        self._router_scopes: dict[str, set[str]] = {}
+
         # names of non-LLM routing-only nodes (no Agent instance)
         self._routing_nodes: set[str] = set()
 
-        # thread-safety lock for dynamic mutation during run()
-        self._lock = threading.Lock()
+        # Explicit assignments replace implicit predecessor-output delivery
+        # for dynamically dispatched subagents.
+        self.task_bus = TaskBus()
+        self._task_by_agent: dict[str, str] = {}
+        self._task_by_id: dict[str, str] = {}
+        self._dynamic_ready: SimpleQueue[str] = SimpleQueue()
 
-        # hook system
+        # Topology mutations are short and independent from Agent execution.
+        self._topology_lock = threading.RLock()
+
+        # Hooks are snapshotted before invocation so user callbacks never hold
+        # graph topology or hook-registration locks.
+        self._hooks_lock = threading.Lock()
         self.hooks: list[ExecutionHook] = []
-        self._shutdown_requested = False
+
+        # Shutdown is observed by the scheduler without sharing topology state.
+        self._shutdown_requested = threading.Event()
+
+    def __str__(self) -> str:
+        """Render a thread-safe human-readable snapshot of graph topology.
+
+        The output includes registered nodes, directed connections, and the
+        concurrency limit. It deliberately delegates to
+        :meth:`dynamic_get_info` so diagnostic printing and the graph-inspect
+        tool always expose the same current state during dynamic mutation.
+
+        Returns:
+            Multi-line summary suitable for ``print(graph)``.
+        """
+        return self.dynamic_get_info()
 
     # -- hook registration -------------------------------------------------
 
     def add_hook(self, hook: ExecutionHook) -> None:
-        """Register a hook that receives every :class:`ExecutionEvent`."""
-        self.hooks.append(hook)
+        """Register a hook that receives every :class:`ExecutionEvent`.
+
+        Args:
+            hook: Callback invoked for future graph and Agent events.
+
+        Returns:
+            None.
+        """
+        with self._hooks_lock:
+            self.hooks.append(hook)
+
+    def request_shutdown(self) -> None:
+        """Ask the scheduler to stop submitting further runnable Agents.
+
+        Already-running Agents are not interrupted by this method because the
+        graph deliberately does not hold locks across model or tool calls.
+
+        Returns:
+            None.
+        """
+        self._shutdown_requested.set()
 
     def _emit(
         self,
@@ -174,7 +223,9 @@ class ExecutionGraph:
             message=message,
             data=data,
         )
-        for hook in self.hooks:
+        with self._hooks_lock:
+            hooks = tuple(self.hooks)
+        for hook in hooks:
             try:
                 hook(event)
             except Exception:
@@ -201,15 +252,15 @@ class ExecutionGraph:
             ``True`` if the agent was registered. ``False`` if another agent
             already uses ``agent_name``.
         """
-        if agent_name in self.agent_dict:
-            return False
-
-        self.agent_dict[agent_name] = agent_instance
-        self._successors[agent_name] = set()
-        self._predecessors[agent_name] = set()
-        # Tag the agent so its own hook events carry its graph name.
-        agent_instance._agent_name_in_graph = agent_name
-        return True
+        with self._topology_lock:
+            if agent_name in self.agent_dict:
+                return False
+            self.agent_dict[agent_name] = agent_instance
+            self._successors[agent_name] = set()
+            self._predecessors[agent_name] = set()
+            # Tag the agent so its own hook events carry its graph name.
+            agent_instance._agent_name_in_graph = agent_name
+            return True
 
     def add_routing_node(
         self,
@@ -233,15 +284,15 @@ class ExecutionGraph:
             ``True`` if the node was registered. ``False`` if *name* is
             already taken by an agent or another routing node.
         """
-        if name in self.agent_dict:
-            return False
-
-        self.agent_dict[name] = None  # sentinel — no Agent
-        self._successors[name] = set()
-        self._predecessors[name] = set()
-        self._routing_nodes.add(name)
-        self._routers[name] = router
-        return True
+        with self._topology_lock:
+            if name in self.agent_dict:
+                return False
+            self.agent_dict[name] = None  # sentinel — no Agent
+            self._successors[name] = set()
+            self._predecessors[name] = set()
+            self._routing_nodes.add(name)
+            self._routers[name] = router
+            return True
 
     def remove_agent(self, agent_name: str) -> bool:
         """Remove an agent and every edge connected to it.
@@ -256,23 +307,21 @@ class ExecutionGraph:
             ``True`` if the agent existed and was removed. ``False`` if no
             registered agent uses ``agent_name``.
         """
-        if agent_name not in self.agent_dict:
-            return False
-
-        for predecessor in self._predecessors[agent_name]:
-            self._successors[predecessor].discard(agent_name)
-
-        for successor in self._successors[agent_name]:
-            self._predecessors[successor].discard(agent_name)
-
-        del self.agent_dict[agent_name]
-        del self._successors[agent_name]
-        del self._predecessors[agent_name]
-        self._mappers.pop(agent_name, None)
-        self._routers.pop(agent_name, None)
-        self._routing_nodes.discard(agent_name)
-
-        return True
+        with self._topology_lock:
+            if agent_name not in self.agent_dict:
+                return False
+            for predecessor in self._predecessors[agent_name]:
+                self._successors[predecessor].discard(agent_name)
+            for successor in self._successors[agent_name]:
+                self._predecessors[successor].discard(agent_name)
+            del self.agent_dict[agent_name]
+            del self._successors[agent_name]
+            del self._predecessors[agent_name]
+            self._mappers.pop(agent_name, None)
+            self._routers.pop(agent_name, None)
+            self._router_scopes.pop(agent_name, None)
+            self._routing_nodes.discard(agent_name)
+            return True
 
     # ------------------------------------------------------------------
     # Graph construction  —  edges
@@ -308,19 +357,16 @@ class ExecutionGraph:
             This method does not immediately detect longer cycles. Cycles are
             detected when :meth:`run` is called.
         """
-        self._require_agent(source)
-        self._require_agent(target)
-
-        if source == target:
-            raise ValueError("An agent cannot connect to itself")
-
-        if target in self._successors[source]:
-            return False
-
-        self._successors[source].add(target)
-        self._predecessors[target].add(source)
-
-        return True
+        with self._topology_lock:
+            self._require_agent(source)
+            self._require_agent(target)
+            if source == target:
+                raise ValueError("An agent cannot connect to itself.")
+            if target in self._successors[source]:
+                return False
+            self._successors[source].add(target)
+            self._predecessors[target].add(source)
+            return True
 
     def add_split(
         self,
@@ -382,7 +428,7 @@ class ExecutionGraph:
             self.add_connection(source, target)
 
         if mapper is not None:
-            self._mappers[target] = mapper
+            self.set_mapper(target, mapper)
 
     # ------------------------------------------------------------------
     # Graph construction  —  mappers (node-level)
@@ -411,8 +457,9 @@ class ExecutionGraph:
             KeyError:
                 If *agent_name* is not registered.
         """
-        self._require_agent(agent_name)
-        self._mappers[agent_name] = mapper
+        with self._topology_lock:
+            self._require_agent(agent_name)
+            self._mappers[agent_name] = mapper
 
     # ------------------------------------------------------------------
     # Graph construction  —  routers (dynamic successor selection)
@@ -442,13 +489,15 @@ class ExecutionGraph:
             KeyError:
                 If *agent_name* is not registered or is a routing node.
         """
-        self._require_agent(agent_name)
-        if agent_name in self._routing_nodes:
-            raise KeyError(
-                f"{agent_name!r} is a routing-only node — use "
-                "``add_routing_node`` to set the router at creation time"
-            )
-        self._routers[agent_name] = router
+        with self._topology_lock:
+            self._require_agent(agent_name)
+            if agent_name in self._routing_nodes:
+                raise KeyError(
+                    f"{agent_name!r} is a routing-only node — use "
+                    "``add_routing_node`` to set the router at creation time"
+                )
+            self._routers[agent_name] = router
+            self._router_scopes[agent_name] = set(self._successors[agent_name])
 
     def remove_router(self, agent_name: str) -> bool:
         """Remove a post-completion router from an agent.
@@ -458,14 +507,145 @@ class ExecutionGraph:
         Returns:
             ``True`` if a router existed and was removed.
         """
-        if agent_name not in self._routers:
-            return False
-        del self._routers[agent_name]
-        return True
+        with self._topology_lock:
+            if agent_name not in self._routers:
+                return False
+            del self._routers[agent_name]
+            self._router_scopes.pop(agent_name, None)
+            return True
 
     # ------------------------------------------------------------------
     # Dynamic mutation  —  thread-safe, usable during run()
     # ------------------------------------------------------------------
+
+    def dispatch_task(
+        self,
+        *,
+        agent_name: str,
+        agent_instance: Agent,
+        objective: str,
+        handoff: str,
+        reply_to: str,
+        expected_artifacts: Iterable[str] = (),
+        task_id: str = "",
+    ) -> TaskAssignment:
+        """Create a worker, deliver an explicit task, and queue it to run.
+
+        Dependency edges are not required for this operation. The worker is
+        scheduled independently so its coordinator can wait for reports while
+        still running. The assignment, not a predecessor's raw output, is the
+        only initial input delivered to the worker.
+
+        Args:
+            agent_name: Unique graph name for the new worker.
+            agent_instance: Worker Agent configured with task-report tools.
+            objective: Concrete worker objective.
+            handoff: Bounded coordinator state relevant to the objective.
+            reply_to: Coordinator Agent that receives the structured report.
+            expected_artifacts: Optional paths or names expected at close.
+            task_id: Optional caller-provided durable task identifier.
+
+        Returns:
+            Immutable task assignment accepted by the task bus.
+
+        Raises:
+            ValueError: If the Agent name already exists or task fields are invalid.
+        """
+        with self._topology_lock:
+            if agent_name in self.agent_dict:
+                raise ValueError(f"Agent {agent_name!r} 已存在")
+            assignment = self.task_bus.create_assignment(
+                recipient=agent_name,
+                reply_to=reply_to,
+                objective=objective,
+                handoff=handoff,
+                expected_artifacts=expected_artifacts,
+                task_id=task_id,
+            )
+            self.agent_dict[agent_name] = agent_instance
+            self._successors[agent_name] = set()
+            self._predecessors[agent_name] = set()
+            self._task_by_agent[agent_name] = assignment.id
+            self._task_by_id[assignment.id] = agent_name
+            agent_instance._agent_name_in_graph = agent_name
+        self._dynamic_ready.put(agent_name)
+        self._emit(
+            "graph",
+            agent_name,
+            "task:dispatched",
+            f"Task {assignment.id} dispatched to {agent_name}",
+            data={
+                "task_id": assignment.id,
+                "reply_to": assignment.reply_to,
+                "objective": assignment.objective,
+            },
+        )
+        return assignment
+
+    def report_task(
+        self,
+        *,
+        task_id: str,
+        reporter: str,
+        status: str,
+        summary: str,
+        findings: Iterable[str] = (),
+        evidence: Iterable[str] = (),
+        artifacts: Iterable[str] = (),
+        open_questions: Iterable[str] = (),
+        recommended_next_action: str = "",
+    ) -> TaskReport:
+        """Accept a structured worker report without forwarding raw output.
+
+        Args:
+            task_id: Task identifier supplied in the worker assignment.
+            reporter: Logical name of the reporting worker.
+            status: Terminal report status.
+            summary: Bounded worker conclusion.
+            findings: Key claims or observations.
+            evidence: URLs or concise evidence descriptions.
+            artifacts: References to persisted detailed output.
+            open_questions: Unresolved follow-up questions.
+            recommended_next_action: Suggested coordinator action.
+
+        Returns:
+            Accepted immutable report.
+        """
+        report = self.task_bus.submit_report(
+            task_id=task_id,
+            reporter=reporter,
+            status=status,
+            summary=summary,
+            findings=findings,
+            evidence=evidence,
+            artifacts=artifacts,
+            open_questions=open_questions,
+            recommended_next_action=recommended_next_action,
+        )
+        self._emit(
+            "graph",
+            reporter,
+            "task:reported",
+            f"Task {task_id} reported to {report.recipient}",
+            data=report.as_dict(),
+        )
+        return report
+
+    def wait_for_reports(
+        self,
+        task_ids: Iterable[str],
+        timeout_seconds: float,
+    ) -> list[TaskReport]:
+        """Block until requested structured reports arrive or time expires.
+
+        Args:
+            task_ids: Task identifiers expected by the coordinator.
+            timeout_seconds: Maximum wait duration in seconds.
+
+        Returns:
+            Available reports in requested task order.
+        """
+        return self.task_bus.wait_for_reports(task_ids, timeout_seconds)
 
     def dynamic_add_agent(
         self,
@@ -481,7 +661,7 @@ class ExecutionGraph:
         Returns:
             Status text describing registration or a duplicate-name error.
         """
-        with self._lock:
+        with self._topology_lock:
             if agent_name in self.agent_dict:
                 return f"Error: agent '{agent_name}' already exists"
 
@@ -499,7 +679,7 @@ class ExecutionGraph:
 
         Returns a status message for the calling LLM.
         """
-        with self._lock:
+        with self._topology_lock:
             if agent_name not in self.agent_dict:
                 return f"Error: agent '{agent_name}' does not exist"
 
@@ -513,6 +693,7 @@ class ExecutionGraph:
             del self._predecessors[agent_name]
             self._mappers.pop(agent_name, None)
             self._routers.pop(agent_name, None)
+            self._router_scopes.pop(agent_name, None)
             self._routing_nodes.discard(agent_name)
 
             return f"Agent '{agent_name}' removed"
@@ -527,7 +708,7 @@ class ExecutionGraph:
 
         Returns a status message for the calling LLM.
         """
-        with self._lock:
+        with self._topology_lock:
             if source not in self.agent_dict:
                 return f"Error: source agent '{source}' does not exist"
             if target not in self.agent_dict:
@@ -557,7 +738,7 @@ class ExecutionGraph:
         Returns:
             Status text for the coordinator Agent.
         """
-        with self._lock:
+        with self._topology_lock:
             if source not in self.agent_dict or target not in self.agent_dict:
                 return f"Error: unknown agent in connection {source} -> {target}"
             if target not in self._successors[source]:
@@ -585,7 +766,7 @@ class ExecutionGraph:
         }
         if mode not in modes:
             return f"Error: mapper mode must be one of {', '.join(sorted(modes))}"
-        with self._lock:
+        with self._topology_lock:
             if agent_name not in self.agent_dict:
                 return f"Error: agent '{agent_name}' does not exist"
             self._mappers[agent_name] = modes[mode]
@@ -602,13 +783,14 @@ class ExecutionGraph:
         Returns:
             Status text for the coordinator Agent.
         """
-        with self._lock:
+        with self._topology_lock:
             if agent_name not in self.agent_dict:
                 return f"Error: agent '{agent_name}' does not exist"
             unknown = [target for target in targets if target not in self.agent_dict]
             if unknown:
                 return f"Error: unknown router targets: {', '.join(unknown)}"
             self._routers[agent_name] = lambda _output: list(targets)
+            self._router_scopes[agent_name] = set(self._successors[agent_name])
         self._emit("graph", agent_name, "dynamic:set_router", f"Router set on {agent_name}", data={"agent": agent_name, "targets": targets})
         return f"Router set on {agent_name}: {', '.join(targets) or '(none)'}"
 
@@ -618,7 +800,7 @@ class ExecutionGraph:
         Useful for LLM agents that need to inspect the graph topology
         before deciding which agents to create or connect.
         """
-        with self._lock:
+        with self._topology_lock:
             lines = ["Current agents:"]
             for name in sorted(self.agent_dict):
                 agent = self.agent_dict[name]
@@ -637,13 +819,25 @@ class ExecutionGraph:
                         lines.append(f"  {source} -> {target}")
             lines.append("")
             lines.append(f"Concurrency limit: {self.max_concurrency_agents}")
-            return "\n".join(lines)
+            task_agents = dict(self._task_by_id)
+        task_states = self.task_bus.task_states()
+        if task_states:
+            lines.append("")
+            lines.append("Task assignments:")
+            for task_id, state in sorted(task_states.items()):
+                agent_name = task_agents.get(task_id, "(removed)")
+                lines.append(f"  {task_id} -> {agent_name} ({state})")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    def run(self, message: str) -> dict[str, Any]:
+    def run(
+        self,
+        message: str,
+        control: AgentRunControl | None = None,
+    ) -> dict[str, Any]:
         """Execute the graph using dependency-driven concurrent scheduling.
 
         Root agents receive ``message`` directly. Whenever an agent finishes,
@@ -660,6 +854,9 @@ class ExecutionGraph:
             message:
                 Initial input message supplied independently to every root
                 agent.
+            control:
+                Optional cooperative stop and steering source passed to each
+                scheduled Agent at completed-step boundaries.
 
         Returns:
             Mapping from every executed agent name to its raw output.
@@ -677,14 +874,14 @@ class ExecutionGraph:
             Already-running sibling agents may continue until the thread-pool
             executor shuts down.
         """
-        if not self.agent_dict:
-            return {}
-
-        self._shutdown_requested = False
+        with self._topology_lock:
+            if not self.agent_dict:
+                return {}
+        self._shutdown_requested.clear()
 
         self._emit("graph", "", "graph:start", message)
 
-        with self._lock:
+        with self._topology_lock:
             remaining_dependencies = {
                 name: len(self._predecessors[name])
                 for name in self.agent_dict
@@ -707,57 +904,72 @@ class ExecutionGraph:
             max_workers=self.max_concurrency_agents
         ) as executor:
             while (
-                (ready or running)
-                and not self._shutdown_requested
+                (ready or running or not self._dynamic_ready.empty())
+                and not self._shutdown_requested.is_set()
             ):
+                self._drain_dynamic_ready(ready, remaining_dependencies)
                 # --- submit ready agents up to the concurrency limit ----
                 while (
                     ready
                     and len(running) < self.max_concurrency_agents
-                    and not self._shutdown_requested
+                    and not self._shutdown_requested.is_set()
                 ):
                     agent_name = ready.popleft()
 
-                    # Non-LLM routing node: evaluate synchronously
-                    if agent_name in self._routing_nodes:
-                        with self._lock:
-                            input_message = self._build_input(
-                                agent_name=agent_name,
-                                initial_message=message,
-                                outputs=outputs,
-                            )
+                    with self._topology_lock:
+                        is_routing_node = agent_name in self._routing_nodes
+                        if agent_name not in self.agent_dict:
+                            continue
+                        input_message = self._build_input(
+                            agent_name=agent_name,
+                            initial_message=message,
+                            outputs=outputs,
+                        )
+                        routing_fn = self._routers.get(agent_name)
+                        agent_instance = self.agent_dict.get(agent_name)
+                        task_id = self._task_by_agent.get(agent_name)
+
+                    if task_id:
+                        assignment = self.task_bus.claim_assignment(task_id)
+                        input_message = self._render_assignment(assignment)
+
+                    # Routing callbacks are external code and must run outside
+                    # the topology lock.
+                    if is_routing_node:
+                        if routing_fn is None:
+                            raise RuntimeError(f"Routing node {agent_name!r} has no router")
                         outputs[agent_name] = input_message
-                        selected = self._routers[agent_name](input_message)
+                        selected = routing_fn(input_message)
                         selected_set = set(selected)
-                        with self._lock:
-                            for s in self._successors[agent_name]:
-                                if s not in selected_set:
-                                    routed_out.add(s)
+                        with self._topology_lock:
+                            successors = tuple(self._successors.get(agent_name, ()))
+                            for successor in successors:
+                                if successor not in selected_set:
+                                    routed_out.add(successor)
                             self._activate(
                                 agent_name, selected,
                                 remaining_dependencies, ready,
                             )
                         continue
 
-                    with self._lock:
-                        input_message = self._build_input(
-                            agent_name=agent_name,
-                            initial_message=message,
-                            outputs=outputs,
-                        )
+                    if agent_instance is None:
+                        continue
 
                     self._emit(
                         "graph", agent_name, "agent:submitted",
                         message,
                     )
 
-                    future = executor.submit(
-                        self.agent_dict[agent_name].run,
+                    future: Future = executor.submit(
+                        agent_instance.run,
                         input_message,
+                        control=control,
                     )
                     running[future] = agent_name
 
-                if not running or self._shutdown_requested:
+                if not running:
+                    continue
+                if self._shutdown_requested.is_set():
                     break
 
                 # --- poll with timeout for Ctrl+C responsiveness -------
@@ -773,6 +985,8 @@ class ExecutionGraph:
 
                 for future in completed_futures:
                     agent_name = running.pop(future)
+                    with self._topology_lock:
+                        task_id = self._task_by_agent.get(agent_name)
 
                     try:
                         outputs[agent_name] = future.result()
@@ -781,7 +995,31 @@ class ExecutionGraph:
                             f"Agent completed",
                             data={"output_len": len(str(outputs[agent_name]))},
                         )
+                        if task_id:
+                            missing_report = self.task_bus.fail_unreported_task(
+                                task_id,
+                                agent_name,
+                                "Worker 已完成，但没有通过 report_task 提交结构化报告。",
+                            )
+                            if missing_report is not None:
+                                self._emit(
+                                    "graph",
+                                    agent_name,
+                                    "task:report_missing",
+                                    f"Task {task_id} finished without report_task",
+                                    data=missing_report.as_dict(),
+                                )
                     except Exception as exc:
+                        if task_id:
+                            self.task_bus.fail_unreported_task(
+                                task_id,
+                                agent_name,
+                                f"Worker 运行失败：{str(exc)[:1000]}",
+                            )
+                        if isinstance(exc, AgentRunStopped):
+                            for pending_future in running:
+                                pending_future.cancel()
+                            raise
                         self._emit(
                             "graph", agent_name, "agent:failed",
                             str(exc),
@@ -793,29 +1031,37 @@ class ExecutionGraph:
                             f"Agent {agent_name!r} failed"
                         ) from exc
 
-                    # Post-completion router or activate all successors
-                    with self._lock:
-                        if agent_name in self._routers:
-                            output_text = self._output_to_text(
-                                outputs[agent_name]
-                            )
-                            selected = self._routers[agent_name](output_text)
-                            selected_set = set(selected)
-                            for s in self._successors[agent_name]:
-                                if s not in selected_set:
-                                    routed_out.add(s)
+                    # Snapshot topology state, then invoke any user-defined
+                    # router without blocking concurrent dynamic mutations.
+                    with self._topology_lock:
+                        routing_fn = self._routers.get(agent_name)
+                        successors = tuple(self._successors.get(agent_name, ()))
+                        router_scope = set(self._router_scopes.get(agent_name, successors))
+                    if routing_fn is not None:
+                        output_text = self._output_to_text(outputs[agent_name])
+                        selected = list(routing_fn(output_text))
+                        selected.extend(
+                            successor for successor in successors
+                            if successor not in router_scope
+                        )
+                        selected_set = set(selected)
+                        with self._topology_lock:
+                            for successor in successors:
+                                if successor not in selected_set:
+                                    routed_out.add(successor)
                             self._activate(
                                 agent_name, selected,
                                 remaining_dependencies, ready,
                             )
-                        else:
+                    else:
+                        with self._topology_lock:
                             self._activate(
-                                agent_name, self._successors[agent_name],
+                                agent_name, successors,
                                 remaining_dependencies, ready,
                             )
 
         # --- final validation: detect deadlocks -------------------------
-        with self._lock:
+        with self._topology_lock:
             never_ran = [
                 n for n in self.agent_dict
                 if n not in outputs
@@ -849,7 +1095,7 @@ class ExecutionGraph:
     def _activate(
         self,
         completed_agent: str,
-        successors: list[str] | set[str],
+        successors: Iterable[str],
         remaining_dependencies: dict[str, int],
         ready: deque[str],
     ) -> None:
@@ -871,6 +1117,53 @@ class ExecutionGraph:
                 remaining_dependencies[successor] = deps - 1
                 if remaining_dependencies[successor] == 0:
                     ready.append(successor)
+
+    def _drain_dynamic_ready(
+        self,
+        ready: deque[str],
+        remaining_dependencies: dict[str, int],
+    ) -> None:
+        """Move explicitly dispatched workers into the local scheduler queue.
+
+        Args:
+            ready: Local FIFO queue owned by the scheduler loop.
+            remaining_dependencies: Mutable dependency counters for this run.
+
+        Returns:
+            None.
+        """
+        while True:
+            try:
+                agent_name = self._dynamic_ready.get_nowait()
+            except Empty:
+                return
+            with self._topology_lock:
+                if agent_name not in self.agent_dict:
+                    continue
+                if agent_name in remaining_dependencies:
+                    continue
+                remaining_dependencies[agent_name] = 0
+            ready.append(agent_name)
+
+    @staticmethod
+    def _render_assignment(assignment: TaskAssignment) -> str:
+        """Render one explicit task package without exposing raw peer output.
+
+        Args:
+            assignment: Structured task package claimed by a worker.
+
+        Returns:
+            Bounded model input containing task and coordinator handoff only.
+        """
+        artifact_text = ", ".join(assignment.expected_artifacts) or "None"
+        handoff = assignment.handoff or "No more assignment info."
+        return (
+            f"Quest ID: {assignment.id}\n"
+            f"Target: {assignment.objective}\n"
+            f"Assigner: {handoff}\n"
+            f"Expected artifact: {artifact_text}\n\n"
+            "After finishing your job, a call for tool report_task for structured abstract, evidence, reference for artifact and problems needs to solve SHOULD be done."
+        )
 
     def _build_input(
         self,

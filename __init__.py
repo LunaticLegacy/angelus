@@ -23,6 +23,8 @@ from .llm_fetcher import (
 
 from .agent import (
     Agent,
+    AgentRunControl,
+    AgentRunStopped,
 )
 
 from .tool_handler import (
@@ -35,6 +37,9 @@ from .tool_executor import (
 
 from .swarm_module import (
     AgentSwarm,
+    TaskAssignment,
+    TaskBus,
+    TaskReport,
 )
 
 from .context_handlers.linear import (

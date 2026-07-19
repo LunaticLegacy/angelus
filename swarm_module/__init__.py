@@ -9,6 +9,7 @@ from .execution_graph import (
     RouterFn,
 )
 from .swarm import AgentSwarm
+from .task_bus import TaskAssignment, TaskBus, TaskReport
 
 __all__ = [
     "ExecutionGraph",
@@ -17,4 +18,7 @@ __all__ = [
     "MapperFn",
     "RouterFn",
     "AgentSwarm",
+    "TaskAssignment",
+    "TaskBus",
+    "TaskReport",
 ]

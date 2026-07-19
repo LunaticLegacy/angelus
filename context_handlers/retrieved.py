@@ -14,6 +14,8 @@ from .linear import ContextHandlerLinear
 class RetrievedContextHandler(ContextHandler):
     """Inject relevant long-term memories into a normal conversation context.
 
+    TODO: I should REMAKE this, like an RAG.
+
     The handler deliberately composes ``ContextHandlerLinear`` instead of
     replacing it. This preserves tool-call ordering while keeping vector
     database concerns behind ``MemoryProvider``.

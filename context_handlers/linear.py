@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 
 from .base import ContextHandler
 from ..llm_types import (
@@ -15,8 +15,35 @@ from ..llm_types import (
     ToolInfo,
 )
 
-if TYPE_CHECKING:
-    from ..llm_fetcher import LLMFetcher
+class CompactionFetcher(Protocol):
+    """Describe the minimal LLM interface used for context compaction."""
+
+    def fetch(
+        self,
+        msg: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.4,
+        max_tokens: int = 4096,
+        context_handler: Optional[ContextHandler] = None,
+        backend_name: Optional[str] = None,
+        tools: Any = None,
+    ) -> LLMOutput:
+        """Generate one compacted context response.
+
+        Args:
+            msg: Text requesting a compacted transcript summary.
+            system_prompt: Compaction-specific model instruction.
+            temperature: Sampling temperature for the summary response.
+            max_tokens: Upper bound for the compacted response.
+            context_handler: Optional stored context, intentionally ``None``
+                for bounded standalone compaction.
+            backend_name: Optional explicit backend selector.
+            tools: Optional provider tool definitions; compaction uses none.
+
+        Returns:
+            Normalized model output containing the compacted context.
+        """
+        ...
 
 
 _COMPACTING_SYSTEM_PROMPT = (
@@ -46,6 +73,11 @@ _COMPACTING_SYSTEM_PROMPT = (
     "timeline values this summary covers (e.g. [1, 2, 3])."
 )
 
+_COMPACTION_OUTPUT_MAX_TOKENS = 8192
+_COMPACTION_INPUT_CHAR_LIMIT = 196_608
+_TOOL_RESULT_MAX_CHARS = 24_000
+_TOOL_RESULT_TOTAL_MAX_CHARS = 96_000
+
 class ContextHandlerLinear(ContextHandler):
     """A simple context handler that stores messages in a flat list.
 
@@ -60,8 +92,10 @@ class ContextHandlerLinear(ContextHandler):
 
     def __init__(
         self,
-        compacting_llmfetcher_handler: LLMFetcher,
+        compacting_llmfetcher_handler: CompactionFetcher,
         max_context_threshold: int = 262144,
+        compaction_input_char_limit: int = _COMPACTION_INPUT_CHAR_LIMIT,
+        compaction_output_max_tokens: int = _COMPACTION_OUTPUT_MAX_TOKENS,
     ) -> None:
         """
         Initiate the context handler.
@@ -71,11 +105,22 @@ class ContextHandlerLinear(ContextHandler):
                 Instance of LLMFetcher for compacting.
             max_context_threshold:
                 When the length of context exceeded this number, compact it.
+            compaction_input_char_limit:
+                Maximum transcript size sent to the standalone compactor.
+            compaction_output_max_tokens:
+                Maximum generated tokens requested from the compactor.
+
+        Raises:
+            ValueError: If either compaction budget is not positive.
         """
         super().__init__()
 
-        self.llm_handler: LLMFetcher = compacting_llmfetcher_handler
+        self.llm_handler = compacting_llmfetcher_handler
         self.compress_threshold: int = max_context_threshold
+        if compaction_input_char_limit <= 0 or compaction_output_max_tokens <= 0:
+            raise ValueError("compaction budgets must be greater than zero")
+        self.compaction_input_char_limit = compaction_input_char_limit
+        self.compaction_output_max_tokens = compaction_output_max_tokens
 
         self.abstract: Optional[LLMContextCompacted] = None
         self.messages: List[LLMContext] = []
@@ -124,10 +169,11 @@ class ContextHandlerLinear(ContextHandler):
             tool_results: Tool execution result of this round's llm call.
         """
         self._round += 1
+        bounded_tool_results = self._bounded_tool_results(tool_results)
         tool_calls: List[ToolInfo] = []
-        for tc in message.tool_calls:
-            call_id = tc.call_id
-            result = tool_results.get(call_id) if tool_results else None
+        for index, tc in enumerate(message.tool_calls):
+            call_id = tc.call_id or f"call_{index}"
+            result = bounded_tool_results.get(call_id) if bounded_tool_results else None
             tool_calls.append(ToolInfo(call=tc, result=result))
 
         self.messages.append(LLMContext(
@@ -139,7 +185,9 @@ class ContextHandlerLinear(ContextHandler):
         ))
 
         # Auto-trigger compaction when context exceeds threshold.
-        if self._estimate_context_size() > self.compress_threshold:
+        context_size: int = self._estimate_context_size()
+        # print(f"Current context size: {context_size} / {self.compress_threshold} | {100 * context_size / self.compress_threshold}%")
+        if context_size > self.compress_threshold:
             self.compact()
 
     def compact(self) -> bool:
@@ -161,12 +209,13 @@ class ContextHandlerLinear(ContextHandler):
         # Collect the timelines of messages being compacted.
         source_timelines: List[int] = [m.timeline for m in self.messages]
 
+        compaction_input = self._build_compaction_input()
         result: LLMOutput = self.llm_handler.fetch(
-            msg=_COMPACTING_SYSTEM_PROMPT,
-            system_prompt="",
+            msg=compaction_input,
+            system_prompt=_COMPACTING_SYSTEM_PROMPT,
             temperature=0.4,
-            max_tokens=self.compress_threshold + 8192,
-            context_handler=self,
+            max_tokens=self.compaction_output_max_tokens,
+            context_handler=None,
         )
         compacted_raw: str = result.content
 
@@ -240,6 +289,84 @@ class ContextHandlerLinear(ContextHandler):
         if self.abstract is not None:
             total += len(self.abstract.abstract_msg)
         return total
+
+    def _bounded_tool_results(
+        self,
+        tool_results: Optional[Dict[str, str]],
+    ) -> Dict[str, str]:
+        """Bound tool output before it becomes persistent chat history.
+
+        Tool calls may return complete HTML pages, archives, or command output.
+        Keeping those payloads verbatim makes later context compaction exceed a
+        model's context window. Detailed data must instead remain in its file
+        artifact and be referenced by the retained prefix.
+
+        Args:
+            tool_results: Raw tool output keyed by provider tool-call ID.
+
+        Returns:
+            Copy with a per-result and aggregate character limit. Truncated
+            values include their original size for the Agent's next round.
+        """
+        if not tool_results:
+            return {}
+        remaining = _TOOL_RESULT_TOTAL_MAX_CHARS
+        bounded: Dict[str, str] = {}
+        for call_id, raw_value in tool_results.items():
+            raw_text = str(raw_value)
+            allowed = min(_TOOL_RESULT_MAX_CHARS, remaining)
+            if allowed <= 0:
+                bounded[call_id] = (
+                    f"[tool result omitted; {len(raw_text)} characters total; "
+                    "aggregate context budget exhausted]"
+                )
+                continue
+            if len(raw_text) > allowed:
+                bounded[call_id] = (
+                    f"{raw_text[:allowed]}\n\n[tool result truncated; "
+                    f"{len(raw_text)} characters total]"
+                )
+            else:
+                bounded[call_id] = raw_text
+            remaining -= min(len(raw_text), allowed)
+        return bounded
+
+    def _build_compaction_input(self) -> str:
+        """Render a bounded, newest-first transcript for one summary request.
+
+        The compactor is intentionally called without this handler as request
+        context. This method supplies only a capped textual transcript, so a
+        failed or delayed compaction can never ask the backend to accept the
+        entire unbounded conversation plus a large generation budget.
+
+        Returns:
+            JSON-like transcript containing the most recent context entries
+            that fit the compaction input budget.
+        """
+        serialized_entries = [
+            json.dumps(entry, ensure_ascii=False, default=str)
+            for entry in self.build_messages()
+        ]
+        retained: List[str] = []
+        used = 0
+        for entry in reversed(serialized_entries):
+            addition = len(entry) + 2
+            if retained and used + addition > self.compaction_input_char_limit:
+                break
+            if not retained and len(entry) > self.compaction_input_char_limit:
+                retained.append(entry[-self.compaction_input_char_limit:])
+                used = self.compaction_input_char_limit
+                break
+            retained.append(entry)
+            used += addition
+        retained.reverse()
+        omitted = len(serialized_entries) - len(retained)
+        prefix = (
+            "[Earlier context entries omitted due to the "
+            f"{self.compaction_input_char_limit} character compaction budget.]\n"
+            if omitted else ""
+        )
+        return prefix + "\n\n".join(retained)
 
     @staticmethod
     def _parse_compacted_abstract(raw: str) -> Optional[str]:

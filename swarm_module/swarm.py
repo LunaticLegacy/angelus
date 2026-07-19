@@ -7,15 +7,16 @@ for full details on scheduling semantics.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Iterable, Mapping
 
-from ..agent import Agent
+from ..agent import Agent, AgentRunControl
 from ..events import ExecutionHook
 from .execution_graph import (
     ExecutionGraph,
     MapperFn,
     RouterFn,
 )
+from .task_bus import TaskAssignment, TaskReport
 
 
 class AgentSwarm:
@@ -122,6 +123,98 @@ class AgentSwarm:
         """Dynamically register an ``Agent`` instance during execution."""
         return self._graph.dynamic_add_agent(agent_name, agent_instance)
 
+    def dispatch_task(
+        self,
+        *,
+        agent_name: str,
+        agent_instance: Agent,
+        objective: str,
+        handoff: str,
+        reply_to: str,
+        expected_artifacts: Iterable[str] = (),
+        task_id: str = "",
+    ) -> TaskAssignment:
+        """Create and immediately schedule a task-addressed subagent.
+
+        Args:
+            agent_name: Unique graph name for the worker.
+            agent_instance: Worker configured with task-report tools.
+            objective: Concrete task delivered to the worker inbox.
+            handoff: Bounded coordinator state relevant to the task.
+            reply_to: Coordinator Agent that receives the final report.
+            expected_artifacts: Optional detailed-output references expected.
+            task_id: Optional stable task identifier.
+
+        Returns:
+            Immutable task assignment accepted by the graph task bus.
+        """
+        return self._graph.dispatch_task(
+            agent_name=agent_name,
+            agent_instance=agent_instance,
+            objective=objective,
+            handoff=handoff,
+            reply_to=reply_to,
+            expected_artifacts=expected_artifacts,
+            task_id=task_id,
+        )
+
+    def report_task(
+        self,
+        *,
+        task_id: str,
+        reporter: str,
+        status: str,
+        summary: str,
+        findings: Iterable[str] = (),
+        evidence: Iterable[str] = (),
+        artifacts: Iterable[str] = (),
+        open_questions: Iterable[str] = (),
+        recommended_next_action: str = "",
+    ) -> TaskReport:
+        """Submit one structured worker report to the assigned coordinator.
+
+        Args:
+            task_id: Correlation identifier from the assignment.
+            reporter: Reporting worker name.
+            status: Terminal task status.
+            summary: Bounded conclusion.
+            findings: Key claims or observations.
+            evidence: Source or evidence references.
+            artifacts: Persisted detailed-output references.
+            open_questions: Remaining uncertainties.
+            recommended_next_action: Suggested follow-up.
+
+        Returns:
+            Accepted immutable report.
+        """
+        return self._graph.report_task(
+            task_id=task_id,
+            reporter=reporter,
+            status=status,
+            summary=summary,
+            findings=findings,
+            evidence=evidence,
+            artifacts=artifacts,
+            open_questions=open_questions,
+            recommended_next_action=recommended_next_action,
+        )
+
+    def wait_for_reports(
+        self,
+        task_ids: Iterable[str],
+        timeout_seconds: float,
+    ) -> list[TaskReport]:
+        """Wait for reports from explicitly dispatched subagent tasks.
+
+        Args:
+            task_ids: Task identifiers expected by a coordinator.
+            timeout_seconds: Maximum wait duration in seconds.
+
+        Returns:
+            Available reports in requested task order.
+        """
+        return self._graph.wait_for_reports(task_ids, timeout_seconds)
+
     def dynamic_remove_agent(self, agent_name: str) -> str:
         """Dynamically remove an agent and its edges during execution."""
         return self._graph.dynamic_remove_agent(agent_name)
@@ -157,10 +250,33 @@ class AgentSwarm:
         """
         self._graph.add_hook(hook)
 
+    def request_shutdown(self) -> None:
+        """Stop scheduling further runnable Agents in the active graph.
+
+        Already-running Agents finish their current work according to their
+        own cooperative controls.
+
+        Returns:
+            None.
+        """
+        self._graph.request_shutdown()
+
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    def run(self, message: str) -> dict[str, Any]:
-        """Execute the graph and return a mapping of agent name → output."""
-        return self._graph.run(message)
+    def run(
+        self,
+        message: str,
+        control: AgentRunControl | None = None,
+    ) -> dict[str, Any]:
+        """Execute the graph with an optional cooperative Agent control.
+
+        Args:
+            message: Initial input supplied to every root Agent.
+            control: Optional stop and steering source shared by graph Agents.
+
+        Returns:
+            Mapping of agent name to its raw output.
+        """
+        return self._graph.run(message, control=control)

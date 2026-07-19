@@ -1,292 +1,373 @@
-# LLM Fetcher
+# llmfetcher
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 
-A Python framework for building LLM-powered multi-agent systems with structured reasoning, adaptive context management, and DAG-based workflow orchestration.
+`llmfetcher` is a small synchronous Python framework for tool-using LLM
+agents and concurrent multi-agent workflows. It provides a provider-neutral
+LLM dispatcher, bounded conversation contexts, a dependency-driven execution
+graph, and a TaskBus for structured subagent handoffs.
 
-**Key differentiator**: Most agent frameworks use a fixed-size sliding window for context — old messages silently drop off. llmfetcher introduces an **LLM-driven graph mode** where the model periodically *chooses* what context to keep active, backed by tag-based and semantic vector retrieval. The result is a more relevant prompt for fewer tokens, with the model retaining access to important information from 50+ turns ago.
+The library deliberately keeps orchestration explicit. An Agent owns its
+model loop and tools. An `AgentSwarm` owns dependency scheduling. Dynamic
+workers return bounded reports through the TaskBus instead of injecting raw
+model transcripts into a coordinator context.
 
----
+## Status
+
+The package is under active development. APIs documented in this README match
+the current source tree. The sections [Current limitations](#current-limitations)
+and [Roadmap](#roadmap) are intentional boundaries, not implemented features.
 
 ## Features
 
-- **Single & multi-agent** — standalone agents or swarms of coordinated specialists
-- **Structured reasoning** — `ThinkingGraph` with 17 typed node types, 12 typed edge types, and schema validation
-- **DAG-based execution** — event-driven workflow engine with conditional routing, parallel branches, concurrency control, and checkpoint/resume
-- **Dual context modes** — linear (conventional sliding window) or graph (LLM-driven selection with tag + semantic retrieval)
-- **6 LLM backends** — OpenAI, Anthropic, LiteLLM, OpenAI-compatible, OpenVINO, ONNX Runtime, with automatic fallback
-- **Async-native** — full `asyncio`, concurrent tool execution, background task slots
-- **Self-modifying memory** — agents can read, select, and compress their own context via built-in tools
-- **State persistence** — per-turn `AgentStateMachine` tracks phase, facts, and next actions; full session checkpoint/resume
-
----
-
-## Quick Start
-
-```python
-import asyncio
-from llmfetcher import Agent, LLMFetcher, LLMBackendConfig
-
-async def main():
-    fetcher = LLMFetcher(backends=[
-        LLMBackendConfig(
-            name="openai", 
-            provider="openai",
-            model="gpt-4o-mini", 
-            api_key="sk-...",
-        )
-    ])
-
-    agent = Agent(
-        llm_handler=fetcher,
-        system_prompt="You are a helpful assistant.",
-        max_concurrent_tools=2,
-    )
-
-    response = await agent.run_agent_round("What is quantum computing?")
-    print(response)
-
-asyncio.run(main())
-```
-
----
-
-## Core Architecture
-
-```
-                    ┌─────────────────────────────┐
-                    │        Agent Swarm           │
-                    │  ┌────────┐  ┌────────┐     │
-                    │  │Agent 1 │  │Agent 2 │ ... │
-                    │  └───┬────┘  └───┬────┘     │
-                    │      └────┬──────┘          │
-                    │      ┌────▼────────┐        │
-                    │      │ExecutionGraph│        │
-                    │      └────┬────────┘        │
-                    └───────────┼─────────────────┘
-                                │
-                     ┌──────────▼──────────┐
-                     │   Thinking Graph    │
-                     │  (Shared Reasoning) │
-                     └──────────┬──────────┘
-                                │
-                     ┌──────────▼──────────┐
-                     │    LLM Fetcher      │
-                     │  (Backend Router)   │
-                     └─────────────────────┘
-```
-
-### LLM Fetcher — Backend Abstraction
-
-Router that registers backends, manages fallback ordering, and dispatches requests. Backend-specific SDK calls, message conversion, and tool-schema translation live in handlers discovered via subclass enumeration:
-
-```
-LLMBackendHandler ── OpenAIHandler
-                   ├─ AnthropicHandler
-                   ├─ LiteLLMHandler
-                   ├─ OpenVINOHandler
-                   └─ OnnxRuntimeGenAIHandler
-```
-
-All streaming output is normalized to a provider-agnostic protocol — reasoning blocks in `<think>...</think>` tags, tool calls in `<tool_call>...</tool_call>` XML.
-
-### Agent — Tool-Calling Loop
-
-The core lifecycle:
-1. Build prompt from context (linear or graph mode)
-2. Call LLM with registered tools
-3. Execute tool calls concurrently via `asyncio.gather`
-4. Compress large tool results into `ToolResultFact` bundles
-5. Update `AgentStateMachine` (durable phase/facts/next-actions tracker)
-6. Store assistant response + tool results as tagged context entries
-7. Repeat until model calls no tools or `max_turns` is reached
-
-Two context modes:
-- **Linear** — conventional active window with LLM-based compression when it overflows
-- **Graph** — periodic context reselection: the model chooses which past entries to keep, backed by tag indexes and semantic (sentence-transformer) retrieval
-
-### ThinkingGraph — Structured Reasoning
-
-A directed graph with typed nodes and edges, schema-validated connections, conflict detection, and full transaction logging.
-
-Node types (17): `GOAL`, `QUESTION`, `CLAIM`, `HYPOTHESIS`, `EVIDENCE`, `ASSUMPTION`, `PLAN`, `STEP`, `ACTION`, `OBSERVATION`, `CRITIQUE`, `DECISION`, `SUMMARY`, `MEMORY`, `ARTIFACT`, `ERROR`
-
-Edge types (12): `SUPPORTS`, `OPPOSES`, `LEADS_TO`, `DERIVES_FROM`, `REQUIRES`, `ANSWERS`, `REFINES`, `CONTRADICTS`, `BLOCKS`, `PRODUCES`, `OBSERVES`
-
-Each edge is validated against a schema of allowed `(source_type, target_type)` pairs. Semantic conflicts (e.g., `SUPPORTS` + `CONTRADICTS` on the same pair) are detected at creation time.
-
-```python
-from llmfetcher import ThinkingGraph, ThinkingNodeType
-
-graph = ThinkingGraph()
-
-goal = await graph.add_node(
-    node_type=ThinkingNodeType.GOAL,
-    info="Understand quantum entanglement",
-    created_by="user"
-)
-
-claim = await graph.add_node(
-    node_type=ThinkingNodeType.CLAIM,
-    info="Entangled particles share quantum states",
-    created_by="agent",
-    confidence=0.85,
-)
-
-await graph.add_edge(
-    source_id=claim, target_id=goal,
-    edge_type="answers", strength=0.9,
-    created_by="agent"
-)
-```
-
-### ExecutionGraph — DAG Workflow Engine
-
-Event-driven DAG scheduler: nodes execute as soon as all upstream dependencies complete, naturally parallelizing independent branches.
-
-| Node Type | Purpose |
-|-----------|---------|
-| `InputNode` | Entry point |
-| `AgentNode` | Runs an agent round |
-| `ToolNode` | Executes a single tool |
-| `RouterNode` | LLM-based conditional routing |
-| `JoinNode` | Merges parallel paths |
-| `OutputNode` | Collects results |
-
-Features: `asyncio.Semaphore` concurrency limit, per-node timeouts, soft/hard stop, event hooks, full checkpoint/resume.
-
-### Agent Swarm
-
-Coordinates multiple agents with shared state (`ThinkingGraph`), global tools, and DAG-defined workflows. Agents can share thinking-graph tools for collaborative reasoning.
-
-```python
-from llmfetcher import AgentSwarm, LLMFetcher, LLMBackendConfig
-
-fetcher = LLMFetcher(backends=[...])
-swarm = AgentSwarm(fetcher, name="research-team")
-
-# Add domain agents
-swarm.add_agent("researcher", "You gather information on topics.")
-swarm.add_agent("analyst",    "You analyze findings for key insights.")
-swarm.add_agent("writer",     "You synthesize analysis into reports.")
-
-# Build pipeline
-swarm.add_input("input")
-swarm.connect("input", "researcher")
-swarm.connect("researcher", "analyst")
-swarm.connect("analyst", "writer")
-swarm.add_output("output")
-swarm.connect("writer", "output")
-
-ctx = await swarm.run(
-    initial_input="Research recent AI developments",
-    entry_node_id="input"
-)
-print(ctx.get_output("output"))
-```
-
----
-
-## Tools
-
-Agents use a `Tool` wrapper for extensible function calling:
-
-```python
-from llmfetcher import Tool
-
-async def my_tool(param1: str, param2: int = 10) -> str:
-    """Custom tool description."""
-    return f"Processed {param1} with {param2}"
-
-agent.add_tool(Tool(
-    name="custom_tool",
-    description="My custom functionality",
-    parameters={
-        "type": "object",
-        "properties": {
-            "param1": {"type": "string"},
-            "param2": {"type": "integer"}
-        },
-        "required": ["param1"]
-    },
-    handler=my_tool,
-))
-```
-
-Available tool factories:
-- `create_shell_tools()` — safe shell execution with command whitelist/blacklist, timeout, and directory sandboxing
-- `create_thinking_graph_tools()` — agents manipulate their shared reasoning graph
-- `create_execution_graph_tools()` — agents modify the workflow DAG at runtime
-- `create_runtime_slot_tools()` — submit/poll/collect for async background tasks
-- `create_obscura_tools()` — web scraping utilities
-
-Custom tools can be registered per-agent or globally at the swarm level.
-
----
-
-## LLM Backend Configuration
-
-```python
-from llmfetcher import LLMFetcher, LLMBackendConfig
-
-# Single backend
-fetcher = LLMFetcher(backends=[
-    LLMBackendConfig(
-        name="primary", provider="openai",
-        model="gpt-4o", api_key="sk-...",
-        timeout=120.0,
-    )
-])
-
-# Multiple backends with automatic fallback
-fetcher = LLMFetcher(backends=[
-    LLMBackendConfig(name="primary",  provider="openai",    model="gpt-4o",     api_key="..."),
-    LLMBackendConfig(name="fallback", provider="openai",    model="gpt-4o-mini", api_key="..."),
-    LLMBackendConfig(name="local",    provider="openvino",  model="/path/to/model", api_key=""),
-])
-
-# Local inference (OpenVINO)
-# pip install "llmfetcher[openvino]"
-backend = LLMBackendConfig(
-    name="local", provider="openvino", model="/path/to/model",
-    extra={"device": "CPU", "generation_config": {"top_p": 0.9}},
-)
-```
-
----
+- **Multi-backend LLM dispatch** with OpenAI-compatible, Anthropic, LiteLLM,
+  OpenVINO, and ONNX Runtime handlers; ordered fallback and per-backend retry.
+- **Synchronous Agent loop** with model tool calls, parallel tool batches,
+  token accounting, event hooks, cooperative stop/steer controls, and bounded
+  default execution budgets.
+- **Context handling** with JSON persistence, bounded tool-result retention,
+  and LLM-based compaction that uses a standalone bounded summary request.
+- **Retrieval context contract** through `RetrievedContextHandler` and the
+  provider-neutral `MemoryProvider` protocol.
+- **Dependency-driven swarm execution** using a thread pool, DAG edges,
+  split/gather, input mappers, post-completion routers, and thread-safe dynamic
+  graph changes.
+- **TaskBus subagents** with immutable task packages and report-only feedback
+  loops. Raw worker `run()` output remains audit data, not coordinator input.
+- **Structured tools** represented by Python callables plus JSON Schema-like
+  `ToolParameter` definitions.
+- **Execution events** for agent, graph, tool, routing, and task lifecycle
+  visibility.
 
 ## Installation
 
-```bash
-pip install git+https://github.com/LunaticLegacy/llmfetcher.git
+Requires Python 3.12 or later.
 
-# Or from source
+```bash
 git clone https://github.com/LunaticLegacy/llmfetcher.git
 cd llmfetcher
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
-Requires Python 3.14+.
+The base dependencies install the OpenAI, Anthropic, and LiteLLM client
+libraries. Local OpenVINO and ONNX Runtime handlers require their respective
+runtime packages.
 
----
+## Quick Start
+
+Create one text Agent. `Agent.run()` is synchronous and returns the final
+normalized `LLMOutput`.
+
+```python
+from llmfetcher import Agent, LLMBackendConfig, LLMFetcher
+
+fetcher = LLMFetcher([
+    LLMBackendConfig(
+        name="primary",
+        provider="openai",
+        model="gpt-4.1-mini",
+        api_key="<api-key>",
+        api_url="https://api.openai.com/v1",
+    ),
+])
+
+agent = Agent(
+    llm_fetcher=fetcher,
+    system_prompt="Answer concisely and cite uncertainty.",
+    default_max_rounds=6,
+    default_max_tokens=2_048,
+)
+
+result = agent.run("Explain why shirts use different sleeve lengths.")
+print(result.content)
+print(agent.usage.total_tokens)
+```
+
+## LLM Backends and Fallback
+
+Each `LLMBackendConfig` identifies one backend. `LLMFetcher` tries its default
+backend first, retries timeouts according to `max_retries`, then falls through
+to the remaining registered backends when appropriate.
+
+```python
+from llmfetcher import LLMBackendConfig, LLMFetcher
+
+fetcher = LLMFetcher([
+    LLMBackendConfig(
+        name="primary",
+        provider="openai",
+        model="deepseek-v4-flash",
+        api_key="<deepseek-key>",
+        api_url="https://api.deepseek.com",
+        timeout=90,
+        max_retries=1,
+    ),
+    LLMBackendConfig(
+        name="fallback",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        api_key="<anthropic-key>",
+        max_retries=0,
+    ),
+])
+
+# Use the primary with fallback.
+response = fetcher.fetch("Summarize this note.")
+
+# Force one named backend for this request only.
+fallback_response = fetcher.fetch(
+    "Independently check the conclusion.",
+    backend_name="fallback",
+)
+```
+
+Supported handler names are:
+
+| Provider value | Handler | Typical use |
+| --- | --- | --- |
+| `openai` | OpenAI-compatible Chat Completions | OpenAI and compatible endpoints |
+| `anthropic` | Anthropic Messages API | Claude-compatible endpoints |
+| `litellm` | LiteLLM | LiteLLM-supported providers |
+| `openvino` | OpenVINO | Local inference |
+| `onnxruntime` | ONNX Runtime GenAI | Local inference |
+
+Multi-backend fallback is not the same as task-aware model routing. See
+[Current limitations](#current-limitations).
+
+## Tools
+
+A tool has a stable name, description, JSON Schema-like parameters, and a
+synchronous handler. Agent tool calls in one model response execute in
+parallel, while the resulting tool messages retain their original call order.
+
+```python
+from llmfetcher import Tool
+from llmfetcher.llm_types import ToolParameter, ToolSchema
+
+def convert_size(size: str) -> str:
+    """Return an example normalized jersey size."""
+    return {"s": "small", "m": "medium", "l": "large"}.get(
+        size.lower(), "unknown"
+    )
+
+agent.add_tool(Tool(
+    name="convert_size",
+    description="Normalize a jersey size code.",
+    schemas=ToolSchema(properties=[
+        ToolParameter(
+            name="size",
+            type="string",
+            description="Input size code such as S, M, or L.",
+        ),
+    ]),
+    handler=convert_size,
+))
+```
+
+Built-in factories currently include:
+
+- `create_shell_tools()` for bounded shell execution.
+- `create_knowledge_tools()` for the package's knowledge-base adapter.
+- `create_obscura_tools()` for configured web search, fetch, and scrape tools.
+- `create_swarm_tools()` for coordinator-controlled dynamic workers and graph
+  mutation.
+
+Tool handlers are local Python callables. They must validate their own inputs,
+apply side-effect policy, and return bounded results suitable for model context.
+
+## Context and Memory
+
+`ContextHandlerLinear` stores short-term history and persists it as JSON when
+an Agent has a `context_path`. Large tool output is truncated before storage.
+When its threshold is exceeded, the handler asks the configured LLM for a
+bounded standalone summary instead of replaying an unbounded transcript.
+
+```python
+from pathlib import Path
+
+agent = Agent(
+    llm_fetcher=fetcher,
+    system_prompt="You are a research assistant.",
+    context_path=Path("sessions/research.json"),
+    max_context_threshold=48_000,
+)
+```
+
+`RetrievedContextHandler` composes linear history with a `MemoryProvider`:
+
+```python
+from llmfetcher.context_handlers import RetrievedContextHandler
+from llmfetcher.memory import MemoryProvider
+
+# Implement MemoryProvider.search(...) and MemoryProvider.add(...)
+# with a vector, hybrid, or remote store, then pass it to the Agent.
+context = RetrievedContextHandler(
+    memory_provider=my_memory_provider,  # type: MemoryProvider
+    compacting_llmfetcher_handler=fetcher,
+    namespace="team:catalog",
+)
+```
+
+The library provides the memory interface and retrieval-aware context handler;
+it does not currently ship a concrete vector database implementation.
+
+## Agent Lifecycle Controls and Events
+
+`AgentRunControl` exposes safe boundaries between complete
+model-and-tool steps. A control implementation may request a stop or enqueue
+new user steering text. `Agent.request_completion()` is for terminal workflow
+tools: it completes the Agent only after the active tool batch and context write
+finish.
+
+Hooks receive `ExecutionEvent` objects synchronously. Hook failures are
+isolated from the running Agent.
+
+```python
+from llmfetcher.events import ExecutionEvent
+
+def print_event(event: ExecutionEvent) -> None:
+    print(event.event_type, event.agent_name, event.message)
+
+agent.add_hook(print_event)
+```
+
+## Static Swarm Workflow
+
+An `AgentSwarm` schedules Agents as soon as each node's dependencies are
+satisfied. Independent nodes can run concurrently up to
+`max_concurrency_agents`.
+
+```python
+from llmfetcher import Agent, AgentSwarm
+
+researcher = Agent(llm_fetcher=fetcher, system_prompt="Find facts.")
+writer = Agent(llm_fetcher=fetcher, system_prompt="Write a concise report.")
+
+swarm = AgentSwarm(max_concurrency_agents=2)
+swarm.add_agent("researcher", researcher)
+swarm.add_agent("writer", writer)
+swarm.add_connection("researcher", "writer")
+
+outputs = swarm.run("Research the history of a football shirt.")
+print(outputs["writer"].content)
+```
+
+`add_split`, `add_gather`, `set_mapper`, and `set_router` provide fan-out,
+fan-in, input transformation, and post-completion routing. `print(swarm._graph)`
+renders a diagnostic topology snapshot.
+
+## Dynamic Subagents with TaskBus
+
+For dynamic work, give `create_swarm_tools()` only to the coordinator Agent.
+The coordinator can dispatch independent workers and wait for their structured
+reports. A dispatched worker receives only its task objective, bounded handoff,
+and expected artifacts; it does not receive a coordinator's raw model context.
+
+```python
+from llmfetcher import Agent, AgentSwarm
+from llmfetcher.tools import create_swarm_tools
+
+swarm = AgentSwarm(max_concurrency_agents=4)
+coordinator = Agent(
+    llm_fetcher=fetcher,
+    system_prompt=(
+        "Delegate independent research with dispatch_subagents. "
+        "Wait for all reports before writing a conclusion."
+    ),
+    default_max_rounds=8,
+    default_max_tokens=4_096,
+)
+swarm.add_agent("coordinator", coordinator)
+
+coordinator.add_tools(create_swarm_tools(
+    swarm=swarm,
+    llm_fetcher=fetcher,
+    worker_tool_pool=[],
+    coordinator_name="coordinator",
+    worker_max_rounds=6,
+    worker_max_tokens=2_048,
+))
+
+outputs = swarm.run("Compare three public data sources.")
+```
+
+The task protocol is intentionally narrow:
+
+1. `dispatch_subagent` or `dispatch_subagents` creates a `TaskAssignment`.
+2. The scheduler runs the worker independently of DAG edges.
+3. The worker persists detailed material as artifacts where appropriate.
+4. The worker calls its local `report_task` tool.
+5. `report_task` writes a bounded immutable `TaskReport`, then ends that
+   worker after the current tool batch.
+6. The coordinator calls `wait_for_reports` and synthesizes only report fields.
+
+This prevents large tool output, reasoning traces, and raw `Agent.run()` text
+from becoming implicit parent-Agent context.
+
+## Package Layout
+
+```text
+llmfetcher/
+├── agent.py                 # Tool-using synchronous Agent loop
+├── llm_fetcher.py           # Backend selection, retry, fallback, streaming
+├── llm_types.py             # Provider-neutral models, tool schemas, usage
+├── context_handlers/        # Linear and retrieval-aware contexts
+├── memory/                  # Long-term memory contracts
+├── fetcher_handlers/        # Provider adapters
+├── swarm_module/            # ExecutionGraph, AgentSwarm, TaskBus
+├── tools/                   # Local tool factories and dynamic worker tools
+└── tests/                   # Offline regression tests
+```
 
 ## Testing
 
+The repository tests are offline and do not require an API key.
+
 ```bash
-pip install pytest pytest-asyncio
-pytest tests/ -v --tb=short
+python -m unittest discover -s tests -v
 ```
 
----
+For a source checkout whose parent directory owns the package:
 
-## Project Status
+```bash
+PYTHONPATH="$(pwd)/.." python -m unittest discover -s tests -v
+```
 
-**Version 0.3.0** — Active development. The graph-mode context selection and ThinkingGraph are the most mature subsystems. Built-in context-management tools (`context_read`, `context_select`, `context_compress`) are planned but not yet implemented.
+## Current Limitations
 
----
+- **No native MCP client or MCP server support.** MCP tools are not yet
+  discovered, lifecycle-managed, or converted into `Tool` instances.
+- **No provider-neutral multimodal content blocks.** Context messages are
+  text-oriented; image URLs, Base64 images, file IDs, and multimodal tool
+  results need a message-model and provider-adapter extension.
+- **No task-aware provider routing.** A fetcher can have fallback backends, but
+  dynamic workers created by `create_swarm_tools()` use the configured shared
+  fetcher. There is no persisted `AgentProfile` that selects a visual, OCR, or
+  text model by task capability.
+- **No library-level durable execution store.** `ExecutionGraph` and `TaskBus`
+  state live in memory. Applications can persist events and run state through
+  hooks, but graph checkpoint/recovery is not a built-in package feature.
+- **No generic middleware pipeline.** Policies such as model routing, tool
+  approvals, retries, PII filtering, and budget enforcement currently belong
+  in application code or individual tool handlers.
+- **Synchronous public runtime.** Agent and swarm execution use threads for
+  concurrent tool and Agent work; there is no async public `Agent.run()` API.
+
+## Roadmap
+
+The next foundational work should preserve the explicit TaskBus model while
+adding:
+
+1. Provider-neutral multimodal message content blocks.
+2. Persisted `AgentProfile` and `FetcherRegistry` model routing.
+3. A policy-controlled MCP client adapter for stdio and HTTP transports.
+4. A durable execution/checkpoint store for graph and TaskBus state.
+5. Middleware-style lifecycle interception for model, tool, budget, and
+   approval policies.
 
 ## License
 
-MIT
+No license file is currently distributed with this repository. Confirm the
+project's intended license before redistributing it.

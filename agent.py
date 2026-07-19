@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import threading
 import time
-from typing import List, Any, Optional, Dict
+from typing import List, Any, Optional, Dict, Protocol
 from pathlib import Path
 
 from .llm_fetcher import LLMBackendConfig, LLMFetcher, LLMBackendHandler
@@ -10,6 +11,27 @@ from .tool_handler import ToolHandler
 from .tool_executor import ToolExecutor
 from .context_handlers import ContextHandlerLinear, ContextHandler
 from .events import ExecutionEvent, ExecutionHook
+
+
+class AgentRunControl(Protocol):
+    """Describe cooperative controls read between completed Agent steps.
+
+    Implementations may persist requests in a database or keep them in an
+    application-specific queue. Methods are deliberately only called after a
+    model response and its tool batch have completed.
+    """
+
+    def should_stop(self) -> bool:
+        """Return whether the Agent should stop at the current safe boundary."""
+        ...
+
+    def drain_steers(self) -> list[str]:
+        """Return and consume queued user steering messages in FIFO order."""
+        ...
+
+
+class AgentRunStopped(RuntimeError):
+    """Signal that cooperative execution stopped at a completed step boundary."""
 
 
 def _tool_result_summary(value: Any, max_chars: int = 1200) -> str:
@@ -39,6 +61,8 @@ class Agent:
         max_context_threshold: int = 262144,
         context_path: Optional[str | Path] = "",
         context_handler: Optional[ContextHandler] = None,
+        default_max_rounds: int = 30,
+        default_max_tokens: int = 32768,
     ):
         """Initialize one tool-using Agent.
 
@@ -50,15 +74,28 @@ class Agent:
             context_path: Optional persisted context file path.
             context_handler: Optional custom context implementation, such as
                 ``RetrievedContextHandler``.
+            default_max_rounds: Default maximum model-and-tool steps for a
+                ``run`` call that omits ``max_rounds``.
+            default_max_tokens: Default maximum generated tokens per model
+                step for a ``run`` call that omits ``max_tokens``.
 
         Returns:
             None.
+
+        Raises:
+            ValueError: If either default execution budget is not positive.
         """
+        if default_max_rounds <= 0:
+            raise ValueError("default_max_rounds must be greater than zero")
+        if default_max_tokens <= 0:
+            raise ValueError("default_max_tokens must be greater than zero")
         self.llm_fetcher = llm_fetcher
         self.system_prompt = system_prompt
         self.max_concurrency = max_concurrency
         self.max_context_threshold = max_context_threshold
         self.context_path = Path(context_path) if context_path else None
+        self.default_max_rounds = default_max_rounds
+        self.default_max_tokens = default_max_tokens
 
         self.tool_handler: ToolHandler = ToolHandler()
         self.tool_executor: ToolExecutor = ToolExecutor(
@@ -69,11 +106,18 @@ class Agent:
             max_context_threshold=self.max_context_threshold,
         )
 
+        # This attribute will be assigned by ExecutionGraph so Agent-level events retain their node.
+        self._agent_name_in_graph: str = ""
+
         # Cumulative token usage across all rounds of the most recent run.
         self.usage: TokenUsage = TokenUsage()
 
         # hook system
         self.hooks: list[ExecutionHook] = []
+
+        # Terminal workflow tools request this event after persisting their
+        # result. ``run`` observes it only at a complete step boundary.
+        self._completion_requested = threading.Event()
 
     # -- hooks ----------------------------------------------------------
 
@@ -102,6 +146,19 @@ class Agent:
         except ValueError:
             return False
         return True
+
+    def request_completion(self) -> None:
+        """Request completion after the active model-and-tool step finishes.
+
+        Terminal workflow tools, such as a dispatched worker's
+        ``report_task``, call this method after writing their durable result.
+        The request never interrupts model inference or a parallel tool batch;
+        ``run`` observes it only after that complete step is stored.
+
+        Returns:
+            None.
+        """
+        self._completion_requested.set()
 
     def _emit(
         self,
@@ -186,24 +243,44 @@ class Agent:
     def run(
         self,
         message: str,
-        max_rounds: int = 30,
+        max_rounds: int | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 32768,
+        max_tokens: int | None = None,
         verbose: bool = False,
+        control: AgentRunControl | None = None,
     ) -> LLMOutput:
-        """Run agent call.
+        """Run the Agent until it responds, reaches a budget, or completes.
 
         Args:
-            message: user input's message.
-            max_rounds: maximum rounds for this.
-            temperature: temperature for model.
-            max_tokens: how much tokens does output generate (per turn).
-            verbose: whether to verbose debug info.
+            message: User request or explicit task package for this run.
+            max_rounds: Maximum model-and-tool steps. ``None`` uses the
+                Agent's ``default_max_rounds``.
+            temperature: Model sampling temperature.
+            max_tokens: Maximum generated tokens per model step. ``None``
+                uses the Agent's ``default_max_tokens``.
+            verbose: Whether to print per-round diagnostic output.
+            control: Optional cooperative stop and steering source. It is read
+                after each completed model-and-tool step, never mid-step.
 
         Returns:
-            Return the last round of the LLM agent.
+            Last model output produced by the Agent.
+
+        Raises:
+            ValueError: If a resolved execution budget is not positive.
+            RuntimeError: If execution completes without a model response.
         """
-        name = getattr(self, "_agent_name_in_graph", "")
+        resolved_max_rounds = (
+            self.default_max_rounds if max_rounds is None else max_rounds
+        )
+        resolved_max_tokens = (
+            self.default_max_tokens if max_tokens is None else max_tokens
+        )
+        if resolved_max_rounds <= 0:
+            raise ValueError("max_rounds must be greater than zero")
+        if resolved_max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than zero")
+        self._completion_requested.clear()
+        name = self._agent_name_in_graph
 
         backend = self.llm_fetcher.default_backend_config
         self._emit(
@@ -228,7 +305,11 @@ class Agent:
         tool_results: Optional[Dict[str, str]] = None
         have_tool_call: bool = False
 
-        load_result: bool = self.context_handler.load(self.context_path)
+        load_result = (
+            self.context_handler.load(self.context_path)
+            if self.context_path is not None
+            else False
+        )
         if verbose:
             if not load_result:
                 print(
@@ -241,9 +322,10 @@ class Agent:
         self.context_handler.add_user_message(message=message)
         self.usage = TokenUsage()
 
-        result: LLMOutput
+        result: LLMOutput | None = None
+        round_idx = 0
 
-        for round_idx in range(1, 1 + max_rounds):
+        for round_idx in range(1, 1 + resolved_max_rounds):
             if verbose:
                 print("=" * 10 + "  ROUND " + str(round_idx) + "=" * 10)
 
@@ -253,7 +335,7 @@ class Agent:
                 system_prompt=prompt,
                 temperature=temperature,
                 context_handler=self.context_handler,
-                max_tokens=max_tokens,
+                max_tokens=resolved_max_tokens,
                 tools=self.tool_handler.get_all_tools(),
             )
 
@@ -369,10 +451,43 @@ class Agent:
                 tool_results=tool_results,
             )
 
-            if not have_tool_call:
+            if self._completion_requested.is_set():
+                self._emit(
+                    "agent", name, "agent:completion_requested",
+                    f"Completed after terminal tool in round {round_idx}",
+                    data={"round": round_idx},
+                )
                 break
 
-        save_result: bool = self.context_handler.save(self.context_path)
+            # Controls are intentionally observed after response persistence
+            # and the complete tool batch, preserving one coherent step.
+            if control is not None and control.should_stop():
+                self._emit(
+                    "agent", name, "agent:stopped",
+                    f"Stopped after round {round_idx}",
+                    data={"round": round_idx},
+                )
+                raise AgentRunStopped("Agent stopped after the current step")
+
+            steers = control.drain_steers() if control is not None else []
+            if steers:
+                for steer in steers:
+                    self.context_handler.add_user_message(message=steer)
+                message = steers[-1]
+                self._emit(
+                    "agent", name, "agent:steer_applied",
+                    f"Applied {len(steers)} steering message(s)",
+                    data={"round": round_idx, "messages": steers},
+                )
+
+            if not have_tool_call and not steers:
+                break
+
+        save_result = (
+            self.context_handler.save(self.context_path)
+            if self.context_path is not None
+            else False
+        )
         if verbose:
             if not save_result:
                 print("Context saving failed.")
@@ -394,6 +509,8 @@ class Agent:
             },
         )
 
+        if result is None:
+            raise RuntimeError("Agent completed without a model response")
         return result
 
     def close(self) -> None:
