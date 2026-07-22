@@ -836,6 +836,7 @@ class ExecutionGraph:
     def run(
         self,
         message: str,
+        max_rounds: int | None = None,
         control: AgentRunControl | None = None,
     ) -> dict[str, Any]:
         """Execute the graph using dependency-driven concurrent scheduling.
@@ -854,6 +855,8 @@ class ExecutionGraph:
             message:
                 Initial input message supplied independently to every root
                 agent.
+            max_rounds: Maximum rounds passed to every Agent; ``0`` means
+                unlimited and ``None`` uses each Agent's default.
             control:
                 Optional cooperative stop and steering source passed to each
                 scheduled Agent at completed-step boundaries.
@@ -898,6 +901,8 @@ class ExecutionGraph:
 
         outputs: dict[str, Any] = {}
         running: dict[Future[Any], str] = {}
+        running_agents: dict[Future[Any], Agent] = {}
+        running_hooks: dict[Future[Any], list[ExecutionHook]] = {}
         routed_out: set[str] = set()
 
         with ThreadPoolExecutor(
@@ -960,12 +965,23 @@ class ExecutionGraph:
                         message,
                     )
 
+                    run_kwargs: dict[str, Any] = {"control": control}
+                    if max_rounds is not None:
+                        run_kwargs["max_rounds"] = max_rounds
+                    with self._hooks_lock:
+                        agent_hooks = list(self.hooks)
+                    for hook in agent_hooks:
+                        add_hook = getattr(agent_instance, "add_hook", None)
+                        if add_hook is not None:
+                            add_hook(hook)
                     future: Future = executor.submit(
                         agent_instance.run,
                         input_message,
-                        control=control,
+                        **run_kwargs,
                     )
                     running[future] = agent_name
+                    running_agents[future] = agent_instance
+                    running_hooks[future] = agent_hooks
 
                 if not running:
                     continue
@@ -985,6 +1001,11 @@ class ExecutionGraph:
 
                 for future in completed_futures:
                     agent_name = running.pop(future)
+                    agent_instance = running_agents.pop(future)
+                    for hook in running_hooks.pop(future, []):
+                        remove_hook = getattr(agent_instance, "remove_hook", None)
+                        if remove_hook is not None:
+                            remove_hook(hook)
                     with self._topology_lock:
                         task_id = self._task_by_agent.get(agent_name)
 

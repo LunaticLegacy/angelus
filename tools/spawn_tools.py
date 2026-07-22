@@ -63,10 +63,11 @@ def create_swarm_tools(
         A list of ``Tool`` instances the coordinator can call.
 
     Raises:
-        ValueError: If either worker execution budget is not positive.
+        ValueError: If either worker execution budget is negative or the token
+            budget is not positive.
     """
-    if worker_max_rounds <= 0:
-        raise ValueError("worker_max_rounds must be greater than zero")
+    if worker_max_rounds < 0:
+        raise ValueError("worker_max_rounds must be zero or greater")
     if worker_max_tokens <= 0:
         raise ValueError("worker_max_tokens must be greater than zero")
 

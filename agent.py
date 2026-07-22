@@ -77,10 +77,11 @@ class Agent:
             None.
 
         Raises:
-            ValueError: If either default execution budget is not positive.
+            ValueError: If the round budget is negative or the token budget is
+                not positive.
         """
-        if default_max_rounds <= 0:
-            raise ValueError("default_max_rounds must be greater than zero")
+        if default_max_rounds < 0:
+            raise ValueError("default_max_rounds must be zero or greater")
         if default_max_tokens <= 0:
             raise ValueError("default_max_tokens must be greater than zero")
         self.llm_fetcher = llm_fetcher
