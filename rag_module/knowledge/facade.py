@@ -263,17 +263,8 @@ class KnowledgeBase:
         if not self.available():
             return None
         
-        # Normalize path: remove 'kb/' prefix if present since root is already kb/
-        # 去除前缀 kb/，如果路径存在本内容。
-        normalized_path = path
-        if normalized_path.startswith('kb/'):
-            normalized_path = normalized_path[3:]
-        
-        # 建立 path
-        doc_path: Path = self.root / normalized_path
-        
-        # Check if file exists
-        if not doc_path.exists() or not doc_path.is_file():
+        doc_path = self._resolve_document_path(path)
+        if doc_path is None:
             return None
         
         try:
@@ -282,6 +273,34 @@ class KnowledgeBase:
             return document.content
         except Exception:
             return None
+
+    def _resolve_document_path(self, path: str) -> Path | None:
+        """Resolve either root-relative or repository-relative document paths.
+
+        Args:
+            path: Path emitted by retrieval metadata or supplied by a caller.
+
+        Returns:
+            Existing Markdown file under the configured knowledge root, or
+            ``None`` when the path is invalid or does not exist.
+        """
+        normalized_path = str(path).replace('\\', '/').strip()
+        if normalized_path.startswith('kb/'):
+            normalized_path = normalized_path[3:]
+        candidates = (
+            self.root / normalized_path,
+            self.root.parent / normalized_path,
+        )
+        root_resolved = self.root.resolve()
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(root_resolved)
+            except ValueError:
+                continue
+            if resolved.is_file():
+                return resolved
+        return None
 
     def get_documents_by_paths(self, paths: list[str]) -> dict[str, str]:
         """Retrieve full text content for multiple documents by their paths.
@@ -321,13 +340,10 @@ class KnowledgeBase:
         if not self.available():
             return None
 
-        # Reuse the same path normalisation rules as full-text lookup so chunk
-        # retrieval stays consistent with the existing public document API.
-        normalized_path = path
-        if normalized_path.startswith('kb/'):
-            normalized_path = normalized_path[3:]
-        doc_path: Path = self.root / normalized_path
-        if not doc_path.exists() or not doc_path.is_file():
+        # Reuse the same dual path resolution rules as full-text lookup so
+        # search results can be passed directly back to this method.
+        doc_path = self._resolve_document_path(path)
+        if doc_path is None:
             return None
 
         try:

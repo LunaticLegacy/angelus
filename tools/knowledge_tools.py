@@ -44,6 +44,20 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
             if not hits:
                 return f"No knowledge entries found for query: {query}"
 
+            # A zero-vector result is not independent evidence. For year- or
+            # event-scoped queries, reject lexical fallback hits that do not
+            # contain the requested scope in their returned text.
+            years = {token for token in query.split() if token.isdigit() and len(token) == 4}
+            if years:
+                scoped_hits = [
+                    hit for hit in hits
+                    if hit.vector_score > 0
+                    or any(year in f"{hit.title} {hit.excerpt}" for year in years)
+                ]
+                hits = scoped_hits
+                if not hits:
+                    return f"No scoped knowledge evidence found for query: {query}"
+
             # Format stable fields so the agent can select a path for full retrieval.
             lines = [f"Found {len(hits)} knowledge entries for query: {query}\n"]
             for index, hit in enumerate(hits, start=1):

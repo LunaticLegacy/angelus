@@ -69,6 +69,7 @@ _DEFAULT_SEARCH_SETTINGS = {
     "bing_api_key": "",
 }
 _SEARCH_STORE: "WebSearchStore | None" = None
+_PROVIDER_FAILURE_STREAK: dict[str, int] = {}
 
 
 class WebSearchStore:
@@ -371,6 +372,33 @@ def _search_provider(provider: str, query: str, max_results: int, timeout: int, 
     raise ValueError(f"Unsupported search provider: {provider}")
 
 
+def _relevant_search_results(query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reject result pages with no lexical relationship to the query.
+
+    Args:
+        query: Original search query.
+        results: Provider-normalized result records.
+
+    Returns:
+        Only results containing at least one meaningful query term.
+    """
+    import re
+
+    normalized = query.lower()
+    latin_terms = [item for item in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", normalized) if item not in {"the", "and", "for", "from", "with"}]
+    cjk_terms = re.findall(r"[\u4e00-\u9fff]{2,}", normalized)
+    terms = latin_terms + cjk_terms
+    if not terms:
+        return results
+    minimum = 2 if len(latin_terms) >= 2 else 1
+    relevant = []
+    for result in results:
+        haystack = " ".join(str(result.get(key, "")) for key in ("title", "url", "snippet")).lower()
+        if sum(term in haystack for term in terms) >= minimum:
+            relevant.append(result)
+    return relevant
+
+
 def _web_search(**kwargs: Any) -> dict[str, Any]:
     """Search domestic-first providers through curl with bounded fallback.
 
@@ -390,13 +418,21 @@ def _web_search(**kwargs: Any) -> dict[str, Any]:
     attempts = []
     per_provider_timeout = max(3, timeout // len(providers))
     for provider in providers:
+        if _PROVIDER_FAILURE_STREAK.get(provider, 0) >= 2:
+            attempts.append({"provider": provider, "ok": False, "duration_ms": 0, "error": "provider circuit breaker is open"})
+            continue
         started = time.perf_counter()
         try:
             payload = _search_provider(provider, query, max_results, per_provider_timeout, settings)
+            payload["results"] = _relevant_search_results(query, payload.get("results", []))
+            payload["ok"] = bool(payload.get("ok")) and bool(payload["results"])
+            if not payload["ok"] and not payload.get("error"):
+                payload["error"] = "search results failed relevance validation"
         except Exception as exc:
             payload = {"ok": False, "provider": provider, "query": query, "results": [], "error": str(exc)}
         duration = int((time.perf_counter() - started) * 1000)
         result_count = len(payload.get("results", []))
+        _PROVIDER_FAILURE_STREAK[provider] = 0 if payload.get("ok") else _PROVIDER_FAILURE_STREAK.get(provider, 0) + 1
         get_web_search_store().record(provider, bool(payload.get("ok")), result_count, duration)
         attempts.append({"provider": provider, "ok": bool(payload.get("ok")), "duration_ms": duration, "error": payload.get("error", "")})
         if payload.get("ok"):
@@ -568,7 +604,7 @@ def create_obscura_tools() -> list[Tool]:
             name="web_search",
             description=(
                 "Search the live public web through the local curl command. Returns only "
-                "URLs extracted from DuckDuckGo HTML; use web_fetch to verify every source "
+                "URLs extracted from domestic-first curl search providers; use web_fetch to verify every source "
                 "before citing it."
             ),
             schemas=ToolSchema(
