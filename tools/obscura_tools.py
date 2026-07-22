@@ -468,7 +468,7 @@ def _obscura_fetch_cli(**kwargs: Any) -> dict[str, Any]:
             ]
             payload["images"] = images[:20]
             if requested_mode == "text":
-                payload["stdout"] = document.get_text(" ", strip=True)[:120000]
+                payload["stdout"] = document.get_text(" ", strip=True)
         except Exception as exc:
             payload["images_error"] = str(exc)
     return payload

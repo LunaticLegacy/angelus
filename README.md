@@ -179,8 +179,10 @@ apply side-effect policy, and return bounded results suitable for model context.
 
 ## Context and Memory
 
-`ContextHandlerLinear` stores short-term history and persists it as JSON when
-an Agent has a `context_path`. Large tool output is truncated before storage.
+`ContextHandlerLinear` stores short-term history and persists complete tool
+results as JSON when an Agent has a `context_path`. If the conversation exceeds
+the model context budget, a separate compaction request protects the next model
+call; this does not overwrite the persisted tool result.
 When its threshold is exceeded, the handler asks the configured LLM for a
 bounded standalone summary instead of replaying an unbounded transcript.
 
@@ -369,5 +371,5 @@ adding:
 
 ## License
 
-No license file is currently distributed with this repository. Confirm the
-project's intended license before redistributing it.
+This repository is licensed under the GNU Affero General Public License,
+version 3 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE).

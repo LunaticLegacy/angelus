@@ -65,8 +65,7 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
             **kwargs: Tool arguments containing the required document ``path``.
 
         Returns:
-            The document text, truncated to the tool context limit, or an error
-            message.
+            The complete document text, or an error message.
         """
         path = str(kwargs.get("path", "")).strip()
         if not path:
@@ -77,24 +76,14 @@ def create_knowledge_tools(knowledge_base: KnowledgeBase | None = None) -> list[
             if content is None:
                 return f"Error: document not found or cannot be loaded: {path}"
 
-            # Bound full-document output before it enters the model context.
-            max_chars = 15000
-            truncated = len(content) > max_chars
-            display_content = content[:max_chars] if truncated else content
-
             lines = [
                 f"Document: {path}",
                 f"Length: {len(content)} characters",
-                f"{'[TRUNCATED - showing first 15000 chars]' if truncated else '[FULL CONTENT]'}",
+                "[FULL CONTENT]",
                 "",
                 "=" * 80,
-                display_content,
+                content,
             ]
-
-            if truncated:
-                lines.append("")
-                lines.append("=" * 80)
-                lines.append(f"[Content truncated. Total length: {len(content)} chars]")
 
             return "\n".join(lines)
         except Exception as exc:

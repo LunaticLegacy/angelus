@@ -34,21 +34,15 @@ class AgentRunStopped(RuntimeError):
     """Signal that cooperative execution stopped at a completed step boundary."""
 
 
-def _tool_result_summary(value: Any, max_chars: int = 1200) -> str:
-    """Return a bounded tool-result string suitable for live event streams.
+def _tool_result_text(value: Any) -> str:
+    """Return the complete tool-result string for persistence and events.
 
     Args:
         value: Raw value returned by a tool handler.
-        max_chars: Maximum number of characters retained in the summary.
-
     Returns:
-        String form of ``value``, truncated with an explicit size marker when
-        it exceeds ``max_chars``.
+        Complete string form of ``value`` without a display or persistence limit.
     """
-    text = str(value)
-    if len(text) <= max_chars:
-        return text
-    return f"{text[:max_chars]}\n[truncated; {len(text)} characters total]"
+    return str(value)
 
 
 class Agent:
@@ -389,7 +383,7 @@ class Agent:
                 ])
                 have_tool_call = True
 
-                # Publish bounded outcomes after every parallel tool batch.
+                # Publish complete outcomes so persistence and export never lose tool evidence.
                 completed_calls = []
                 for call, raw_result in zip(requested_calls, results_list):
                     result_ok = not isinstance(raw_result, Exception)
@@ -398,7 +392,7 @@ class Agent:
                     completed_calls.append({
                         **call,
                         "ok": result_ok,
-                        "result": _tool_result_summary(raw_result),
+                        "result": _tool_result_text(raw_result),
                     })
                 self._emit(
                     "agent",

@@ -8,7 +8,6 @@ from typing import Any
 from llmfetcher.context_handlers.linear import (
     _COMPACTION_INPUT_CHAR_LIMIT,
     _COMPACTION_OUTPUT_MAX_TOKENS,
-    _TOOL_RESULT_MAX_CHARS,
     ContextHandlerLinear,
 )
 from llmfetcher.llm_types import LLMOutput, LLMToolCall
@@ -83,7 +82,7 @@ class ContextCompactionTests(unittest.TestCase):
 
         handler.add_assistant_message(
             output,
-            tool_results={"call-1": "x" * (_TOOL_RESULT_MAX_CHARS * 3)},
+            tool_results={"call-1": "x" * (_COMPACTION_INPUT_CHAR_LIMIT * 3)},
         )
 
         self.assertIsNone(compactor.request["context_handler"])
@@ -96,8 +95,8 @@ class ContextCompactionTests(unittest.TestCase):
         assert handler.abstract is not None
         self.assertEqual(handler.abstract.abstract_msg, "bounded summary")
 
-    def test_tool_result_is_bounded_before_history_storage(self) -> None:
-        """Retain a truncation marker instead of an unbounded shell transcript."""
+    def test_tool_result_is_complete_in_history_storage(self) -> None:
+        """Retain the complete tool result for lossless persistence/export."""
         compactor = _RecordingCompactor()
         handler = ContextHandlerLinear(compactor, max_context_threshold=10**9)
         output = LLMOutput(
@@ -108,16 +107,16 @@ class ContextCompactionTests(unittest.TestCase):
             tool_calls=[LLMToolCall(name="shell", call_id="call-1")],
         )
 
+        raw_result = "x" * (_COMPACTION_INPUT_CHAR_LIMIT + 1)
         handler.add_assistant_message(
             output,
-            tool_results={"call-1": "x" * (_TOOL_RESULT_MAX_CHARS + 1)},
+            tool_results={"call-1": raw_result},
         )
 
         stored_result = handler.messages[-1].tool_calls[0].result
         self.assertIsNotNone(stored_result)
         assert stored_result is not None
-        self.assertIn("[tool result truncated;", stored_result)
-        self.assertLessEqual(len(stored_result), _TOOL_RESULT_MAX_CHARS + 100)
+        self.assertEqual(stored_result, raw_result)
 
 
 if __name__ == "__main__":
