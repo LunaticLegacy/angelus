@@ -248,7 +248,7 @@ class Agent:
         Args:
             message: User request or explicit task package for this run.
             max_rounds: Maximum model-and-tool steps. ``None`` uses the
-                Agent's ``default_max_rounds``.
+                Agent's ``default_max_rounds``; ``0`` means no round limit.
             temperature: Model sampling temperature.
             max_tokens: Maximum generated tokens per model step. ``None``
                 uses the Agent's ``default_max_tokens``.
@@ -260,17 +260,14 @@ class Agent:
             Last model output produced by the Agent.
 
         Raises:
-            ValueError: If a resolved execution budget is not positive.
             RuntimeError: If execution completes without a model response.
         """
-        resolved_max_rounds = (
-            self.default_max_rounds if max_rounds is None else max_rounds
-        )
+        resolved_max_rounds = self.default_max_rounds if max_rounds is None else max_rounds
         resolved_max_tokens = (
             self.default_max_tokens if max_tokens is None else max_tokens
         )
-        if resolved_max_rounds <= 0:
-            raise ValueError("max_rounds must be greater than zero")
+        if resolved_max_rounds < 0:
+            raise ValueError("max_rounds must be zero or greater")
         if resolved_max_tokens <= 0:
             raise ValueError("max_tokens must be greater than zero")
         self._completion_requested.clear()
@@ -319,7 +316,9 @@ class Agent:
         result: LLMOutput | None = None
         round_idx = 0
 
-        for round_idx in range(1, 1 + resolved_max_rounds):
+        round_idx = 0
+        while resolved_max_rounds == 0 or round_idx < resolved_max_rounds:
+            round_idx += 1
             if verbose:
                 print("=" * 10 + "  ROUND " + str(round_idx) + "=" * 10)
 
