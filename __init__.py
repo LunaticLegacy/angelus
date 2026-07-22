@@ -31,6 +31,11 @@ from .tool_handler import (
     Tool,
 )
 
+from .llm_types import (
+    ToolParameter,
+    ToolSchema,
+)
+
 from .tool_executor import (
     ToolExecutor,
 )
