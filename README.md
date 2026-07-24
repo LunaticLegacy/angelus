@@ -372,4 +372,7 @@ adding:
 ## License
 
 This repository is licensed under the GNU Affero General Public License,
-version 3 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE).
+version 3 or later (AGPL-3.0-or-later).  For code whose copyright is held by
+LunaticLegacy, a separately executed commercial license is also available;
+see [LICENSING.md](LICENSING.md).  The open-source license text remains in
+[LICENSE](LICENSE).
