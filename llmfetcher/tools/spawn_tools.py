@@ -37,6 +37,8 @@ def create_swarm_tools(
     coordinator_name: str = "main_agent",
     worker_max_rounds: int = 30,
     worker_max_tokens: int = 32768,
+    worker_max_context_threshold: int = 262144,
+    context_path_factory: Callable[[str], Any] | None = None,
 ) -> list[Tool]:
     """Create tools that let a coordinator LLM manipulate the swarm at runtime.
 
@@ -58,18 +60,26 @@ def create_swarm_tools(
             these tools.
         worker_max_tokens:
             Default generated-token budget per worker model step.
+        worker_max_context_threshold:
+            Character count at which every dynamically created worker
+            compacts its older conversation history.
+        context_path_factory:
+            Optional callback returning a durable context path for each
+            dynamically created worker Agent.
 
     Returns:
         A list of ``Tool`` instances the coordinator can call.
 
     Raises:
-        ValueError: If either worker execution budget is negative or the token
-            budget is not positive.
+        ValueError: If the worker execution budgets or context threshold are
+            outside their supported ranges.
     """
     if worker_max_rounds < 0:
         raise ValueError("worker_max_rounds must be zero or greater")
     if worker_max_tokens <= 0:
         raise ValueError("worker_max_tokens must be greater than zero")
+    if worker_max_context_threshold < 1024:
+        raise ValueError("worker_max_context_threshold must be at least 1024")
 
     def _dynamic_add_agent(**kwargs: Any) -> str:
         """Create and register a new worker agent in the swarm.
@@ -88,6 +98,8 @@ def create_swarm_tools(
         agent = Agent(
             llm_fetcher=llm_fetcher,
             system_prompt=system_prompt,
+            max_context_threshold=worker_max_context_threshold,
+            context_path=context_path_factory(name) if context_path_factory else None,
             default_max_rounds=worker_max_rounds,
             default_max_tokens=worker_max_tokens,
         )
@@ -216,6 +228,8 @@ def create_swarm_tools(
         worker = Agent(
             llm_fetcher=llm_fetcher,
             system_prompt=system_prompt,
+            max_context_threshold=worker_max_context_threshold,
+            context_path=context_path_factory(name) if context_path_factory else None,
             default_max_rounds=worker_max_rounds,
             default_max_tokens=worker_max_tokens,
         )

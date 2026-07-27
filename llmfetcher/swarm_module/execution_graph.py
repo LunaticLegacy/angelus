@@ -67,6 +67,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import threading
+import time
 from queue import Empty, SimpleQueue
 from typing import Any, Callable, Iterable, Mapping
 
@@ -171,6 +172,7 @@ class ExecutionGraph:
         self.task_bus = TaskBus()
         self._task_by_agent: dict[str, str] = {}
         self._task_by_id: dict[str, str] = {}
+        self._node_states: dict[str, dict[str, Any]] = {}
         self._dynamic_ready: SimpleQueue[str] = SimpleQueue()
 
         # Topology mutations are short and independent from Agent execution.
@@ -396,6 +398,85 @@ class ExecutionGraph:
         with self._hooks_lock:
             self.hooks.append(hook)
 
+    def view_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-safe live topology view without executable objects.
+
+        The view is deliberately distinct from :meth:`to_snapshot`: it is
+        safe to call while a graph is running and contains only the data a UI
+        needs to draw nodes, hierarchy, edges, assignments, and current task states.
+
+        Returns:
+            Mapping with ``nodes``, ``edges``, concurrency limit, task
+            assignments, and TaskBus states. Node entries never contain Agent
+            instances, credentials, prompts, or tool handlers.
+        """
+        with self._topology_lock:
+            task_parents = {}
+            for task_id, agent_name in self._task_by_id.items():
+                try:
+                    task_parents[agent_name] = self.task_bus.get_assignment(task_id).reply_to
+                except KeyError:
+                    # A task can disappear between topology and mailbox reads.
+                    # The graph view remains useful without that optional parent.
+                    continue
+            nodes = [
+                {
+                    "id": name,
+                    "kind": "routing" if name in self._routing_nodes else "agent",
+                    "dynamic": name in self._task_by_agent,
+                    "parent": task_parents.get(name),
+                }
+                for name in sorted(self.agent_dict)
+            ]
+            edges = [
+                {"source": source, "target": target, "kind": "dependency"}
+                for source in sorted(self._successors)
+                for target in sorted(self._successors[source])
+            ]
+            assignments = {
+                task_id: agent_name for task_id, agent_name in self._task_by_id.items()
+            }
+            node_states = {
+                agent_name: dict(record)
+                for agent_name, record in self._node_states.items()
+            }
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "max_concurrency_agents": self.max_concurrency_agents,
+            "assignments": assignments,
+            "task_states": self.task_bus.task_states(),
+            "node_states": node_states,
+        }
+
+    def finalize_tasks(self) -> dict[str, str]:
+        """Close every unfinished dynamic task after the scheduler stops.
+
+        Running tasks become ``interrupted`` and never-started tasks become
+        ``cancelled``. Existing completed or failed task outcomes are
+        preserved.
+
+        Returns:
+            Mapping of task identifiers changed during finalization.
+
+        Side Effects:
+            Emits one ``task:finalized`` lifecycle event for every changed
+            task so observers persist the same terminal view.
+        """
+        changed = self.task_bus.finalize_unfinished()
+        with self._topology_lock:
+            agents = dict(self._task_by_id)
+        for task_id, state in changed.items():
+            agent_name = agents.get(task_id, "")
+            self._emit(
+                "graph",
+                agent_name,
+                "task:finalized",
+                f"Task {task_id} finalized as {state}",
+                data={"task_id": task_id, "state": state},
+            )
+        return changed
+
     def request_shutdown(self) -> None:
         """Ask the scheduler to stop submitting further runnable Agents.
 
@@ -419,6 +500,7 @@ class ExecutionGraph:
 
         A single failed hook does not crash the execution.
         """
+        self._record_node_state(agent_name, event_type, message, data)
         event = ExecutionEvent(
             source=source,
             agent_name=agent_name,
@@ -433,6 +515,83 @@ class ExecutionGraph:
                 hook(event)
             except Exception:
                 pass  # hook must not crash the swarm
+
+    def _record_node_state(
+        self,
+        agent_name: str,
+        event_type: str,
+        message: str,
+        data: Any,
+    ) -> None:
+        """Project one lifecycle event into the UI-facing node state cache.
+
+        Args:
+            agent_name: Graph node named by the event; blank graph-wide events
+                are ignored.
+            event_type: Lifecycle type emitted by an Agent or scheduler.
+            message: Human-readable latest activity.
+            data: Optional event payload used for task terminal outcomes.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Replaces the named entry in ``_node_states`` under the topology
+            lock.
+        """
+        if not agent_name:
+            return
+        state = ""
+        if event_type == "task:dispatched":
+            state = "queued"
+        elif event_type in {"agent:completed", "agent:complete"}:
+            state = "completed"
+        elif event_type in {"agent:failed", "agent:error"}:
+            state = "failed"
+        elif event_type == "agent:stopped":
+            state = "interrupted"
+        elif event_type == "task:report_missing":
+            state = "failed"
+        elif event_type == "task:reported":
+            report_status = str(data.get("status", "")) if isinstance(data, Mapping) else ""
+            state = TaskBus._state_for_report_status(report_status)
+        elif event_type == "task:finalized":
+            state = str(data.get("state", "")) if isinstance(data, Mapping) else ""
+        elif event_type.startswith("agent:"):
+            state = "running"
+        if not state:
+            return
+        with self._topology_lock:
+            task_id = self._task_by_agent.get(agent_name, "")
+            record: dict[str, Any] = {
+                "state": state,
+                "message": message,
+                "updated_at": time.time(),
+            }
+            if task_id:
+                record["task_id"] = task_id
+            self._node_states[agent_name] = record
+
+    def _attach_agent_events(self, agent: Agent) -> None:
+        """Forward one graph member's lifecycle events to graph hooks.
+
+        Args:
+            agent: Newly registered Agent whose model and tool events should
+                be visible to graph observers.
+
+        Side Effects:
+            Registers a lightweight forwarding hook when ``agent`` implements
+            ``add_hook``. Lightweight test or application runners that expose
+            only ``run`` remain valid graph nodes. The graph never mutates a
+            forwarded event and preserves its agent name, type and tool data.
+        """
+        def forward(event: ExecutionEvent) -> None:
+            """Relay one Agent event through the graph's hook collection."""
+            self._emit(event.source, event.agent_name, event.event_type, event.message, event.data)
+
+        add_hook = getattr(agent, "add_hook", None)
+        if callable(add_hook):
+            add_hook(forward)
 
     # ------------------------------------------------------------------
     # Graph construction  —  agents
@@ -461,8 +620,14 @@ class ExecutionGraph:
             self.agent_dict[agent_name] = agent_instance
             self._successors[agent_name] = set()
             self._predecessors[agent_name] = set()
+            self._node_states[agent_name] = {
+                "state": "idle",
+                "message": "尚未开始",
+                "updated_at": 0.0,
+            }
             # Tag the agent so its own hook events carry its graph name.
             agent_instance._agent_name_in_graph = agent_name
+            self._attach_agent_events(agent_instance)
             return True
 
     def add_routing_node(
@@ -495,6 +660,11 @@ class ExecutionGraph:
             self._predecessors[name] = set()
             self._routing_nodes.add(name)
             self._routers[name] = router
+            self._node_states[name] = {
+                "state": "idle",
+                "message": "尚未开始",
+                "updated_at": 0.0,
+            }
             return True
 
     def remove_agent(self, agent_name: str) -> bool:
@@ -524,6 +694,7 @@ class ExecutionGraph:
             self._routers.pop(agent_name, None)
             self._router_scopes.pop(agent_name, None)
             self._routing_nodes.discard(agent_name)
+            self._node_states.pop(agent_name, None)
             return True
 
     # ------------------------------------------------------------------
@@ -770,7 +941,14 @@ class ExecutionGraph:
             self._predecessors[agent_name] = set()
             self._task_by_agent[agent_name] = assignment.id
             self._task_by_id[assignment.id] = agent_name
+            self._node_states[agent_name] = {
+                "state": "queued",
+                "message": "等待调度",
+                "task_id": assignment.id,
+                "updated_at": time.time(),
+            }
             agent_instance._agent_name_in_graph = agent_name
+            self._attach_agent_events(agent_instance)
         self._dynamic_ready.put(agent_name)
         self._emit(
             "graph",
@@ -872,6 +1050,7 @@ class ExecutionGraph:
             self._successors[agent_name] = set()
             self._predecessors[agent_name] = set()
             agent_instance._agent_name_in_graph = agent_name
+            self._attach_agent_events(agent_instance)
 
         self._emit("graph", agent_name, "dynamic:add_agent",
                     f"Agent '{agent_name}' created")
@@ -1234,16 +1413,18 @@ class ExecutionGraph:
                                     data=missing_report.as_dict(),
                                 )
                     except Exception as exc:
+                        if isinstance(exc, AgentRunStopped):
+                            if task_id:
+                                self.task_bus.set_terminal_state(task_id, "interrupted")
+                            for pending_future in running:
+                                pending_future.cancel()
+                            raise
                         if task_id:
                             self.task_bus.fail_unreported_task(
                                 task_id,
                                 agent_name,
                                 f"Worker 运行失败：{str(exc)[:1000]}",
                             )
-                        if isinstance(exc, AgentRunStopped):
-                            for pending_future in running:
-                                pending_future.cancel()
-                            raise
                         self._emit(
                             "graph", agent_name, "agent:failed",
                             str(exc),

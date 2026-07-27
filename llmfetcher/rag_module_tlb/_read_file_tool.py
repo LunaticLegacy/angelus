@@ -26,6 +26,8 @@ def create_read_file_tool(root: Path) -> Tool:
         ``file_path`` parameter.
     """
 
+    root_resolved = root.resolve()
+
     def handler(file_path: str) -> str:
         """Read a file within the sandboxed root directory.
 
@@ -40,10 +42,12 @@ def create_read_file_tool(root: Path) -> Tool:
             PermissionError: If the resolved path is outside the root.
         """
         resolved = Path(file_path).resolve()
-        if not str(resolved).startswith(str(root.resolve())):
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError:
             raise PermissionError(
                 f"Access denied: '{file_path}' is outside the TLB root '{root}'"
-            )
+            ) from None
         return resolved.read_text(encoding="utf-8")
 
     return Tool(

@@ -1,1 +1,1 @@
-recursive-include web *.html *.css *.js
+recursive-include frontend *.html *.css *.js

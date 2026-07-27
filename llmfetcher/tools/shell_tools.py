@@ -1,16 +1,31 @@
 import os
 import re
+import signal
 import shlex
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..llm_types import Tool, ToolSchema, ToolParameter
+
+
+def _kill_process_group(process: subprocess.Popen) -> None:
+    """Terminate a shell command and descendants when possible."""
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except (OSError, ProcessLookupError):
+            pass
 
 
 def create_shell_tools(
     allowed_commands: Optional[List[str]] = None,
     max_timeout: float = 60.0,
     sandbox_cwd: Optional[str] = None,
+    register_process: Optional[Callable[[subprocess.Popen], None]] = None,
+    unregister_process: Optional[Callable[[subprocess.Popen], None]] = None,
+    force_stop_event: Any = None,
 ) -> List[Tool]:
     """Create shell execution tool with security controls.
 
@@ -82,30 +97,46 @@ def create_shell_tools(
                 if not any(base_cmd == allowed for allowed in allowed_commands):
                     return f"Error: command '{base_cmd}' not in allowed list: {allowed_commands}"
 
+        if force_stop_event is not None and force_stop_event.is_set():
+            return "Error: command force-stopped before execution"
+
+        proc = None
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 command,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 shell=True,
                 text=True,
                 cwd=exec_cwd,
-                timeout=timeout,
+                start_new_session=True,
                 env={
                     key: value
                     for key, value in os.environ.items()
                     if key not in ["SSH_AUTH_SOCK", "GPG_AGENT_INFO"]
                 },
             )
+            if register_process:
+                register_process(proc)
+            if force_stop_event is not None and force_stop_event.is_set():
+                _kill_process_group(proc)
+            stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
+            if proc is not None:
+                _kill_process_group(proc)
+                proc.communicate()
             return f"Error: command timed out after {timeout} seconds"
         except Exception as exc:
             return f"Error: {exc}"
+        finally:
+            if proc is not None and unregister_process:
+                unregister_process(proc)
 
         lines: List[str] = []
-        if proc.stdout:
-            lines.append("[stdout]\n" + proc.stdout.rstrip("\n"))
-        if proc.stderr:
-            lines.append("[stderr]\n" + proc.stderr.rstrip("\n"))
+        if stdout:
+            lines.append("[stdout]\n" + stdout.rstrip("\n"))
+        if stderr:
+            lines.append("[stderr]\n" + stderr.rstrip("\n"))
         if proc.returncode != 0:
             lines.append(f"[exit code] {proc.returncode}")
 

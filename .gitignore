@@ -48,6 +48,6 @@ docs/_build/
 .qwen
 .codex
 
-# local llm workspace for testing
-worksapce/
+# Local browser sessions, connectors, and migration backups.
+workspace/
 .llmfetcher/

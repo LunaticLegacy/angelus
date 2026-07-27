@@ -68,22 +68,24 @@ llmfetcher-web
 ```
 
 Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Configure a provider,
-model, optional API URL and key, then send a message. API keys are used only to
-start the active run and are not stored in the persisted chat context. Context
-files are saved locally under `.llmfetcher/sessions/`.
+model, optional API URL and key, then send a message. The Connection selector
+can save multiple named provider configurations, including their API keys, in
+the local `workspace/connectors.json` store (the file is written with mode
+0600 where the OS permits it). Keys are not stored in persisted chat context.
 
 The optional Shell switch exposes the existing restricted `shell` tool with its
 working directory limited to the process directory. Only enable it for models
 you trust with local-machine access.
 
-### Workspaces and CLI
+### Sessions and CLI
 
-Each workspace has its own persistent chat context. Select one in the console,
-or manage it from the main CLI:
+Each browser-visible session owns an independent local directory under
+`workspace/<session>/`. Select one in the console, or manage it from the main
+CLI:
 
 ```bash
-llmfetcher workspace list
-llmfetcher workspace create "产品研究"
+llmfetcher session list
+llmfetcher session create "产品研究"
 llmfetcher web --port 8765
 ```
 

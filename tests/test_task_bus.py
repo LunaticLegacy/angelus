@@ -8,7 +8,7 @@ from typing import Any, cast
 from llmfetcher.agent import Agent
 from llmfetcher.llm_fetcher import LLMBackendConfig
 from llmfetcher.llm_types import LLMOutput, LLMToolCall, Tool, ToolSchema
-from llmfetcher.swarm_module import ExecutionGraph
+from llmfetcher.swarm_module import ExecutionGraph, TaskBus
 
 
 class _CompletionFetcher:
@@ -218,6 +218,49 @@ class TaskBusGraphTests(unittest.TestCase):
 
         self.assertEqual(result.content, "Submitting the completed report.")
         self.assertEqual(fetcher.call_count, 1)
+
+    def test_report_outcome_and_unfinished_cleanup_use_precise_terminals(self) -> None:
+        """Preserve reports while interrupting running and cancelling queued work."""
+        bus = TaskBus()
+        completed = bus.create_assignment(
+            recipient="done", reply_to="coordinator", objective="finish"
+        )
+        failed = bus.create_assignment(
+            recipient="failed", reply_to="coordinator", objective="fail"
+        )
+        running = bus.create_assignment(
+            recipient="running", reply_to="coordinator", objective="continue"
+        )
+        queued = bus.create_assignment(
+            recipient="queued", reply_to="coordinator", objective="wait"
+        )
+        bus.claim_assignment(completed.id)
+        bus.claim_assignment(failed.id)
+        bus.claim_assignment(running.id)
+        bus.submit_report(
+            task_id=completed.id, reporter="done", status="completed", summary="ok"
+        )
+        bus.submit_report(
+            task_id=failed.id, reporter="failed", status="failed", summary="bad"
+        )
+
+        changed = bus.finalize_unfinished()
+
+        self.assertEqual(changed, {running.id: "interrupted", queued.id: "cancelled"})
+        self.assertEqual(bus.task_states(), {
+            completed.id: "completed",
+            failed.id: "failed",
+            running.id: "interrupted",
+            queued.id: "cancelled",
+        })
+        self.assertFalse(bus.set_terminal_state(completed.id, "failed"))
+        with self.assertRaises(ValueError):
+            bus.submit_report(
+                task_id=running.id,
+                reporter="running",
+                status="completed",
+                summary="late result",
+            )
 
 
 if __name__ == "__main__":
