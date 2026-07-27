@@ -2,7 +2,7 @@
 
 LLMFetcher is available to commercial customers under a separately
 negotiated, written license agreement.  This route is intended for customers
-that need permissions not available under GPL-3.0, such as closed-source
+that need permissions not available under AGPL-3.0-or-later, such as closed-source
 deployment, internal redistribution, or a defined support commitment.
 
 ## What a commercial license can cover
@@ -44,9 +44,9 @@ agreement explicitly identifies them.
 
 ## Open-source alternative
 
-The GPL-3.0-only edition remains available under [LICENSE](../LICENSE).  A
-commercial agreement does not revoke GPL rights already granted to recipients
-of the GPL edition.
+The AGPL-3.0-or-later edition remains available under [LICENSE](LICENSE). A
+commercial agreement does not revoke AGPL rights already granted to recipients
+of the AGPL edition.
 
 ## Contract checklist
 

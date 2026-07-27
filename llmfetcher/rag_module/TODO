@@ -1,2 +1,0 @@
-TODO: 当前的 RAG 性能和实现均有硬伤，需要紧急查询问题所在，并进行紧急 code review。
-TODO: chunk RAG 已落地，后续可继续优化 chunk overlap、缓存与召回评估。

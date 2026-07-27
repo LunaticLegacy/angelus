@@ -47,7 +47,11 @@ docs/_build/
 # LLM
 .qwen
 .codex
+.codetalk/
 
 # Local browser sessions, connectors, and migration backups.
 workspace/
 .llmfetcher/
+
+# Local RAG datasets and generated indexes are not part of the superproject.
+benchmark/
