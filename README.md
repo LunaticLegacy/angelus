@@ -66,17 +66,17 @@ OpenVINO 或 ONNX Runtime 后端时，按 LLMFetcher 的依赖说明额外安装
 
 ## 3. 启动 Web Workbench
 
-将运行数据放在 Angelus 顶层，避免它们进入 submodule 工作树：
+Angelus 会自动把运行数据写入顶层 `workspace/`，因此旧会话在 submodule 更新后
+仍会显示。正常启动不需要环境变量：
 
 ```bash
-export LLMFETCHER_STATE_DIR="$PWD/workspace"
 llmfetcher web --host 127.0.0.1 --port 8765
 ```
 
-也可使用固定地址的快捷命令：
+需要把状态放到其他磁盘、容器卷或临时目录时，才设置覆盖变量：
 
 ```bash
-LLMFETCHER_STATE_DIR="$PWD/workspace" llmfetcher-web
+LLMFETCHER_STATE_DIR=/path/to/state llmfetcher-web
 ```
 
 浏览器打开 <http://127.0.0.1:8765>。首次使用时：
