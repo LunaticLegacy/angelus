@@ -1,139 +1,146 @@
 # Angelus
 
-Angelus 是 [LLMFetcher](./llmfetcher) 的部署与工作台 superproject。它把
-LLMFetcher 固定为一个 Git submodule，并为本地运行数据、团队协作和版本升级
-提供一个稳定的上层入口。
+> 面向专业研究工作流的 Agent 轨迹追溯工作台。
 
-所有可执行实现都在 `llmfetcher/`：Python 包、Web Workbench、Agent、Swarm、
-会话持久化、TLB RAG、测试和其自身文档均由该子模块维护。
-
-## 目录与职责
+Angelus 让多 Agent 的研究过程不仅能运行，也能被检查、停止、恢复和复盘。它面向
+构建或监督研究型 Agent 的开发者与团队：当一个结论由多个 Agent、工具调用和任务交接
+共同产生时，你应当能够回答“它为什么得出这个结论、证据来自哪里、过程在哪里中断”。
 
 ```text
-angelus/
-├── llmfetcher/                 # 固定版本的 LLMFetcher submodule
-├── workspace/                  # 本机运行数据；不提交
-├── LICENSE                     # AGPL-3.0-or-later
-├── LICENSING.md                # 商业授权路径说明
-├── commercial-licensing.md     # 商业授权范围提示
-└── .gitmodules                 # 子模块 URL 与跟踪分支
+研究任务 → 任务分解 → 专家 Agent / 工具执行 → 结构化报告交接 → 综合结论
+    │                                                                     │
+    └──────── 会话、事件、执行图、用量与上下文均可持久化和回放 ────────────┘
 ```
 
-`workspace/` 由 Web Workbench 创建。它保存本地会话、上下文、执行图快照、
-事件 Trace、任务计划和连接器配置；其中的 API key 仅保存在本机，不能提交。
+Angelus 是 [LLMFetcher](./llmfetcher) 的部署与工作台 superproject。
+完整实现位于 `llmfetcher/` Git submodule：Python 包、Web Workbench、Agent、
+Swarm、持久化、TLB RAG、测试及底层技术文档均在其中维护。Angelus 负责锁定一个
+可复现版本，并保存不进入 Git 的本地运行状态。
 
-## 1. 获取项目
+## 适合谁
 
-要求：Python 3.12+、Git，以及可访问 GitHub 的 SSH 凭据（本项目的 submodule
-使用 SSH URL）。
+- 构建深度研究、情报分析、安全分析、代码分析或知识检索 Agent 的工程师；
+- 需要多 Agent 分工、证据交接、长任务恢复与结果审计的团队；
+- 不满足于“模型给出了一个答案”，而需要检查执行轨迹和结论来源的人。
 
-新克隆时必须初始化子模块：
+它不是面向普通聊天用户的通用 AI 客户端，也不试图替代向量数据库或所有 Agent
+框架。它专注于：**让专业 Agent 工作流可观测、可恢复、可追溯。**
+
+## 核心能力
+
+| 能力 | 解决的问题 |
+| --- | --- |
+| 持久化会话 | 刷新页面或重启服务后，用户消息、Agent 回复和执行状态仍可恢复。 |
+| Agent 轨迹 | 记录生命周期事件、任务计划、工具批次、执行图和逐 Agent 用量。 |
+| 可控中断 | 协作式停止会保存已完成边界；强制停止会记录终态并清理已登记工具进程。 |
+| Swarm 交接 | coordinator 分派 worker；worker 通过 TaskBus 返回结构化报告，而非污染 coordinator 上下文的 raw transcript。 |
+| 本地优先 | 连接器、API key 与会话数据保存在本机 `workspace/`，不写入 Git。 |
+| 实验性 TLB RAG | 通过 `INDEX.md` 层级路由读取最小充分文件集，适合结构化知识树。 |
+
+## 快速开始
+
+**要求：** Python 3.12+、Git，以及可访问 GitHub 的 SSH 凭据。子模块使用 SSH URL。
 
 ```bash
 git clone --recurse-submodules git@github.com:LunaticLegacy/angelus.git
 cd angelus
-```
 
-如果已经克隆但 `llmfetcher/` 为空：
-
-```bash
-git submodule update --init --recursive
-```
-
-确认当前 Angelus 固定的 LLMFetcher 版本：
-
-```bash
-git submodule status
-git -C llmfetcher log -1 --oneline
-```
-
-## 2. 安装
-
-建议在 Angelus 顶层创建虚拟环境，但从子模块安装包：
-
-```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install setuptools
+python -m pip install --upgrade pip setuptools
 python -m pip install --no-build-isolation -e ./llmfetcher
-```
 
-可编辑安装使 `llmfetcher` CLI 与 `llmfetcher-web` 命令可用。需要本地
-OpenVINO 或 ONNX Runtime 后端时，按 LLMFetcher 的依赖说明额外安装对应运行时。
-`--no-build-isolation` 允许使用虚拟环境中刚安装的 `setuptools`；这对 Python
-3.14 的最小 venv 或无网络环境尤其有用。
-
-## 3. 启动 Web Workbench
-
-Angelus 会自动把运行数据写入顶层 `workspace/`，因此旧会话在 submodule 更新后
-仍会显示。正常启动不需要环境变量：
-
-```bash
 llmfetcher web --host 127.0.0.1 --port 8765
 ```
 
-需要把状态放到其他磁盘、容器卷或临时目录时，才设置覆盖变量：
+打开 <http://127.0.0.1:8765>，创建 Provider 连接器，选择模型并新建会话，即可开始。
+如果 `8765` 已被占用，改用 `llmfetcher web --port 8766`。
+
+> Python 3.14 的最小 venv 可能不自带 `setuptools`。`--no-build-isolation` 让可编辑
+> 安装复用当前虚拟环境的构建工具，适合无网络或受代理限制的环境。
+
+### 首次配置
+
+1. 在 Workbench 的“连接”区域创建 Provider 配置，填写 provider、model、可选 API URL 和 API key。
+2. 选择或新建会话。
+3. 调整最大输出 tokens、温度、Swarm 并发度和上下文压缩阈值。
+4. 发送任务；需要协作时启用 Agent Swarm。
+
+上下文压缩阈值默认是 262144 个字符。它控制历史何时压缩，并非模型服务商声明的
+context window。Shell 工具只应向受信任模型开放；它的工作目录受限于当前会话目录。
+
+## 运行数据与轨迹
+
+Angelus 会自动使用顶层 `workspace/`。因此升级或重新安装 `llmfetcher` submodule 后，
+已有会话仍会显示。若需要把数据置于其他磁盘、容器卷或临时目录，可覆盖：
 
 ```bash
 LLMFETCHER_STATE_DIR=/path/to/state llmfetcher-web
 ```
 
-浏览器打开 <http://127.0.0.1:8765>。首次使用时：
+每个会话独立保存于 `workspace/<session>/`：
 
-1. 在“连接”中创建 Provider 配置，填写 provider、model、API URL（如需要）和 API key。
-2. 选择或新建会话。
-3. 设定最大输出 tokens、温度、Swarm 并发度与“上下文压缩阈值”。默认阈值是 262144 个字符；它是历史压缩阈值，不是模型服务商声明的上下文窗口。
-4. 发送任务；需要时开启 Shell 或 Agent Swarm。Shell 工具会在当前会话的工作目录中执行，因此只应向受信任的模型开放。
-
-连接器保存在 `workspace/connectors.json`；服务会尽可能以文件权限 0600 写入。不要把该文件复制进 issue、日志或 Git 提交。
-
-## 4. 会话、执行和恢复
-
-每个浏览器会话对应 `workspace/<session>/` 下的独立目录。常见文件包括：
-
-| 文件 | 作用 |
+| 文件 | 内容 |
 | --- | --- |
 | `conversation.json` | 按保存顺序的用户与 Agent 可见对话 |
 | `contexts/*.json` | 各 Agent 的持久化上下文与工具审计数据 |
 | `events.ndjson` | 可重放的生命周期 Event Trace |
-| `graph-view.json` | 当前或最后一次执行图的安全快照 |
-| `task-plan.json` | Agent 任务计划 |
-| `run-state.json` | 当前运行或最近一次终态 |
+| `graph-view.json` | 当前或最近一次运行的安全执行图快照 |
+| `task-plan.json` | 任务分解与状态 |
+| `run-state.json` | 活跃运行或最近一次终态 |
 
-刷新浏览器、切换会话或切换 Agent 时，前端会从这些文件重新加载历史与运行状态。运行中的 SSE 连接会从持久化事件日志续接；服务重启导致的活跃运行会显示为 `interrupted`，而不是伪装成仍在运行。
+刷新、切换会话或切换 Agent 时，前端从这些持久化文件恢复视图。SSE 会从事件日志续接；
+服务丢失的运行会显示为 `interrupted`，不会被误报为仍在执行。
 
-停止是协作式的：当前模型/工具步骤完成并保存后才停止。强制停止会终止已登记的工具进程；两种停止路径都会持久化已完成的上下文边界。
+Workbench 中，绿色表示运行中，橘色表示 pending，蓝色表示已完成且等待确认，红色表示
+失败/中断，灰色表示空闲、取消或已确认。右侧检查器提供任务计划、Agent、Trace 和用量；
+总览隐藏工具细节，只显示行为块与可见对话，选中具体 Agent 后再显示其工具和推理细节。
 
-命令行可管理会话和启动服务：
+## Swarm：从任务到可审计结论
 
-```bash
-llmfetcher session list
-llmfetcher session create "研究"
-llmfetcher web --host 127.0.0.1 --port 8765
+启用 Agent Swarm 后，coordinator 可以动态分派子 Agent。每个 worker 收到明确任务包，
+通过 TaskBus 回传结构化结论、证据、产物和待解决问题；raw transcript 仅保留作审计，
+不会直接注入 coordinator 的上下文。
+
+这使轨迹能按以下路径复盘：
+
+```text
+谁收到何种任务 → 何时调用什么工具 → 产生什么结构化报告 →
+报告被谁消费 → 最终结论如何形成
 ```
 
-## 5. 使用 Swarm
+停止是协作式的：当前模型与工具步骤完成、结果持久化后才结束。强制停止会终止已登记的
+工具进程；两种方式都会保留已经完成的上下文边界。
 
-启用 Agent Swarm 后，coordinator 可以动态分派子 Agent。worker 以明确的任务包执行，
-并通过 TaskBus 交回结构化报告；raw transcript 保留为审计数据，不会直接塞回
-coordinator 的上下文。
+## CLI 与测试
 
-Workbench 中的状态颜色含义：
+```bash
+# 会话管理
+llmfetcher session list
+llmfetcher session create "研究"
 
-| 颜色 | 状态 |
-| --- | --- |
-| 绿色 | 正在运行 |
-| 橘色 | pending / 等待调度 |
-| 蓝色 | 已完成，等待用户确认 |
-| 红色 | 失败或中断 |
-| 灰色 | 空闲、已取消或已确认 |
+# 在 LLMFetcher 子模块中运行完整测试
+cd llmfetcher
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
 
-右侧检查器提供任务计划、Agent、Trace 和用量四个视图。总览聊天只显示 Agent 行为块与最终可见对话；选择某个 Agent 后才显示该 Agent 的推理和工具调用细节。
+### 常见问题
 
-## 6. Python API 与 TLB RAG
+- **`ModuleNotFoundError: llmfetcher`**：旧 editable 安装可能仍指向 Angelus 顶层。执行：
+  ```bash
+  python -m pip install setuptools
+  python -m pip install --no-build-isolation -e ./llmfetcher
+  ```
+- **`llmfetcher/` 为空**：执行 `git submodule update --init --recursive`。
+- **SSH 认证失败**：为 GitHub 配置 SSH key；或修改 `.gitmodules` 后执行
+  `git submodule sync --recursive`。
+- **看不到旧会话**：通常是启动进程使用了不同的 `LLMFETCHER_STATE_DIR`；检查它是否指向期望目录。
 
-从子模块目录或已安装环境中导入包：
+## 使用 TLB RAG
+
+TLB RAG 是实验性的层级文件树检索工具。它将 `INDEX.md` 视为路由表，内部 Agent 按层
+读取必要的索引和叶文件，并生成候选 intent-to-path 缓存项。它适合已有清晰目录结构的
+知识库，不是通用向量数据库替代品。
 
 ```python
 from llmfetcher import Agent, LLMBackendConfig, LLMFetcher
@@ -148,41 +155,15 @@ fetcher = LLMFetcher([
         api_url="https://api.openai.com/v1",
     )
 ])
-
 agent = Agent(llm_fetcher=fetcher, system_prompt="Answer with evidence.")
 agent.add_tool(create_tlb_rag_tool("./knowledge", fetcher))
 print(agent.run("Locate the deployment guide.").content)
 ```
 
-TLB RAG 是实验性层级文件树检索工具：它让内部 Agent 沿 `INDEX.md` 路由文件
-按层读取最少的叶节点，并将候选 intent-to-path 映射作为缓存项。它不是通用向量
-数据库替代品；知识树、索引质量和模型的工具调用可靠性共同决定效果。
+## 更新 LLMFetcher
 
-## 7. 测试与排错
-
-在 submodule 内运行完整测试：
-
-```bash
-cd llmfetcher
-python -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-常见问题：
-
-- `ModuleNotFoundError: llmfetcher`：确认已运行
-  `python -m pip install --no-build-isolation -e ./llmfetcher`，或在 `llmfetcher/` 内执行命令。
-- 由旧 Angelus 顶层迁移后出现同一错误：旧 editable 安装仍指向顶层目录。运行
-  `python -m pip install setuptools`，再运行
-  `python -m pip install --no-build-isolation -e ./llmfetcher`。
-- submodule 目录为空：运行 `git submodule update --init --recursive`。
-- Git 提示 SSH 认证失败：为 GitHub 账户配置 SSH key，或在 `.gitmodules` 中改成你有权限访问的 URL 后执行 `git submodule sync --recursive`。
-- 浏览器刷新后没有本地数据：确认每次启动都设置了相同的 `LLMFETCHER_STATE_DIR`。
-- 端口 8765 被占用：使用 `llmfetcher web --port <port>`。
-
-## 8. 更新模型实现
-
-Angelus 记录一个确定的 LLMFetcher commit，不会在普通 `git pull` 时自动移动到
-submodule 的最新分支。审阅更新后显式推进它：
+Angelus 固定一个确定的 LLMFetcher commit；普通 `git pull` 不会自动推进 submodule。
+审阅更新后显式执行：
 
 ```bash
 git -C llmfetcher fetch origin
@@ -199,15 +180,15 @@ git push
 git submodule update --init --recursive
 ```
 
-不要直接在 submodule 中改动后忘记提交；应先在 `llmfetcher` 仓库中提交并推送，
-再在 Angelus 中提交更新后的 gitlink。
+对子模块做修改时，应先在 LLMFetcher 仓库中提交并推送，再在 Angelus 中提交更新后的
+gitlink。
 
-## 9. 许可证与素材
+## 许可证与素材
 
-Angelus 顶层继承 LLMFetcher 的 AGPL-3.0-or-later 开源授权和另行签署的商业授权
-路径，详见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md) 与
-[commercial-licensing.md](commercial-licensing.md)。`llmfetcher` submodule 是独立
-版本库，保留自己的版权与许可证声明；Angelus 不改变或再授权其条款。
+Angelus 继承 LLMFetcher 的 AGPL-3.0-or-later 开源授权与另行签署的商业授权路径，
+详见 [LICENSE](LICENSE)、[LICENSING.md](LICENSING.md) 和
+[commercial-licensing.md](commercial-licensing.md)。`llmfetcher` 是独立版本库，
+保留自身版权和许可证声明；Angelus 不改变或再授权其条款。
 
-从其他项目移入图像、字体、图标或截图前，必须逐项确认素材来源和许可。删除源仓库、
-归档源仓库或锁定其 Git commit 都不会自动转移版权或授予新的复用权限。
+导入图像、字体、图标或截图前，应逐项确认来源、版权人与许可。删除、归档或锁定源仓库
+不会自动转移版权或授予新的复用权限。
