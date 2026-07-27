@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, override
 
 from .base import ContextHandler
 from ..llm_types import (
@@ -131,6 +131,14 @@ class ContextHandlerLinear(ContextHandler):
     # -- public API ---------------------------------------------------------
     # System prompt should NOT be included in this context manager.
 
+    @override
+    def clear_context(self):
+        self.abstract = None
+        self.messages = []
+        return True
+
+
+    @override
     def add_user_message(
         self,
         message: str,
@@ -151,6 +159,7 @@ class ContextHandlerLinear(ContextHandler):
             content=message,
         ))
 
+    @override
     def add_assistant_message(
         self,
         message: LLMOutput,
@@ -237,6 +246,7 @@ class ContextHandlerLinear(ContextHandler):
         self.messages.clear()
         return True
 
+    @override
     def get_prev_messages(self) -> List[LLMContext | LLMContextCompacted]:
         """Return the stored conversation history."""
         result: List[LLMContext | LLMContextCompacted] = list(self.messages)
@@ -244,6 +254,7 @@ class ContextHandlerLinear(ContextHandler):
             result.insert(0, self.abstract)
         return result
 
+    @override
     def build_messages(self) -> List[Dict[str, Any]]:
         """Build context messages for an LLM request.
 
@@ -395,6 +406,7 @@ class ContextHandlerLinear(ContextHandler):
 
     # -- persistence -------------------------------------------------------
 
+    @override
     def save(self, path: str | Path) -> bool:
         """Serialize the conversation history to a JSON file.
 
@@ -421,6 +433,7 @@ class ContextHandlerLinear(ContextHandler):
         except (OSError, TypeError, ValueError):
             return False
 
+    @override
     def load(self, path: Optional[str | Path]) -> bool:
         """Deserialize conversation history from a JSON file.
 

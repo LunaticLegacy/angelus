@@ -510,3 +510,9 @@ class Agent:
     def close(self) -> None:
         """Release sub-interpreter resources held by the tool executor."""
         self.tool_executor.close()
+
+    def clear_context(self) -> None:
+        """
+        Clear context.
+        """
+        self.context_handler.clear_context()
