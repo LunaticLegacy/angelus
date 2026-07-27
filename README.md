@@ -55,11 +55,14 @@ git -C llmfetcher log -1 --oneline
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ./llmfetcher
+python -m pip install setuptools
+python -m pip install --no-build-isolation -e ./llmfetcher
 ```
 
 可编辑安装使 `llmfetcher` CLI 与 `llmfetcher-web` 命令可用。需要本地
 OpenVINO 或 ONNX Runtime 后端时，按 LLMFetcher 的依赖说明额外安装对应运行时。
+`--no-build-isolation` 允许使用虚拟环境中刚安装的 `setuptools`；这对 Python
+3.14 的最小 venv 或无网络环境尤其有用。
 
 ## 3. 启动 Web Workbench
 
@@ -166,7 +169,11 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 
 常见问题：
 
-- `ModuleNotFoundError: llmfetcher`：确认已运行 `python -m pip install -e ./llmfetcher`，或在 `llmfetcher/` 内执行命令。
+- `ModuleNotFoundError: llmfetcher`：确认已运行
+  `python -m pip install --no-build-isolation -e ./llmfetcher`，或在 `llmfetcher/` 内执行命令。
+- 由旧 Angelus 顶层迁移后出现同一错误：旧 editable 安装仍指向顶层目录。运行
+  `python -m pip install setuptools`，再运行
+  `python -m pip install --no-build-isolation -e ./llmfetcher`。
 - submodule 目录为空：运行 `git submodule update --init --recursive`。
 - Git 提示 SSH 认证失败：为 GitHub 账户配置 SSH key，或在 `.gitmodules` 中改成你有权限访问的 URL 后执行 `git submodule sync --recursive`。
 - 浏览器刷新后没有本地数据：确认每次启动都设置了相同的 `LLMFETCHER_STATE_DIR`。
