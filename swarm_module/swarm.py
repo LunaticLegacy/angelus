@@ -268,15 +268,18 @@ class AgentSwarm:
     def run(
         self,
         message: str,
+        max_rounds: int | None = None,
         control: AgentRunControl | None = None,
     ) -> dict[str, Any]:
         """Execute the graph with an optional cooperative Agent control.
 
         Args:
             message: Initial input supplied to every root Agent.
+            max_rounds: Maximum rounds passed to every Agent; ``0`` means
+                unlimited and ``None`` uses each Agent's default.
             control: Optional stop and steering source shared by graph Agents.
 
         Returns:
             Mapping of agent name to its raw output.
         """
-        return self._graph.run(message, control=control)
+        return self._graph.run(message, max_rounds=max_rounds, control=control)

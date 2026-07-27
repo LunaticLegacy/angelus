@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, override
 
 from ..llm_types import LLMOutput
 from ..memory import MemoryItem, MemoryProvider
@@ -50,6 +50,7 @@ class RetrievedContextHandler(ContextHandler):
         self.persist_assistant = persist_assistant
         self._retrieved: list[MemoryItem] = []
 
+    @override
     def add_user_message(self, message: str) -> None:
         """Retrieve memories for and append a user message.
 
@@ -64,6 +65,7 @@ class RetrievedContextHandler(ContextHandler):
             self._retrieved = []
         self.linear.add_user_message(message)
 
+    @override
     def add_assistant_message(
         self, message: LLMOutput, tool_results: Optional[Dict[str, str]] = None
     ) -> None:
@@ -75,6 +77,7 @@ class RetrievedContextHandler(ContextHandler):
                 namespace=self.namespace,
             )
 
+    @override
     def build_messages(self) -> List[Dict[str, Any]]:
         """Build linear history plus a bounded retrieved-memory system turn."""
         messages = self.linear.build_messages()
@@ -92,10 +95,16 @@ class RetrievedContextHandler(ContextHandler):
             })
         return messages
 
+    @override
     def save(self, path: str | Path) -> bool:
         """Save the short-term linear context to disk."""
         return self.linear.save(path)
 
+    @override
     def load(self, path: str | Path) -> bool:
         """Load the short-term linear context from disk."""
         return self.linear.load(path)
+
+    @override
+    def clear_context(self) -> bool:
+        return self.linear.clear_context()

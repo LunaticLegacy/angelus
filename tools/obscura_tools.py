@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import sqlite3
 import subprocess
+import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, quote_plus, urlparse
@@ -23,9 +24,25 @@ def _get_obscura_bin() -> str:
     """Resolve the configured Obscura executable.
 
     Returns:
-        ``OBSCURA_BIN`` when configured, otherwise ``obscura`` from ``PATH``.
+        Explicit ``OBSCURA_BIN``, a product-local bundled executable, or
+        ``obscura`` from ``PATH`` in that order.
     """
-    return os.environ.get("OBSCURA_BIN", "obscura")
+    explicit = os.environ.get("OBSCURA_BIN")
+    if explicit:
+        return explicit
+    project_root = Path(__file__).resolve().parents[3]
+    platform_name = {
+        ("linux", "x86_64"): "linux-x86_64",
+        ("linux", "aarch64"): "linux-aarch64",
+        ("darwin", "x86_64"): "macos-x86_64",
+        ("darwin", "arm64"): "macos-aarch64",
+        ("win32", "AMD64"): "windows-x86_64",
+    }.get((sys.platform, platform.machine()), "")
+    if platform_name:
+        bundled = project_root / "vendor" / "obscura" / platform_name / ("obscura.exe" if sys.platform == "win32" else "obscura")
+        if bundled.is_file():
+            return str(bundled)
+    return "obscura"
 
 
 def _unwrap_search_url(href: str) -> str:
@@ -44,7 +61,7 @@ def _unwrap_search_url(href: str) -> str:
 
 
 _DEFAULT_SEARCH_SETTINGS = {
-    "providers": ["duckduckgo"],
+    "providers": ["baidu", "bing_html", "duckduckgo"],
     "mode": "fallback",
     "max_results": 5,
     "timeout": 20,
@@ -52,6 +69,7 @@ _DEFAULT_SEARCH_SETTINGS = {
     "bing_api_key": "",
 }
 _SEARCH_STORE: "WebSearchStore | None" = None
+_PROVIDER_FAILURE_STREAK: dict[str, int] = {}
 
 
 class WebSearchStore:
@@ -110,7 +128,7 @@ class WebSearchStore:
         """Validate, persist, and return web-search settings."""
         current = self.get_settings()
         providers = [str(item) for item in values.get("providers", current["providers"])]
-        allowed = {"duckduckgo", "brave", "bing"}
+        allowed = {"baidu", "bing_html", "duckduckgo", "brave", "bing"}
         providers = [item for item in providers if item in allowed]
         if not providers:
             raise ValueError("至少启用一个搜索 Provider")
@@ -185,21 +203,9 @@ def _search_duckduckgo(query: str, max_results: int, timeout: int) -> dict[str, 
 
         url = "https://html.duckduckgo.com/html/?q=" + quote_plus(query)
         user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
-        # Some deployments cannot reach DDG through Python's HTTP stack but can
-        # reach it through the system proxy configured for curl.
-        if os.environ.get("WEB_SEARCH_TRANSPORT", "curl") == "curl":
-            completed = subprocess.run(
-                ["curl", "-L", "--compressed", "--max-time", str(timeout), "-A", user_agent, url],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            document = BeautifulSoup(completed.stdout, "html.parser")
-        else:
-            import requests
-            response = requests.get(url, headers={"User-Agent": user_agent}, timeout=timeout)
-            response.raise_for_status()
-            document = BeautifulSoup(response.text, "html.parser")
+        document, transport_error = _curl_document(url, timeout, user_agent)
+        if document is None:
+            return {"ok": False, "provider": "duckduckgo", "query": query, "results": [], "error": transport_error}
 
         # Keep only organic result blocks and expose direct source URLs.
         results = []
@@ -234,6 +240,83 @@ def _search_duckduckgo(query: str, max_results: int, timeout: int) -> dict[str, 
             "results": [],
             "error": str(exc),
         }
+
+
+def _curl_document(url: str, timeout: int, user_agent: str) -> tuple[Any | None, str]:
+    """Fetch one HTML document with bounded curl diagnostics.
+
+    Args:
+        url: Public HTTP(S) search endpoint.
+        timeout: Total curl timeout in seconds.
+        user_agent: Browser-like user-agent header.
+
+    Returns:
+        A BeautifulSoup document and an empty error, or ``None`` with a
+        diagnostic containing curl's exit status and stderr.
+    """
+    from bs4 import BeautifulSoup
+
+    completed = subprocess.run(
+        [
+            "curl", "-L", "--compressed", "--connect-timeout", str(min(5, timeout)),
+            "--max-time", str(timeout), "-A", user_agent, url,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "no stderr"
+        return None, f"curl exit status {completed.returncode}: {detail}"
+    return BeautifulSoup(completed.stdout, "html.parser"), ""
+
+
+def _search_baidu(query: str, max_results: int, timeout: int) -> dict[str, Any]:
+    """Search Baidu's public HTML endpoint for domestic-first retrieval."""
+    from urllib.parse import quote_plus
+
+    url = "https://www.baidu.com/s?wd=" + quote_plus(query)
+    document, error = _curl_document(url, timeout, "Mozilla/5.0")
+    if document is None:
+        return {"ok": False, "provider": "baidu", "query": query, "results": [], "error": error}
+    results = []
+    for node in document.select("div.result, div.c-container"):
+        anchor = node.select_one("h3 a, h3 a[href]")
+        if anchor is None or not anchor.get("href"):
+            continue
+        snippet = node.select_one(".c-span-last, .c-color-text, .c-abstract")
+        results.append({
+            "title": anchor.get_text(" ", strip=True),
+            "url": _unwrap_search_url(str(anchor["href"])),
+            "snippet": snippet.get_text(" ", strip=True) if snippet else "",
+        })
+        if len(results) >= max_results:
+            break
+    return {"ok": bool(results), "provider": "baidu", "query": query, "results": results, "error": "" if results else "search returned no parseable results"}
+
+
+def _search_bing_html(query: str, max_results: int, timeout: int) -> dict[str, Any]:
+    """Search Bing's public HTML endpoint without requiring an API key."""
+    from urllib.parse import quote_plus
+
+    url = "https://cn.bing.com/search?q=" + quote_plus(query)
+    document, error = _curl_document(url, timeout, "Mozilla/5.0")
+    if document is None:
+        return {"ok": False, "provider": "bing_html", "query": query, "results": [], "error": error}
+    results = []
+    for node in document.select("li.b_algo"):
+        anchor = node.select_one("h2 a[href]")
+        if anchor is None:
+            continue
+        snippet = node.select_one(".b_caption p")
+        results.append({
+            "title": anchor.get_text(" ", strip=True),
+            "url": str(anchor["href"]),
+            "snippet": snippet.get_text(" ", strip=True) if snippet else "",
+        })
+        if len(results) >= max_results:
+            break
+    return {"ok": bool(results), "provider": "bing_html", "query": query, "results": results, "error": "" if results else "search returned no parseable results"}
 
 
 def _search_brave(query: str, max_results: int, timeout: int, api_key: str) -> dict[str, Any]:
@@ -272,6 +355,10 @@ def _search_bing(query: str, max_results: int, timeout: int, api_key: str) -> di
 
 def _search_provider(provider: str, query: str, max_results: int, timeout: int, settings: dict[str, Any]) -> dict[str, Any]:
     """Dispatch one configured provider and return its normalized payload."""
+    if provider == "baidu":
+        return _search_baidu(query, max_results, timeout)
+    if provider == "bing_html":
+        return _search_bing_html(query, max_results, timeout)
     if provider == "duckduckgo":
         return _search_duckduckgo(query, max_results, timeout)
     if provider == "brave":
@@ -285,8 +372,35 @@ def _search_provider(provider: str, query: str, max_results: int, timeout: int, 
     raise ValueError(f"Unsupported search provider: {provider}")
 
 
+def _relevant_search_results(query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reject result pages with no lexical relationship to the query.
+
+    Args:
+        query: Original search query.
+        results: Provider-normalized result records.
+
+    Returns:
+        Only results containing at least one meaningful query term.
+    """
+    import re
+
+    normalized = query.lower()
+    latin_terms = [item for item in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", normalized) if item not in {"the", "and", "for", "from", "with"}]
+    cjk_terms = re.findall(r"[\u4e00-\u9fff]{2,}", normalized)
+    terms = latin_terms + cjk_terms
+    if not terms:
+        return results
+    minimum = 2 if len(latin_terms) >= 2 else 1
+    relevant = []
+    for result in results:
+        haystack = " ".join(str(result.get(key, "")) for key in ("title", "url", "snippet")).lower()
+        if sum(term in haystack for term in terms) >= minimum:
+            relevant.append(result)
+    return relevant
+
+
 def _web_search(**kwargs: Any) -> dict[str, Any]:
-    """Search configured web providers, record usage, and deduplicate results.
+    """Search domestic-first providers through curl with bounded fallback.
 
     Args:
         **kwargs: Tool arguments containing ``query`` and optional result limit.
@@ -295,59 +409,35 @@ def _web_search(**kwargs: Any) -> dict[str, Any]:
         Normalized result payload with provider attempt metadata.
     """
     query = str(kwargs.get("query", "")).strip()
-    store = get_web_search_store()
-    settings = store.get_settings()
-    max_results = max(1, min(int(kwargs.get("max_results", settings["max_results"])), 10))
+    max_results = max(1, min(int(kwargs.get("max_results", 5)), 10))
+    timeout = max(3, min(int(kwargs.get("timeout", 20)), 60))
     if not query:
         return {"ok": False, "error": "query is required", "results": []}
-
+    settings = get_web_search_store().get_settings()
+    providers = ["baidu", "bing_html", "duckduckgo"]
     attempts = []
-    payloads = {}
-    providers = settings["providers"]
-    if settings["mode"] == "parallel" and len(providers) > 1:
-        with ThreadPoolExecutor(max_workers=len(providers)) as executor:
-            futures = {executor.submit(_search_provider, provider, query, max_results, settings["timeout" ]): provider for provider in providers}
-            for future in as_completed(futures):
-                provider = futures[future]
-                started = time.perf_counter()
-                try:
-                    payload = future.result()
-                    error = ""
-                except Exception as exc:
-                    payload = {"ok": False, "provider": provider, "results": [], "error": str(exc)}
-                    error = str(exc)
-                duration = int((time.perf_counter() - started) * 1000)
-                payloads[provider] = payload
-                store.record(provider, bool(payload.get("ok")), len(payload.get("results", [])), duration)
-                attempts.append({"provider": provider, "ok": bool(payload.get("ok")), "error": error or payload.get("error", ""), "duration_ms": duration})
-    else:
-        for provider in providers:
-            started = time.perf_counter()
-            try:
-                payload = _search_provider(provider, query, max_results, settings["timeout"])
-                error = ""
-            except Exception as exc:
-                payload = {"ok": False, "provider": provider, "results": [], "error": str(exc)}
-                error = str(exc)
-            duration = int((time.perf_counter() - started) * 1000)
-            payloads[provider] = payload
-            store.record(provider, bool(payload.get("ok")), len(payload.get("results", [])), duration)
-            attempts.append({"provider": provider, "ok": bool(payload.get("ok")), "error": error or payload.get("error", ""), "duration_ms": duration})
-            if payload.get("ok") and settings["mode"] == "fallback":
-                break
-
-    merged = []
-    seen = set()
-    for attempt in attempts:
-        if not attempt["ok"]:
+    per_provider_timeout = max(3, timeout // len(providers))
+    for provider in providers:
+        if _PROVIDER_FAILURE_STREAK.get(provider, 0) >= 2:
+            attempts.append({"provider": provider, "ok": False, "duration_ms": 0, "error": "provider circuit breaker is open"})
             continue
-        provider_payload = payloads.get(attempt["provider"])
-        for item in (provider_payload or {}).get("results", []):
-            if item.get("url") in seen:
-                continue
-            seen.add(item.get("url"))
-            merged.append({**item, "provider": attempt["provider"]})
-    return {"ok": bool(merged), "query": query, "providers": attempts, "results": merged[:max_results], "error": "" if merged else "all providers failed"}
+        started = time.perf_counter()
+        try:
+            payload = _search_provider(provider, query, max_results, per_provider_timeout, settings)
+            payload["results"] = _relevant_search_results(query, payload.get("results", []))
+            payload["ok"] = bool(payload.get("ok")) and bool(payload["results"])
+            if not payload["ok"] and not payload.get("error"):
+                payload["error"] = "search results failed relevance validation"
+        except Exception as exc:
+            payload = {"ok": False, "provider": provider, "query": query, "results": [], "error": str(exc)}
+        duration = int((time.perf_counter() - started) * 1000)
+        result_count = len(payload.get("results", []))
+        _PROVIDER_FAILURE_STREAK[provider] = 0 if payload.get("ok") else _PROVIDER_FAILURE_STREAK.get(provider, 0) + 1
+        get_web_search_store().record(provider, bool(payload.get("ok")), result_count, duration)
+        attempts.append({"provider": provider, "ok": bool(payload.get("ok")), "duration_ms": duration, "error": payload.get("error", "")})
+        if payload.get("ok"):
+            return {"ok": True, "query": query, "transport": "curl", "provider": provider, "duration_ms": sum(item["duration_ms"] for item in attempts), "results": payload["results"], "attempts": attempts, "error": ""}
+    return {"ok": False, "query": query, "transport": "curl", "duration_ms": sum(item["duration_ms"] for item in attempts), "results": [], "attempts": attempts, "error": "all search providers failed"}
 
 
 def _obscura_fetch_cli(**kwargs: Any) -> dict[str, Any]:
@@ -367,6 +457,10 @@ def _obscura_fetch_cli(**kwargs: Any) -> dict[str, Any]:
     wait_until = str(kwargs.get("wait_until", "load"))
     stealth = bool(kwargs.get("stealth", False))
     eval_js = str(kwargs.get("eval_js", ""))
+    include_images = bool(kwargs.get("include_images", True))
+    requested_mode = mode
+    if include_images and mode == "text":
+        mode = "html"
 
     cmd_parts = [
         _get_obscura_bin(),
@@ -391,14 +485,30 @@ def _obscura_fetch_cli(**kwargs: Any) -> dict[str, Any]:
         timeout=wait + 15,  # hard ceiling
     )
 
-    return {
+    payload = {
         "url": url,
-        "mode": mode,
+        "mode": requested_mode,
         "exit_code": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
         "ok": result.returncode == 0,
     }
+    if include_images and result.returncode == 0:
+        try:
+            from bs4 import BeautifulSoup
+            from urllib.parse import urljoin
+            document = BeautifulSoup(result.stdout, "html.parser")
+            images = [
+                {"url": urljoin(url, str(node.get("src") or node.get("data-src"))), "alt": node.get("alt", "")}
+                for node in document.select("img[src], img[data-src]")
+                if node.get("src") or node.get("data-src")
+            ]
+            payload["images"] = images[:20]
+            if requested_mode == "text":
+                payload["stdout"] = document.get_text(" ", strip=True)
+        except Exception as exc:
+            payload["images_error"] = str(exc)
+    return payload
 
 
 def _obscura_scrape_cli(**kwargs: Any) -> dict[str, Any]:
@@ -493,14 +603,15 @@ def create_obscura_tools() -> list[Tool]:
         Tool(
             name="web_search",
             description=(
-                "Search the live public web for current sources. Returns result titles, "
-                "direct URLs, and snippets. Use this before web_fetch when the source URL "
-                "is not already known."
+                "Search the live public web through the local curl command. Returns only "
+                "URLs extracted from domestic-first curl search providers; use web_fetch to verify every source "
+                "before citing it."
             ),
             schemas=ToolSchema(
                 properties=[
                     ToolParameter(name="query", type="string", description="Web search query", required=True),
                     ToolParameter(name="max_results", type="integer", default=5, description="Maximum results (1-10)", required=False),
+                    ToolParameter(name="timeout", type="integer", default=20, description="curl timeout in seconds (3-60)", required=False),
                 ],
             ),
             handler=_web_search,
@@ -510,7 +621,8 @@ def create_obscura_tools() -> list[Tool]:
             description=(
                 "Fetch a single webpage using a headless browser and extract content. "
                 "Supports html/text/links output modes, CSS selectors, JavaScript evaluation, "
-                "and stealth mode. Use it to inspect primary sources returned by web_search."
+                "and stealth mode. It also returns bounded image URLs for visual inspection. "
+                "Use it to inspect primary sources returned by web_search."
             ),
             schemas=ToolSchema(
                 properties=[
@@ -521,6 +633,7 @@ def create_obscura_tools() -> list[Tool]:
                     ToolParameter(name="wait_until", type="string", enum=["load", "domcontentloaded", "networkidle"], default="load", description="Page event to wait for before extraction", required=False),
                     ToolParameter(name="stealth", type="boolean", default=False, description="Enable anti-detection stealth mode", required=False),
                     ToolParameter(name="eval_js", type="string", default="", description="JavaScript expression to evaluate on the page", required=False),
+                    ToolParameter(name="include_images", type="boolean", default=True, description="Extract image URLs from the page for analyze_image", required=False),
                 ],
             ),
             handler=_obscura_fetch_cli,
