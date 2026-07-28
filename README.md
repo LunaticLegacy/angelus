@@ -12,10 +12,10 @@ Angelus 让多 Agent 的研究过程不仅能运行，也能被检查、停止�
     └──────── 会话、事件、执行图、用量与上下文均可持久化和回放 ────────────┘
 ```
 
-Angelus 是 [LLMFetcher](./llmfetcher) 的部署与工作台 superproject。
-完整实现位于 `llmfetcher/` Git submodule：Python 包、Web Workbench、Agent、
-Swarm、持久化、TLB RAG、测试及底层技术文档均在其中维护。Angelus 负责锁定一个
-可复现版本，并保存不进入 Git 的本地运行状态。
+Angelus 以 [LLMFetcher](./llmfetcher) 为固定的基础库：模型后端、工具契约、上下文
+处理与实验性 RAG 保持在子模块中。Angelus 顶层拥有 Agent 控制面——Web 控制台、
+会话持久化、可观测 Swarm、任务计划、受控 Shell 和运行时测试；前端资产只位于
+`frontend/`，不会进入 LLMFetcher 仓库。
 
 ## 适合谁
 
@@ -49,12 +49,13 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools
 python -m pip install --no-build-isolation -e ./llmfetcher
+python -m pip install --no-build-isolation -e .
 
-llmfetcher web --host 127.0.0.1 --port 8765
+angelus web --host 127.0.0.1 --port 8765
 ```
 
 打开 <http://127.0.0.1:8765>，创建 Provider 连接器，选择模型并新建会话，即可开始。
-如果 `8765` 已被占用，改用 `llmfetcher web --port 8766`。
+如果 `8765` 已被占用，改用 `angelus web --port 8766`。
 
 > Python 3.14 的最小 venv 可能不自带 `setuptools`。`--no-build-isolation` 让可编辑
 > 安装复用当前虚拟环境的构建工具，适合无网络或受代理限制的环境。
@@ -75,7 +76,7 @@ Angelus 会自动使用顶层 `workspace/`。因此升级或重新安装 `llmfet
 已有会话仍会显示。若需要把数据置于其他磁盘、容器卷或临时目录，可覆盖：
 
 ```bash
-LLMFETCHER_STATE_DIR=/path/to/state llmfetcher-web
+LLMFETCHER_STATE_DIR=/path/to/state angelus web
 ```
 
 每个会话独立保存于 `workspace/<session>/`：
@@ -116,11 +117,10 @@ Workbench 中，绿色表示运行中，橘色表示 pending，蓝色表示已�
 
 ```bash
 # 会话管理
-llmfetcher session list
-llmfetcher session create "研究"
+angelus session list
+angelus session create "研究"
 
-# 在 LLMFetcher 子模块中运行完整测试
-cd llmfetcher
+# 在 Angelus 顶层运行控制台测试
 python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
