@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -151,14 +152,15 @@ class TLBRAGHandler:
         self.worker_agent.add_tool(read_tool)
 
         self.tlb: dict[str, Path] = {}
+        self._tlb_lock = threading.Lock()
 
     def retrieve(self, query: str) -> TLBResult:
         """Execute a TLB-like hierarchical retrieval for the given query.
 
-        Runs the worker Agent with the query, extracts and parses the
-        JSON response, updates the internal TLB cache from any
-        ``cache_candidate``, and clears the agent context after each
-        invocation.
+        Injects the current TLB route-cache contents into the worker
+        message so the agent can check for cache hits before traversing
+        the file tree. The cache is read and updated under a lock for
+        thread safety, but the LLM call itself runs unlocked.
 
         Args:
             query: The retrieval intent / search query to resolve against
@@ -169,7 +171,17 @@ class TLBRAGHandler:
             failure, returns a result with status ``"invalid_cache_entry"``
             and the error message populated.
         """
-        result_raw: LLMOutput = self.worker_agent.run(query)
+        with self._tlb_lock:
+            if self.tlb:
+                cache_lines = "\n".join(
+                    f"  {key} -> {path}" for key, path in self.tlb.items()
+                )
+                cache_text = f"Current TLB route cache:\n{cache_lines}"
+            else:
+                cache_text = "TLB route cache is currently empty."
+
+        full_query = f"{cache_text}\n\n---\n\nQuery: {query}"
+        result_raw: LLMOutput = self.worker_agent.run(full_query)
 
         try:
             json_str = _extract_json(result_raw.content)
@@ -186,6 +198,7 @@ class TLBRAGHandler:
 
         cc = result.cache_candidate
         if cc and cc.intent_key and cc.node_path:
-            self.tlb[cc.intent_key] = Path(cc.node_path)
+            with self._tlb_lock:
+                self.tlb[cc.intent_key] = Path(cc.node_path)
 
         return result
