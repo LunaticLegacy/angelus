@@ -505,7 +505,22 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
             unregister_process=active.unregister_process if active else None,
             force_stop_event=active.control.force_stopped if active else None,
         ))
-    agent.add_tools(create_task_planning_tools(_plan_store(workspace_id, session_id)))
+    def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
+        if active is not None:
+            active.events.put({
+                "event": "lifecycle",
+                **_event_payload(ExecutionEvent(
+                    source="plan", agent_name=agent_name,
+                    event_type=event_type,
+                    message=f"Plan updated ({plan.get('goal', '')[:80]})",
+                    data={"plan": plan},
+                )),
+            })
+
+    agent.add_tools(create_task_planning_tools(
+        _plan_store(workspace_id, session_id),
+        on_changed=_on_plan_changed,
+    ))
     return agent
 
 

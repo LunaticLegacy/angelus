@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from llmfetcher.llm_types import Tool, ToolParameter, ToolSchema
 
@@ -141,22 +141,35 @@ class TaskPlanStore:
         temporary.replace(self.path)
 
 
-def create_task_planning_tools(store: TaskPlanStore) -> list[Tool]:
+def create_task_planning_tools(
+    store: TaskPlanStore,
+    *,
+    on_changed: Callable[[str, dict[str, Any]], None] | None = None,
+) -> list[Tool]:
     """Create Agent tools that let a model publish and supervise a task plan.
 
     Args:
         store: Session-local task plan store mutated by the returned handlers.
+        on_changed: Optional callback invoked as ``on_changed(event_type, plan)``
+            after every successful plan mutation, where *event_type* is
+            ``"plan:set"`` or ``"plan:status"``.
 
     Returns:
         ``set_task_plan`` and ``update_task_status`` Tool instances.
     """
     def set_task_plan(goal: str, summary: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         """Persist a complete plan supplied by the model in structured arguments."""
-        return {"ok": True, "plan": store.replace(goal=goal, summary=summary, tasks=tasks)}
+        plan = store.replace(goal=goal, summary=summary, tasks=tasks)
+        if on_changed is not None:
+            on_changed("plan:set", plan)
+        return {"ok": True, "plan": plan}
 
     def update_task_status(task_id: str, status: str) -> dict[str, Any]:
         """Persist a user-visible task status transition requested by the model."""
-        return {"ok": True, "plan": store.update_status(task_id, status)}
+        plan = store.update_status(task_id, status)
+        if on_changed is not None:
+            on_changed("plan:status", plan)
+        return {"ok": True, "plan": plan}
 
     return [
         Tool(name="set_task_plan", description="Create or replace the user's nested task plan. Use it for multi-step goals before executing work.", schemas=ToolSchema(properties=[ToolParameter(name="goal", description="User goal", required=True), ToolParameter(name="summary", description="Planning summary", required=True), ToolParameter(name="tasks", type="array", description="Nested tasks with title, description, priority, estimated_minutes and subtasks", required=True)]), handler=set_task_plan),
