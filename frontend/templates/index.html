@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-17" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-18" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -13,6 +13,14 @@
         <label for="new-session-name">会话名称</label>
         <input id="new-session-name" name="name" maxlength="80" required autocomplete="off" placeholder="例如：资料检索" />
         <div class="session-dialog-actions"><button id="cancel-new-session" type="button">取消</button><button type="submit">创建并进入</button></div>
+      </form>
+    </dialog>
+    <dialog id="new-connector-dialog" class="session-dialog" aria-labelledby="new-connector-title">
+      <form id="new-connector-form" class="session-dialog-form">
+        <h2 id="new-connector-title">保存连接器</h2>
+        <label for="new-connector-name">连接器名称</label>
+        <input id="new-connector-name" name="name" maxlength="80" required autocomplete="off" placeholder="例如：DeepSeek 工作连接" />
+        <div class="session-dialog-actions"><button id="cancel-new-connector" type="button">取消</button><button type="submit">保存</button></div>
       </form>
     </dialog>
     <aside class="sidebar">
@@ -79,6 +87,6 @@
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
-    <script src="/static/app.js?v=workbench-26"></script>
+    <script src="/static/app.js?v=workbench-28"></script>
   </body>
 </html>

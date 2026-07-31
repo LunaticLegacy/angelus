@@ -174,7 +174,12 @@ temporary file. Called by connector CRUD handlers.
 
 The REST API used by `web/static/app.js` to list, create, replace and delete
 named Provider/model/API-key settings. Creation assigns a UUID; update retains
-the ID; deletion removes the stored credential together with its record.
+the ID; deletion removes the stored credential together with its record. The
+frontend uses document-native name dialogs for new connectors and shows a
+temporary success/failure label on the save control, so a global connector
+save is visible even when the Trace inspector is not selected. The connection
+control keeps that label on one line with a fixed minimum width, preventing
+the compact sidebar from splitting `保存` or `已保存` into separate rows.
 
 ### `webapp.render_markdown(text)`
 
@@ -413,6 +418,11 @@ Enter keypress. Ctrl+Enter and Alt+Enter keep the textarea's normal newline
 behavior; IME composition Enter is also left untouched. The submit handler
 continues to validate and start the run, so keyboard and send-button paths are
 identical.
+
+`resizeComposer()` is shared by the input and submit paths. It grows the
+textarea to a capped content height while text exists, then removes its inline
+height after the prompt is cleared so the composer returns to its compact CSS
+size rather than retaining the previous multiline height.
 
 ### `webapp.delete_workspace()` / `_stop_then_remove_workspace()` compatibility
 
