@@ -55,3 +55,4 @@ workspace/
 
 # Local RAG datasets and generated indexes are not part of the superproject.
 benchmark/
+workspace/
