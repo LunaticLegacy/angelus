@@ -9,8 +9,6 @@ let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-p
 let traceBefore = null;
 let traceEvents = [];
 let durableEventCount = 0;
-let agentBehaviorBlocks = new Map();
-let agentBehaviorRounds = new Map();
 let currentAgents = [];
 let currentGraph = {nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};
 
@@ -35,22 +33,10 @@ async function copyResult(text, button) { try { await navigator.clipboard.writeT
 function renderTools(tools=[]) { if(!tools.length)return ""; const calls=tools.map(tool=>`<article class="tool-call"><strong>${escapeHtml(tool.name)}</strong><p>参数</p><pre>${escapeHtml(JSON.stringify(tool.arguments,null,2))}</pre><p>结果</p><pre>${escapeHtml(tool.result || "(无返回内容)")}</pre></article>`).join(""); return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`; }
 /** Render a user or selected-Agent transcript turn with an explicit speaker. */
 function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="") { removeWelcome(); const el=document.createElement("article"); el.className=`message ${role}`; const body=contentHtml || escapeHtml(content); const bodyClass=contentHtml ? "markdown" : "plain-text"; const thought=reasoningHtml || escapeHtml(reasoning); const copy=role === "assistant" && content ? `<button class="copy-result" type="button">复制结果</button>` : ""; const bubble=content ? `<div class="bubble ${bodyClass}">${body}</div>` : ""; const isUser=role === "user"; const speaker=isUser ? "你" : (agentName || selectedAgent || "Coordinator"); const kind=isUser ? "用户输入" : "Agent 回复"; el.innerHTML=`<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${kind}</small>${copy}</div>${bubble}${reasoning ? `<details class="reasoning"><summary>思考过程</summary><div class="markdown">${thought}</div></details>` : ""}${renderTools(tools)}`; el.querySelector(".copy-result")?.addEventListener("click",()=>copyResult(content,el.querySelector(".copy-result"))); $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight; }
-/** Reset per-Agent lifecycle grouping whenever the aggregate chat is rebuilt. */
-function resetAgentBehaviorBlocks() { agentBehaviorBlocks=new Map(); agentBehaviorRounds=new Map(); }
-/** Group lifecycle events into one collapsed, expandable block for each Agent run. */
-function appendAgentBehavior(event) { const agent=event.agent || "coordinator"; const rawType=String(event.type || "event"); const type=rawType.replace("agent:","").replace("graph:","").replaceAll("_"," "); const starts=rawType.endsWith(":start") || rawType === "start"; let key=agentBehaviorBlocks.get(agent); if(starts || !key){const round=(agentBehaviorRounds.get(agent) || 0)+1;agentBehaviorRounds.set(agent,round);key=`${agent}:${round}`;agentBehaviorBlocks.set(agent,key);const block=document.createElement("article");block.className="agent-behavior-block";block.dataset.behaviorKey=key;block.innerHTML=`<button class="agent-behavior-toggle" type="button" aria-expanded="false"><span><strong>${escapeHtml(agent)}</strong><small>AGENT BEHAVIOUR BLOCK · 第 ${round} 轮</small><em class="agent-behavior-summary">等待事件</em></span><i>⌄</i></button><div class="agent-behavior-events"></div>`;block.querySelector(".agent-behavior-toggle").addEventListener("click",()=>{const expanded=block.classList.toggle("expanded");block.querySelector(".agent-behavior-toggle").setAttribute("aria-expanded",String(expanded));});$("chat").append(block);} const block=$("chat").querySelector(`[data-behavior-key="${CSS.escape(key)}"]`);if(!block)return;const events=block.querySelector(".agent-behavior-events");const item=document.createElement("p");item.innerHTML=`<small>${escapeHtml(type)}</small><span>${escapeHtml(event.message || "执行状态已更新")}</span>`;events.append(item);const count=events.children.length;const terminal=rawType === "agent:complete" ? "已完成" : rawType === "agent:stopped" ? "已停止" : rawType === "agent:error" ? "失败" : "进行中";block.querySelector(".agent-behavior-summary").textContent=`${terminal} · ${count} 个事件 · ${event.message || type}`;if(terminal !== "进行中") block.classList.remove("expanded");$("chat").scrollTop=$("chat").scrollHeight; }
 /** Display a durable run failure in the chat pane without hiding prior work. */
 function appendRunErrorBlock(title, message) { removeWelcome(); const el=document.createElement("article"); el.className="run-error"; el.innerHTML=`<strong>⚠ ${escapeHtml(title)}</strong><p>${escapeHtml(message || "未提供错误详情。")}</p>`; $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight; }
-/** Load ordered session turns, lifecycle cards, and extra tool-free Agent results. */
-async function loadAllAgentBehavior() { const [{events=[],total=0},{agents=[]},{messages:sessionMessages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=500`),apiJson(`/api/sessions/${sessionId}/agents`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; $("chat").innerHTML=""; resetAgentBehaviorBlocks(); const behaviors=events.slice().reverse().filter(event=>event.event === "lifecycle"); for(const event of behaviors) appendAgentBehavior(event); const canonicalAssistantContents=new Set(); for(const message of sessionMessages) { if(!message.content?.trim()) continue; if(message.role === "assistant") canonicalAssistantContents.add(message.content); appendMessage(message.role,message.content,"",message.content_html,"",[],message.role === "assistant" ? "coordinator" : ""); } const histories=await Promise.all((agents || []).filter(agent=>agent.id !== "all").map(async agent=>({agent,messages:(await apiJson(`/api/sessions/${sessionId}/messages?agent=${encodeURIComponent(agent.id)}`)).messages || []}))); let extraResultCount=0; for(const {agent,messages} of histories) for(const message of messages) if(message.role === "assistant" && message.content?.trim() && !(message.tools || []).length && !canonicalAssistantContents.has(message.content)){appendMessage("assistant",message.content,"",message.content_html,"",[],agent.name || agent.id);extraResultCount+=1;} if(!behaviors.length && !sessionMessages.length && !extraResultCount) $("chat").innerHTML=`<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 行为</h2><p>此视图会展示用户输入、各 Agent 的执行状态与已完成结果，不显示工具详情。</p></div>`; }
-/** Load a selected Agent's durable lifecycle records and advance the SSE cursor. */
-async function loadAgentBehaviorEvents(agentId) {
-  const {events = [], total = 0} = await apiJson(`/api/sessions/${sessionId}/events?limit=500`);
-  durableEventCount = total;
-  return events.slice().reverse().filter(
-    event => event.event === "lifecycle" && event.agent === agentId,
-  );
-}
+/** Load the canonical session transcript using the same detailed message UI. */
+async function loadAllAgentBehavior() { const [{total=0},{messages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; $("chat").innerHTML=""; for(const message of messages) appendMessage(message.role,message.content,message.reasoning,message.content_html,message.reasoning_html,message.tools,message.role === "assistant" ? "coordinator" : ""); if(!messages.length) $("chat").innerHTML=`<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>`; }
 /** Build one escaped, expandable Trace card from persisted or live event data. */
 function traceElement(title, message="", data=null, kind="") { const el=document.createElement("article"); el.className=`trace-event ${kind}`; const detail=data ? `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>` : ""; const label=kind==="tool"?"TOOL CALL":"STATUS"; el.innerHTML=`<button class="trace-toggle" type="button" aria-expanded="false"><span class="trace-summary"><i></i><strong>${escapeHtml(title)}</strong><small>${label}</small></span><span class="trace-chevron">⌄</span></button><div class="trace-details"><p>${escapeHtml(message)}</p>${detail}</div>`; el.querySelector(".trace-toggle").addEventListener("click",()=>{const expanded=el.classList.toggle("expanded");el.querySelector(".trace-toggle").setAttribute("aria-expanded",String(expanded));}); return el; }
 function trace(title, message="", data=null, kind="") { const target=$("trace"); target.querySelector(".empty")?.remove(); target.prepend(traceElement(title,message,data,kind)); }
@@ -133,20 +119,18 @@ async function updatePlanStatus(taskId,status) { const response=await fetch(`${p
 /** Rehydrate the aggregate view or one Agent's durable trajectory and transcript. */
 async function loadHistory() {
   if (selectedAgent === "all") return loadAllAgentBehavior();
-  const [{messages = []}, behaviors] = await Promise.all([
+  const [{messages = []}, {total = 0}] = await Promise.all([
     apiJson(messagesUrl()),
-    loadAgentBehaviorEvents(selectedAgent),
+    apiJson(`/api/sessions/${sessionId}/events?limit=1`),
   ]);
+  durableEventCount = total;
   $("chat").innerHTML = "";
-  resetAgentBehaviorBlocks();
-  // Historical behavior is oldest-first so live SSE updates extend the same block.
-  for (const event of behaviors) appendAgentBehavior(event);
   for (const message of messages) {
     appendMessage(message.role, message.content, message.reasoning,
       message.content_html, message.reasoning_html, message.tools, selectedAgent);
   }
-  if (!behaviors.length && !messages.length) {
-    $("chat").innerHTML = `<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的执行行为、回复、思考和工具调用详情。</p></div>`;
+  if (!messages.length) {
+    $("chat").innerHTML = `<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`;
   }
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
@@ -165,7 +149,7 @@ async function start(message) {
 }
 function handleEvent(event) {
   durableEventCount+=1;
-  if(event.event === "lifecycle") { traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents); if(selectedAgent === "all" || selectedAgent === event.agent) appendAgentBehavior(event); if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
+  if(event.event === "lifecycle") { traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents); if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
   if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all") loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); else if(selectedAgent === resultAgent) appendMessage("assistant", event.content, event.reasoning, event.content_html, event.reasoning_html, [], resultAgent); updateHeaderMetrics(event); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); traceEvents.unshift(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { traceEvents.unshift({...event,type:"agent:error",agent:event.agent || "coordinator"}); tracePayload(event); renderAgentSelector(currentAgents); appendRunErrorBlock("运行失败",event.message); setStatus("运行失败", "error"); return; }
   if(event.event === "stopped") { traceEvents.unshift(event); tracePayload(event); }

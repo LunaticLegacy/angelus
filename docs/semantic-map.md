@@ -135,6 +135,22 @@ with each run and connector payload. `_build_swarm()` forwards the same value
 to `create_swarm_tools()`, so both direct dynamic Agents and task-dispatched
 workers receive the coordinator's compaction setting.
 
+### `llmfetcher.context_handlers.linear.ContextHandlerLinear.save()` / `load()` / `clear_context()`
+
+`save(path)` serializes the compaction threshold, current round counter,
+compacted abstract, and retained messages. `Agent._save_context()` calls it at
+completed execution boundaries. `load(path)` is called by `Agent.run()` before
+the new user message is added; it replaces in-memory history and restores the
+round counter as the maximum of the saved counter, retained message timelines,
+and compacted `source_timeline` values. Deriving that maximum keeps context
+files written before the explicit `round` field backward compatible and
+prevents timeline reuse after restart. Invalid persistence data clears the
+partially loaded state and returns `False`. `clear_context()` clears retained
+and compacted history and resets the counter so the next message starts at
+timeline one. `RetrievedContextHandler` delegates all three operations to its
+contained linear handler; both classes implement the `ContextHandler`
+interface and have no known subclasses in this repository.
+
 ### `llmfetcher.tools.spawn_tools.create_swarm_tools()`
 
 Builds runtime swarm-management tools from a coordinator, shared worker tool
@@ -287,26 +303,20 @@ work is still running.
 
 ### `frontend/static/app.js.loadHistory()` / `loadAllAgentBehavior()`
 
-The chat pane has two intentional information densities. With the aggregate
-`all` filter, it reads lifecycle events from the durable session trace and
-renders one collapsed behavior block for each Agent run, then renders the
-canonical session transcript in its saved order. Each block collects lifecycle
-events from `start` through its terminal event and can be expanded for the
-per-event timeline. It reads every selectable Agent context only to
-append non-empty assistant turns without tool calls that are not already in the
-canonical transcript. Thus the aggregate view includes durable LLM results
-without exposing tool arguments, tool results, or reasoning, while preserving
-the saved order of prompts and coordinator replies. With a specific Agent
-selected, it reads only that Agent's persisted context and renders messages,
-reasoning, and tool-call details.
-Lifecycle cards never mix into an Agent transcript; the complete lifecycle
-stream is confined to the aggregate view and the right-hand Trace inspector.
-Live lifecycle events append only while the aggregate filter is selected.
-Completed results appear in the coordinator/specific-Agent view immediately,
-while the aggregate view reloads its persisted transcript after the result.
+The chat pane uses one detailed message representation for both the aggregate
+`all` filter and individual Agents. Lifecycle events are confined to the
+right-hand Trace inspector and never produce a second set of collapsed cards
+above the transcript. The aggregate view reads canonical `conversation.json`;
+an individual Agent view reads `_agent_turns_from_events()`, which reconstructs
+all browser user submissions plus that Agent's model rounds, reasoning, and
+completed tool calls from append-only `events.ndjson`. This avoids losing old
+prompts when the Agent's model context is compacted. A legacy context file is
+used only when no durable event transcript exists.
+Completed aggregate results reload their persisted transcript, while a selected
+coordinator result is appended immediately and reconciled on the next reload.
 Transcript turn metadata labels user input as `你`, Agent replies with the
-selected Agent's name, and lifecycle cards as `执行动态`; these roles are
-visual-only and do not change stored data.
+selected Agent's name; these roles are visual-only and do not change stored
+data.
 `get_session_graph()` exposes only the safe view snapshot to the frontend.
 
 Single-Agent event capture supplies `coordinator` when the underlying library

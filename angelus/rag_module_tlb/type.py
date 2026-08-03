@@ -1,7 +1,7 @@
 """Type definitions for the TLB-like hierarchical RAG module.
 
-This module defines the dataclasses that represent retrieval results from a
-Translation Lookaside Buffer (TLB) style hierarchical file-tree traversal.
+This module defines dataclasses for retrieval results, TLB cache entries,
+and read traces used by the hierarchical file-tree traversal system.
 """
 
 from dataclasses import dataclass, field
@@ -49,11 +49,13 @@ class LeafFile:
 
 @dataclass
 class CacheCandidate:
-    """A proposed TLB cache entry mapping an intent to a file path.
+    """A model-reported suggestion for a TLB cache entry.
+
+    This is untrusted — the runtime validates it before writing to cache.
 
     Attributes:
-        intent_key: The normalized intent key (analogous to a virtual page number).
-        node_path: The resolved file path (analogous to a physical frame number).
+        intent_key: The normalized intent key suggested by the model.
+        node_path: The resolved file path suggested by the model.
     """
 
     intent_key: str = ""
@@ -61,30 +63,90 @@ class CacheCandidate:
 
 
 @dataclass
+class TLBEntry:
+    """A verified runtime TLB cache entry mapping a query key to a file path.
+
+    Attributes:
+        query_key: Deterministic normalized query key.
+        node_path: Verified absolute path within the knowledge root.
+        entry_kind: ``"route"`` for an INDEX.md start node, ``"leaf"`` for a
+            resolved leaf file.
+        file_mtime_ns: File modification time in nanoseconds at cache time.
+        file_size: File size in bytes at cache time.
+        file_hash: SHA-256 hex digest of file content at cache time.
+        created_at: Unix timestamp when the entry was created.
+    """
+
+    query_key: str
+    node_path: str
+    entry_kind: str  # "route" | "leaf"
+    file_mtime_ns: int
+    file_size: int
+    file_hash: str
+    created_at: float
+
+
+@dataclass
+class ReadTraceEntry:
+    """A single file read recorded by the runtime during a worker traversal.
+
+    Attributes:
+        resolved_path: Absolute resolved path of the file read.
+        is_index: ``True`` if the file is named INDEX.md.
+        byte_size: Number of bytes read.
+        mtime_ns: File modification time in nanoseconds at read time.
+        sha256: SHA-256 hex digest of the file content.
+        success: ``True`` if the read succeeded.
+        error: Error message if the read failed, or ``None``.
+    """
+
+    resolved_path: str
+    is_index: bool
+    byte_size: int
+    mtime_ns: int
+    sha256: str
+    success: bool
+    error: str | None = None
+
+
+# Allowed status values for TLBResult.
+_VALID_STATUSES = frozenset({
+    "resolved",
+    "retrieval_miss",
+    "root_unreachable",
+    "ambiguous_entity",
+    "parse_error",
+})
+
+
+# Valid entry_kind values for TLBEntry.
+_VALID_ENTRY_KINDS = frozenset({"route", "leaf"})
+
+
+@dataclass
 class TLBResult:
     """The complete result of a TLB-like hierarchical RAG retrieval.
 
-    Maps to the JSON response schema returned by the worker agent after
-    traversing the file tree.
+    Fields marked ``(runtime)`` are set or corrected by the runtime after
+    the worker agent completes — they override any model-reported values.
 
     Attributes:
-        status: Outcome status — one of ``"resolved"``, ``"retrieval_miss"``,
-            ``"root_unreachable"``, ``"ambiguous_entity"``, or
-            ``"invalid_cache_entry"``.
-        normalized_intent: The decomposed retrieval intent, or ``None`` if
-            normalization failed.
-        tlb_hit: ``True`` if the intent was resolved from the route cache
-            without a full traversal.
+        status: Outcome status. Must be one of the values in
+            ``_VALID_STATUSES``.
+        normalized_intent: The decomposed retrieval intent, or ``None``.
+        tlb_hit: ``(runtime)`` ``True`` if the runtime resolved this query
+            from a validated cache entry without a full page-table walk.
         resolved: ``True`` if the retrieval successfully located leaf files.
         start_node: Path to the root ``INDEX.md`` where traversal began, or
             ``None``.
-        visited_indexes: Ordered list of ``INDEX.md`` paths visited during
-            traversal.
-        rejected_branches: Branches that were explored and rejected as
-            irrelevant.
-        leaf_files: The resolved leaf files containing the target information.
-        cache_candidate: A proposed intent-to-path mapping for future TLB
-            caching, or ``None``.
+        visited_indexes: ``(runtime)`` Ordered list of INDEX.md paths
+            actually visited, derived from the read trace.
+        rejected_branches: Model-reported branches explored and rejected.
+            Marked as model-provided, not runtime-verified.
+        leaf_files: ``(runtime)`` Verified leaf files — each path has been
+            validated to exist within root and to have been actually read.
+        cache_candidate: A model-suggested intent-to-path mapping. Runtime
+            validates before writing to cache.
         error: Error message if status indicates failure, or ``None``.
     """
 

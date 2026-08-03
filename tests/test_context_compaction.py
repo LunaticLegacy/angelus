@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from llmfetcher.context_handlers.linear import (
@@ -117,6 +119,59 @@ class ContextCompactionTests(unittest.TestCase):
         self.assertIsNotNone(stored_result)
         assert stored_result is not None
         self.assertEqual(stored_result, raw_result)
+
+    def test_load_restores_round_for_new_and_legacy_contexts(self) -> None:
+        """Continue timeline numbering after loading either context format."""
+        compactor = _RecordingCompactor()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "context.json"
+            original = ContextHandlerLinear(compactor, max_context_threshold=10**9)
+            original.add_user_message("first")
+            original.add_user_message("second")
+            self.assertTrue(original.save(path))
+
+            restored = ContextHandlerLinear(compactor, max_context_threshold=10**9)
+            self.assertTrue(restored.load(path))
+            restored.add_user_message("third")
+            self.assertEqual([message.timeline for message in restored.messages], [1, 2, 3])
+
+            # Removing the new field simulates files written before this fix.
+            payload = path.read_text(encoding="utf-8").replace('  "round": 2,\n', "")
+            path.write_text(payload, encoding="utf-8")
+            legacy = ContextHandlerLinear(compactor, max_context_threshold=10**9)
+            self.assertTrue(legacy.load(path))
+            legacy.add_user_message("legacy third")
+            self.assertEqual([message.timeline for message in legacy.messages], [1, 2, 3])
+
+    def test_load_restores_round_from_compacted_timeline(self) -> None:
+        """Recover the counter when compaction leaves no retained messages."""
+        compactor = _RecordingCompactor()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "context.json"
+            original = ContextHandlerLinear(compactor, max_context_threshold=1)
+            original.add_user_message("first")
+            original.add_assistant_message(LLMOutput(
+                content="second",
+                provider="test",
+                backend_name="test",
+                model="test",
+            ))
+            self.assertTrue(original.save(path))
+
+            restored = ContextHandlerLinear(compactor, max_context_threshold=10**9)
+            self.assertTrue(restored.load(path))
+            restored.add_user_message("third")
+            self.assertEqual(restored.messages[-1].timeline, 3)
+
+    def test_clear_context_restarts_timeline(self) -> None:
+        """Assign timeline one to the first message after an explicit clear."""
+        handler = ContextHandlerLinear(_RecordingCompactor(), max_context_threshold=10**9)
+        handler.add_user_message("old")
+
+        self.assertTrue(handler.clear_context())
+        handler.add_user_message("new")
+
+        self.assertEqual(handler.messages[-1].timeline, 1)
 
 
 if __name__ == "__main__":

@@ -6,12 +6,10 @@ import json
 import os
 import queue
 import re
-import signal
 import shutil
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +17,21 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
-from pydantic import BaseModel, Field
 
-from .agent import Agent, AgentRunControl, AgentRunStopped
+from .agent import Agent, AgentRunStopped
+from .classes import (
+    ActiveRun,
+    BrowserRunControl,
+    BrowserSession,
+    ConnectorRequest,
+    RunConfig,
+    RunRequest,
+    SteerRequest,
+    TaskPlanRequest,
+    TaskStatusRequest,
+    WorkspaceDeleteRequest,
+    WorkspaceRequest,
+)
 from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import LLMOutput
@@ -79,155 +89,6 @@ CONNECTOR_INDEX = STATE_ROOT / "connectors.json"
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 # Raw HTML remains disabled so model output cannot inject arbitrary browser DOM.
 _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("table")
-
-
-class RunConfig(BaseModel):
-    """Settings used to create the backend and Agent for a browser session.
-
-    ``max_context_threshold`` is measured in characters.  It is the point at
-    which the local history handler compacts older conversation, rather than
-    a provider-specific model context-window limit.
-    """
-
-    provider: str = "openai"
-    model: str
-    api_key: str = ""
-    api_url: str = ""
-    system_prompt: str = "You are a helpful, precise assistant."
-    temperature: float = Field(default=0.4, ge=0, le=2)
-    max_tokens: int = Field(default=4096, ge=1, le=131072)
-    max_rounds: int = Field(default=12, ge=0, le=100)
-    max_context_threshold: int = Field(default=262144, ge=1024, le=16777216)
-    enable_shell: bool = False
-    enable_swarm: bool = False
-    max_swarm_agents: int = Field(default=4, ge=1, le=16)
-
-
-class RunRequest(BaseModel):
-    """A message and its non-persisted browser-side configuration."""
-
-    session_id: str
-    workspace_id: str
-    message: str = Field(min_length=1, max_length=100_000)
-    config: RunConfig
-
-
-class SteerRequest(BaseModel):
-    """One instruction added at the next safe agent boundary."""
-
-    message: str = Field(min_length=1, max_length=100_000)
-
-
-class WorkspaceRequest(BaseModel):
-    """A user-visible workspace name, stored only on the local machine."""
-
-    name: str = Field(min_length=1, max_length=80)
-
-
-class WorkspaceDeleteRequest(BaseModel):
-    """Explicit second confirmation required before deleting a workspace."""
-
-    confirmation: str = Field(min_length=1, max_length=80)
-
-
-class ConnectorRequest(RunConfig):
-    """A named, persisted LLM connection configuration.
-
-    The API key is intentionally part of this model: a connector is useful
-    across browser restarts only when its credentials can be restored. The
-    local JSON store is restricted to the current OS user where supported.
-    """
-
-    name: str = Field(min_length=1, max_length=80)
-
-
-class TaskPlanRequest(BaseModel):
-    """Entire user task plan supplied by the browser or Agent planning tool."""
-
-    goal: str = Field(min_length=1, max_length=10_000)
-    summary: str = Field(default="", max_length=10_000)
-    tasks: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class TaskStatusRequest(BaseModel):
-    """One user-requested planning status transition."""
-
-    status: str
-
-
-class BrowserRunControl(AgentRunControl):
-    """Thread-safe implementation of llmfetcher's cooperative run controls."""
-
-    def __init__(self) -> None:
-        self._stopped = threading.Event()
-        self._force_stopped = threading.Event()
-        self._steers: queue.Queue[str] = queue.Queue()
-
-    def should_stop(self) -> bool:
-        return self._stopped.is_set()
-
-    def drain_steers(self) -> list[str]:
-        messages: list[str] = []
-        while True:
-            try:
-                messages.append(self._steers.get_nowait())
-            except queue.Empty:
-                return messages
-
-    def stop(self) -> None:
-        self._stopped.set()
-
-    def force_stop(self) -> None:
-        self._force_stopped.set()
-        self._stopped.set()
-
-    @property
-    def force_stopped(self) -> threading.Event:
-        return self._force_stopped
-
-    def steer(self, message: str) -> None:
-        self._steers.put(message)
-
-
-@dataclass
-class ActiveRun:
-    """Live work and its event queue, owned by one browser session."""
-
-    control: BrowserRunControl
-    events: queue.Queue[dict[str, Any]] = field(default_factory=queue.Queue)
-    done: threading.Event = field(default_factory=threading.Event)
-    swarm: AgentSwarm | None = None
-    processes: set[Any] = field(default_factory=set)
-    processes_lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def register_process(self, process: Any) -> None:
-        with self.processes_lock:
-            self.processes.add(process)
-
-    def unregister_process(self, process: Any) -> None:
-        with self.processes_lock:
-            self.processes.discard(process)
-
-    def force_stop(self) -> None:
-        self.control.force_stop()
-        with self.processes_lock:
-            processes = list(self.processes)
-        for process in processes:
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                try:
-                    process.kill()
-                except (OSError, ProcessLookupError):
-                    pass
-
-
-@dataclass
-class BrowserSession:
-    """In-memory state that prevents concurrent runs in the same chat."""
-
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    active: ActiveRun | None = None
 
 
 _sessions: dict[tuple[str, str], BrowserSession] = {}
@@ -1114,16 +975,24 @@ def get_session_history(workspace_id: str, session_id: str, agent: str = "all") 
 
 
 def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> list[dict[str, Any]]:
-    """Read the display transcript belonging to one graph Agent.
+    """Read one Agent's complete display transcript from durable events.
 
-    ``conversation.json`` is the aggregate browser transcript. Individual
-    swarm Agents persist their own context under ``contexts/<agent>.json``;
-    exposing that file through this helper makes the UI selector a real
-    session switch rather than a visual filter.
+    Args:
+        workspace_id: Internal storage partition owning the session.
+        session_id: Browser-stable identifier for the current chat.
+        agent_name: Selected graph Agent, or ``all`` for the canonical chat.
+
+    Returns:
+        Chronological user prompts and detailed Agent turns. Event history is
+        preferred because an Agent context may discard old turns during
+        compaction; legacy contexts remain a fallback for older sessions.
     """
     if agent_name in {"", "all"}:
         return _read_session_history(workspace_id, session_id)
     agent_name = _safe_id(agent_name, "agent")
+    turns = _agent_turns_from_events(workspace_id, session_id, agent_name)
+    if turns:
+        return turns
     context_path = _session_path(workspace_id, session_id) / "contexts" / f"{agent_name}.json"
     turns = _turns_from_legacy_context(context_path)
     for turn in turns:
@@ -1131,6 +1000,98 @@ def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> 
             turn["content_html"] = render_markdown(str(turn.get("content", "")))
             turn["reasoning_html"] = render_markdown(str(turn.get("reasoning", "")))
     return turns
+
+
+def _agent_turns_from_events(
+    workspace_id: str,
+    session_id: str,
+    agent_name: str,
+) -> list[dict[str, Any]]:
+    """Reconstruct an Agent transcript from the append-only lifecycle log.
+
+    Args:
+        workspace_id: Internal storage partition owning ``events.ndjson``.
+        session_id: Browser-stable identifier for the current chat.
+        agent_name: Graph Agent whose model rounds should be included.
+
+    Returns:
+        Chronological user prompts and assistant rounds with rendered Markdown
+        and completed tool evidence. A coordinator result identical to its
+        final model round is emitted only once.
+    """
+    turns: list[dict[str, Any]] = []
+    completed_tools: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    last_assistant: tuple[str, str] | None = None
+
+    for event in _read_session_event_log(workspace_id, session_id):
+        event_kind = str(event.get("event", ""))
+        event_type = str(event.get("type", ""))
+        event_agent = str(event.get("agent") or "coordinator")
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+
+        # Coordinator starts delimit real browser submissions. Showing these
+        # in every Agent filter preserves the complete user-side conversation.
+        if event_kind == "lifecycle" and event_type == "agent:start" and event_agent == "coordinator":
+            content = str(event.get("message", ""))
+            if content:
+                turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+            last_assistant = None
+            continue
+
+        # Tool completion precedes its matching model-round event, allowing
+        # the detailed message to carry both request arguments and results.
+        if event_kind == "lifecycle" and event_type == "agent:tools_completed":
+            round_number = data.get("round")
+            if event_agent == agent_name and isinstance(round_number, int):
+                completed_tools[(event_agent, round_number)] = _display_tools_from_event(data)
+            continue
+        if event_kind == "lifecycle" and event_type == "agent:round" and event_agent == agent_name:
+            content = str(data.get("assistant_content", ""))
+            reasoning = str(data.get("reasoning_content", ""))
+            tools = completed_tools.pop((event_agent, data.get("round")), [])
+            if not content and not reasoning and not tools:
+                continue
+            turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": tools}
+            turn["content_html"] = render_markdown(content)
+            turn["reasoning_html"] = render_markdown(reasoning)
+            turns.append(turn)
+            last_assistant = (content, reasoning)
+            continue
+
+        # The top-level result repeats the coordinator's final model round in
+        # normal runs, but remains necessary for old or partial event logs.
+        if event_kind == "result" and agent_name == "coordinator":
+            content = str(event.get("content", ""))
+            reasoning = str(event.get("reasoning", ""))
+            if (not content and not reasoning) or last_assistant == (content, reasoning):
+                continue
+            turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": []}
+            turn["content_html"] = render_markdown(content)
+            turn["reasoning_html"] = render_markdown(reasoning)
+            turns.append(turn)
+            last_assistant = (content, reasoning)
+    return turns
+
+
+def _display_tools_from_event(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize completed lifecycle tool calls for browser display.
+
+    Args:
+        data: ``agent:tools_completed`` event data.
+
+    Returns:
+        Safe tool name, argument, and persisted result mappings in call order.
+    """
+    tools: list[dict[str, Any]] = []
+    for item in data.get("tool_calls", []):
+        if not isinstance(item, dict):
+            continue
+        tools.append({
+            "name": str(item.get("name", "unknown")),
+            "arguments": item.get("args", {}),
+            "result": str(item.get("result", "")),
+        })
+    return tools
 
 
 @app.get("/api/sessions/{session_id}/messages")

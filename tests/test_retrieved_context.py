@@ -141,7 +141,6 @@ class RetrievedContextHandlerTests(unittest.TestCase):
                 "Resolved clock skew",
             )
             content = index_path.read_text(encoding="utf-8")
-            self.assertIn("# Conversations:", content)
             self.assertIn("[OAuth Debug](session_abc.md)", content)
             self.assertIn("Resolved clock skew", content)
 
@@ -206,6 +205,12 @@ class RetrievedContextHandlerTests(unittest.TestCase):
         handler._has_retrieved = False
         handler._message_count = 2
         handler.retrieval_trigger = "first_message"
+        # First-message mode: has_retrieved is still False, so
+        # _should_retrieve returns True (message_count >= 1).
+        # The flag is set by retrieve() after the first call.
+        self.assertTrue(handler._should_retrieve())
+        # After retrieval, it should not trigger again.
+        handler._has_retrieved = True
         self.assertFalse(handler._should_retrieve())
 
     # -- create_save_tool ------------------------------------------------
@@ -225,7 +230,7 @@ class RetrievedContextHandlerTests(unittest.TestCase):
 
     # -- build_messages with retrieved sessions -------------------------
 
-    def test_build_messages_injects_retrieved_as_system(self) -> None:
+    def test_build_messages_injects_retrieved_as_user_role(self) -> None:
         handler = RetrievedContextHandler.__new__(RetrievedContextHandler)
         handler.linear = _FakeLinear()
         handler.retrieved = [
@@ -240,10 +245,13 @@ class RetrievedContextHandlerTests(unittest.TestCase):
         ]
 
         messages = handler.build_messages()
-        self.assertGreater(len(messages), 2)
+        self.assertEqual(len(messages), 2)  # 1 retrieved user msg + 1 linear msg
+        user_msgs = [m for m in messages if m["role"] == "user"]
+        self.assertIn("retrieved_memory", user_msgs[0]["content"])
+        self.assertIn("Debug Session", user_msgs[0]["content"])
+        # Retrieved memory must NOT be system role (P0-I).
         system_msgs = [m for m in messages if m["role"] == "system"]
-        self.assertIn("## Retrieved Conversation History", system_msgs[0]["content"])
-        self.assertIn("Debug Session", system_msgs[1]["content"])
+        self.assertEqual(len(system_msgs), 0)
 
     def test_build_messages_no_retrieved_just_linear(self) -> None:
         handler = RetrievedContextHandler.__new__(RetrievedContextHandler)
