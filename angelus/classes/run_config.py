@@ -11,6 +11,7 @@ class RunConfig(BaseModel):
 
     provider: str = "openai"
     model: str
+    connector_id: str = ""
     api_key: str = ""
     api_url: str = ""
     system_prompt: str = "You are a helpful, precise assistant."

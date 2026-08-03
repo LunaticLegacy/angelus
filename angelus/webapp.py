@@ -39,6 +39,13 @@ from .tools.shell_tools import create_shell_tools
 from .tools.spawn_tools import create_swarm_tools
 from .swarm_module.swarm import AgentSwarm
 from .task_planning import TaskPlanStore, create_task_planning_tools
+from .security import (
+    SecurityManager,
+    SecurityMiddleware,
+    mask_api_key,
+    looks_masked,
+    validate_llm_api_url,
+)
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -89,6 +96,9 @@ CONNECTOR_INDEX = STATE_ROOT / "connectors.json"
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 # Raw HTML remains disabled so model output cannot inject arbitrary browser DOM.
 _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("table")
+
+# Security manager: access token, host validation, rate limits, SSRF guard.
+SECURITY = SecurityManager(STATE_ROOT)
 
 
 _sessions: dict[tuple[str, str], BrowserSession] = {}
@@ -803,7 +813,9 @@ def migrate_legacy_state() -> None:
 migrate_legacy_state()
 
 
-app = FastAPI(title="llmfetcher Console", docs_url=None, redoc_url=None)
+_openapi_url = "/openapi.json" if SECURITY.openapi_enabled else None
+app = FastAPI(title="llmfetcher Console", docs_url=None, redoc_url=None, openapi_url=_openapi_url)
+app.add_middleware(SecurityMiddleware, manager=SECURITY)
 app.mount("/static", StaticFiles(directory=FRONTEND_ROOT / "static"), name="static")
 
 
@@ -819,10 +831,24 @@ def providers() -> dict[str, list[str]]:
     return {"providers": list(LLMFetcher.list_available_backend_providers())}
 
 
+def _connector_public(record: dict[str, Any]) -> dict[str, Any]:
+    """Return a connector record safe to expose to the browser.
+
+    The real API key is stripped; only a masked hint is returned so the UI
+    can indicate a credential is stored without leaking it.
+    """
+    public = dict(record)
+    stored = str(public.get("api_key") or "")
+    public["api_key"] = ""
+    public["has_api_key"] = bool(stored)
+    public["api_key_hint"] = mask_api_key(stored) if stored else ""
+    return public
+
+
 @app.get("/api/connectors")
 def list_connectors() -> dict[str, list[dict[str, Any]]]:
-    """List locally persisted connector settings, including saved API keys."""
-    return {"connectors": _read_connectors()}
+    """List locally persisted connector settings with masked API keys."""
+    return {"connectors": [_connector_public(item) for item in _read_connectors()]}
 
 
 @app.post("/api/connectors", status_code=201)
@@ -835,12 +861,17 @@ def create_connector(request: ConnectorRequest) -> dict[str, Any]:
     Returns:
         New connector record with its generated stable ID.
     """
+    ok, reason = validate_llm_api_url(request.api_url, allow_private=SECURITY.allow_private_llm)
+    if not ok:
+        raise HTTPException(status_code=422, detail=reason)
+    if looks_masked(request.api_key):
+        raise HTTPException(status_code=422, detail="A masked API key cannot be used to create a connector")
     record = {"id": uuid.uuid4().hex, **request.model_dump()}
     with _sessions_lock:
         connectors = _read_connectors()
         connectors.append(record)
         _write_connectors(connectors)
-    return record
+    return _connector_public(record)
 
 
 @app.put("/api/connectors/{connector_id}")
@@ -858,14 +889,19 @@ def update_connector(connector_id: str, request: ConnectorRequest) -> dict[str, 
         HTTPException: If the connector identifier does not exist.
     """
     connector_id = _safe_id(connector_id, "connector")
-    replacement = {"id": connector_id, **request.model_dump()}
+    ok, reason = validate_llm_api_url(request.api_url, allow_private=SECURITY.allow_private_llm)
+    if not ok:
+        raise HTTPException(status_code=422, detail=reason)
     with _sessions_lock:
         connectors = _read_connectors()
         for index, connector in enumerate(connectors):
             if connector.get("id") == connector_id:
+                replacement = {"id": connector_id, **request.model_dump()}
+                if looks_masked(replacement.get("api_key", "")):
+                    replacement["api_key"] = str(connector.get("api_key") or "")
                 connectors[index] = replacement
                 _write_connectors(connectors)
-                return replacement
+                return _connector_public(replacement)
     raise HTTPException(status_code=404, detail="Connector not found")
 
 
@@ -1435,6 +1471,43 @@ def delete_session(session_id: str, request: WorkspaceDeleteRequest) -> dict[str
     return delete_workspace(session_id, request)
 
 
+def _resolve_run_config(request_config: RunConfig) -> RunConfig:
+    """Merge a browser-supplied run config with a saved connector secret.
+
+    When connector_id is supplied the stored connector api_key (and any
+    settings the request left empty) are filled in server-side so the
+    plaintext key never has to travel through the browser. Otherwise the
+    request config is used as-is, subject to SSRF and shell checks.
+    """
+    config = request_config.model_copy(deep=True)
+    if config.enable_shell and SECURITY.disable_shell:
+        raise HTTPException(status_code=403, detail="Shell tool is disabled by ANGELUS_DISABLE_SHELL")
+    if config.connector_id:
+        connector = next(
+            (item for item in _read_connectors() if item.get("id") == config.connector_id),
+            None,
+        )
+        if connector is None:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        # Server-side secret resolution: the stored key is the only source
+        # of truth for a saved connector; never trust a client-sent key.
+        config.api_key = str(connector.get("api_key") or "")
+        for field in ("provider", "model", "api_url", "system_prompt"):
+            if not getattr(config, field, ""):
+                setattr(config, field, str(connector.get(field) or ""))
+        if not config.api_key:
+            raise HTTPException(status_code=422, detail="Saved connector has no API key configured")
+    else:
+        if looks_masked(config.api_key):
+            raise HTTPException(status_code=422, detail="API key is required (a masked placeholder was sent)")
+        if not config.api_key and config.provider not in ("openvino", "onnxruntime", "ort"):
+            raise HTTPException(status_code=422, detail="API key is required")
+    ok, reason = validate_llm_api_url(config.api_url, allow_private=SECURITY.allow_private_llm)
+    if not ok:
+        raise HTTPException(status_code=422, detail=reason)
+    return config
+
+
 @app.post("/api/runs")
 def start_run(request: RunRequest) -> dict[str, str]:
     """Start one Agent or Swarm in a session-owned worker thread.
@@ -1461,7 +1534,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
     with _sessions_lock:
         if workspace_id in _deleting_workspaces:
             raise HTTPException(status_code=409, detail="Workspace is being deleted")
-    if not request.config.model.strip():
+    config = _resolve_run_config(request.config)
+    if not config.model.strip():
         raise HTTPException(status_code=422, detail="Model is required")
     session = _get_session(workspace_id, session_id)
     with session.lock:
@@ -1482,8 +1556,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
         terminal_status = "completed"
         error_message = ""
         try:
-            if request.config.enable_swarm:
-                swarm = _build_swarm(request.config, workspace_id, session_id, active)
+            if config.enable_swarm:
+                swarm = _build_swarm(config, workspace_id, session_id, active)
                 active.swarm = swarm
                 outputs = swarm.run(request.message, control=active.control)
                 output = outputs.get("coordinator")
@@ -1492,7 +1566,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
                 usage = {"input": 0, "output": 0, "total": 0}
             else:
-                agent = _build_agent(request.config, workspace_id, session_id, active=active)
+                agent = _build_agent(config, workspace_id, session_id, active=active)
                 def capture(event: ExecutionEvent) -> None:
                     """Durably relay one named single-Agent event to the browser.
 
@@ -1507,7 +1581,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 agent.add_hook(capture)
                 output = agent.run(
                     request.message,
-                    temperature=request.config.temperature,
+                    temperature=config.temperature,
                     control=active.control,
                 )
                 usage = {
@@ -1540,7 +1614,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             # that result in the browser transcript so history and LLM context
             # include the same last turn after either stop operation.
             output = exc.last_output
-            if output is not None and not request.config.enable_swarm:
+            if output is not None and not config.enable_swarm:
                 _append_conversation_turn(workspace_id, session_id, {
                     "role": "assistant",
                     "content": output.content,
@@ -1746,4 +1820,17 @@ def main() -> None:
     """Run the local console with ``llmfetcher-web``."""
     import uvicorn
 
+    token_source = (
+        "ANGELUS_TOKEN environment variable"
+        if os.environ.get("ANGELUS_TOKEN")
+        else str(SECURITY.token_path)
+    )
+    print("=" * 64)
+    print("Angelus web console (hardened)")
+    print("  Access token : " + token_source)
+    print("  Allowed hosts: " + ", ".join(sorted(SECURITY.allowed_hosts)))
+    print("  Shell tool   : " + ("disabled" if SECURITY.disable_shell else "enabled (owner opt-in)"))
+    if SECURITY.openapi_enabled:
+        print("  OpenAPI      : enabled")
+    print("=" * 64)
     uvicorn.run(app, host="127.0.0.1", port=8765)

@@ -23,6 +23,15 @@
         <div class="session-dialog-actions"><button id="cancel-new-connector" type="button">取消</button><button type="submit">保存</button></div>
       </form>
     </dialog>
+    <dialog id="auth-dialog" class="session-dialog" aria-labelledby="auth-title">
+      <form id="auth-form" class="session-dialog-form">
+        <h2 id="auth-title">解锁控制台</h2>
+        <p class="auth-hint">请输入 Angelus 访问令牌（见启动日志或 auth_token 文件）。</p>
+        <label for="auth-token">访问令牌</label>
+        <input id="auth-token" name="token" type="password" required autocomplete="off" placeholder="粘贴访问令牌" />
+        <div class="session-dialog-actions"><button id="cancel-auth" type="button">取消</button><button type="submit">解锁</button></div>
+      </form>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
 

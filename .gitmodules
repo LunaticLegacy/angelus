@@ -1,4 +1,4 @@
 [submodule "llmfetcher"]
 	path = llmfetcher
-	url = git@github.com:LunaticLegacy/llmfetcher.git
+	url = https://github.com/LunaticLegacy/llmfetcher.git
 	branch = main
