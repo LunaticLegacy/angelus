@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 from llmfetcher.llm_types import Tool, ToolSchema, ToolParameter
+from ..sandbox import run_in_sandbox
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +304,8 @@ def create_shell_tools(
         who need a full-privilege shell.
     """
     restricted = os.environ.get("ANGELUS_SHELL_MODE", "restricted").lower() != "full"
+    sandbox_mode = os.environ.get("ANGELUS_SHELL_SANDBOX", "off").lower() == "unshare"
+    no_network = os.environ.get("ANGELUS_SHELL_NETWORK", "on").lower() != "on"
 
     def _shell(**kwargs: Any) -> str:
         command: str = kwargs["command"]
@@ -363,6 +366,25 @@ def create_shell_tools(
 
         if force_stop_event is not None and force_stop_event.is_set():
             return "Error: command force-stopped before execution"
+
+        if sandbox_mode:
+            result = run_in_sandbox(
+                command,
+                exec_cwd or ".",
+                timeout,
+                no_network=no_network,
+                force_stop_event=force_stop_event,
+            )
+            lines: List[str] = []
+            if result.get("error"):
+                lines.append(f"Error: {result['error']}")
+            if result.get("stdout"):
+                lines.append("[stdout]\n" + result["stdout"].rstrip("\n"))
+            if result.get("stderr"):
+                lines.append("[stderr]\n" + result["stderr"].rstrip("\n"))
+            if result.get("returncode") not in (0, None):
+                lines.append(f"[exit code] {result['returncode']}")
+            return "\n".join(lines) if lines else "(no output)"
 
         proc = None
         try:

@@ -121,3 +121,47 @@ Verified matrix (sandboxed test):
 > bubblewrap / container), which is not available in this WSL2 environment;
 > it is recommended for deployments where the agent is exposed to untrusted
 > input.
+
+
+## OS-level sandbox toolchain (`angelus/sandbox.py`, added later)
+
+A dependency-free, container-style sandbox implemented directly on Linux
+namespaces (no Docker / bubblewrap / root required):
+
+- `CLONE_NEWUSER` - unprivileged user namespace: sandbox thinks it is root but
+  maps to the real OS user (no real privileges).
+- `CLONE_NEWNS` - private mount namespace: whole root filesystem remounted
+  read-only; only the session working directory is bind-mounted writable.
+- `CLONE_NEWNET` - optional network namespace (`ANGELUS_SHELL_NETWORK=off`):
+  command sees only `lo`, no host network.
+
+`mount(2)` is called through `ctypes` (this Python build lacks `os.mount`).
+
+How the toolchain fits together (layers):
+
+| Layer | Mechanism | File |
+|-------|-----------|------|
+| 0. Entry/auth | bearer token, `ANGELUS_DISABLE_SHELL`, `ANGELUS_SHELL_SANDBOX` | webapp/security |
+| 1. App-level checks | regex blacklist, path confinement, write-then-run detection, content scan | tools/shell_tools.py |
+| 2. OS-level sandbox | unshare namespaces, read-only root + writable workspace | sandbox.py |
+| 3. Run control | timeout, process-group kill, force-stop | both |
+
+Enable with `ANGELUS_SHELL_SANDBOX=unshare` (default `off` for backward
+compatibility). `ANGELUS_SHELL_NETWORK=off` additionally cuts the network.
+App-layer checks remain active, so even a bypassed blacklist is stopped
+physically by the read-only root.
+
+Verified (WSL2, Python 3.12, no Docker):
+
+| Case | Result |
+|------|--------|
+| `touch /should_fail` / `touch /home/...` inside sandbox | denied (read-only root; also blocked by path confinement) |
+| write in session workspace | allowed, lands on host only inside the workspace |
+| read system files | allowed (read-only) |
+| `no_network` | only loopback interface, no eth0 |
+| `sleep 5` with 1s timeout | SIGKILL process group (rc=-9) |
+| host `/` and `/home` | untouched |
+
+Requirements: Linux kernel with unprivileged user namespaces (default on
+Ubuntu / WSL2 / Arch). On hardened distros where user namespaces are disabled,
+`ANGELUS_SHELL_SANDBOX` falls back to app-layer-only mode.
