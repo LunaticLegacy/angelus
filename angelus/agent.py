@@ -358,8 +358,12 @@ class Agent:
                 print("=" * 10 + "  ROUND " + str(round_idx) + "=" * 10)
 
             round_started_at = time.perf_counter()
+            message_input: str = ""
+            if round_idx == 0:
+                message_input = message
+
             result = self.llm_fetcher.fetch(
-                msg=message,
+                msg=message_input,
                 system_prompt=prompt,
                 temperature=temperature,
                 context_handler=self.context_handler,
