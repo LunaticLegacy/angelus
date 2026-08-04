@@ -30,6 +30,7 @@ if __name__ == "__main__" and not __package__:
 
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import Tool
+from llmfetcher.graph_memory import GraphContextHandler
 from angelus.agent import Agent
 
 
@@ -252,6 +253,12 @@ def _bootstrap_agent(args: argparse.Namespace) -> Agent:
         max_concurrency=8,
         max_context_threshold=262144,
         context_path=args.context or None,
+        # Graph long-term memory (entity/relation graph persisted as
+        # ``<context_path>.graph.json`` alongside the linear context file).
+        context_handler=GraphContextHandler(
+            compacting_fetcher=fetcher,
+            max_context_threshold=262144,
+        ),
     )
 
     tools = _load_tools(args.tools)

@@ -35,6 +35,7 @@ from .classes import (
 from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import LLMOutput
+from llmfetcher.graph_memory import GraphContextHandler
 from .tools.shell_tools import create_shell_tools
 from .tools.spawn_tools import create_swarm_tools
 from .swarm_module.swarm import AgentSwarm
@@ -349,8 +350,9 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         timeout=120,
         max_retries=0,
     )
+    fetcher = LLMFetcher([backend])
     agent = Agent(
-        llm_fetcher=LLMFetcher([backend]),
+        llm_fetcher=fetcher,
         system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses."),
         # Keep browser-selected compaction behavior consistent for the
         # coordinator and every subsequently created session Agent.
@@ -358,6 +360,13 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         context_path=_context_path(workspace_id, session_id, agent_name),
         default_max_rounds=config.max_rounds,
         default_max_tokens=config.max_tokens,
+        # Graph long-term memory: entity/relation graph persisted alongside
+        # the linear context file (``<context>.graph.json``), reusing the
+        # same LLM for extraction/query fallback and compaction.
+        context_handler=GraphContextHandler(
+            compacting_fetcher=fetcher,
+            max_context_threshold=config.max_context_threshold,
+        ),
     )
     if config.enable_shell:
         agent.add_tools(create_shell_tools(

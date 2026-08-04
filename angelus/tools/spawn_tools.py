@@ -25,6 +25,7 @@ from typing import Any, Callable
 
 from ..agent import Agent
 from llmfetcher.llm_fetcher import LLMFetcher
+from llmfetcher.graph_memory import GraphContextHandler
 from llmfetcher.llm_types import Tool, ToolParameter, ToolSchema
 from ..swarm_module.swarm import AgentSwarm
 from ..swarm_module.task_bus import TaskAssignment
@@ -102,6 +103,12 @@ def create_swarm_tools(
             context_path=context_path_factory(name) if context_path_factory else None,
             default_max_rounds=worker_max_rounds,
             default_max_tokens=worker_max_tokens,
+            # Graph long-term memory for the dynamically created worker,
+            # persisted as ``<context_path>.graph.json`` when a path exists.
+            context_handler=GraphContextHandler(
+                compacting_fetcher=llm_fetcher,
+                max_context_threshold=worker_max_context_threshold,
+            ),
         )
         agent.add_tools(worker_tool_pool)
 
@@ -232,6 +239,11 @@ def create_swarm_tools(
             context_path=context_path_factory(name) if context_path_factory else None,
             default_max_rounds=worker_max_rounds,
             default_max_tokens=worker_max_tokens,
+            # Graph long-term memory for the dispatched worker.
+            context_handler=GraphContextHandler(
+                compacting_fetcher=llm_fetcher,
+                max_context_threshold=worker_max_context_threshold,
+            ),
         )
         worker.add_tools(
             worker_tool_pool + [_report_task_tool(task_id, name, worker.request_completion)]
