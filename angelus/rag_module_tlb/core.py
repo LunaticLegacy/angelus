@@ -230,20 +230,26 @@ class TLBRAGHandler:
     """
 
     _METRICS_LOCK = threading.Lock()
-    _METRICS: dict[str, int] = {"hits": 0, "misses": 0, "invalidations": 0, "errors": 0}
+    _METRICS: dict[str, int] = {"hits": 0, "misses": 0, "invalidations": 0, "errors": 0, "cache_loaded": 0}
 
     def __init__(
         self,
         root: str | Path,
         fetcher_instance: LLMFetcher,
         index_file_name: str = "INDEX.md",
+        cache_path: str | Path | None = None,
     ) -> None:
         self.root: Path = Path(root).resolve()
         self.llm_fetcher: LLMFetcher = fetcher_instance
         self.index_file_name: str = index_file_name
+        # 缓存落盘路径: 默认放在语料根目录下, 便于随知识库迁移
+        if cache_path is None:
+            cache_path = self.root / f".tlb_cache_{self.index_file_name.lower()}.json"
+        self.cache_path: Path = Path(cache_path)
         self.tlb: dict[str, TLBEntry] = {}
         self._tlb_lock = threading.Lock()
         self._agent_lock = threading.Lock()
+        self._load_cache()
 
     # -- Public cache API ---------------------------------------------------
 
@@ -301,33 +307,69 @@ class TLBRAGHandler:
             self.tlb[query_key] = entry
         return entry
 
-    def invalidate_cache_entry(self, query_key: str) -> bool:
-        """Remove one cache entry by its normalized query key.
+    # -- Cache persistence --------------------------------------------------
 
-        Args:
-            query_key: Normalized query key to remove.
+    def save_cache(self) -> None:
+        """Persist the TLB cache to disk as JSON.
 
-        Returns:
-            ``True`` if an entry was removed.
+        Each entry is stored with its validated file attributes so a later
+        process can re-validate it against the live filesystem before use.
         """
-        with self._tlb_lock:
-            if query_key in self.tlb:
-                del self.tlb[query_key]
-                return True
-        return False
+        try:
+            with self._tlb_lock:
+                data = {
+                    "version": 1,
+                    "root": str(self.root),
+                    "index_file_name": self.index_file_name,
+                    "entries": {
+                        k: {
+                            "query_key": e.query_key,
+                            "node_path": e.node_path,
+                            "entry_kind": e.entry_kind,
+                            "file_mtime_ns": e.file_mtime_ns,
+                            "file_size": e.file_size,
+                            "file_hash": e.file_hash,
+                            "created_at": e.created_at,
+                        }
+                        for k, e in self.tlb.items()
+                    },
+                }
+            tmp = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(self.cache_path)
+        except OSError:
+            pass
 
-    def clear_cache(self) -> int:
-        """Remove all TLB cache entries.
-
-        Returns:
-            Number of entries removed.
-        """
-        with self._tlb_lock:
-            count = len(self.tlb)
-            self.tlb.clear()
-        return count
-
-    # -- Retrieval ----------------------------------------------------------
+    def _load_cache(self) -> None:
+        """Load a previously persisted TLB cache from disk (if present)."""
+        try:
+            if not self.cache_path.is_file():
+                return
+            data = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            entries = data.get("entries", {})
+            loaded = 0
+            for k, raw in entries.items():
+                try:
+                    e = TLBEntry(
+                        query_key=raw["query_key"],
+                        node_path=raw["node_path"],
+                        entry_kind=raw["entry_kind"],
+                        file_mtime_ns=int(raw["file_mtime_ns"]),
+                        file_size=int(raw["file_size"]),
+                        file_hash=raw["file_hash"],
+                        created_at=float(raw["created_at"]),
+                    )
+                    # 仅加载仍能通过路径与文件校验的条目
+                    if self._validate_cache_entry(e) is not None:
+                        self.tlb[k] = e
+                        loaded += 1
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if loaded:
+                with TLBRAGHandler._METRICS_LOCK:
+                    TLBRAGHandler._METRICS["cache_loaded"] = loaded
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
 
     def retrieve(self, query: str) -> TLBResult:
         """Execute a TLB-like hierarchical retrieval for *query*.
@@ -399,7 +441,7 @@ class TLBRAGHandler:
                     except OSError:
                         mtime_ns, byte_size, sha256 = 0, 0, ""
                     cc_entry = TLBEntry(
-                        query_key=cc.intent_key,
+                        query_key=query_key,
                         node_path=str(resolved_cc),
                         entry_kind="leaf" if resolved_cc.name != self.index_file_name else "route",
                         file_mtime_ns=mtime_ns,
@@ -408,7 +450,8 @@ class TLBRAGHandler:
                         created_at=time.time(),
                     )
                     with self._tlb_lock:
-                        self.tlb[cc.intent_key] = cc_entry
+                        self.tlb[query_key] = cc_entry
+                    self.save_cache()
             except (PermissionError, FileNotFoundError):
                 pass
 
