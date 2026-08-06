@@ -1144,7 +1144,7 @@ class ExecutionGraph:
         modes = {
             "labelled": lambda outputs: "\n\n".join(f"[{name}]\n{value}" for name, value in sorted(outputs.items())),
             "concat": lambda outputs: "\n\n".join(str(value) for _, value in sorted(outputs.items())),
-            "json": lambda outputs: json.dumps(outputs, ensure_ascii=False, indent=2),
+            "json": lambda outputs: json.dumps(outputs, ensure_ascii=False, indent=2, default=str),
         }
         if mode not in modes:
             return f"Error: mapper mode must be one of {', '.join(sorted(modes))}"
