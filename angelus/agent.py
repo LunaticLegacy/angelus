@@ -362,6 +362,30 @@ class Agent:
             if round_idx == 0:
                 message_input = message
 
+            self._emit(
+                "agent",
+                name,
+                "agent:llm_request",
+                f"LLM request round {round_idx}",
+                data={
+                    "round": round_idx,
+                    "message": message,
+                    "msg": message_input,
+                    "system_prompt": prompt,
+                    "temperature": temperature,
+                    "max_tokens": resolved_max_tokens,
+                    "backend": {
+                        "name": backend.name,
+                        "provider": backend.provider,
+                        "model": backend.model,
+                    },
+                    "tools": [
+                        {"name": tool.name, "description": tool.description}
+                        for tool in self.tool_handler.get_all_tools()
+                    ],
+                },
+            )
+
             result = self.llm_fetcher.fetch(
                 msg=message_input,
                 system_prompt=prompt,
