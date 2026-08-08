@@ -286,6 +286,33 @@ class AgentSwarm:
     # Execution
     # ------------------------------------------------------------------
 
+    def total_usage(self) -> dict[str, int]:
+        """Aggregate token usage across every registered Agent.
+
+        Each Agent accumulates its own per-round usage plus internal
+        compaction / graph-memory LLM usage in ``Agent.usage`` after
+        ``run`` completes. This sums them across the coordinator and all
+        (dynamically dispatched) workers.
+
+        Returns:
+            Dict with ``input``, ``output``, ``total``, ``cached`` and
+            ``reasoning`` keys, all non-negative.
+        """
+        totals = {"input": 0, "output": 0, "total": 0, "cached": 0, "reasoning": 0}
+        with self._graph._topology_lock:
+            for agent in self._graph.agent_dict.values():
+                if agent is None:
+                    continue
+                usage = getattr(agent, "usage", None)
+                if usage is None:
+                    continue
+                totals["input"] += usage.input_tokens or 0
+                totals["output"] += usage.output_tokens or 0
+                totals["total"] += usage.total_tokens or 0
+                totals["cached"] += usage.cached_tokens or 0
+                totals["reasoning"] += usage.reasoning_tokens or 0
+        return totals
+
     def run(
         self,
         message: str,

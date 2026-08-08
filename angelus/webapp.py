@@ -1499,7 +1499,10 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 if not isinstance(output, LLMOutput):
                     raise RuntimeError("Coordinator did not produce a language-model output")
                 _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
-                usage = {"input": 0, "output": 0, "total": 0}
+                # Aggregate token usage across every executed agent
+                # (coordinator + workers), each of which already includes
+                # its own internal compaction / graph-memory LLM calls.
+                usage = swarm.total_usage()
             else:
                 agent = _build_agent(request.config, workspace_id, session_id, active=active)
                 def capture(event: ExecutionEvent) -> None:

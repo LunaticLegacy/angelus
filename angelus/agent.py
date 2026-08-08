@@ -552,6 +552,16 @@ class Agent:
             else:
                 print("Context saved at: ", self.context_path)
 
+        # Merge internal (non-round) LLM usage — compaction, graph
+        # extraction, retrieval seed extraction — into the reported totals.
+        extra = getattr(self.context_handler, "extra_usage", None)
+        if extra is not None:
+            self.usage.input_tokens += extra.input_tokens or 0
+            self.usage.output_tokens += extra.output_tokens or 0
+            self.usage.total_tokens += extra.total_tokens or 0
+            self.usage.cached_tokens += extra.cached_tokens or 0
+            self.usage.reasoning_tokens += extra.reasoning_tokens or 0
+
         self._emit(
             "agent", name, "agent:complete",
             f"Completed in {round_idx} round(s), "
