@@ -75,6 +75,9 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .inspector-agent div { min-width:0; flex:1; }
 .inspector-agent strong,.inspector-agent small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inspector-agent strong { font-size:10px; }.inspector-agent small { color:var(--muted); font-size:9px; }
+
+.inspector-agent small.agent-context { margin-top:3px; padding-top:3px; border-top:1px dashed #2a3b57; color:#8fa3c4; font-size:8px; white-space:normal; overflow-wrap:anywhere; line-height:1.45; }
+.inspector-agent small.agent-context::before { content:"⛶ "; color:var(--purple); }
 .load-more-trace { flex:0 0 auto; padding:7px; border:1px solid var(--line); border-radius:6px; background:#111e31; color:var(--soft); font-size:10px; }
 .load-more-trace:hover { border-color:#52688f; }
 .usage-total { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }

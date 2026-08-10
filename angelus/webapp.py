@@ -1109,6 +1109,77 @@ def get_session_messages(session_id: str, agent: str = "all") -> dict[str, list[
     return {"messages": _read_agent_history(session_id, session_id, agent)}
 
 
+def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Return current context-length statistics for one Agent.
+
+    Reads the Agent's persisted linear-context JSON
+    (``contexts/<agent>.json``) and summarizes the retained conversation:
+    message count, estimated character size of retained messages, the
+    compacted abstract size (when compaction already ran), the compaction
+    threshold, and the estimated ratio of current size to that threshold.
+
+    Args:
+        session_id: Browser-stable session identity.
+        agent_name: Graph Agent whose context file is read.
+
+    Returns:
+        Dict with ``messages``, ``characters``, ``abstract_characters``,
+        ``compacted``, ``threshold``, ``round`` and ``ratio`` keys. Missing
+        or malformed context files yield all-zero defaults so the UI can
+        render an empty state instead of failing.
+    """
+    stats = {
+        "messages": 0,
+        "characters": 0,
+        "abstract_characters": 0,
+        "compacted": False,
+        "threshold": 0,
+        "round": 0,
+        "ratio": 0.0,
+    }
+    try:
+        safe_session = _safe_id(session_id, "session")
+        safe_agent = _safe_id(agent_name, "agent")
+        path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return stats
+
+    if not isinstance(raw, dict):
+        return stats
+
+    messages = raw.get("messages", [])
+    if isinstance(messages, list):
+        stats["messages"] = len(messages)
+        stats["characters"] = sum(
+            len(json.dumps(msg, ensure_ascii=False, default=str))
+            for msg in messages
+            if isinstance(msg, dict)
+        )
+
+    abstract = raw.get("abstract")
+    if isinstance(abstract, dict):
+        stats["compacted"] = True
+        stats["abstract_characters"] = len(
+            json.dumps(abstract, ensure_ascii=False, default=str)
+        )
+
+    threshold = raw.get("compress_threshold")
+    if isinstance(threshold, (int, float)) and threshold > 0:
+        stats["threshold"] = int(threshold)
+
+    round_value = raw.get("round")
+    if isinstance(round_value, (int, float)) and not isinstance(round_value, bool):
+        stats["round"] = int(round_value)
+
+    # Estimated ratio of retained context to the compaction threshold.
+    total_chars = stats["characters"] + stats["abstract_characters"]
+    if stats["threshold"] > 0:
+        stats["ratio"] = round(min(1.0, total_chars / stats["threshold"]), 4)
+
+    return stats
+
+
 @app.get("/api/sessions/{session_id}/agents")
 def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:
     """Return selectable Agent identities from the persisted graph snapshot."""
@@ -1130,9 +1201,14 @@ def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:
             "kind": "agent",
             "dynamic": bool(node.get("dynamic")),
             "parent": node.get("parent"),
+            "context": _agent_context_stats(session_id, agent_id),
         })
     if len(agents) == 1 and (_session_path(session_id, session_id) / "contexts" / "coordinator.json").exists():
-        agents.append({"id": "coordinator", "name": "coordinator", "kind": "agent", "dynamic": False, "parent": None})
+        agents.append({
+            "id": "coordinator", "name": "coordinator", "kind": "agent",
+            "dynamic": False, "parent": None,
+            "context": _agent_context_stats(session_id, "coordinator"),
+        })
     return {"agents": agents}
 
 

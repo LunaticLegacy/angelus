@@ -108,7 +108,27 @@ async function loadGraph() { const response=await fetch(graphUrl()); if(response
 /** Build the cursor-paginated durable Trace request for the selected session. */
 function traceUrl(before=null) { const params=new URLSearchParams({limit:"200"}); if(before !== null) params.set("before",String(before)); return `/api/sessions/${sessionId}/events?${params}`; }
 async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=page.events || []; const target=$("trace"); if(reset){ traceEvents=events; traceBefore=page.next_before; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_before; } if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? `${event.agent ? `[${event.agent}] ` : ""}${type.replace("agent:","").replaceAll("_"," ")}` : type; fragment.append(traceElement(title,event.message || "",event.data || event.usage || null,type.includes("tool") ? "tool" : "")); } target.append(fragment); } $("load-more-trace").hidden=traceBefore === null; }
-async function loadInspectorAgents() { const [agentPayload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/agents`),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");const target=$("inspector-agents-list");target.innerHTML=agents.length?agents.map(agent=>{const view=agentStateView(agent.id,agentPayload.agents);return `<article class="inspector-agent"><i class="${escapeHtml(view.ui)}"></i><div><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(view.message)}</small></div></article>`;}).join(""):`<p class="empty">当前 session 尚未创建 Agent。</p>`;renderAgentSelector(agentPayload.agents);renderGraph(graphPayload); }
+function agentContextStats(agent) {
+  const ctx = agent.context || {};
+  const messages = Number(ctx.messages || 0);
+  const chars = Number(ctx.characters || 0);
+  const abstractChars = Number(ctx.abstract_characters || 0);
+  const threshold = Number(ctx.threshold || 0);
+  const compacted = Boolean(ctx.compacted);
+  const ratio = Number(ctx.ratio || 0);
+
+  if (!messages && !chars && !abstractChars) {
+    return `<small class="agent-context">上下文：—</small>`;
+  }
+
+  const charsLabel = `${chars.toLocaleString()}`;
+  const ratioLabel = threshold > 0 ? ` · ${Math.round(ratio * 100)}%` : "";
+  const compactLabel = compacted ? ` · 已压缩` : "";
+  const thresholdLabel = threshold > 0 ? ` / 阈值 ${threshold.toLocaleString()}` : "";
+  return `<small class="agent-context" title="消息 ${messages} 条 · 字符 ${chars + abstractChars} · 压缩阈值 ${threshold}">上下文：${messages} 条 · ${charsLabel} 字符${thresholdLabel}${ratioLabel}${compactLabel}</small>`;
+}
+
+async function loadInspectorAgents() { const [agentPayload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/agents`),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");const target=$("inspector-agents-list");target.innerHTML=agents.length?agents.map(agent=>{const view=agentStateView(agent.id,agentPayload.agents);return `<article class="inspector-agent"><i class="${escapeHtml(view.ui)}"></i><div><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(view.message)}</small>${agentContextStats(agent)}</div></article>`;}).join(""):`<p class="empty">当前 session 尚未创建 Agent。</p>`;renderAgentSelector(agentPayload.agents);renderGraph(graphPayload); }
 function usageCells(usage) { return [["Input",usage.input],["Output",usage.output],["Total",usage.total],["Cached",usage.cached],["Reasoning",usage.reasoning]].map(([label,value])=>`<span>${label}<b>${Number(value || 0).toLocaleString()}</b></span>`).join(""); }
 async function loadUsage() { const payload=await apiJson(`/api/sessions/${sessionId}/usage`); const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>`<article class="usage-agent"><header><strong>${escapeHtml(agent.id)}</strong><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage)}</div></article>`).join(""); }
 function selectInspectorPanel(panel, refresh=true) { const target=document.getElementById(panel); if(!target) return; activeInspectorPanel=panel; localStorage.llmfetcherInspectorPanel=panel; document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.classList.toggle("active",button.dataset.inspectorPanel===panel)); document.querySelectorAll(".inspector-panel").forEach(item=>item.classList.toggle("active",item===target)); if(!refresh) return; const loaders={"inspector-plan":loadPlan,"inspector-agents":loadInspectorAgents,"inspector-trace":()=>loadTrace(true),"inspector-usage":loadUsage}; loaders[panel]?.().catch(error=>trace("检查器加载失败",error.message)); }
