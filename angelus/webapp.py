@@ -1031,6 +1031,12 @@ def _agent_turns_from_events(
     turns: list[dict[str, Any]] = []
     completed_tools: dict[tuple[str, int], list[dict[str, Any]]] = {}
     last_assistant: tuple[str, str] | None = None
+    # One round-identity tracker per Agent, reset at its ``agent:start``.
+    # The graph used to relay each Agent event through two hook paths, so the
+    # durable log may contain an immediate second copy of every round.  A round
+    # that exactly repeats the previous (agent, round, content, reasoning) is
+    # that duplicate, not a real new model step.
+    last_round: dict[str, tuple[int, str, str]] = {}
 
     for event in _read_session_event_log(workspace_id, session_id):
         event_kind = str(event.get("event", ""))
@@ -1038,9 +1044,13 @@ def _agent_turns_from_events(
         event_agent = str(event.get("agent") or "coordinator")
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
 
-        # Coordinator starts delimit real browser submissions. Showing these
-        # in every Agent filter preserves the complete user-side conversation.
-        if event_kind == "lifecycle" and event_type == "agent:start" and event_agent == "coordinator":
+        # Agent starts delimit one run boundary for round deduplication.
+        # Coordinator starts also delimit real browser submissions; showing
+        # those in every Agent filter preserves the user-side conversation.
+        if event_kind == "lifecycle" and event_type == "agent:start":
+            last_round.pop(event_agent, None)
+            if event_agent != "coordinator":
+                continue
             content = str(event.get("message", ""))
             if content:
                 turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
@@ -1060,11 +1070,22 @@ def _agent_turns_from_events(
             tools = completed_tools.pop((event_agent, data.get("round")), [])
             if not content and not reasoning and not tools:
                 continue
+            round_number = data.get("round")
+            previous_round = last_round.get(event_agent)
+            if (
+                isinstance(round_number, int)
+                and previous_round is not None
+                and previous_round == (round_number, content, reasoning)
+            ):
+                # Immediate duplicate copy of the same round (legacy double-write).
+                continue
             turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": tools}
             turn["content_html"] = render_markdown(content)
             turn["reasoning_html"] = render_markdown(reasoning)
             turns.append(turn)
             last_assistant = (content, reasoning)
+            if isinstance(round_number, int):
+                last_round[event_agent] = (round_number, content, reasoning)
             continue
 
         # The top-level result repeats the coordinator's final model round in

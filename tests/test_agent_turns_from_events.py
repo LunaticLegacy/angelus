@@ -81,26 +81,61 @@ class AgentTurnsFromEventsTests(unittest.TestCase):
         contents = [t["content"] for t in turns]
         self.assertEqual(contents, ["Q1", "A1", "Q2", "A2"])
 
-    def test_duplicate_agent_round_events_produce_duplicate_turns(self):
-        """If agent:round fires twice, turns are duplicated (the real issue)."""
+    def test_duplicate_agent_round_events_are_deduplicated(self):
+        """An immediate second copy of the same round must not duplicate turns.
+
+        The execution graph used to relay each Agent event through two hook
+        paths, writing an identical second copy of every ``agent:round`` to the
+        durable log. Transcript reconstruction collapses that exact repeat so a
+        specific-Agent view shows each thinking block once.
+        """
         events = [
             {"event": "lifecycle", "type": "agent:start", "agent": "coordinator",
              "message": "Q1", "timestamp": 1},
             {"event": "lifecycle", "type": "agent:round", "agent": "coordinator",
-             "data": {"round": 1, "assistant_content": "A1", "reasoning_content": ""},
+             "data": {"round": 1, "assistant_content": "A1", "reasoning_content": "R1"},
              "timestamp": 2},
-            # DUPLICATE agent:round — same content, emitted by a second hook
+            # DUPLICATE agent:round — same round, same content and reasoning,
+            # written by the legacy double-hook relay.
             {"event": "lifecycle", "type": "agent:round", "agent": "coordinator",
-             "data": {"round": 1, "assistant_content": "A1", "reasoning_content": ""},
+             "data": {"round": 1, "assistant_content": "A1", "reasoning_content": "R1"},
              "timestamp": 3},
-            {"event": "result", "content": "A1", "reasoning": "",
+            {"event": "result", "content": "A1", "reasoning": "R1",
              "timestamp": 4},
         ]
         self._write_events(events)
         turns = self._read_turns("coordinator")
         roles = [t["role"] for t in turns]
-        self.assertEqual(roles, ["user", "assistant", "assistant"],
-                         f"Duplicate agent:round events cause duplicate assistant turns: {roles}")
+        self.assertEqual(roles, ["user", "assistant"],
+                         f"Duplicate agent:round events must not duplicate turns: {roles}")
+        self.assertEqual(turns[1]["reasoning"], "R1")
+
+    def test_worker_duplicate_rounds_are_deduplicated_per_agent(self):
+        """Worker double-writes collapse while distinct workers stay separate."""
+        events = [
+            {"event": "lifecycle", "type": "agent:start", "agent": "coordinator",
+             "message": "Dispatch", "timestamp": 1},
+            {"event": "lifecycle", "type": "agent:start", "agent": "worker-1",
+             "message": "Quest", "timestamp": 2},
+            {"event": "lifecycle", "type": "agent:round", "agent": "worker-1",
+             "data": {"round": 1, "assistant_content": "W1", "reasoning_content": "WR1"},
+             "timestamp": 3},
+            # duplicate copy of worker-1 round 1
+            {"event": "lifecycle", "type": "agent:round", "agent": "worker-1",
+             "data": {"round": 1, "assistant_content": "W1", "reasoning_content": "WR1"},
+             "timestamp": 4},
+            {"event": "lifecycle", "type": "agent:round", "agent": "coordinator",
+             "data": {"round": 1, "assistant_content": "C1", "reasoning_content": "CR1"},
+             "timestamp": 5},
+        ]
+        self._write_events(events)
+        worker_turns = self._read_turns("worker-1")
+        self.assertEqual([t["role"] for t in worker_turns], ["user", "assistant"])
+        self.assertEqual(worker_turns[1]["content"], "W1")
+        self.assertEqual(worker_turns[1]["reasoning"], "WR1")
+        coord_turns = self._read_turns("coordinator")
+        self.assertEqual([t["role"] for t in coord_turns], ["user", "assistant"])
+        self.assertEqual(coord_turns[1]["content"], "C1")
 
     def test_non_coordinator_agent_only_gets_its_own_rounds(self):
         """A sub-agent 'worker-1' sees coordinator user messages + its own rounds."""

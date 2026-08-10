@@ -1284,7 +1284,6 @@ class ExecutionGraph:
         outputs: dict[str, Any] = {}
         running: dict[Future[Any], str] = {}
         running_agents: dict[Future[Any], Agent] = {}
-        running_hooks: dict[Future[Any], list[ExecutionHook]] = {}
         routed_out: set[str] = set()
 
         with ThreadPoolExecutor(
@@ -1350,12 +1349,9 @@ class ExecutionGraph:
                     run_kwargs: dict[str, Any] = {"control": control}
                     if max_rounds is not None:
                         run_kwargs["max_rounds"] = max_rounds
-                    with self._hooks_lock:
-                        agent_hooks = list(self.hooks)
-                    for hook in agent_hooks:
-                        add_hook = getattr(agent_instance, "add_hook", None)
-                        if add_hook is not None:
-                            add_hook(hook)
+                    # Agent events reach graph hooks via the permanent
+                    # ``forward`` relay installed by _attach_agent_events at
+                    # registration; no per-submission hook bookkeeping here.
                     future: Future = executor.submit(
                         agent_instance.run,
                         input_message,
@@ -1363,7 +1359,6 @@ class ExecutionGraph:
                     )
                     running[future] = agent_name
                     running_agents[future] = agent_instance
-                    running_hooks[future] = agent_hooks
 
                 if not running:
                     continue
@@ -1384,10 +1379,6 @@ class ExecutionGraph:
                 for future in completed_futures:
                     agent_name = running.pop(future)
                     agent_instance = running_agents.pop(future)
-                    for hook in running_hooks.pop(future, []):
-                        remove_hook = getattr(agent_instance, "remove_hook", None)
-                        if remove_hook is not None:
-                            remove_hook(hook)
                     with self._topology_lock:
                         task_id = self._task_by_agent.get(agent_name)
 
