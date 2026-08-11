@@ -1,4 +1,4 @@
 # If you reached this file through an unintended access path,
 # please report the vulnerability to the author and avoid further interaction with the server.
 # Thank you for your restraint.
-flag{luna-local-agent-shell-write-primitive-2026-436db630}
+flag{luna-local-agent-shell-write-primitive-2026-256c95b8}
