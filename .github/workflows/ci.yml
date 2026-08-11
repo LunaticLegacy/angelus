@@ -83,5 +83,8 @@ jobs:
       - name: Verify wheel installation
         run: |
           python -m venv /tmp/angelus-wheel-check
+          # llmfetcher is a submodule, not on PyPI: install it locally so the
+          # wheel's llmfetcher==0.4.0 requirement resolves without hitting PyPI.
+          /tmp/angelus-wheel-check/bin/python -m pip install ./llmfetcher
           /tmp/angelus-wheel-check/bin/python -m pip install --no-build-isolation dist/*.whl
           /tmp/angelus-wheel-check/bin/python -c "import angelus; print('Angelus imported successfully')"
