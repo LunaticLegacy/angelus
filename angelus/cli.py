@@ -35,10 +35,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = next(a for a in parser._actions if isinstance(a, _SubParsersAction))
 
-    # web — starts the browser console without requiring a separate command.
-    web_p = sub.add_parser("web", help="Start the local web console")
-    web_p.add_argument("--host", default="127.0.0.1", help="Bind host (default: %(default)s)")
-    web_p.add_argument("--port", type=int, default=8765, help="Bind port (default: %(default)s)")
+    # LLMFetcher 0.4.0+ provides the same web command.  Reuse it when
+    # present so Angelus remains compatible with both library versions.
+    if "web" not in sub.choices:
+        web_p = sub.add_parser("web", help="Start the local web console")
+        web_p.add_argument("--host", default="127.0.0.1", help="Bind host (default: %(default)s)")
+        web_p.add_argument("--port", type=int, default=8765, help="Bind port (default: %(default)s)")
 
     # session — browser-visible conversations with independent work paths.
     session_p = sub.add_parser("session", help="Manage local web-console sessions")
