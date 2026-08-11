@@ -19,5 +19,5 @@ dependencies = [
 angelus = "angelus.cli:main"
 angelus-web = "angelus.cli:main"
 
-[tool.setuptools]
-packages = ["angelus", "angelus.rag_module_tlb", "angelus.swarm_module", "angelus.tools"]
+[tool.setuptools.packages.find]
+include = ["angelus*"]
