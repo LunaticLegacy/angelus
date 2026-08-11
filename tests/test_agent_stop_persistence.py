@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from angelus.agent import Agent, AgentRunStopped
+from llmfetcher.agent import Agent, AgentRunStopped
 from llmfetcher.llm_types import LLMOutput
 
 

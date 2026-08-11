@@ -1,7 +1,7 @@
 import queue
 import threading
 
-from ..agent import AgentRunControl
+from llmfetcher.agent import AgentRunControl
 
 
 class BrowserRunControl(AgentRunControl):

@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from angelus.agent import Agent
+from llmfetcher.agent import Agent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
-from angelus.swarm_module import ExecutionGraph, GraphPersistenceError
+from llmfetcher.swarm_module import ExecutionGraph, GraphPersistenceError
 
 
 def _agent(prompt: str) -> Agent:

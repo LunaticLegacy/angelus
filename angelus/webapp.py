@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
 
-from .agent import Agent, AgentRunStopped
+from llmfetcher import Agent, AgentRunStopped
 from .classes import (
     ActiveRun,
     BrowserRunControl,
@@ -36,9 +36,9 @@ from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import LLMOutput
 from llmfetcher.graph_memory import GraphContextHandler
-from .tools.shell_tools import create_shell_tools
-from .tools.spawn_tools import create_swarm_tools
-from .swarm_module.swarm import AgentSwarm
+from llmfetcher.tools.shell_tools import create_shell_tools
+from llmfetcher.tools.spawn_tools import create_swarm_tools
+from llmfetcher.swarm_module.swarm import AgentSwarm
 from .task_planning import TaskPlanStore, create_task_planning_tools
 
 
