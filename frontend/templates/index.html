@@ -1,10 +1,14 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <script>
+      /* Apply saved theme before first paint to avoid a flash of the wrong theme. */
+      try { if (localStorage.getItem("llmfetcherTheme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-19" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-20" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -56,7 +60,7 @@
         <label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label>
       </section>
       <p class="privacy">连接密钥仅保存在本机受限文件中，不会写入会话上下文。</p>
-      <div class="side-footer"><button type="button">⚙</button><button type="button">?</button><button type="button">☾</button></div>
+      <div class="side-footer"><button type="button">⚙</button><button type="button">?</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
     </aside>
 
     <main class="main-panel">
@@ -88,6 +92,6 @@
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
-    <script src="/static/app.js?v=workbench-30"></script>
+    <script src="/static/app.js?v=workbench-31"></script>
   </body>
 </html>

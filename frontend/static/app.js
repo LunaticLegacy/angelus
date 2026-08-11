@@ -1,4 +1,30 @@
 const $ = (id) => document.getElementById(id);
+
+/* ================================================================
+ *  Theme (light / dark) — wired to the ☾ sidebar-footer button.
+ *  Persisted in localStorage["llmfetcherTheme"]; the inline <head>
+ *  script applies the saved theme before first paint.
+ * ================================================================ */
+const THEME_KEY = "llmfetcherTheme";
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const btn = $("theme-toggle");
+  if (btn) {
+    btn.textContent = theme === "light" ? "☀" : "☾";
+    btn.title = theme === "light" ? "切换到深色主题" : "切换到浅色主题";
+  }
+  try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* private mode etc. */ }
+}
+function initTheme() {
+  let theme = "dark";
+  try { theme = localStorage.getItem(THEME_KEY) || "dark"; } catch (e) {}
+  applyTheme(theme);
+  const btn = $("theme-toggle");
+  if (btn) btn.addEventListener("click", () =>
+    applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
+}
+initTheme();
+
 let sessionId = localStorage.llmfetcherSession || localStorage.llmfetcherWorkspace || "default";
 let workspaceId = sessionId;
 let connectorId = localStorage.llmfetcherConnector || "";
