@@ -1,4 +1,4 @@
 [submodule "llmfetcher"]
 	path = llmfetcher
 	url = git@github.com:LunaticLegacy/llmfetcher.git
-	branch = main
+	branch = fix/agent_swarm
