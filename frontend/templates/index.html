@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-18" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-19" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -70,6 +70,7 @@
       <section id="chat" class="chat"><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
 
       <form id="composer" class="composer"><div class="composer-box"><textarea id="message" placeholder="给 Agent 一个任务…" rows="1" required></textarea><div class="composer-meta"><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
+      <form id="steer-composer" class="composer steer-composer" hidden><div class="composer-box"><div class="steer-hint"><i></i><span id="steer-status">运行中 — 输入指令，Agent 会在安全的轮次边界调整方向</span></div><textarea id="steer-message" placeholder="给正在运行的 Agent 一个调整指令…" rows="1" maxlength="100000"></textarea><div class="composer-meta"><span>Enter 发送 · Shift / Alt + Enter 换行</span></div></div><button id="steer-send" class="send-button" type="submit" aria-label="发送调整指令">➤</button></form>
     </main>
 
     <aside class="activity" aria-label="会话执行信息">
@@ -87,6 +88,6 @@
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
-    <script src="/static/app.js?v=workbench-29"></script>
+    <script src="/static/app.js?v=workbench-30"></script>
   </body>
 </html>

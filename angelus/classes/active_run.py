@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..swarm_module.swarm import AgentSwarm
+from llmfetcher.swarm_module.swarm import AgentSwarm
 from .browser_run_control import BrowserRunControl
 
 

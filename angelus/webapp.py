@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from markdown_it import MarkdownIt
 
-from .agent import Agent, AgentRunStopped
+from llmfetcher import Agent, AgentRunStopped
 from .classes import (
     ActiveRun,
     BrowserRunControl,
@@ -36,9 +36,9 @@ from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import LLMOutput
 from llmfetcher.graph_memory import GraphContextHandler
-from .tools.shell_tools import create_shell_tools
-from .tools.spawn_tools import create_swarm_tools
-from .swarm_module.swarm import AgentSwarm
+from llmfetcher.tools.shell_tools import create_shell_tools
+from llmfetcher.tools.spawn_tools import create_swarm_tools
+from llmfetcher.swarm_module.swarm import AgentSwarm
 from .task_planning import TaskPlanStore, create_task_planning_tools
 
 
@@ -1031,6 +1031,12 @@ def _agent_turns_from_events(
     turns: list[dict[str, Any]] = []
     completed_tools: dict[tuple[str, int], list[dict[str, Any]]] = {}
     last_assistant: tuple[str, str] | None = None
+    # One round-identity tracker per Agent, reset at its ``agent:start``.
+    # The graph used to relay each Agent event through two hook paths, so the
+    # durable log may contain an immediate second copy of every round.  A round
+    # that exactly repeats the previous (agent, round, content, reasoning) is
+    # that duplicate, not a real new model step.
+    last_round: dict[str, tuple[int, str, str]] = {}
 
     for event in _read_session_event_log(workspace_id, session_id):
         event_kind = str(event.get("event", ""))
@@ -1038,9 +1044,13 @@ def _agent_turns_from_events(
         event_agent = str(event.get("agent") or "coordinator")
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
 
-        # Coordinator starts delimit real browser submissions. Showing these
-        # in every Agent filter preserves the complete user-side conversation.
-        if event_kind == "lifecycle" and event_type == "agent:start" and event_agent == "coordinator":
+        # Agent starts delimit one run boundary for round deduplication.
+        # Coordinator starts also delimit real browser submissions; showing
+        # those in every Agent filter preserves the user-side conversation.
+        if event_kind == "lifecycle" and event_type == "agent:start":
+            last_round.pop(event_agent, None)
+            if event_agent != "coordinator":
+                continue
             content = str(event.get("message", ""))
             if content:
                 turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
@@ -1060,11 +1070,22 @@ def _agent_turns_from_events(
             tools = completed_tools.pop((event_agent, data.get("round")), [])
             if not content and not reasoning and not tools:
                 continue
+            round_number = data.get("round")
+            previous_round = last_round.get(event_agent)
+            if (
+                isinstance(round_number, int)
+                and previous_round is not None
+                and previous_round == (round_number, content, reasoning)
+            ):
+                # Immediate duplicate copy of the same round (legacy double-write).
+                continue
             turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": tools}
             turn["content_html"] = render_markdown(content)
             turn["reasoning_html"] = render_markdown(reasoning)
             turns.append(turn)
             last_assistant = (content, reasoning)
+            if isinstance(round_number, int):
+                last_round[event_agent] = (round_number, content, reasoning)
             continue
 
         # The top-level result repeats the coordinator's final model round in
@@ -1109,6 +1130,77 @@ def get_session_messages(session_id: str, agent: str = "all") -> dict[str, list[
     return {"messages": _read_agent_history(session_id, session_id, agent)}
 
 
+def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Return current context-length statistics for one Agent.
+
+    Reads the Agent's persisted linear-context JSON
+    (``contexts/<agent>.json``) and summarizes the retained conversation:
+    message count, estimated character size of retained messages, the
+    compacted abstract size (when compaction already ran), the compaction
+    threshold, and the estimated ratio of current size to that threshold.
+
+    Args:
+        session_id: Browser-stable session identity.
+        agent_name: Graph Agent whose context file is read.
+
+    Returns:
+        Dict with ``messages``, ``characters``, ``abstract_characters``,
+        ``compacted``, ``threshold``, ``round`` and ``ratio`` keys. Missing
+        or malformed context files yield all-zero defaults so the UI can
+        render an empty state instead of failing.
+    """
+    stats = {
+        "messages": 0,
+        "characters": 0,
+        "abstract_characters": 0,
+        "compacted": False,
+        "threshold": 0,
+        "round": 0,
+        "ratio": 0.0,
+    }
+    try:
+        safe_session = _safe_id(session_id, "session")
+        safe_agent = _safe_id(agent_name, "agent")
+        path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return stats
+
+    if not isinstance(raw, dict):
+        return stats
+
+    messages = raw.get("messages", [])
+    if isinstance(messages, list):
+        stats["messages"] = len(messages)
+        stats["characters"] = sum(
+            len(json.dumps(msg, ensure_ascii=False, default=str))
+            for msg in messages
+            if isinstance(msg, dict)
+        )
+
+    abstract = raw.get("abstract")
+    if isinstance(abstract, dict):
+        stats["compacted"] = True
+        stats["abstract_characters"] = len(
+            json.dumps(abstract, ensure_ascii=False, default=str)
+        )
+
+    threshold = raw.get("compress_threshold")
+    if isinstance(threshold, (int, float)) and threshold > 0:
+        stats["threshold"] = int(threshold)
+
+    round_value = raw.get("round")
+    if isinstance(round_value, (int, float)) and not isinstance(round_value, bool):
+        stats["round"] = int(round_value)
+
+    # Estimated ratio of retained context to the compaction threshold.
+    total_chars = stats["characters"] + stats["abstract_characters"]
+    if stats["threshold"] > 0:
+        stats["ratio"] = round(min(1.0, total_chars / stats["threshold"]), 4)
+
+    return stats
+
+
 @app.get("/api/sessions/{session_id}/agents")
 def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:
     """Return selectable Agent identities from the persisted graph snapshot."""
@@ -1130,9 +1222,14 @@ def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:
             "kind": "agent",
             "dynamic": bool(node.get("dynamic")),
             "parent": node.get("parent"),
+            "context": _agent_context_stats(session_id, agent_id),
         })
     if len(agents) == 1 and (_session_path(session_id, session_id) / "contexts" / "coordinator.json").exists():
-        agents.append({"id": "coordinator", "name": "coordinator", "kind": "agent", "dynamic": False, "parent": None})
+        agents.append({
+            "id": "coordinator", "name": "coordinator", "kind": "agent",
+            "dynamic": False, "parent": None,
+            "context": _agent_context_stats(session_id, "coordinator"),
+        })
     return {"agents": agents}
 
 
@@ -1499,7 +1596,10 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 if not isinstance(output, LLMOutput):
                     raise RuntimeError("Coordinator did not produce a language-model output")
                 _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
-                usage = {"input": 0, "output": 0, "total": 0}
+                # Aggregate token usage across every executed agent
+                # (coordinator + workers), each of which already includes
+                # its own internal compaction / graph-memory LLM calls.
+                usage = swarm.total_usage()
             else:
                 agent = _build_agent(request.config, workspace_id, session_id, active=active)
                 def capture(event: ExecutionEvent) -> None:

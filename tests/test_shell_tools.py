@@ -2,7 +2,7 @@
 
 import tempfile
 
-from angelus.tools.shell_tools import create_shell_tools
+from llmfetcher.tools.shell_tools import create_shell_tools
 
 
 def test_shell_tool_runs_with_popen_pipes() -> None:
