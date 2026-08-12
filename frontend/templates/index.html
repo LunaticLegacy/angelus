@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-21" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-22" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -27,6 +27,20 @@
         <div class="session-dialog-actions"><button id="cancel-new-connector" type="button">取消</button><button type="submit">保存</button></div>
       </form>
     </dialog>
+    <dialog id="settings-dialog" class="session-dialog" aria-labelledby="settings-title">
+      <form id="settings-form" class="session-dialog-form">
+        <h2 id="settings-title">连接设置</h2>
+        <label for="provider">Provider</label>
+        <select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select>
+        <label for="model">模型</label>
+        <input id="model" placeholder="gpt-4.1-mini" />
+        <label for="api-url">API URL</label>
+        <input id="api-url" placeholder="https://api.openai.com/v1" />
+        <label for="api-key">API Key</label>
+        <input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" />
+        <div class="session-dialog-actions"><button id="cancel-settings" type="button">取消</button><button type="submit">保存</button></div>
+      </form>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
 
@@ -41,12 +55,6 @@
         <div class="side-heading"><span>连接</span><div><button id="new-connector" class="mini-button" type="button" title="保存为新连接">＋</button><button id="delete-connector" class="mini-button danger" type="button" title="删除连接">×</button></div></div>
         <div class="connection-field"><i></i><select id="connector" aria-label="选择已保存连接"><option value="">未保存的临时连接</option></select><button id="save-connector" type="button" title="保存当前连接">保存</button></div>
         <div class="model-chip"><span class="model-symbol">◈</span><div><strong id="model-label">模型配置</strong><small id="provider-label">OpenAI compatible</small></div><i></i></div>
-        <details class="connection-details"><summary>连接参数</summary>
-          <label>Provider<select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label>
-          <label>模型<input id="model" placeholder="gpt-4.1-mini" /></label>
-          <label>API URL<input id="api-url" placeholder="https://api.openai.com/v1" /></label>
-          <label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label>
-        </details>
       </section>
 
       <section class="side-block settings-block">
@@ -60,7 +68,7 @@
         <label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label>
       </section>
       <p class="privacy">连接密钥仅保存在本机受限文件中，不会写入会话上下文。</p>
-      <div class="side-footer"><button type="button">⚙</button><button type="button">?</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
+      <div class="side-footer"><button id="settings" type="button" title="连接设置">⚙</button><button type="button">?</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
     </aside>
 
     <main class="main-panel">
@@ -92,6 +100,6 @@
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
-    <script src="/static/app.js?v=workbench-32"></script>
+    <script src="/static/app.js?v=workbench-33"></script>
   </body>
 </html>

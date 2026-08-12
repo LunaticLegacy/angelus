@@ -220,3 +220,6 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 :root[data-theme="light"] .message.steer .bubble { border-color:#d8b25c; background:#fdf6e3; }
 :root[data-theme="light"] .message .role.role-steer { color:#a06a00; }
 :root[data-theme="light"] .message .role.role-steer i { background:var(--amber); box-shadow:0 0 7px #e8890c33; }
+/* Connection settings dialog opened from the sidebar gear button. */
+#settings-dialog { width:min(420px, calc(100vw - 32px)); }
+#settings-dialog .session-dialog-form label { color:var(--muted); font-size:10px; }
