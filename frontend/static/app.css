@@ -224,3 +224,5 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .steer-entry p { margin:0; color:var(--soft); font-size:11px; overflow-wrap:anywhere; white-space:pre-wrap; }
 :root[data-theme="light"] .steer-entry { border-color:#d8b25c; background:#fdf6e3; }
 :root[data-theme="light"] .steer-entry strong { color:#a06a00; }
+/* Connection settings dialog opened from the sidebar gear button. */
+#settings-dialog { width:min(420px, calc(100vw - 32px)); }

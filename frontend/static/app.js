@@ -88,6 +88,7 @@ async function createConnector(name) { const response=await fetch("/api/connecto
 async function saveSelectedConnector() { if(!connectorId){openConnectorDialog();return;} const name=$("connector").selectedOptions[0]?.text||"当前连接"; const response=await fetch(`/api/connectors/${connectorId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(connectorPayload(name))}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||"无法更新连接");} trace("已更新连接",name); connectorFeedback("已保存","success"); }
 /** Open the document-native name dialog used by both new and unsaved connectors. */
 function openConnectorDialog() { const dialog=$("new-connector-dialog"); const input=$("new-connector-name"); input.value=""; dialog.showModal(); input.focus(); }
+function openSettingsDialog() { const dialog=$("settings-dialog"); if(!dialog) return; dialog.showModal(); $("model")?.focus(); }
 function planUrl() { return `/api/sessions/${sessionId}/plan`; }
 function messagesUrl() { return `/api/sessions/${sessionId}/messages?agent=${encodeURIComponent(selectedAgent)}`; }
 function graphUrl() { return `/api/sessions/${sessionId}/graph`; }
@@ -267,6 +268,9 @@ $("delete-workspace").addEventListener("click",async()=>{const selected=$("works
 $("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(persistSettings);});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("cancel-new-connector").addEventListener("click", ()=>$("new-connector-dialog").close());
+$("settings").addEventListener("click", openSettingsDialog);
+$("cancel-settings").addEventListener("click", ()=>$("settings-dialog").close());
+$("settings-form").addEventListener("submit", event=>{ event.preventDefault(); updateModelSummary(); $("settings-dialog").close(); });
 $("new-connector-form").addEventListener("submit", async event=>{event.preventDefault(); const input=$("new-connector-name"); const name=input.value.trim(); if(!name){input.focus();return;} $("new-connector-dialog").close(); try{await createConnector(name);}catch(error){trace("保存连接器失败",error.message);connectorFeedback("保存失败","error");alert(`无法保存连接器：${error.message}`);}});
 $("save-connector").addEventListener("click", async()=>{try{await saveSelectedConnector();}catch(error){trace("更新连接器失败",error.message);connectorFeedback("保存失败","error");alert(`无法保存连接器：${error.message}`);}});
 $("delete-connector").addEventListener("click", async()=>{if(!connectorId||!confirm("删除这个连接及其保存的密钥？"))return;const response=await fetch(`/api/connectors/${connectorId}`,{method:"DELETE"});if(!response.ok){alert("无法删除连接");return;}connectorId="";localStorage.llmfetcherConnector="";await loadConnectors();trace("已删除连接");});
