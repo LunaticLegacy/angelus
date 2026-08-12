@@ -39,18 +39,31 @@ let currentAgents = [];
 let currentGraph = {nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};
 
 const value = (id) => $(id).value.trim();
-const config = () => ({
+// Connector (connection) settings are global: provider/model/URL/key come from
+// the selected connector or a single browser-wide temporary connection.
+const connectionIds = ["provider", "model", "api-url", "api-key"];
+// Agent settings are per-session and never leak across sessions or connectors.
+const agentIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-context-threshold", "max-swarm-agents"];
+const toggleIds = ["enable-shell", "enable-swarm"];
+const connectionConfig = () => ({
   provider: value("provider"), model: value("model"), api_key: $("api-key").value,
-  api_url: value("api-url"), system_prompt: $("system-prompt").value,
-  temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
-  max_rounds: Number($("max-rounds").value), max_context_threshold: Number($("max-context-threshold").value), enable_shell: $("enable-shell").checked,
-  enable_swarm: $("enable-swarm").checked, max_swarm_agents: Number($("max-swarm-agents").value),
+  api_url: value("api-url"),
 });
-const settingsIds = ["provider", "model", "api-url", "api-key", "system-prompt", "temperature", "max-tokens", "max-rounds", "max-context-threshold", "max-swarm-agents"];
-function settingsKey(id=workspaceId) { return `llmfetcherSettings:${id}`; }
-function persistSettings() { if(!workspaceId) return; const settings={...config(), enable_shell:$('enable-shell').checked, enable_swarm:$('enable-swarm').checked}; localStorage.setItem(settingsKey(), JSON.stringify(settings)); }
-function restoreSettings() { try { const settings=JSON.parse(localStorage.getItem(settingsKey()) || "null"); if(!settings) return; settingsIds.forEach(id=>{const key=id.replaceAll("-","_"); if(settings[key] !== undefined) $(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell); $("enable-swarm").checked=Boolean(settings.enable_swarm); } catch { /* Ignore malformed browser-local settings. */ } }
-function bindSettingsPersistence() { [...settingsIds,"enable-shell","enable-swarm"].forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,persistSettings))); }
+const agentConfig = () => ({
+  system_prompt: value("system-prompt"),
+  temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
+  max_rounds: Number($("max-rounds").value), max_context_threshold: Number($("max-context-threshold").value),
+  enable_shell: $("enable-shell").checked, enable_swarm: $("enable-swarm").checked,
+  max_swarm_agents: Number($("max-swarm-agents").value),
+});
+const config = () => ({ ...connectionConfig(), ...agentConfig() });
+const connectionStorageKey = "llmfetcherConnection";
+function agentSettingsKey(id=workspaceId) { return `llmfetcherAgentSettings:${id}`; }
+function persistAgentSettings() { if(!workspaceId) return; localStorage.setItem(agentSettingsKey(), JSON.stringify(agentConfig())); }
+function restoreAgentSettings() { try { const settings=JSON.parse(localStorage.getItem(agentSettingsKey()) || "null"); if(!settings) return; agentIds.forEach(id=>{const key=id.replaceAll("-","_"); if(settings[key] !== undefined) $(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell); $("enable-swarm").checked=Boolean(settings.enable_swarm); } catch { /* Ignore malformed browser-local settings. */ } }
+function persistConnection() { try { localStorage.setItem(connectionStorageKey, JSON.stringify(connectionConfig())); } catch { /* private mode etc. */ } }
+function restoreConnection() { try { const saved=JSON.parse(localStorage.getItem(connectionStorageKey) || "null"); if(!saved) return; connectionIds.forEach(id=>{const key=id.replaceAll("-","_"); if(saved[key] !== undefined) $(id).value=saved[key];}); } catch { /* Ignore malformed browser-local settings. */ } }
+function bindSettingsPersistence() { [...agentIds, ...toggleIds].forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,persistAgentSettings))); connectionIds.forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,()=>{ persistConnection(); updateModelSummary(); }))); }
 function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
 function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || "模型配置"; $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; }
 function escapeHtml(text) { const node=document.createElement("div"); node.textContent=text ?? ""; return node.innerHTML; }
@@ -77,9 +90,9 @@ async function sendSteer(message) { const send=$("steer-send"), input=$("steer-m
 async function apiJson(path) { const response=await fetch(path); if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${path})`); return response.json(); }
 /** Load every session into the select and independently scrollable quick list. */
 async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); if(!sessions.length) throw new Error("会话列表为空"); const select=$("workspace"); select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const recent=$("recent-sessions"); recent.innerHTML=sessions.map(item=>`<button class="recent-session ${item.id===workspaceId?"active":""}" type="button" data-workspace-id="${escapeHtml(item.id)}">${escapeHtml(item.name)}</button>`).join(""); recent.querySelectorAll("[data-workspace-id]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.workspaceId).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); }
-function applyConnector(connector) { ["provider","model","api-url","api-key","system-prompt","temperature","max-tokens","max-rounds","max-context-threshold","max-swarm-agents"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); $("enable-shell").checked=Boolean(connector.enable_shell); $("enable-swarm").checked=Boolean(connector.enable_swarm); }
-async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; localStorage.llmfetcherConnector=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
-function connectorPayload(name) { return {name, ...config()}; }
+function applyConnector(connector) { connectionIds.forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); }
+async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; localStorage.llmfetcherConnector=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); else restoreConnection(); }
+function connectorPayload(name) { return {name, ...connectionConfig()}; }
 /** Give connector saves a visible local result instead of relying on hidden Trace. */
 function connectorFeedback(text, state="") { const button=$("save-connector"); button.textContent=text; button.dataset.state=state; clearTimeout(connectorFeedback.timer); connectorFeedback.timer=setTimeout(()=>{button.textContent="保存";button.dataset.state="";},1800); }
 /** Persist the current fields as a new globally available connector. */
@@ -192,7 +205,7 @@ async function loadHistory() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { persistSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; traceBefore=null; traceEvents=[]; durableEventCount=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function switchSession(selected) { persistAgentSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; traceBefore=null; traceEvents=[]; durableEventCount=0; await loadWorkspaces(selected); await loadConnectors(); restoreAgentSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 
 async function start(message) {
   // Show the submitted prompt immediately in every filter; the durable reload
@@ -265,7 +278,7 @@ $("new-session-form").addEventListener("submit", async event=>{
   await createAndSwitchSession(name);
 });
 $("delete-workspace").addEventListener("click",async()=>{const selected=$("workspace").selectedOptions[0];if(!selected)return;const name=selected.text;if(!confirm(`删除会话“${name}”及其所有数据？此操作不可恢复。`))return;const confirmation=prompt(`请输入会话名称“${name}”以确认删除：`);if(confirmation !== name)return;const response=await fetch(`/api/sessions/${sessionId}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation})});const payload=await response.json();if(response.status===404){await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已不存在",`${name} 已被移除，已切换到有效会话。`);return;}if(!response.ok){alert(payload.detail||"无法删除会话");return;}if(payload.status==="stopping"){trace("正在停止并删除会话",payload.message);return;}await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已删除",name);});
-$("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(persistSettings);});
+$("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(()=>{ persistConnection(); updateModelSummary(); });});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("cancel-new-connector").addEventListener("click", ()=>$("new-connector-dialog").close());
 $("settings").addEventListener("click", openSettingsDialog);
@@ -283,5 +296,5 @@ $("refresh-steer").addEventListener("click",()=>loadSteers().catch(error=>trace(
 $("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
-async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreAgentSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 initializeConsole().catch(error=>trace("工作空间/会话加载失败", error.message));
