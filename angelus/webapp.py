@@ -37,7 +37,7 @@ from .classes import (
 from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import LLMOutput
-from llmfetcher.graph_memory import GraphContextHandler
+from llmfetcher.graph_memory import GraphContextHandler, SemanticGraphWorker
 from llmfetcher.tools.shell_tools import create_shell_tools
 from llmfetcher.tools.spawn_tools import create_swarm_tools
 from llmfetcher.swarm_module.swarm import AgentSwarm
@@ -398,6 +398,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         max_retries=0,
     )
     fetcher = LLMFetcher([backend])
+    semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
         system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses."),
@@ -412,6 +413,8 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         # same LLM for extraction/query fallback and compaction.
         context_handler=GraphContextHandler(
             compacting_fetcher=fetcher,
+            extraction_fetcher=semantic_worker,
+            query_fetcher=semantic_worker,
             max_context_threshold=config.max_context_threshold,
         ),
     )
@@ -575,32 +578,44 @@ def _empty_usage() -> dict[str, int]:
 
 
 def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate completed model-round token usage for a browser session.
+    """Aggregate the canonical per-call token ledger for a browser session.
 
     Args:
         events: Chronological or reverse-chronological durable event records.
-            Only lifecycle records of type ``agent:round`` contribute usage.
+            New logs contribute ``agent:usage`` and ``agent:internal_usage``
+            lifecycle records.  Old logs without either retain the
+            ``agent:round.round_usage`` compatibility path.
 
     Returns:
         A mapping with session-wide ``usage`` and per-agent usage records.
 
-    ``agent:round`` carries a per-round delta as ``round_usage`` as well as a
-    cumulative value. Summing the delta keeps multiple runs and worker Agents
-    accurate without double-counting earlier rounds.
+    Ledger records are deltas, one for each provider call.  This means hidden
+    compaction and graph calls are visible, while the summary does not sum the
+    duplicate per-round display payload.
     """
+    ledger_events = [
+        event for event in events
+        if event.get("event") == "lifecycle"
+        and event.get("type") in {"agent:usage", "agent:internal_usage"}
+    ]
+    source_events = ledger_events or [
+        event for event in events
+        if event.get("event") == "lifecycle" and event.get("type") == "agent:round"
+    ]
     total = _empty_usage()
     by_agent: dict[str, dict[str, int]] = {}
-    for event in events:
-        if event.get("event") != "lifecycle" or event.get("type") != "agent:round":
-            continue
+    for event in source_events:
         agent = str(event.get("agent") or "unknown")
         data = event.get("data")
-        round_usage = data.get("round_usage") if isinstance(data, dict) else None
-        if not isinstance(round_usage, dict):
+        usage = (
+            data.get("usage") if ledger_events and isinstance(data, dict)
+            else data.get("round_usage") if isinstance(data, dict) else None
+        )
+        if not isinstance(usage, dict):
             continue
         agent_usage = by_agent.setdefault(agent, _empty_usage())
         for key in total:
-            value = round_usage.get(key, 0)
+            value = usage.get(key, 0)
             if isinstance(value, (int, float)):
                 tokens = max(0, int(value))
                 total[key] += tokens
@@ -668,7 +683,7 @@ def _read_session_history(workspace_id: str, session_id: str) -> list[dict[str, 
     messages = raw.get("messages", [])
     history: list[dict[str, Any]] = []
     for message in messages:
-        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant", "steer"}:
             continue
         content = str(message.get("content", ""))
         reasoning = str(message.get("reasoning", message.get("content_reasoning", "")))
@@ -759,7 +774,7 @@ def _turns_from_legacy_context(path: Path) -> list[dict[str, Any]]:
         return []
     turns: list[dict[str, Any]] = []
     for message in raw.get("messages", []) if isinstance(raw, dict) else []:
-        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant", "steer"}:
             continue
         tools = [
             {"name": str(item.get("call", {}).get("name", "unknown")), "arguments": item.get("call", {}).get("arguments", {}), "result": str(item.get("result", ""))}
@@ -789,8 +804,15 @@ def _turns_from_event_log(path: Path) -> list[dict[str, Any]]:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("event") == "lifecycle" and event.get("type") == "graph:start":
+        if event.get("event") == "run_started" and event.get("message"):
+            turns.append({"role": "user", "content": str(event["message"]), "reasoning": "", "tools": []})
+        elif event.get("event") == "lifecycle" and event.get("type") == "graph:start":
             turns.append({"role": "user", "content": str(event.get("message", "")), "reasoning": "", "tools": []})
+        elif event.get("event") == "lifecycle" and event.get("type") == "agent:steer_applied":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            for message in data.get("messages", []):
+                if isinstance(message, str) and message:
+                    turns.append({"role": "steer", "content": message, "reasoning": "", "tools": []})
         elif event.get("event") == "result":
             turns.append({"role": "assistant", "content": str(event.get("content", "")), "reasoning": str(event.get("reasoning", "")), "tools": []})
     return turns
@@ -1050,6 +1072,11 @@ def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> 
         compaction; legacy contexts remain a fallback for older sessions.
     """
     if agent_name in {"", "all"}:
+        turns = _agent_turns_from_events(workspace_id, session_id, "coordinator")
+        # A result-only legacy trace is not a complete transcript; keep its
+        # conversation projection as the compatibility source in that case.
+        if any(turn.get("role") == "user" for turn in turns):
+            return turns
         return _read_session_history(workspace_id, session_id)
     agent_name = _safe_id(agent_name, "agent")
     turns = _agent_turns_from_events(workspace_id, session_id, agent_name)
@@ -1172,6 +1199,7 @@ def _agent_turns_from_events(
     turns: list[dict[str, Any]] = []
     completed_tools: dict[tuple[str, int], list[dict[str, Any]]] = {}
     last_assistant: tuple[str, str] | None = None
+    last_user: str | None = None
     # One round-identity tracker per Agent, reset at its ``agent:start``.
     # The graph used to relay each Agent event through two hook paths, so the
     # durable log may contain an immediate second copy of every round.  A round
@@ -1185,6 +1213,15 @@ def _agent_turns_from_events(
         event_agent = str(event.get("agent") or "coordinator")
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
 
+        # Browser submissions are persisted before the Agent begins. This is
+        # the canonical user turn for new sessions.
+        if event_kind == "run_started":
+            content = str(event.get("message", ""))
+            if content:
+                turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+                last_user = content
+            continue
+
         # Agent starts delimit one run boundary for round deduplication.
         # Coordinator starts also delimit real browser submissions; showing
         # those in every Agent filter preserves the user-side conversation.
@@ -1193,9 +1230,24 @@ def _agent_turns_from_events(
             if event_agent != "coordinator":
                 continue
             content = str(event.get("message", ""))
-            if content:
+            # Old logs have only agent:start; new logs also have run_started.
+            if content and content != last_user:
                 turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+                last_user = content
             last_assistant = None
+            continue
+
+        if (
+            event_kind == "lifecycle"
+            and event_type == "agent:steer_applied"
+            and event_agent == "coordinator"
+            and agent_name == "coordinator"
+        ):
+            messages = data.get("messages", [])
+            if isinstance(messages, list):
+                for message in messages:
+                    if isinstance(message, str) and message:
+                        turns.append({"role": "steer", "content": message, "reasoning": "", "tools": []})
             continue
 
         # Tool completion precedes its matching model-round event, allowing
@@ -1729,6 +1781,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
         "event": "run_started",
         "run_id": session_id,
         "timestamp": started_at,
+        "message": request.message,
         "runtime_profile": runtime_profile,
     })
 
@@ -1769,9 +1822,11 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     control=active.control,
                 )
                 usage = {
-                    "input": agent.usage.input_tokens,
-                    "output": agent.usage.output_tokens,
-                    "total": agent.usage.total_tokens,
+                    "input": getattr(agent.usage, "input_tokens", 0) or 0,
+                    "output": getattr(agent.usage, "output_tokens", 0) or 0,
+                    "total": getattr(agent.usage, "total_tokens", 0) or 0,
+                    "cached": getattr(agent.usage, "cached_tokens", 0) or 0,
+                    "reasoning": getattr(agent.usage, "reasoning_tokens", 0) or 0,
                 }
             result_payload = {
                 "event": "result",

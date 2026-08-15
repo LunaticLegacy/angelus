@@ -36,6 +36,22 @@ class SessionObservabilityTests(unittest.TestCase):
             finally:
                 webapp.WORKSPACE_ROOT = original_root
 
+    def test_usage_prefers_canonical_per_call_ledger(self) -> None:
+        """The display-only round payload must not double-count ledger calls."""
+        events = [
+            {"event": "lifecycle", "type": "agent:usage", "agent": "coordinator",
+             "data": {"kind": "primary", "usage": {"input": 3, "output": 2, "total": 5, "cached": 1, "reasoning": 1}}},
+            {"event": "lifecycle", "type": "agent:internal_usage", "agent": "coordinator",
+             "data": {"kind": "graph_query", "usage": {"input": 4, "output": 1, "total": 5, "cached": 0, "reasoning": 0}}},
+            {"event": "lifecycle", "type": "agent:round", "agent": "coordinator",
+             "data": {"round_usage": {"input": 99, "output": 99, "total": 198, "cached": 0, "reasoning": 0}}},
+        ]
+
+        summary = webapp._session_usage_summary(events)
+
+        self.assertEqual(summary["usage"], {"input": 7, "output": 3, "total": 10, "cached": 1, "reasoning": 1})
+        self.assertEqual(summary["agents"], [{"id": "coordinator", "usage": summary["usage"]}])
+
     def test_orphaned_running_state_becomes_persisted_interruption(self) -> None:
         """Expose a restart-lost worker as a durable, explainable terminal state."""
         with tempfile.TemporaryDirectory() as directory:
