@@ -54,3 +54,27 @@ def test_memory_authorizations_are_selected_and_sent_as_run_grants() -> None:
     assert '"session-memory-sessions"' in script
     assert "session_memory_search_sessions: selectedMemorySessions()" in script
     assert "session_artifact_open_sessions: selectedMemorySessions()" in script
+
+
+def test_retry_count_is_session_persisted_and_sent_with_runs() -> None:
+    """Expose the additional timeout retry count as a saved Agent setting."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="max-retries"' in template
+    assert 'value="3"' in template
+    assert 'max_retries: Number($("max-retries").value)' in script
+    assert '"max-retries"' in script
+    assert "workbench-40" in template
+
+
+def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
+    """Keep per-Agent usage cards aligned with the canonical status projection."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "const view=agentStateView(agent.id)" in script
+    assert 'class="agent-state ${escapeHtml(view.ui)}"' in script
+    assert "apiJson(graphUrl()).catch(()=>null)" in script
+    assert ".usage-agent .agent-state.running" in stylesheet
+    assert "workbench-40" in INDEX_TEMPLATE.read_text(encoding="utf-8")

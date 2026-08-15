@@ -45,13 +45,13 @@ const config = () => ({
   provider: value("provider"), model: value("model"), api_key: $("api-key").value, connector_id: connectorId,
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
-  max_rounds: Number($("max-rounds").value), max_context_threshold: Number($("max-context-threshold").value),
+  max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), max_context_threshold: Number($("max-context-threshold").value),
   enable_shell: $("enable-shell").checked, enable_swarm: $("enable-swarm").checked,
   max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-context-threshold", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function settingsKey(id=workspaceId) { return `llmfetcherAgentSettings:${id}`; }
 function connectionDraftKey(id=workspaceId) { return `llmfetcherConnectionDraft:${id}`; }
@@ -190,7 +190,8 @@ function renderAgentTopology(agents, graph) {
 }
 async function loadInspectorAgents() { const [agentPayload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/agents`),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,graphPayload);renderAgentSelector(agentPayload.agents);renderGraph(graphPayload); }
 function usageCells(usage) { return [["Input",usage.input],["Output",usage.output],["Total",usage.total],["Cached",usage.cached],["Reasoning",usage.reasoning]].map(([label,value])=>`<span>${label}<b>${Number(value || 0).toLocaleString()}</b></span>`).join(""); }
-async function loadUsage() { const payload=await apiJson(`/api/sessions/${sessionId}/usage`); const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>`<article class="usage-agent"><header><strong>${escapeHtml(agent.id)}</strong><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage)}</div></article>`).join(""); }
+/** Render per-Agent token totals with the same reconciled state lights as other Agent surfaces. */
+async function loadUsage() { const [payload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/usage`),apiJson(graphUrl()).catch(()=>null)]); if(graphPayload){currentGraph=graphPayload; renderGraph(currentGraph);} const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>{const view=agentStateView(agent.id); return `<article class="usage-agent"><header><span class="usage-agent-title"><i class="agent-state ${escapeHtml(view.ui)}" title="${escapeHtml(view.message)}"></i><strong>${escapeHtml(agent.id)}</strong></span><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage)}</div></article>`;}).join(""); }
 /** Render one applied steering instruction batch in the right-hand inspector. */
 function renderSteer(round, messages=[]) { const target=$("steer-list"); if(!target) return; target.querySelector(".empty")?.remove(); const entry=document.createElement("article"); entry.className="steer-entry"; const label=round !== undefined && round !== null ? `第 ${round} 轮` : "调整指令"; entry.innerHTML=`<header><strong>${escapeHtml(label)}</strong><small>已应用</small></header>${(messages||[]).map(m=>`<p>${escapeHtml(m)}</p>`).join("")}`; target.append(entry); target.scrollTop=target.scrollHeight; }
 /** Rebuild the right-hand steer panel from the durable session event log. */

@@ -14,6 +14,10 @@ class WebAppContextThresholdTests(unittest.TestCase):
         """Keep the documented default compaction threshold stable."""
         self.assertEqual(webapp.RunConfig(model="demo").max_context_threshold, 262144)
 
+    def test_default_retry_count_is_three_additional_attempts(self) -> None:
+        """Keep the browser retry default explicit and independently configurable."""
+        self.assertEqual(webapp.RunConfig(model="demo").max_retries, 3)
+
     def test_build_agent_uses_browser_context_threshold(self) -> None:
         """Pass a session's configured threshold into its history handler."""
         config = webapp.RunConfig(
@@ -25,6 +29,7 @@ class WebAppContextThresholdTests(unittest.TestCase):
 
         self.assertEqual(agent.max_context_threshold, 8192)
         self.assertEqual(agent.context_handler.compress_threshold, 8192)
+        self.assertEqual(agent.llm_fetcher.default_backend_config.max_retries, 3)
 
     def test_context_threshold_rejects_unusable_values(self) -> None:
         """Reject values too small to retain a useful conversation history."""

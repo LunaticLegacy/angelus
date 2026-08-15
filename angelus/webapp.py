@@ -438,6 +438,7 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
         "max_rounds": config.max_rounds,
+        "max_retries": config.max_retries,
         "max_context_threshold": config.max_context_threshold,
         "enable_shell": config.enable_shell,
         "enable_swarm": config.enable_swarm,
@@ -507,7 +508,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         api_key=config.api_key,
         api_url=config.api_url.strip() or None,
         timeout=120,
-        max_retries=0,
+        max_retries=config.max_retries,
     )
     fetcher = LLMFetcher([backend])
     semantic_worker = SemanticGraphWorker(fetcher)

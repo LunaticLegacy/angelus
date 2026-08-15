@@ -30,7 +30,7 @@ swarm, TLB-RAG, and utilities.
 | `test_tlb_reliability.py` | TLB-RAG reliability: edge cases, error handling |
 | `test_web_markdown.py` | `render_markdown()`: CommonMark rendering |
 | `test_workbench_assets.py` | Active Workbench script/template DOM, left settings navigation, selectable session-memory grants, and settings API consistency |
-| `test_webapp_context_threshold.py` | Webapp context threshold configuration |
+| `test_webapp_context_threshold.py` | Webapp context-threshold and browser retry-count configuration |
 | `test_workspace_deletion.py` | Workspace deletion: cleanup, active run handling |
 
 ## Intent Routing
