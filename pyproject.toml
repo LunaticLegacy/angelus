@@ -15,6 +15,11 @@ dependencies = [
     "uvicorn",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+]
+
 [project.scripts]
 angelus = "angelus.cli:main"
 angelus-web = "angelus.cli:main"

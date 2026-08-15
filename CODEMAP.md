@@ -18,6 +18,7 @@ Read it before modifying code. Update it after changing behavior.
   - Task planning (`task_planning.py`)
   - Web UI (`webapp.py`, `web/static/app.js`)
   - Configuration and CLI (`cli.py`, `pyproject.toml`)
+  - Test execution (`pyproject.toml` test extra, `.github/workflows/ci.yml`)
 
 ## Modules
 
