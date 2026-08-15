@@ -91,7 +91,7 @@ async function createConnector(name) { const response=await fetch("/api/connecto
 async function saveSelectedConnector() { if(!connectorId){openConnectorDialog();return;} const name=$("connector").selectedOptions[0]?.text||"当前连接"; const response=await fetch(`/api/connectors/${connectorId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(connectorPayload(name))}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||"无法更新连接");} trace("已更新连接",name); connectorFeedback("已保存","success"); }
 /** Open the document-native name dialog used by both new and unsaved connectors. */
 function openConnectorDialog() { const dialog=$("new-connector-dialog"); const input=$("new-connector-name"); input.value=""; dialog.showModal(); input.focus(); }
-function openSettings(section="connection") { $("settings-section").value=section; showSettingsSection(section); $("settings-dialog").showModal(); }
+function openSettings(section="connection") { const dialog=$("settings-dialog"); $("settings-section").value=section; showSettingsSection(section); if(!dialog.open) dialog.showModal(); }
 function showSettingsSection(section) { document.querySelectorAll("[data-settings-panel]").forEach(panel=>panel.classList.toggle("active",panel.dataset.settingsPanel===section)); }
 function planUrl() { return `/api/sessions/${sessionId}/plan`; }
 function messagesUrl() { return `/api/sessions/${sessionId}/messages?agent=${encodeURIComponent(selectedAgent)}`; }

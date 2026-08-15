@@ -109,6 +109,10 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .connection-field button[data-state="success"] { color:var(--green); }.connection-field button[data-state="error"] { color:var(--red); }
 .connection-field button { min-width:46px; padding-inline:8px; white-space:nowrap; }
 
+/* Keep the sidebar in normal flex flow: once configuration moved into the
+   dialog, the session area owns all remaining vertical space. */
+.sidebar > .side-block:first-of-type { display:flex; flex:1 1 auto; min-height:0; flex-direction:column; margin-bottom:0; }.sidebar > .side-block:first-of-type .recent-sessions { max-height:none; flex:1 1 auto; min-height:0; }.sidebar > .privacy { flex:0 0 auto; margin-top:14px; }.sidebar > .side-footer { flex:0 0 auto; }
+
 /* Settings now owns both connector and Agent configuration.  The selector is
    intentionally extensible: future pages do not need another sidebar panel. */
 .settings-dialog { width:min(510px,calc(100vw - 32px)); max-height:min(760px,calc(100vh - 32px)); overflow:hidden; }
