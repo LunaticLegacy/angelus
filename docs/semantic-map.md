@@ -507,7 +507,14 @@ Assistant reasoning is placed in a collapsed native `details` panel, preserving
 the rendered Markdown while keeping final answers readable. `setRunning()`
 adds a main-panel guidance card while a run is active and removes it at
 completion; the card explains trace visibility, safe stop timing and session
-switch behavior.
+switch behavior. The function also moves interaction focus to the main-panel
+steer composer: it replaces the new-task composer only during a run.
+`appendMessage()` routes durable `steer` turns to `appendSteerMessage()`,
+which presents them as right-aligned amber input cards beside original user
+messages. On a live
+`agent:steer_applied`, `handleEvent()` uses a stable event key to prevent
+duplicate cards after an SSE reconnect. `initInspectorTabs()` falls back to
+the plan view when a browser persisted the removed steer-inspector tab.
 
 ### `web/static/app.js` execution graph rendering
 
