@@ -1823,6 +1823,66 @@ def get_session_events(
     )
 
 
+@app.get("/api/sessions/{session_id}/steers")
+def get_session_steers(session_id: str) -> dict[str, Any]:
+    """Return every durable steering instruction applied to this session.
+
+    Steers are reconstructed from the append-only event log, so they survive
+    browser refreshes without a separate steering transcript.
+
+    Args:
+        session_id: Browser-visible session identity.
+
+    Returns:
+        Steer records in chronological order with round and message payloads.
+    """
+    safe_session_id = _safe_id(session_id, "session")
+    events = _read_session_event_log(safe_session_id, safe_session_id)
+    steers = []
+    for event in events:
+        if event.get("event") != "lifecycle" or event.get("type") != "agent:steer_applied":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict) or not data.get("messages"):
+            continue
+        steers.append({
+            "round": data.get("round"),
+            "messages": data.get("messages"),
+            "timestamp": event.get("timestamp"),
+        })
+    return {"steers": steers}
+
+
+@app.get("/api/sessions/{session_id}/steers")
+def get_session_steers(session_id: str) -> dict[str, Any]:
+    """Return every durable steering instruction applied to this session.
+
+    Steers are reconstructed from the append-only event log, so they survive
+    browser refreshes without a separate steering transcript.
+
+    Args:
+        session_id: Browser-visible session identity.
+
+    Returns:
+        Steer records in chronological order with round and message payloads.
+    """
+    safe_session_id = _safe_id(session_id, "session")
+    events = _read_session_event_log(safe_session_id, safe_session_id)
+    steers = []
+    for event in events:
+        if event.get("event") != "lifecycle" or event.get("type") != "agent:steer_applied":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict) or not data.get("messages"):
+            continue
+        steers.append({
+            "round": data.get("round"),
+            "messages": data.get("messages"),
+            "timestamp": event.get("timestamp"),
+        })
+    return {"steers": steers}
+
+
 @app.get("/api/sessions/{session_id}/usage")
 def get_session_usage(session_id: str) -> dict[str, Any]:
     """Return completed token usage for all Agents in one browser session.
