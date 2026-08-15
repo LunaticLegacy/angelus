@@ -10,6 +10,15 @@ the `angelus web` and session-management commands. `angelus.agent.Agent`
 extends the base Agent behavior with durable safe-stop persistence, and is the
 Agent class consumed by the Angelus Swarm and TLB RAG adapter.
 
+## Test and CI contract
+
+`pyproject.toml` exposes the `test` optional dependency group, currently
+including `pytest>=8`. The GitHub Actions `test` job installs Angelus with
+`-e '.[test]'` after installing the local `llmfetcher` submodule, then invokes
+`python -m pytest tests -v`. This keeps test-only dependencies out of the
+runtime package while ensuring both pytest-style functions and `unittest`
+test cases are collected in CI.
+
 ### `angelus.rag_module_tlb.create_read_file_tool(root)`
 
 Creates the Angelus TLB worker's private file-reading tool. Its handler calls
