@@ -109,6 +109,23 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .connection-field button[data-state="success"] { color:var(--green); }.connection-field button[data-state="error"] { color:var(--red); }
 .connection-field button { min-width:46px; padding-inline:8px; white-space:nowrap; }
 
+/* Settings now owns both connector and Agent configuration.  The selector is
+   intentionally extensible: future pages do not need another sidebar panel. */
+.settings-dialog { width:min(510px,calc(100vw - 32px)); max-height:min(760px,calc(100vh - 32px)); overflow:hidden; }
+.settings-dialog-form { display:grid; gap:14px; max-height:inherit; overflow:auto; padding:19px; }
+.settings-dialog-head,.settings-page-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }.settings-dialog-head h2,.settings-page-heading h3 { margin:2px 0 0; font-size:15px; }.settings-page-heading p { margin:4px 0 0; color:var(--muted); font-size:10px; }
+.dialog-close { width:28px; height:28px; border:1px solid var(--line); border-radius:6px; background:#17253b; color:var(--soft); font-size:18px; line-height:1; }.dialog-close:hover { border-color:#7565d2; color:var(--text); }
+.settings-section-picker { display:grid; grid-template-columns:92px 1fr; align-items:center; gap:8px; color:var(--muted); font-size:10px; }.settings-section-picker select { margin:0; }
+.settings-page { display:none; gap:10px; }.settings-page.active { display:grid; }.settings-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }.settings-fields label:last-child { grid-column:1 / -1; }.settings-page > label { display:grid; gap:5px; color:var(--muted); font-size:10px; }.settings-page em { color:#71809a; font-style:normal; }.settings-placeholder { min-height:220px; place-content:center; text-align:center; color:var(--muted); }.settings-placeholder > span { color:var(--purple); font-size:26px; }.settings-placeholder h3 { margin:6px 0 0; color:var(--soft); font-size:13px; }.settings-placeholder p { max-width:280px; margin:0; font-size:10px; line-height:1.6; }
+
+/* The Agents tab is a delegation tree first, then the lower-level graph
+   details.  This keeps the coordinator → worker relationship legible. */
+.agents-legend { margin:0; color:var(--muted); font-size:9px; line-height:1.45; }.agents-legend i { display:inline-block; width:16px; margin-right:4px; border-top:1px solid #52617a; vertical-align:middle; }
+.inspector-agents-list { max-height:58%; padding:1px 3px 1px 1px; }.agent-topology-branch { position:relative; }.agent-topology-children { margin:0 0 4px 12px; padding-left:10px; border-left:1px solid #42516d; }.agent-topology-children > .agent-topology-branch::before { content:""; position:absolute; top:20px; left:-11px; width:10px; border-top:1px solid #42516d; }
+.inspector-agent { align-items:flex-start; margin-bottom:5px; border-left:3px solid #53637f; }.inspector-agent.running { border-left-color:var(--green); }.inspector-agent.pending { border-left-color:var(--amber); }.inspector-agent.completed { border-left-color:#59aaff; }.inspector-agent.error { border-left-color:var(--red); }.inspector-agent > i { margin-top:5px; }.inspector-agent header { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }.inspector-agent header small { color:#9d8bec; font-size:8px; }.inspector-agent p { margin:3px 0 0; color:var(--muted); font-size:9px; overflow-wrap:anywhere; }.agent-tasks { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }.agent-task { max-width:100%; padding:2px 5px; border:1px solid #62568c; border-radius:999px; color:#cdbfff; font-size:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+@media (max-width:650px) { .settings-fields { grid-template-columns:1fr; }.settings-fields label:last-child { grid-column:auto; } }
+
 /* ================================================================
    Light theme — toggled via <html data-theme="light">
    Default (no attribute) remains the dark theme above.

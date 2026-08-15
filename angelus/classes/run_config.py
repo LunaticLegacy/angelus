@@ -12,6 +12,9 @@ class RunConfig(BaseModel):
     provider: str = "openai"
     model: str
     api_key: str = ""
+    # A saved connector is resolved server-side. The browser receives only
+    # metadata, never its stored secret.
+    connector_id: str = ""
     api_url: str = ""
     system_prompt: str = "You are a helpful, precise assistant."
     temperature: float = Field(default=0.4, ge=0, le=2)

@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-21" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-22" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -27,6 +27,24 @@
         <div class="session-dialog-actions"><button id="cancel-new-connector" type="button">取消</button><button type="submit">保存</button></div>
       </form>
     </dialog>
+    <dialog id="settings-dialog" class="session-dialog settings-dialog" aria-labelledby="settings-title">
+      <div class="settings-dialog-form">
+        <header class="settings-dialog-head"><div><p class="eyebrow">WORKBENCH</p><h2 id="settings-title">设置</h2></div><button id="close-settings" class="dialog-close" type="button" aria-label="关闭设置">×</button></header>
+        <label class="settings-section-picker">设置类别<select id="settings-section"><option value="connection">连接器</option><option value="agent">Agent 执行</option><option value="future">更多设置（即将推出）</option></select></label>
+        <section data-settings-panel="connection" class="settings-page active">
+          <div class="settings-page-heading"><div><h3>连接器</h3><p>连接配置保存在本机受限文件中。</p></div><div><button id="new-connector" class="mini-button" type="button" title="保存为新连接">＋</button><button id="delete-connector" class="mini-button danger" type="button" title="删除连接">×</button></div></div>
+          <div class="connection-field"><i></i><select id="connector" aria-label="选择已保存连接"><option value="">未保存的临时连接</option></select><button id="save-connector" type="button" title="保存当前连接">保存</button></div>
+          <div class="model-chip"><span class="model-symbol">◈</span><div><strong id="model-label">模型配置</strong><small id="provider-label">OpenAI compatible</small></div><i></i></div>
+          <div class="settings-fields"><label>Provider<select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label><label>模型<input id="model" placeholder="gpt-4.1-mini" /></label><label>API URL<input id="api-url" placeholder="https://api.openai.com/v1" /></label><label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label></div>
+        </section>
+        <section data-settings-panel="agent" class="settings-page">
+          <div class="settings-page-heading"><div><h3>Agent 执行</h3><p>这些选项会随当前会话保存在浏览器本地。</p></div></div>
+          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div>
+          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label>
+        </section>
+        <section data-settings-panel="future" class="settings-page settings-placeholder"><span>⌘</span><h3>更多设置</h3><p>这里会容纳未来的工作台偏好、检索策略与高级运行选项。</p></section>
+      </div>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
 
@@ -37,30 +55,8 @@
         <button id="delete-workspace" class="quiet-action" type="button">删除当前会话</button>
       </section>
 
-      <section class="side-block">
-        <div class="side-heading"><span>连接</span><div><button id="new-connector" class="mini-button" type="button" title="保存为新连接">＋</button><button id="delete-connector" class="mini-button danger" type="button" title="删除连接">×</button></div></div>
-        <div class="connection-field"><i></i><select id="connector" aria-label="选择已保存连接"><option value="">未保存的临时连接</option></select><button id="save-connector" type="button" title="保存当前连接">保存</button></div>
-        <div class="model-chip"><span class="model-symbol">◈</span><div><strong id="model-label">模型配置</strong><small id="provider-label">OpenAI compatible</small></div><i></i></div>
-        <details class="connection-details"><summary>连接参数</summary>
-          <label>Provider<select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label>
-          <label>模型<input id="model" placeholder="gpt-4.1-mini" /></label>
-          <label>API URL<input id="api-url" placeholder="https://api.openai.com/v1" /></label>
-          <label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label>
-        </details>
-      </section>
-
-      <section class="side-block settings-block">
-        <div class="side-heading"><span>Agent 设置</span><span class="settings-mark">⌘</span></div>
-        <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div>
-        <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label>
-        <label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label>
-        <label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label>
-        <label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label>
-        <label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label>
-        <label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label>
-      </section>
-      <p class="privacy">连接密钥仅保存在本机受限文件中，不会写入会话上下文。</p>
-      <div class="side-footer"><button type="button">⚙</button><button type="button">?</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
+      <p class="privacy">连接器与 Agent 参数集中在设置中管理。</p>
+      <div class="side-footer"><button id="open-settings" type="button" title="打开设置">⚙</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
     </aside>
 
     <main class="main-panel">
@@ -87,7 +83,7 @@
       </nav>
       <div class="inspector-panels">
         <section id="inspector-plan" class="inspector-panel active"><div class="section-title"><div><p class="eyebrow">TASK PLAN</p><h3>任务计划</h3></div><button id="refresh-plan" class="refresh-button" type="button">↻</button></div><p id="plan-summary" class="plan-summary">Agent 生成的任务计划会显示在这里。</p><div id="task-plan" class="task-plan"><p class="empty">尚未建立任务计划。</p></div></section>
-        <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>Agents 与执行图</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div><div id="execution-graph" class="execution-graph"><p class="empty">当前 session 尚未启动 Swarm。</p></div></section>
+        <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>协作拓扑</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><p class="agents-legend"><i></i>缩进表示调度关系；任务标签表示当前指派。</p><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div><div id="execution-graph" class="execution-graph"><p class="empty">当前 session 尚未启动 Swarm。</p></div></section>
         <section id="inspector-trace" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">EVENT STREAM</p><h3>Trace</h3></div><button id="refresh-trace" class="refresh-button" type="button">↻</button></div><div id="trace" class="trace"><p class="empty">当前 session 尚无事件。</p></div><button id="load-more-trace" class="load-more-trace" type="button" hidden>加载更早事件</button></section>
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>

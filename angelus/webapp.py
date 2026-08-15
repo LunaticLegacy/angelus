@@ -8,6 +8,8 @@ import os
 import queue
 import re
 import shutil
+import base64
+import subprocess
 import threading
 import time
 import uuid
@@ -249,12 +251,71 @@ def _stop_then_remove_workspace(workspace_id: str, active_runs: list[ActiveRun])
     _remove_workspace(workspace_id)
 
 
-def _read_connectors() -> list[dict[str, Any]]:
-    """Load saved connector records, treating a missing store as empty.
+def _connector_key_paths() -> tuple[Path, Path]:
+    """Return the per-store RSA private/public key paths."""
+    key_directory = CONNECTOR_INDEX.parent / ".connector-keys"
+    return key_directory / "private.pem", key_directory / "public.pem"
 
-    Returns:
-        JSON-compatible connector records ordered by creation time.
-    """
+
+def _ensure_connector_keypair() -> tuple[Path, Path]:
+    """Create a local RSA-OAEP keypair with OS-user-only permissions."""
+    private_key, public_key = _connector_key_paths()
+    if private_key.exists() and public_key.exists():
+        return private_key, public_key
+    private_key.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        private_key.parent.chmod(0o700)
+    except OSError:
+        pass
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", str(private_key)],
+        check=True, capture_output=True,
+    )
+    try:
+        private_key.chmod(0o600)
+    except OSError:
+        pass
+    subprocess.run(
+        ["openssl", "pkey", "-in", str(private_key), "-pubout", "-out", str(public_key)],
+        check=True, capture_output=True,
+    )
+    return private_key, public_key
+
+
+def _encrypt_connector_key(secret: str) -> dict[str, str]:
+    """Encrypt a normal-size API key with the local RSA public key."""
+    if not secret:
+        return {"algorithm": "RSA-OAEP-SHA256", "ciphertext": ""}
+    _, public_key = _ensure_connector_keypair()
+    try:
+        encrypted = subprocess.run(
+            ["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", str(public_key), "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256"],
+            input=secret.encode("utf-8"), check=True, capture_output=True,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("API Key exceeds the RSA encryption limit or OpenSSL failed") from exc
+    return {"algorithm": "RSA-OAEP-SHA256", "ciphertext": base64.b64encode(encrypted).decode("ascii")}
+
+
+def _decrypt_connector_key(payload: Any) -> str:
+    """Decrypt the encrypted connector key only inside the server process."""
+    if not isinstance(payload, dict) or not payload.get("ciphertext"):
+        return ""
+    if payload.get("algorithm") != "RSA-OAEP-SHA256":
+        raise ValueError("unsupported connector key encryption")
+    private_key, _ = _ensure_connector_keypair()
+    try:
+        ciphertext = base64.b64decode(str(payload["ciphertext"]), validate=True)
+        return subprocess.run(
+            ["openssl", "pkeyutl", "-decrypt", "-inkey", str(private_key), "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256"],
+            input=ciphertext, check=True, capture_output=True,
+        ).stdout.decode("utf-8")
+    except (ValueError, UnicodeDecodeError, subprocess.CalledProcessError) as exc:
+        raise ValueError("cannot decrypt connector API key") from exc
+
+
+def _read_connector_records() -> list[dict[str, Any]]:
+    """Read encrypted connector records exactly as stored on disk."""
     if not CONNECTOR_INDEX.exists():
         return []
     try:
@@ -264,8 +325,24 @@ def _read_connectors() -> list[dict[str, Any]]:
         return []
 
 
+def _read_connectors() -> list[dict[str, Any]]:
+    """Load and decrypt saved connector records for internal server use."""
+    records: list[dict[str, Any]] = []
+    for stored in _read_connector_records():
+        if not isinstance(stored, dict):
+            continue
+        record = dict(stored)
+        encrypted = record.pop("api_key_encrypted", None)
+        if encrypted is not None:
+            record["api_key"] = _decrypt_connector_key(encrypted)
+        # Legacy plaintext entries remain readable and are encrypted on their
+        # next write; public APIs below never expose this field.
+        records.append(record)
+    return records
+
+
 def _write_connectors(connectors: list[dict[str, Any]]) -> None:
-    """Atomically persist connectors in a current-user-readable JSON file.
+    """Atomically persist connectors with RSA-OAEP encrypted credentials.
 
     Args:
         connectors: Complete connector collection replacing the prior store.
@@ -274,13 +351,36 @@ def _write_connectors(connectors: list[dict[str, Any]]) -> None:
         Creates or replaces ``CONNECTOR_INDEX`` and attempts to set mode 0600
         before the atomic replacement.
     """
+    stored: list[dict[str, Any]] = []
+    for connector in connectors:
+        record = dict(connector)
+        record["api_key_encrypted"] = _encrypt_connector_key(str(record.pop("api_key", "")))
+        stored.append(record)
     temporary = CONNECTOR_INDEX.with_suffix(".tmp")
-    temporary.write_text(json.dumps(connectors, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         temporary.chmod(0o600)
     except OSError:
         pass
     temporary.replace(CONNECTOR_INDEX)
+
+
+def _public_connector(record: dict[str, Any]) -> dict[str, Any]:
+    """Return browser-safe connector metadata without its credential."""
+    public = dict(record)
+    public["has_api_key"] = bool(public.pop("api_key", ""))
+    return public
+
+
+def _resolve_connector_key(config: RunConfig) -> RunConfig:
+    """Resolve a selected connector credential only for the impending run."""
+    if not config.connector_id:
+        return config
+    connector_id = _safe_id(config.connector_id, "connector")
+    connector = next((item for item in _read_connectors() if item.get("id") == connector_id), None)
+    if connector is None:
+        raise HTTPException(status_code=404, detail="选择的连接器不存在")
+    return config.model_copy(update={"api_key": str(connector.get("api_key", ""))})
 
 
 def _get_session(workspace_id: str, session_id: str) -> BrowserSession:
@@ -905,8 +1005,8 @@ def providers() -> dict[str, list[str]]:
 
 @app.get("/api/connectors")
 def list_connectors() -> dict[str, list[dict[str, Any]]]:
-    """List locally persisted connector settings, including saved API keys."""
-    return {"connectors": _read_connectors()}
+    """List connector metadata without returning any saved API key."""
+    return {"connectors": [_public_connector(item) for item in _read_connectors()]}
 
 
 @app.post("/api/connectors", status_code=201)
@@ -924,7 +1024,7 @@ def create_connector(request: ConnectorRequest) -> dict[str, Any]:
         connectors = _read_connectors()
         connectors.append(record)
         _write_connectors(connectors)
-    return record
+    return _public_connector(record)
 
 
 @app.put("/api/connectors/{connector_id}")
@@ -942,14 +1042,18 @@ def update_connector(connector_id: str, request: ConnectorRequest) -> dict[str, 
         HTTPException: If the connector identifier does not exist.
     """
     connector_id = _safe_id(connector_id, "connector")
-    replacement = {"id": connector_id, **request.model_dump()}
     with _sessions_lock:
         connectors = _read_connectors()
         for index, connector in enumerate(connectors):
             if connector.get("id") == connector_id:
+                replacement = {"id": connector_id, **request.model_dump()}
+                # Selecting a connector intentionally leaves the input blank;
+                # a blank update therefore keeps its existing encrypted key.
+                if not replacement.get("api_key"):
+                    replacement["api_key"] = connector.get("api_key", "")
                 connectors[index] = replacement
                 _write_connectors(connectors)
-                return replacement
+                return _public_connector(replacement)
     raise HTTPException(status_code=404, detail="Connector not found")
 
 
@@ -1760,7 +1864,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
     with _sessions_lock:
         if workspace_id in _deleting_workspaces:
             raise HTTPException(status_code=409, detail="Workspace is being deleted")
-    if not request.config.model.strip():
+    config = _resolve_connector_key(request.config)
+    if not config.model.strip():
         raise HTTPException(status_code=422, detail="Model is required")
     session = _get_session(workspace_id, session_id)
     with session.lock:
@@ -1769,7 +1874,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
         active = ActiveRun(control=BrowserRunControl())
         session.active = active
     started_at = time.time()
-    runtime_profile = _runtime_profile_snapshot(request.config)
+    runtime_profile = _runtime_profile_snapshot(config)
     _persist_json(_run_state_path(workspace_id, session_id), {
         "status": "running", "run_id": session_id, "started_at": started_at,
         "runtime_profile": runtime_profile,
@@ -1790,8 +1895,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
         terminal_status = "completed"
         error_message = ""
         try:
-            if request.config.enable_swarm:
-                swarm = _build_swarm(request.config, workspace_id, session_id, active)
+            if config.enable_swarm:
+                swarm = _build_swarm(config, workspace_id, session_id, active)
                 active.swarm = swarm
                 outputs = swarm.run(request.message, control=active.control)
                 output = outputs.get("coordinator")
@@ -1803,7 +1908,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 # its own internal compaction / graph-memory LLM calls.
                 usage = swarm.total_usage()
             else:
-                agent = _build_agent(request.config, workspace_id, session_id, active=active)
+                agent = _build_agent(config, workspace_id, session_id, active=active)
                 def capture(event: ExecutionEvent) -> None:
                     """Durably relay one named single-Agent event to the browser.
 
@@ -1818,7 +1923,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 agent.add_hook(capture)
                 output = agent.run(
                     request.message,
-                    temperature=request.config.temperature,
+                    temperature=config.temperature,
                     control=active.control,
                 )
                 usage = {
@@ -1853,7 +1958,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             # that result in the browser transcript so history and LLM context
             # include the same last turn after either stop operation.
             output = exc.last_output
-            if output is not None and not request.config.enable_swarm:
+            if output is not None and not config.enable_swarm:
                 _append_conversation_turn(workspace_id, session_id, {
                     "role": "assistant",
                     "content": output.content,
