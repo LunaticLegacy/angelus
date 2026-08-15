@@ -169,6 +169,24 @@ class RetrievalTriggerTests(unittest.TestCase):
         self.assertTrue(h.has_retrieved)
         self.assertIn("<graph_memory", h.build_messages()[0]["content"])
 
+    def test_auto_retrieval_injects_bounded_raw_archive_evidence(self):
+        """Compacted source turns remain retrievable, rather than deleted."""
+        h = GraphContextHandler(
+            compacting_fetcher=_RecordingCompactor(),
+            retrieval_trigger="auto",
+            max_context_threshold=1,
+        )
+        h.add_user_message("database migration identifier: migration-42")
+        h.add_assistant_message(_assistant("recorded migration-42"))
+        self.assertTrue(h.linear.archive)
+
+        h.add_user_message("What happened to migration-42?")
+
+        retrieved = h.build_messages()[0]["content"]
+        self.assertIn("<archived_evidence", retrieved)
+        self.assertIn("migration-42", retrieved)
+        self.assertIn('"timeline_start":1', retrieved)
+
     def test_auto_no_reretrieval_without_compaction(self):
         h = GraphContextHandler(
             compacting_fetcher=_RecordingCompactor(),
@@ -317,6 +335,24 @@ class BuildMessageTests(unittest.TestCase):
 
 
 class PersistenceTests(unittest.TestCase):
+    def test_save_flushes_pending_messages_before_persisting_graph(self):
+        h = GraphContextHandler(
+            compacting_fetcher=_RecordingCompactor(),
+            graph_update_every=100,
+        )
+        h.add_user_message("inspect durable.py")
+        self.assertEqual(len(h._pending), 1)
+        self.assertEqual(len(h.store), 0)
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ctx.json"
+            self.assertTrue(h.save(path))
+
+            self.assertEqual(h._pending, [])
+            restored = GraphStore()
+            self.assertTrue(restored.load(f"{path}.graph.json"))
+            self.assertIsNotNone(restored.find_entity_by_name("durable.py"))
+
     def test_save_load_roundtrip(self):
         store = _chain_store()
         h = GraphContextHandler(

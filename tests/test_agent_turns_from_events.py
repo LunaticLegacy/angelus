@@ -55,6 +55,26 @@ class AgentTurnsFromEventsTests(unittest.TestCase):
         self.assertEqual(turns[0]["content"], "Hello")
         self.assertEqual(turns[1]["content"], "Hi there!")
 
+    def test_run_started_and_steer_are_durable_transcript_turns(self):
+        """New browser sessions rebuild user, steer, and result from events."""
+        events = [
+            {"event": "run_started", "message": "Investigate the failure", "timestamp": 1},
+            # The normal Agent start must not repeat the browser prompt.
+            {"event": "lifecycle", "type": "agent:start", "agent": "coordinator",
+             "message": "Investigate the failure", "timestamp": 2},
+            {"event": "lifecycle", "type": "agent:steer_applied", "agent": "coordinator",
+             "data": {"round": 1, "messages": ["Focus on persistence", "Keep raw evidence"]}, "timestamp": 3},
+            {"event": "result", "content": "Fixed", "reasoning": "", "timestamp": 4},
+        ]
+        self._write_events(events)
+
+        turns = self._read_turns("coordinator")
+
+        self.assertEqual([turn["role"] for turn in turns], ["user", "steer", "steer", "assistant"])
+        self.assertEqual([turn["content"] for turn in turns], [
+            "Investigate the failure", "Focus on persistence", "Keep raw evidence", "Fixed",
+        ])
+
     def test_two_rounds_no_duplicates(self):
         """Two user questions + two coordinator responses → 4 turns."""
         events = [

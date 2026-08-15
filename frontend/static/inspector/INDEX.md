@@ -1,21 +1,20 @@
 # frontend/static/inspector/ — Inspector Panels INDEX
 
-Right-side inspector tabs for the workbench: execution graph, event trace, token metrics, task plan.
+Legacy ES-module inspector implementation. The active inspector is implemented in
+[`../app.js`](../app.js) and is loaded by `templates/index.html`; these files are
+not currently loaded by the browser.
 
 ## Route Map — Leaf Files
 
 | File | Purpose |
 |------|---------|
-| `index.js` | Tab panel container: tab switching, panel lifecycle |
-| `graph.js` | Execution graph visualization: DAG rendering with node states, task terminals, agent assignments |
-| `trace.js` | Event trace viewer: paginated ExecutionEvent log from durable NDJSON |
-| `metrics.js` | Token usage display: per-agent and aggregate token counts from session events |
-| `plan.js` | Task plan viewer/editor: display goal/summary/tasks, status transitions |
+| `index.js` | Former tab-switching helper; its `data-panel` convention does not match the active template. |
+| `graph.js` | Former graph and Agent-strip renderer; assumes DOM nodes no longer present in the active template. |
+| `trace.js` | Former in-memory live trace appender. |
+| `metrics.js` | Former header/metrics updater; the active UI uses the five-field usage ledger. |
+| `plan.js` | Former task-plan renderer and status-update binding. |
 
 ## Intent Routing
 
-- **Execution graph visualization** → `graph.js`
-- **Event trace / debugging** → `trace.js`
-- **Token usage statistics** → `metrics.js`
-- **Task plan management** → `plan.js`
-- **Tab switching logic** → `index.js`
+- **All active inspector behavior** → `../app.js`
+- **Potential future ES-module migration reference** → the file matching the concern above

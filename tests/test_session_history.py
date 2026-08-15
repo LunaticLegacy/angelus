@@ -97,6 +97,36 @@ def test_agent_history_rebuilds_all_runs_and_completed_tools_from_events() -> No
             webapp.WORKSPACE_ROOT = original_root
 
 
+def test_aggregate_history_prefers_durable_events_and_restores_steer() -> None:
+    """The aggregate chat uses its append-only log, not a stale transcript."""
+    with tempfile.TemporaryDirectory() as directory:
+        original_root = webapp.WORKSPACE_ROOT
+        webapp.WORKSPACE_ROOT = Path(directory)
+        try:
+            session_path = webapp._session_path("doc", "doc")
+            session_path.mkdir(parents=True, exist_ok=True)
+            (session_path / "conversation.json").write_text(json.dumps({"messages": [
+                {"role": "user", "content": "stale"},
+            ]}), encoding="utf-8")
+            events = [
+                {"event": "run_started", "message": "Current prompt"},
+                {"event": "lifecycle", "type": "agent:start", "agent": "coordinator", "message": "Current prompt"},
+                {"event": "lifecycle", "type": "agent:steer_applied", "agent": "coordinator", "data": {"messages": ["Change direction"]}},
+                {"event": "result", "content": "Current answer", "reasoning": ""},
+            ]
+            (session_path / "events.ndjson").write_text(
+                "\n".join(json.dumps(event) for event in events), encoding="utf-8",
+            )
+
+            history = webapp._read_agent_history("doc", "doc", "all")
+
+            assert [(turn["role"], turn["content"]) for turn in history] == [
+                ("user", "Current prompt"), ("steer", "Change direction"), ("assistant", "Current answer"),
+            ]
+        finally:
+            webapp.WORKSPACE_ROOT = original_root
+
+
 def test_agent_history_uses_context_when_no_durable_events_exist() -> None:
     """Retain compatibility with Agent contexts created before event logs."""
     with tempfile.TemporaryDirectory() as directory:

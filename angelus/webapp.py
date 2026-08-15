@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
 import re
 import shutil
+import base64
+import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -35,11 +39,12 @@ from .classes import (
 from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from llmfetcher.llm_types import LLMOutput
-from llmfetcher.graph_memory import GraphContextHandler
+from llmfetcher.graph_memory import GraphContextHandler, SemanticGraphWorker
 from llmfetcher.tools.shell_tools import create_shell_tools
 from llmfetcher.tools.spawn_tools import create_swarm_tools
 from llmfetcher.swarm_module.swarm import AgentSwarm
 from .task_planning import TaskPlanStore, create_task_planning_tools
+from .session_memory import CAPABILITIES, SessionMemoryError, SessionMemoryStore, create_session_memory_tools
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -95,6 +100,11 @@ _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("
 _sessions: dict[tuple[str, str], BrowserSession] = {}
 _sessions_lock = threading.Lock()
 _deleting_workspaces: set[str] = set()
+# Event hooks can be called by concurrently running swarm workers.  Keep each
+# NDJSON record contiguous (and durably flushed) rather than relying on the
+# implementation details of text-mode append writes.
+_event_log_locks: dict[Path, threading.Lock] = {}
+_event_log_locks_guard = threading.Lock()
 
 
 def _safe_id(value: str, label: str) -> str:
@@ -242,12 +252,71 @@ def _stop_then_remove_workspace(workspace_id: str, active_runs: list[ActiveRun])
     _remove_workspace(workspace_id)
 
 
-def _read_connectors() -> list[dict[str, Any]]:
-    """Load saved connector records, treating a missing store as empty.
+def _connector_key_paths() -> tuple[Path, Path]:
+    """Return the per-store RSA private/public key paths."""
+    key_directory = CONNECTOR_INDEX.parent / ".connector-keys"
+    return key_directory / "private.pem", key_directory / "public.pem"
 
-    Returns:
-        JSON-compatible connector records ordered by creation time.
-    """
+
+def _ensure_connector_keypair() -> tuple[Path, Path]:
+    """Create a local RSA-OAEP keypair with OS-user-only permissions."""
+    private_key, public_key = _connector_key_paths()
+    if private_key.exists() and public_key.exists():
+        return private_key, public_key
+    private_key.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        private_key.parent.chmod(0o700)
+    except OSError:
+        pass
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072", "-out", str(private_key)],
+        check=True, capture_output=True,
+    )
+    try:
+        private_key.chmod(0o600)
+    except OSError:
+        pass
+    subprocess.run(
+        ["openssl", "pkey", "-in", str(private_key), "-pubout", "-out", str(public_key)],
+        check=True, capture_output=True,
+    )
+    return private_key, public_key
+
+
+def _encrypt_connector_key(secret: str) -> dict[str, str]:
+    """Encrypt a normal-size API key with the local RSA public key."""
+    if not secret:
+        return {"algorithm": "RSA-OAEP-SHA256", "ciphertext": ""}
+    _, public_key = _ensure_connector_keypair()
+    try:
+        encrypted = subprocess.run(
+            ["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", str(public_key), "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256"],
+            input=secret.encode("utf-8"), check=True, capture_output=True,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("API Key exceeds the RSA encryption limit or OpenSSL failed") from exc
+    return {"algorithm": "RSA-OAEP-SHA256", "ciphertext": base64.b64encode(encrypted).decode("ascii")}
+
+
+def _decrypt_connector_key(payload: Any) -> str:
+    """Decrypt the encrypted connector key only inside the server process."""
+    if not isinstance(payload, dict) or not payload.get("ciphertext"):
+        return ""
+    if payload.get("algorithm") != "RSA-OAEP-SHA256":
+        raise ValueError("unsupported connector key encryption")
+    private_key, _ = _ensure_connector_keypair()
+    try:
+        ciphertext = base64.b64decode(str(payload["ciphertext"]), validate=True)
+        return subprocess.run(
+            ["openssl", "pkeyutl", "-decrypt", "-inkey", str(private_key), "-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt", "rsa_oaep_md:sha256"],
+            input=ciphertext, check=True, capture_output=True,
+        ).stdout.decode("utf-8")
+    except (ValueError, UnicodeDecodeError, subprocess.CalledProcessError) as exc:
+        raise ValueError("cannot decrypt connector API key") from exc
+
+
+def _read_connector_records() -> list[dict[str, Any]]:
+    """Read encrypted connector records exactly as stored on disk."""
     if not CONNECTOR_INDEX.exists():
         return []
     try:
@@ -257,8 +326,24 @@ def _read_connectors() -> list[dict[str, Any]]:
         return []
 
 
+def _read_connectors() -> list[dict[str, Any]]:
+    """Load and decrypt saved connector records for internal server use."""
+    records: list[dict[str, Any]] = []
+    for stored in _read_connector_records():
+        if not isinstance(stored, dict):
+            continue
+        record = dict(stored)
+        encrypted = record.pop("api_key_encrypted", None)
+        if encrypted is not None:
+            record["api_key"] = _decrypt_connector_key(encrypted)
+        # Legacy plaintext entries remain readable and are encrypted on their
+        # next write; public APIs below never expose this field.
+        records.append(record)
+    return records
+
+
 def _write_connectors(connectors: list[dict[str, Any]]) -> None:
-    """Atomically persist connectors in a current-user-readable JSON file.
+    """Atomically persist connectors with RSA-OAEP encrypted credentials.
 
     Args:
         connectors: Complete connector collection replacing the prior store.
@@ -267,13 +352,41 @@ def _write_connectors(connectors: list[dict[str, Any]]) -> None:
         Creates or replaces ``CONNECTOR_INDEX`` and attempts to set mode 0600
         before the atomic replacement.
     """
+    stored: list[dict[str, Any]] = []
+    for connector in connectors:
+        record = dict(connector)
+        record["api_key_encrypted"] = _encrypt_connector_key(str(record.pop("api_key", "")))
+        stored.append(record)
     temporary = CONNECTOR_INDEX.with_suffix(".tmp")
-    temporary.write_text(json.dumps(connectors, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         temporary.chmod(0o600)
     except OSError:
         pass
     temporary.replace(CONNECTOR_INDEX)
+
+
+def _public_connector(record: dict[str, Any]) -> dict[str, Any]:
+    """Return browser-safe connector metadata without its credential."""
+    return {
+        "id": str(record.get("id", "")),
+        "name": str(record.get("name", "")),
+        "provider": str(record.get("provider", "openai")),
+        "model": str(record.get("model", "")),
+        "api_url": str(record.get("api_url", "")),
+        "has_api_key": bool(record.get("api_key", "")),
+    }
+
+
+def _resolve_connector_key(config: RunConfig) -> RunConfig:
+    """Resolve a selected connector credential only for the impending run."""
+    if not config.connector_id:
+        return config
+    connector_id = _safe_id(config.connector_id, "connector")
+    connector = next((item for item in _read_connectors() if item.get("id") == connector_id), None)
+    if connector is None:
+        raise HTTPException(status_code=404, detail="选择的连接器不存在")
+    return config.model_copy(update={"api_key": str(connector.get("api_key", ""))})
 
 
 def _get_session(workspace_id: str, session_id: str) -> BrowserSession:
@@ -292,6 +405,52 @@ def _event_payload(event: ExecutionEvent) -> dict[str, Any]:
         "data": event.data,
         "timestamp": event.timestamp,
     }
+
+
+def _redacted_api_url(value: str) -> str:
+    """Return an endpoint identity without URL credentials or query secrets."""
+    try:
+        parsed = urlsplit(value.strip())
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host + parsed.path, "", "", ""))
+    except ValueError:
+        return ""
+
+
+def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
+    """Build a credential-free, stable description of one run's semantics.
+
+    The browser configuration is otherwise ephemeral.  Keeping this snapshot
+    next to the run terminal makes a restored context auditable without ever
+    serializing the API key or the full (potentially private) system prompt.
+    """
+    system_prompt_digest = hashlib.sha256(config.system_prompt.encode("utf-8")).hexdigest()
+    profile = {
+        "schema_version": 1,
+        "provider": config.provider.strip(),
+        "model": config.model.strip(),
+        "api_url": _redacted_api_url(config.api_url),
+        "system_prompt_sha256": system_prompt_digest,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "max_rounds": config.max_rounds,
+        "max_context_threshold": config.max_context_threshold,
+        "enable_shell": config.enable_shell,
+        "enable_swarm": config.enable_swarm,
+        "max_swarm_agents": config.max_swarm_agents,
+        "session_memory_allowlists": {
+            "search_sessions": sorted(config.session_memory_search_sessions),
+            "read_sessions": sorted(config.session_memory_read_sessions),
+            "artifact_search_sessions": sorted(config.session_artifact_search_sessions),
+            "artifact_open_sessions": sorted(config.session_artifact_open_sessions),
+        },
+    }
+    canonical = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return {**profile, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
 
 def render_markdown(text: str) -> str:
@@ -351,6 +510,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         max_retries=0,
     )
     fetcher = LLMFetcher([backend])
+    semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
         system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses."),
@@ -365,6 +525,8 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         # same LLM for extraction/query fallback and compaction.
         context_handler=GraphContextHandler(
             compacting_fetcher=fetcher,
+            extraction_fetcher=semantic_worker,
+            query_fetcher=semantic_worker,
             max_context_threshold=config.max_context_threshold,
         ),
     )
@@ -391,7 +553,32 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         _plan_store(workspace_id, session_id),
         on_changed=_on_plan_changed,
     ))
+    agent.add_tools(create_session_memory_tools(
+        _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
+    ))
     return agent
+
+
+def _memory_capabilities(config: RunConfig, current_session: str) -> dict[str, set[str]]:
+    """Freeze the four explicit session grants for one Agent run."""
+    fields = {
+        "session_memory.search_sessions": config.session_memory_search_sessions,
+        "session_memory.read_sessions": config.session_memory_read_sessions,
+        "session_artifact.search_sessions": config.session_artifact_search_sessions,
+        "session_artifact.open_sessions": config.session_artifact_open_sessions,
+    }
+    grants: dict[str, set[str]] = {}
+    for capability, values in fields.items():
+        checked = {current_session}
+        for value in values:
+            checked.add(_safe_id(value, "session"))
+        grants[capability] = checked
+    return grants
+
+
+def _session_memory_store() -> SessionMemoryStore:
+    """Create a store whose audit records use the normal durable event log."""
+    return SessionMemoryStore(WORKSPACE_ROOT, lambda session, payload: _append_session_event(session, session, payload))
 
 
 def _plan_store(workspace_id: str, session_id: str) -> TaskPlanStore:
@@ -450,8 +637,14 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
             rendered with ``str`` so observability cannot break execution.
     """
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
-    with event_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    serialized = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
+    with _event_log_locks_guard:
+        lock = _event_log_locks.setdefault(event_path, threading.Lock())
+    with lock:
+        with event_path.open("a", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str, Any]]:
@@ -522,32 +715,44 @@ def _empty_usage() -> dict[str, int]:
 
 
 def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate completed model-round token usage for a browser session.
+    """Aggregate the canonical per-call token ledger for a browser session.
 
     Args:
         events: Chronological or reverse-chronological durable event records.
-            Only lifecycle records of type ``agent:round`` contribute usage.
+            New logs contribute ``agent:usage`` and ``agent:internal_usage``
+            lifecycle records.  Old logs without either retain the
+            ``agent:round.round_usage`` compatibility path.
 
     Returns:
         A mapping with session-wide ``usage`` and per-agent usage records.
 
-    ``agent:round`` carries a per-round delta as ``round_usage`` as well as a
-    cumulative value. Summing the delta keeps multiple runs and worker Agents
-    accurate without double-counting earlier rounds.
+    Ledger records are deltas, one for each provider call.  This means hidden
+    compaction and graph calls are visible, while the summary does not sum the
+    duplicate per-round display payload.
     """
+    ledger_events = [
+        event for event in events
+        if event.get("event") == "lifecycle"
+        and event.get("type") in {"agent:usage", "agent:internal_usage"}
+    ]
+    source_events = ledger_events or [
+        event for event in events
+        if event.get("event") == "lifecycle" and event.get("type") == "agent:round"
+    ]
     total = _empty_usage()
     by_agent: dict[str, dict[str, int]] = {}
-    for event in events:
-        if event.get("event") != "lifecycle" or event.get("type") != "agent:round":
-            continue
+    for event in source_events:
         agent = str(event.get("agent") or "unknown")
         data = event.get("data")
-        round_usage = data.get("round_usage") if isinstance(data, dict) else None
-        if not isinstance(round_usage, dict):
+        usage = (
+            data.get("usage") if ledger_events and isinstance(data, dict)
+            else data.get("round_usage") if isinstance(data, dict) else None
+        )
+        if not isinstance(usage, dict):
             continue
         agent_usage = by_agent.setdefault(agent, _empty_usage())
         for key in total:
-            value = round_usage.get(key, 0)
+            value = usage.get(key, 0)
             if isinstance(value, (int, float)):
                 tokens = max(0, int(value))
                 total[key] += tokens
@@ -615,7 +820,7 @@ def _read_session_history(workspace_id: str, session_id: str) -> list[dict[str, 
     messages = raw.get("messages", [])
     history: list[dict[str, Any]] = []
     for message in messages:
-        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant", "steer"}:
             continue
         content = str(message.get("content", ""))
         reasoning = str(message.get("reasoning", message.get("content_reasoning", "")))
@@ -660,6 +865,11 @@ def _build_swarm(config: RunConfig, workspace_id: str, session_id: str, active: 
     swarm = AgentSwarm(max_concurrency_agents=config.max_swarm_agents)
     swarm.add_agent("coordinator", coordinator)
     worker_tools = create_task_planning_tools(_plan_store(workspace_id, session_id))
+    # Dynamic workers receive the same frozen session grants as their
+    # coordinator.  The closures are run-scoped and do not expose new grants.
+    worker_tools.extend(create_session_memory_tools(
+        _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
+    ))
     if config.enable_shell:
         worker_tools.extend(create_shell_tools(
             sandbox_cwd=str(_session_path(workspace_id, session_id)),
@@ -706,7 +916,7 @@ def _turns_from_legacy_context(path: Path) -> list[dict[str, Any]]:
         return []
     turns: list[dict[str, Any]] = []
     for message in raw.get("messages", []) if isinstance(raw, dict) else []:
-        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant", "steer"}:
             continue
         tools = [
             {"name": str(item.get("call", {}).get("name", "unknown")), "arguments": item.get("call", {}).get("arguments", {}), "result": str(item.get("result", ""))}
@@ -736,8 +946,15 @@ def _turns_from_event_log(path: Path) -> list[dict[str, Any]]:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("event") == "lifecycle" and event.get("type") == "graph:start":
+        if event.get("event") == "run_started" and event.get("message"):
+            turns.append({"role": "user", "content": str(event["message"]), "reasoning": "", "tools": []})
+        elif event.get("event") == "lifecycle" and event.get("type") == "graph:start":
             turns.append({"role": "user", "content": str(event.get("message", "")), "reasoning": "", "tools": []})
+        elif event.get("event") == "lifecycle" and event.get("type") == "agent:steer_applied":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            for message in data.get("messages", []):
+                if isinstance(message, str) and message:
+                    turns.append({"role": "steer", "content": message, "reasoning": "", "tools": []})
         elif event.get("event") == "result":
             turns.append({"role": "assistant", "content": str(event.get("content", "")), "reasoning": str(event.get("reasoning", "")), "tools": []})
     return turns
@@ -830,8 +1047,8 @@ def providers() -> dict[str, list[str]]:
 
 @app.get("/api/connectors")
 def list_connectors() -> dict[str, list[dict[str, Any]]]:
-    """List locally persisted connector settings, including saved API keys."""
-    return {"connectors": _read_connectors()}
+    """List connector metadata without returning any saved API key."""
+    return {"connectors": [_public_connector(item) for item in _read_connectors()]}
 
 
 @app.post("/api/connectors", status_code=201)
@@ -849,7 +1066,7 @@ def create_connector(request: ConnectorRequest) -> dict[str, Any]:
         connectors = _read_connectors()
         connectors.append(record)
         _write_connectors(connectors)
-    return record
+    return _public_connector(record)
 
 
 @app.put("/api/connectors/{connector_id}")
@@ -867,14 +1084,18 @@ def update_connector(connector_id: str, request: ConnectorRequest) -> dict[str, 
         HTTPException: If the connector identifier does not exist.
     """
     connector_id = _safe_id(connector_id, "connector")
-    replacement = {"id": connector_id, **request.model_dump()}
     with _sessions_lock:
         connectors = _read_connectors()
         for index, connector in enumerate(connectors):
             if connector.get("id") == connector_id:
+                replacement = {"id": connector_id, **request.model_dump()}
+                # Selecting a connector intentionally leaves the input blank;
+                # a blank update therefore keeps its existing encrypted key.
+                if not replacement.get("api_key"):
+                    replacement["api_key"] = connector.get("api_key", "")
                 connectors[index] = replacement
                 _write_connectors(connectors)
-                return replacement
+                return _public_connector(replacement)
     raise HTTPException(status_code=404, detail="Connector not found")
 
 
@@ -905,8 +1126,23 @@ def list_workspaces() -> dict[str, list[dict[str, str]]]:
 
 @app.get("/api/sessions")
 def list_sessions() -> dict[str, list[dict[str, str]]]:
-    """List browser-visible sessions backed by independent workspace paths."""
-    return {"sessions": _read_workspaces()}
+    """List browser sessions with a compact durable run-status indicator."""
+    sessions: list[dict[str, str]] = []
+    for workspace in _read_workspaces():
+        session_id = str(workspace.get("id", ""))
+        if not session_id:
+            continue
+        persisted = get_run_status(session_id, session_id).get("status", "idle")
+        indicator = {
+            "running": "running",
+            "force_stopping": "running",
+            "error": "error",
+            "interrupted": "error",
+            "completed": "done",
+            "stopped": "done",
+        }.get(str(persisted), "idle")
+        sessions.append({**workspace, "status": indicator})
+    return {"sessions": sessions}
 
 
 @app.delete("/api/workspaces/{workspace_id}")
@@ -997,6 +1233,11 @@ def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> 
         compaction; legacy contexts remain a fallback for older sessions.
     """
     if agent_name in {"", "all"}:
+        turns = _agent_turns_from_events(workspace_id, session_id, "coordinator")
+        # A result-only legacy trace is not a complete transcript; keep its
+        # conversation projection as the compatibility source in that case.
+        if any(turn.get("role") == "user" for turn in turns):
+            return turns
         return _read_session_history(workspace_id, session_id)
     agent_name = _safe_id(agent_name, "agent")
     turns = _agent_turns_from_events(workspace_id, session_id, agent_name)
@@ -1009,6 +1250,94 @@ def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> 
             turn["content_html"] = render_markdown(str(turn.get("content", "")))
             turn["reasoning_html"] = render_markdown(str(turn.get("reasoning", "")))
     return turns
+
+
+def _archived_context_page(
+    workspace_id: str,
+    session_id: str,
+    agent_name: str = "coordinator",
+    *,
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return a bounded, read-only page of compacted raw context evidence.
+
+    ``ContextHandlerLinear`` stores messages removed from the active prompt in
+    its append-only ``archive`` list.  The archive is intentionally separate
+    from the current transcript: it is evidence for retrieval and audit, not
+    material which should be re-injected into every model request.  Contexts
+    written before that field was introduced simply return an empty page.
+
+    The cursor is an exclusive chronological archive offset, matching the
+    event-log API.  Returned items are newest first so callers can show the
+    most recently compacted evidence without loading a whole long session.
+    """
+    workspace_id = _safe_id(workspace_id, "workspace")
+    session_id = _safe_id(session_id, "session")
+    agent_name = _safe_id(agent_name, "agent")
+    context_path = _session_path(workspace_id, session_id) / "contexts" / f"{agent_name}.json"
+    try:
+        raw = json.loads(context_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+
+    archive = raw.get("archive", []) if isinstance(raw, dict) else []
+    if not isinstance(archive, list):
+        archive = []
+    evidence: list[dict[str, Any]] = []
+    for item in archive:
+        if not isinstance(item, dict):
+            continue
+        timeline = item.get("timeline")
+        role = item.get("role")
+        # Do not manufacture provenance for malformed or pre-schema entries.
+        if not isinstance(timeline, int) or isinstance(timeline, bool) or not isinstance(role, str):
+            continue
+        tool_calls = item.get("tool_calls", [])
+        evidence.append({
+            "timeline": timeline,
+            "role": role,
+            "content": str(item.get("content", "")),
+            "reasoning": str(item.get("content_reasoning", "")),
+            "tool_calls": tool_calls if isinstance(tool_calls, list) else [],
+            "tags": item.get("tags", []) if isinstance(item.get("tags", []), list) else [],
+        })
+
+    page_limit = max(1, min(limit, 500))
+    end = len(evidence) if before is None else max(0, min(before, len(evidence)))
+    start = max(0, end - page_limit)
+    return {
+        "evidence": list(reversed(evidence[start:end])),
+        "total": len(evidence),
+        "next_before": start if start else None,
+    }
+
+
+@app.get("/api/workspaces/{workspace_id}/sessions/{session_id}/archive")
+def get_session_archive(
+    workspace_id: str,
+    session_id: str,
+    agent: str = "coordinator",
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Expose archived raw context evidence without changing model context."""
+    return _archived_context_page(
+        workspace_id, session_id, agent, before=before, limit=limit,
+    )
+
+
+@app.get("/api/sessions/{session_id}/archive")
+def get_session_archive_by_id(
+    session_id: str,
+    agent: str = "coordinator",
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Expose archived coordinator evidence for standalone browser sessions."""
+    return _archived_context_page(
+        session_id, session_id, agent, before=before, limit=limit,
+    )
 
 
 def _agent_turns_from_events(
@@ -1031,6 +1360,7 @@ def _agent_turns_from_events(
     turns: list[dict[str, Any]] = []
     completed_tools: dict[tuple[str, int], list[dict[str, Any]]] = {}
     last_assistant: tuple[str, str] | None = None
+    last_user: str | None = None
     # One round-identity tracker per Agent, reset at its ``agent:start``.
     # The graph used to relay each Agent event through two hook paths, so the
     # durable log may contain an immediate second copy of every round.  A round
@@ -1044,6 +1374,15 @@ def _agent_turns_from_events(
         event_agent = str(event.get("agent") or "coordinator")
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
 
+        # Browser submissions are persisted before the Agent begins. This is
+        # the canonical user turn for new sessions.
+        if event_kind == "run_started":
+            content = str(event.get("message", ""))
+            if content:
+                turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+                last_user = content
+            continue
+
         # Agent starts delimit one run boundary for round deduplication.
         # Coordinator starts also delimit real browser submissions; showing
         # those in every Agent filter preserves the user-side conversation.
@@ -1052,9 +1391,24 @@ def _agent_turns_from_events(
             if event_agent != "coordinator":
                 continue
             content = str(event.get("message", ""))
-            if content:
+            # Old logs have only agent:start; new logs also have run_started.
+            if content and content != last_user:
                 turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+                last_user = content
             last_assistant = None
+            continue
+
+        if (
+            event_kind == "lifecycle"
+            and event_type == "agent:steer_applied"
+            and event_agent == "coordinator"
+            and agent_name == "coordinator"
+        ):
+            messages = data.get("messages", [])
+            if isinstance(messages, list):
+                for message in messages:
+                    if isinstance(message, str) and message:
+                        turns.append({"role": "steer", "content": message, "reasoning": "", "tools": []})
             continue
 
         # Tool completion precedes its matching model-round event, allowing
@@ -1595,6 +1949,64 @@ def create_session(request: WorkspaceRequest) -> dict[str, str]:
     return create_workspace(request)
 
 
+@app.get("/api/sessions/{session_id}/memory/capabilities")
+def get_session_memory_capabilities(session_id: str) -> dict[str, Any]:
+    """Describe the explicit run-scoped grants accepted by the browser API."""
+    _safe_id(session_id, "session")
+    return {"capabilities": list(CAPABILITIES), "current_session_implicit": True,
+            "note": "Additional sessions must be supplied in the RunConfig allowlists before a run starts."}
+
+
+@app.post("/api/sessions/{session_id}/artifacts", status_code=201)
+def register_session_artifact(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Register browser-uploaded base64 attachment bytes without a source path."""
+    safe_session = _safe_id(session_id, "session")
+    try:
+        encoded = str(payload.get("data_base64", ""))
+        data = base64.b64decode(encoded, validate=True)
+        result = _session_memory_store().register_artifact(
+            safe_session, data, str(payload.get("logical_name", "attachment")),
+            str(payload.get("mime_type", "application/octet-stream")),
+        )
+        return result
+    except (ValueError, SessionMemoryError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/sessions/{session_id}/artifacts")
+def list_session_artifacts(session_id: str) -> dict[str, Any]:
+    safe_session = _safe_id(session_id, "session")
+    manifest = _session_memory_store().get_manifest(safe_session)
+    return {"session_id": safe_session, "generation": manifest["generation"], "artifacts": manifest.get("artifacts", [])}
+
+
+@app.get("/api/sessions/{session_id}/handoffs")
+def list_session_handoffs(session_id: str) -> dict[str, Any]:
+    safe_session = _safe_id(session_id, "session")
+    directory = _session_path(safe_session, safe_session) / "handoffs"
+    handoffs = []
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        item = _session_memory_store().read_handoff(safe_session, path.stem)
+        handoffs.append({"handoff_id": item.get("handoff_id"), "source": item.get("source"), "work": item.get("work")})
+    return {"handoffs": handoffs}
+
+
+@app.get("/api/sessions/{session_id}/handoffs/{handoff_id}")
+def get_session_handoff(session_id: str, handoff_id: str) -> dict[str, Any]:
+    try:
+        return _session_memory_store().read_handoff(_safe_id(session_id, "session"), _safe_id(handoff_id, "handoff"))
+    except SessionMemoryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sessions/{session_id}/handoffs", status_code=201)
+def create_browser_session_handoff(session_id: str, handoff: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return _session_memory_store().create_handoff(_safe_id(session_id, "session"), handoff)
+    except SessionMemoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.delete("/api/sessions/{session_id}")
 def delete_session(session_id: str, request: WorkspaceDeleteRequest) -> dict[str, Any]:
     """Delete one session after confirmation and cooperative run shutdown."""
@@ -1627,7 +2039,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
     with _sessions_lock:
         if workspace_id in _deleting_workspaces:
             raise HTTPException(status_code=409, detail="Workspace is being deleted")
-    if not request.config.model.strip():
+    config = _resolve_connector_key(request.config)
+    if not config.model.strip():
         raise HTTPException(status_code=422, detail="Model is required")
     session = _get_session(workspace_id, session_id)
     with session.lock:
@@ -1636,11 +2049,20 @@ def start_run(request: RunRequest) -> dict[str, str]:
         active = ActiveRun(control=BrowserRunControl())
         session.active = active
     started_at = time.time()
+    runtime_profile = _runtime_profile_snapshot(config)
     _persist_json(_run_state_path(workspace_id, session_id), {
         "status": "running", "run_id": session_id, "started_at": started_at,
+        "runtime_profile": runtime_profile,
     })
     _append_conversation_turn(workspace_id, session_id, {
         "role": "user", "content": request.message, "reasoning": "", "tools": [],
+    })
+    _append_session_event(workspace_id, session_id, {
+        "event": "run_started",
+        "run_id": session_id,
+        "timestamp": started_at,
+        "message": request.message,
+        "runtime_profile": runtime_profile,
     })
 
     def execute() -> None:
@@ -1648,8 +2070,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
         terminal_status = "completed"
         error_message = ""
         try:
-            if request.config.enable_swarm:
-                swarm = _build_swarm(request.config, workspace_id, session_id, active)
+            if config.enable_swarm:
+                swarm = _build_swarm(config, workspace_id, session_id, active)
                 active.swarm = swarm
                 outputs = swarm.run(request.message, control=active.control)
                 output = outputs.get("coordinator")
@@ -1661,7 +2083,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 # its own internal compaction / graph-memory LLM calls.
                 usage = swarm.total_usage()
             else:
-                agent = _build_agent(request.config, workspace_id, session_id, active=active)
+                agent = _build_agent(config, workspace_id, session_id, active=active)
                 def capture(event: ExecutionEvent) -> None:
                     """Durably relay one named single-Agent event to the browser.
 
@@ -1676,13 +2098,15 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 agent.add_hook(capture)
                 output = agent.run(
                     request.message,
-                    temperature=request.config.temperature,
+                    temperature=config.temperature,
                     control=active.control,
                 )
                 usage = {
-                    "input": agent.usage.input_tokens,
-                    "output": agent.usage.output_tokens,
-                    "total": agent.usage.total_tokens,
+                    "input": getattr(agent.usage, "input_tokens", 0) or 0,
+                    "output": getattr(agent.usage, "output_tokens", 0) or 0,
+                    "total": getattr(agent.usage, "total_tokens", 0) or 0,
+                    "cached": getattr(agent.usage, "cached_tokens", 0) or 0,
+                    "reasoning": getattr(agent.usage, "reasoning_tokens", 0) or 0,
                 }
             result_payload = {
                 "event": "result",
@@ -1709,7 +2133,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             # that result in the browser transcript so history and LLM context
             # include the same last turn after either stop operation.
             output = exc.last_output
-            if output is not None and not request.config.enable_swarm:
+            if output is not None and not config.enable_swarm:
                 _append_conversation_turn(workspace_id, session_id, {
                     "role": "assistant",
                     "content": output.content,
@@ -1761,6 +2185,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             run_state = {
                 "status": terminal_status, "run_id": session_id,
                 "started_at": started_at, "finished_at": time.time(),
+                "runtime_profile": runtime_profile,
             }
             if error_message:
                 run_state["error"] = error_message
