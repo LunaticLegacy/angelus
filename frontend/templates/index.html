@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-24" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-25" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -49,10 +49,9 @@
       <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
 
       <section class="side-block">
-        <div class="side-heading"><span>会话</span><button id="new-workspace" class="plus-button" type="button" title="新建会话">＋</button></div>
+        <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button" type="button" title="删除当前会话" aria-label="删除当前会话">⌫</button></div></div>
         <div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div>
         <div id="recent-sessions" class="recent-sessions"></div>
-        <button id="delete-workspace" class="quiet-action" type="button">删除当前会话</button>
       </section>
 
       <p class="privacy">连接器与 Agent 参数集中在设置中管理。</p>
