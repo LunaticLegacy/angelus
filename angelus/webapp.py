@@ -44,6 +44,7 @@ from llmfetcher.tools.shell_tools import create_shell_tools
 from llmfetcher.tools.spawn_tools import create_swarm_tools
 from llmfetcher.swarm_module.swarm import AgentSwarm
 from .task_planning import TaskPlanStore, create_task_planning_tools
+from .session_memory import CAPABILITIES, SessionMemoryError, SessionMemoryStore, create_session_memory_tools
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -441,6 +442,12 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
         "enable_shell": config.enable_shell,
         "enable_swarm": config.enable_swarm,
         "max_swarm_agents": config.max_swarm_agents,
+        "session_memory_allowlists": {
+            "search_sessions": sorted(config.session_memory_search_sessions),
+            "read_sessions": sorted(config.session_memory_read_sessions),
+            "artifact_search_sessions": sorted(config.session_artifact_search_sessions),
+            "artifact_open_sessions": sorted(config.session_artifact_open_sessions),
+        },
     }
     canonical = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return {**profile, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
@@ -546,7 +553,32 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         _plan_store(workspace_id, session_id),
         on_changed=_on_plan_changed,
     ))
+    agent.add_tools(create_session_memory_tools(
+        _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
+    ))
     return agent
+
+
+def _memory_capabilities(config: RunConfig, current_session: str) -> dict[str, set[str]]:
+    """Freeze the four explicit session grants for one Agent run."""
+    fields = {
+        "session_memory.search_sessions": config.session_memory_search_sessions,
+        "session_memory.read_sessions": config.session_memory_read_sessions,
+        "session_artifact.search_sessions": config.session_artifact_search_sessions,
+        "session_artifact.open_sessions": config.session_artifact_open_sessions,
+    }
+    grants: dict[str, set[str]] = {}
+    for capability, values in fields.items():
+        checked = {current_session}
+        for value in values:
+            checked.add(_safe_id(value, "session"))
+        grants[capability] = checked
+    return grants
+
+
+def _session_memory_store() -> SessionMemoryStore:
+    """Create a store whose audit records use the normal durable event log."""
+    return SessionMemoryStore(WORKSPACE_ROOT, lambda session, payload: _append_session_event(session, session, payload))
 
 
 def _plan_store(workspace_id: str, session_id: str) -> TaskPlanStore:
@@ -833,6 +865,11 @@ def _build_swarm(config: RunConfig, workspace_id: str, session_id: str, active: 
     swarm = AgentSwarm(max_concurrency_agents=config.max_swarm_agents)
     swarm.add_agent("coordinator", coordinator)
     worker_tools = create_task_planning_tools(_plan_store(workspace_id, session_id))
+    # Dynamic workers receive the same frozen session grants as their
+    # coordinator.  The closures are run-scoped and do not expose new grants.
+    worker_tools.extend(create_session_memory_tools(
+        _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
+    ))
     if config.enable_shell:
         worker_tools.extend(create_shell_tools(
             sandbox_cwd=str(_session_path(workspace_id, session_id)),
@@ -1850,6 +1887,64 @@ def create_workspace(request: WorkspaceRequest) -> dict[str, str]:
 def create_session(request: WorkspaceRequest) -> dict[str, str]:
     """Create one browser-visible session and its private workspace path."""
     return create_workspace(request)
+
+
+@app.get("/api/sessions/{session_id}/memory/capabilities")
+def get_session_memory_capabilities(session_id: str) -> dict[str, Any]:
+    """Describe the explicit run-scoped grants accepted by the browser API."""
+    _safe_id(session_id, "session")
+    return {"capabilities": list(CAPABILITIES), "current_session_implicit": True,
+            "note": "Additional sessions must be supplied in the RunConfig allowlists before a run starts."}
+
+
+@app.post("/api/sessions/{session_id}/artifacts", status_code=201)
+def register_session_artifact(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Register browser-uploaded base64 attachment bytes without a source path."""
+    safe_session = _safe_id(session_id, "session")
+    try:
+        encoded = str(payload.get("data_base64", ""))
+        data = base64.b64decode(encoded, validate=True)
+        result = _session_memory_store().register_artifact(
+            safe_session, data, str(payload.get("logical_name", "attachment")),
+            str(payload.get("mime_type", "application/octet-stream")),
+        )
+        return result
+    except (ValueError, SessionMemoryError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/sessions/{session_id}/artifacts")
+def list_session_artifacts(session_id: str) -> dict[str, Any]:
+    safe_session = _safe_id(session_id, "session")
+    manifest = _session_memory_store().get_manifest(safe_session)
+    return {"session_id": safe_session, "generation": manifest["generation"], "artifacts": manifest.get("artifacts", [])}
+
+
+@app.get("/api/sessions/{session_id}/handoffs")
+def list_session_handoffs(session_id: str) -> dict[str, Any]:
+    safe_session = _safe_id(session_id, "session")
+    directory = _session_path(safe_session, safe_session) / "handoffs"
+    handoffs = []
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        item = _session_memory_store().read_handoff(safe_session, path.stem)
+        handoffs.append({"handoff_id": item.get("handoff_id"), "source": item.get("source"), "work": item.get("work")})
+    return {"handoffs": handoffs}
+
+
+@app.get("/api/sessions/{session_id}/handoffs/{handoff_id}")
+def get_session_handoff(session_id: str, handoff_id: str) -> dict[str, Any]:
+    try:
+        return _session_memory_store().read_handoff(_safe_id(session_id, "session"), _safe_id(handoff_id, "handoff"))
+    except SessionMemoryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/sessions/{session_id}/handoffs", status_code=201)
+def create_browser_session_handoff(session_id: str, handoff: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return _session_memory_store().create_handoff(_safe_id(session_id, "session"), handoff)
+    except SessionMemoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.delete("/api/sessions/{session_id}")

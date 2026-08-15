@@ -24,3 +24,10 @@ class RunConfig(BaseModel):
     enable_shell: bool = False
     enable_swarm: bool = False
     max_swarm_agents: int = Field(default=4, ge=1, le=16)
+    # These grants are intentionally run-scoped and are never inferred from a
+    # handoff target.  The selected session is added server-side for each
+    # capability, so callers only need list additional sessions here.
+    session_memory_search_sessions: list[str] = Field(default_factory=list)
+    session_memory_read_sessions: list[str] = Field(default_factory=list)
+    session_artifact_search_sessions: list[str] = Field(default_factory=list)
+    session_artifact_open_sessions: list[str] = Field(default_factory=list)

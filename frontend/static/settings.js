@@ -22,6 +22,8 @@ const SETTING_IDS = [
   "max-tokens",
   "max-rounds",
   "max-swarm-agents",
+  "max-context-threshold",
+  "session-memory-sessions",
 ];
 
 const BOOL_IDS = ["enable-shell", "enable-swarm"];
@@ -34,6 +36,7 @@ function _settingsKey(workspaceId) {
 
 function _readConfig() {
   const val = (id) => $(id).value.trim();
+  const sessionAllowlist = val("session-memory-sessions").split(",").map((item) => item.trim()).filter(Boolean);
   return {
     provider: val("provider"),
     model: val("model"),
@@ -46,6 +49,11 @@ function _readConfig() {
     enable_shell: $("enable-shell").checked,
     enable_swarm: $("enable-swarm").checked,
     max_swarm_agents: Number($("max-swarm-agents").value),
+    max_context_threshold: Number($("max-context-threshold").value),
+    session_memory_search_sessions: sessionAllowlist,
+    session_memory_read_sessions: sessionAllowlist,
+    session_artifact_search_sessions: sessionAllowlist,
+    session_artifact_open_sessions: sessionAllowlist,
   };
 }
 
@@ -70,6 +78,9 @@ export function restoreSettings() {
       const key = id.replaceAll("-", "_");
       if (settings[key] !== undefined) $(id).value = settings[key];
     });
+    if (Array.isArray(settings.session_memory_search_sessions)) {
+      $("session-memory-sessions").value = settings.session_memory_search_sessions.join(", ");
+    }
     $("enable-shell").checked = Boolean(settings.enable_shell);
     $("enable-swarm").checked = Boolean(settings.enable_swarm);
   } catch {
