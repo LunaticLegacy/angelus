@@ -169,6 +169,24 @@ class RetrievalTriggerTests(unittest.TestCase):
         self.assertTrue(h.has_retrieved)
         self.assertIn("<graph_memory", h.build_messages()[0]["content"])
 
+    def test_auto_retrieval_injects_bounded_raw_archive_evidence(self):
+        """Compacted source turns remain retrievable, rather than deleted."""
+        h = GraphContextHandler(
+            compacting_fetcher=_RecordingCompactor(),
+            retrieval_trigger="auto",
+            max_context_threshold=1,
+        )
+        h.add_user_message("database migration identifier: migration-42")
+        h.add_assistant_message(_assistant("recorded migration-42"))
+        self.assertTrue(h.linear.archive)
+
+        h.add_user_message("What happened to migration-42?")
+
+        retrieved = h.build_messages()[0]["content"]
+        self.assertIn("<archived_evidence", retrieved)
+        self.assertIn("migration-42", retrieved)
+        self.assertIn('"timeline_start":1', retrieved)
+
     def test_auto_no_reretrieval_without_compaction(self):
         h = GraphContextHandler(
             compacting_fetcher=_RecordingCompactor(),
