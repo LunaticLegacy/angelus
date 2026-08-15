@@ -7,7 +7,7 @@ swarm, TLB-RAG, and utilities.
 
 | File | What It Tests |
 |------|---------------|
-| `test_agent_stop_persistence.py` | Agent stop boundary saves context before exit |
+| `test_agent_stop_persistence.py` | Cooperative-stop persistence, force-stop interruption of in-flight model requests, and cancellation-without-retry regression coverage |
 | `test_agent_turns_from_events.py` | `_agent_turns_from_events()` reconstructs conversation turns from event log |
 | `test_archive_retrieval.py` | Bounded lexical retrieval over compacted raw archive records |
 | `test_connector_store.py` | Connector CRUD, API-key encryption/redaction, and server-side resolution |
@@ -29,7 +29,7 @@ swarm, TLB-RAG, and utilities.
 | `test_tlb_rag.py` | TLB-RAG handler: traversal, cache, retrieval |
 | `test_tlb_reliability.py` | TLB-RAG reliability: edge cases, error handling |
 | `test_web_markdown.py` | `render_markdown()`: CommonMark rendering |
-| `test_workbench_assets.py` | Active Workbench script/template DOM and settings API consistency |
+| `test_workbench_assets.py` | Active Workbench script/template DOM, left settings navigation, selectable session-memory grants, and settings API consistency |
 | `test_webapp_context_threshold.py` | Webapp context threshold configuration |
 | `test_workspace_deletion.py` | Workspace deletion: cleanup, active run handling |
 

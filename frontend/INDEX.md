@@ -14,7 +14,7 @@ Browser-based workbench for Angelus. Single-page app with vanilla JS, no framewo
 - **No framework**: Plain HTML + vanilla JS + CSS
 - **SSE**: EventSource for live run streaming
 - **REST**: Fetch-based API calls for CRUD operations
-- **Active runtime**: `templates/index.html` currently loads the single classic script `static/app.js`.
+- **Active runtime**: `templates/index.html` currently loads the single classic script `static/app.js`. Its settings dialog uses left-side categories; connector records are global while Agent settings and session-memory grants are browser-local per session.
 - **Legacy module split**: the remaining `static/*.js` and `static/inspector/*.js` modules are source artifacts from an earlier ES-module split; they are not referenced by the HTML shell and must not be changed under the assumption that they run in production.
 
 ## Intent Routing
