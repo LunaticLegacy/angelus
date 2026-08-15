@@ -44,7 +44,6 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .message { width:min(780px,88%); margin:0 0 20px; }
 .message.user { margin-left:auto; }
 .message.assistant { margin-right:auto; }
-.message.steer { margin-right:auto; }.message.steer .bubble { border-color:#6b5418; border-radius:14px 14px 14px 7px; background:#181e0e; }.message .role.role-steer { color:#ffcf6e; }.message .role.role-steer i { background:var(--amber); box-shadow:0 0 7px #ffcf6e88; }
 .agent-behavior-block { width:min(780px,88%); margin:0 0 10px; border:1px solid #384a72; border-left:3px solid var(--purple); border-radius:7px; background:#101a2b; overflow:hidden; }
 .agent-behavior-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; padding:10px 12px; background:transparent; color:var(--text); text-align:left; }
 .agent-behavior-toggle:hover { background:#15243a; }.agent-behavior-toggle span { min-width:0; display:grid; gap:2px; }.agent-behavior-toggle strong { color:#d8d0ff; font-size:10px; }.agent-behavior-toggle small { color:var(--purple); font-size:9px; }.agent-behavior-summary { overflow:hidden; color:var(--soft); font-size:10px; font-style:normal; text-overflow:ellipsis; white-space:nowrap; }.agent-behavior-toggle > i { color:var(--muted); font-style:normal; transition:transform .16s ease; }.agent-behavior-block.expanded .agent-behavior-toggle > i { transform:rotate(180deg); }.agent-behavior-events { display:none; padding:0 12px 9px; border-top:1px solid var(--line); }.agent-behavior-block.expanded .agent-behavior-events { display:grid; gap:5px; padding-top:8px; }.agent-behavior-events p { display:flex; gap:8px; margin:0; color:var(--soft); font-size:10px; }.agent-behavior-events small { flex:0 0 112px; color:var(--purple); font-size:9px; text-transform:uppercase; }.agent-behavior-events span { overflow-wrap:anywhere; }
@@ -217,6 +216,13 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 :root[data-theme="light"] .session-dialog::backdrop { background:#5b647733; }
 :root[data-theme="light"] .session-dialog-actions button { background:#e9edf6; }
 :root[data-theme="light"] .session-dialog-actions button[type="submit"] { border-color:#2f9e44; color:#102008; }
-:root[data-theme="light"] .message.steer .bubble { border-color:#d8b25c; background:#fdf6e3; }
-:root[data-theme="light"] .message .role.role-steer { color:#a06a00; }
-:root[data-theme="light"] .message .role.role-steer i { background:var(--amber); box-shadow:0 0 7px #e8890c33; }
+.steer-list { display:grid; gap:7px; min-height:0; overflow:auto; padding-right:3px; }
+.steer-entry { padding:8px 10px; border:1px solid #6b5418; border-left:3px solid var(--amber); border-radius:6px; background:#181e0e; }
+.steer-entry header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
+.steer-entry strong { color:#ffcf6e; font-size:10px; }
+.steer-entry small { color:var(--muted); font-size:8px; }
+.steer-entry p { margin:0; color:var(--soft); font-size:11px; overflow-wrap:anywhere; white-space:pre-wrap; }
+:root[data-theme="light"] .steer-entry { border-color:#d8b25c; background:#fdf6e3; }
+:root[data-theme="light"] .steer-entry strong { color:#a06a00; }
+/* Connection settings dialog opened from the sidebar gear button. */
+#settings-dialog { width:min(420px, calc(100vw - 32px)); }
