@@ -111,7 +111,8 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 
 /* Keep the sidebar in normal flex flow: once configuration moved into the
    dialog, the session area owns all remaining vertical space. */
-.sidebar > .side-block:first-of-type { display:flex; flex:1 1 auto; min-height:0; flex-direction:column; margin-bottom:0; }.sidebar > .side-block:first-of-type .recent-sessions { max-height:none; flex:1 1 auto; min-height:0; }.sidebar > .privacy { flex:0 0 auto; margin-top:14px; }.sidebar > .side-footer { flex:0 0 auto; }
+.sidebar > .side-block:first-of-type { display:flex; flex:1 1 auto; min-height:0; flex-direction:column; margin-bottom:0; }.sidebar > .side-block:first-of-type .recent-sessions { max-height:none; flex:1 1 auto; min-height:0; align-content:start; grid-auto-rows:min-content; }.sidebar > .privacy { flex:0 0 auto; margin-top:14px; }.sidebar > .side-footer { flex:0 0 auto; }
+.recent-session[data-status="idle"]::before { border-color:#75849b; background:transparent; box-shadow:none; }.recent-session[data-status="running"]::before { border:0; background:var(--green); box-shadow:0 0 8px var(--green); animation:session-status-pulse 1.3s ease-in-out infinite; }.recent-session[data-status="error"]::before { border:0; background:var(--red); box-shadow:0 0 8px var(--red); }.recent-session[data-status="done"]::before { border:0; background:#59aaff; box-shadow:0 0 7px #59aaff; }.recent-session.active[data-status="idle"]::before { background:var(--green); border:0; box-shadow:0 0 8px var(--green); }@keyframes session-status-pulse { 50% { opacity:.35; } }
 
 /* Settings now owns both connector and Agent configuration.  The selector is
    intentionally extensible: future pages do not need another sidebar panel. */

@@ -1084,8 +1084,23 @@ def list_workspaces() -> dict[str, list[dict[str, str]]]:
 
 @app.get("/api/sessions")
 def list_sessions() -> dict[str, list[dict[str, str]]]:
-    """List browser-visible sessions backed by independent workspace paths."""
-    return {"sessions": _read_workspaces()}
+    """List browser sessions with a compact durable run-status indicator."""
+    sessions: list[dict[str, str]] = []
+    for workspace in _read_workspaces():
+        session_id = str(workspace.get("id", ""))
+        if not session_id:
+            continue
+        persisted = get_run_status(session_id, session_id).get("status", "idle")
+        indicator = {
+            "running": "running",
+            "force_stopping": "running",
+            "error": "error",
+            "interrupted": "error",
+            "completed": "done",
+            "stopped": "done",
+        }.get(str(persisted), "idle")
+        sessions.append({**workspace, "status": indicator})
+    return {"sessions": sessions}
 
 
 @app.delete("/api/workspaces/{workspace_id}")

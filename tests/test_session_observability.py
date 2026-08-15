@@ -13,6 +13,38 @@ from angelus import webapp
 class SessionObservabilityTests(unittest.TestCase):
     """Exercise event pagination and per-Agent token aggregation."""
 
+    def test_session_list_exposes_four_state_indicator(self) -> None:
+        """Sidebar status is a compact projection of each durable run state."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = webapp.WORKSPACE_ROOT
+            original_index = webapp.WORKSPACE_INDEX
+            running_key = ("running", "running")
+            with webapp._sessions_lock:
+                prior_running = webapp._sessions.get(running_key)
+                webapp._sessions[running_key] = webapp.BrowserSession(
+                    active=webapp.ActiveRun(control=webapp.BrowserRunControl()),
+                )
+            webapp.WORKSPACE_ROOT = Path(directory)
+            webapp.WORKSPACE_INDEX = Path(directory) / "sessions.json"
+            try:
+                webapp._write_workspaces([
+                    {"id": "idle", "name": "Idle"}, {"id": "running", "name": "Running"},
+                    {"id": "error", "name": "Error"}, {"id": "done", "name": "Done"},
+                ])
+                for session_id, state in (("running", "running"), ("error", "error"), ("done", "completed")):
+                    webapp._persist_json(webapp._run_state_path(session_id, session_id), {"status": state})
+
+                statuses = {item["id"]: item["status"] for item in webapp.list_sessions()["sessions"]}
+
+                self.assertEqual(statuses, {"idle": "idle", "running": "running", "error": "error", "done": "done"})
+            finally:
+                webapp.WORKSPACE_ROOT = original_root
+                webapp.WORKSPACE_INDEX = original_index
+                with webapp._sessions_lock:
+                    webapp._sessions.pop(running_key, None)
+                    if prior_running is not None:
+                        webapp._sessions[running_key] = prior_running
+
     def test_event_page_is_newest_first_and_usage_uses_round_deltas(self) -> None:
         """Keep historical trace order and avoid cumulative-usage double counts."""
         with tempfile.TemporaryDirectory() as directory:
