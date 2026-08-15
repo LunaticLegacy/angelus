@@ -15,8 +15,8 @@ Each class has its own module and is re-exported by `__init__.py`.
 | `workspace_delete_request.py` | `WorkspaceDeleteRequest` | `BaseModel` | Explicit confirmation required to delete a workspace/session directory |
 | `task_plan_request.py` | `TaskPlanRequest` | `BaseModel` | Complete task-plan replacement: goal, optional summary, and task records |
 | `task_status_request.py` | `TaskStatusRequest` | `BaseModel` | Single task status transition |
-| `browser_run_control.py` | `BrowserRunControl` | `AgentRunControl` | Thread-safe cooperative stop, force-stop, and queued steer implementation for llmfetcher Agents |
-| `active_run.py` | `ActiveRun` | `dataclass` | Live browser-run state: control, event queue, completion signal, optional Swarm, and tracked shell processes for force-stop |
+| `browser_run_control.py` | `BrowserRunControl` | `AgentRunControl` | Thread-safe stop/steer implementation: `stop()` is cooperative; `force_stop()` also exposes the terminal model-I/O cancellation event |
+| `active_run.py` | `ActiveRun` | `dataclass` | Live browser-run state: control, event queue, completion signal, optional Swarm, and tracked shell processes; force-stop propagates model cancellation and kills tracked process groups |
 | `browser_session.py` | `BrowserSession` | `dataclass` | In-memory per-session concurrency guard: lock plus optional active run |
 
 ## Boundaries and Dependencies

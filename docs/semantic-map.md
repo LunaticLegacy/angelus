@@ -133,6 +133,31 @@ Legacy `reported` snapshots are normalized from their saved `TaskReport`.
 
 ## `angelus.webapp` connector store
 
+### `BrowserRunControl.force_stop()` / `ActiveRun.force_stop()` / `webapp.force_stop_run()`
+
+The normal `stop_run()` path sets only the cooperative stop flag and is
+observed after a completed model-and-tool boundary.  The force-stop endpoint
+calls `ActiveRun.force_stop()`, which sets the additional `force_stopped`
+event and kills registered Shell process groups.  `Agent.run()` observes that
+event while its model call is pending, calls
+`LLMFetcher.abort_active_requests()` to close provider client transports, and
+raises `AgentRunStopped` without persisting an incomplete model response.
+`BrowserRunControl` is the browser implementation; `ActiveRun` owns the
+process registry; the endpoint is called by the Workbench's force-stop button.
+
+### `LLMFetcher.abort_active_requests()` / `LLMBackendHandler.abort_active_request()`
+
+`LLMFetcher.abort_active_requests()` calls each registered handler's terminal
+transport-abort hook and returns the number of handlers asked to close.
+`LLMBackendHandler.abort_active_request()` closes an SDK client when it
+exposes `close()` and otherwise returns `False`; failures are isolated per
+handler.  `LLMRequestCancelled` is raised from the fetch and streaming loops
+whenever the terminal cancellation latch is set, including after a close
+produces a timeout-like provider error.  This prevents retries and backend
+fallback after force-stop; ordinary timeout retries and fallback remain
+unchanged.  The API is called exclusively by an Agent force-stop and leaves no
+closed handler for reuse because that Agent run is terminal.
+
 ### `webapp._default_state_root(project_root)` / `STATE_ROOT`
 
 Resolves the browser Workbench state location before module startup creates it.
@@ -245,6 +270,36 @@ Loads the complete session registry into both the native selector and the
 sidebar quick list. The quick list owns a bounded six-row scroll area, so a
 large registry cannot push connection and Agent settings below the viewport;
 the selected session is scrolled into view after each rebuild.
+
+### `frontend/static/app.js.switchSession()` / settings listeners
+
+`switchSession()` calls `persistSettings()` before changing the selected
+session, then calls `restoreSettings()` after the new session and connector
+state have loaded. Connector changes use the same persistence helper. Settings
+dialog listeners target only controls defined in `frontend/templates/index.html`;
+there are no compatibility calls to removed `persistAgentSettings`,
+`restoreAgentSettings`, `persistConnection`, or `openSettingsDialog` helpers.
+`tests/test_workbench_assets.py` checks both the direct listener IDs and the
+current helper names so a script/template drift fails before browser startup.
+
+### `frontend/static/app.js.showSettingsSection(section)`
+
+The settings dialog uses a persistent left navigation rather than a select
+control. `showSettingsSection()` receives one category key from
+`data-settings-section`, shows the matching `data-settings-panel`, and updates
+each navigation button's `active` class and `aria-selected` state. It is called
+by `openSettings()` and the category-button click handlers; it does not mutate
+connector records or per-session Agent settings.
+
+### `frontend/static/app.js.renderMemorySessionPicker()` / `selectedMemorySessions()`
+
+The Agent settings pane labels memory authorization as current-session-local
+and offers a searchable multi-select of other sessions. The selected IDs are
+stored in the hidden `session-memory-sessions` field, persisted by
+`persistSettings()`, and restored with the rest of the current session's Agent
+settings. `config()` sends the same selected IDs to all four explicit
+SessionMemory search/read and artifact search/open allowlists. The server adds
+the current session independently, so it is not selectable in the picker.
 
 ## `llmfetcher.task_planning.TaskPlanStore`
 

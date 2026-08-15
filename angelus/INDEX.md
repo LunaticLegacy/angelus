@@ -44,9 +44,12 @@ source for browser-provided API keys.
 
 ## Primary Control-Plane Flows
 
-- **Run / stop / steer** → `webapp.py`: a `BrowserSession` prevents concurrent
-  runs. Runs append durable events before notifying SSE clients; normal,
-  stopped, and error terminals update `run-state.json`.
+- **Run / stop / force-stop / steer** → `webapp.py`: a `BrowserSession`
+  prevents concurrent runs. Normal stop is cooperative and takes effect at a
+  completed model/tool boundary. Force-stop cancels the active provider
+  transport, prevents retry/fallback, and kills registered Shell processes.
+  Runs append durable events before notifying SSE clients; normal, stopped,
+  and error terminals update `run-state.json`.
 - **History and observability** → `webapp.py`: session messages, archive,
   graph, events, per-call token ledger, and Agent/Swarm views are reconstructed
   from durable session artifacts.
