@@ -20,6 +20,7 @@ class RunConfig(BaseModel):
     temperature: float = Field(default=0.4, ge=0, le=2)
     max_tokens: int = Field(default=4096, ge=1, le=131072)
     max_rounds: int = Field(default=12, ge=0, le=100)
+    max_retries: int = Field(default=3, ge=0, le=10)
     max_context_threshold: int = Field(default=262144, ge=1024, le=16777216)
     enable_shell: bool = False
     enable_swarm: bool = False

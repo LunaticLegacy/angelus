@@ -45,13 +45,13 @@ const config = () => ({
   provider: value("provider"), model: value("model"), api_key: $("api-key").value, connector_id: connectorId,
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
-  max_rounds: Number($("max-rounds").value), max_context_threshold: Number($("max-context-threshold").value),
+  max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), max_context_threshold: Number($("max-context-threshold").value),
   enable_shell: $("enable-shell").checked, enable_swarm: $("enable-swarm").checked,
   max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-context-threshold", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function settingsKey(id=workspaceId) { return `llmfetcherAgentSettings:${id}`; }
 function connectionDraftKey(id=workspaceId) { return `llmfetcherConnectionDraft:${id}`; }
