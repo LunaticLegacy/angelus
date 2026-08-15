@@ -1,17 +1,18 @@
 # Angelus — Root INDEX
 
-Multi-agent LLM framework with observable agent control plane, built on LLMFetcher.
-Provides CLI + Web UI for interactive sessions with tool use, swarm collaboration, and TLB-RAG knowledge retrieval.
+Multi-agent LLM workbench with an observable browser control plane, built on
+LLMFetcher. Provides interactive sessions, durable event/context state,
+connector management, swarm collaboration, and graph-backed long-term memory.
 
 ## Route Map
 
 | Entry | Type | Purpose |
 |-------|------|---------|
-| [`angelus/`](angelus/INDEX.md) | Package | Main Python package: agent loop, webapp, classes, tools, TLB-RAG, swarm |
+| [`angelus/`](angelus/INDEX.md) | Package | Browser webapp, request models, run control, and task-planning helpers |
 | [`llmfetcher/`](llmfetcher/INDEX.md) | Submodule | LLM abstraction layer: backends, context handlers, tool framework |
 | [`frontend/`](frontend/INDEX.md) | Dir | Web UI assets: HTML templates, JavaScript modules, CSS |
-| [`tests/`](tests/INDEX.md) | Dir | Test suite (18 test files, pytest) |
-| [`docs/`](docs/INDEX.md) | Dir | Design documents, semantic map, research drafts |
+| [`tests/`](tests/INDEX.md) | Dir | `unittest` regression suite for persistence, graph memory, web UI APIs, and swarm behavior |
+| [`docs/`](docs/INDEX.md) | Dir | Design documents, semantic map, graph-memory design, and research drafts |
 | `pyproject.toml` | File | Build config: setuptools, dependencies (fastapi, uvicorn, pydantic, markdown-it-py) |
 | `README.md` | File | Project overview, quickstart, architecture summary |
 | `CODEMAP.md` | File | Semantic contract for agentic code changes — authoritative architecture reference |
@@ -24,12 +25,12 @@ Provides CLI + Web UI for interactive sessions with tool use, swarm collaboratio
 
 ## Quick Intent Routing
 
-- **"How does the agent loop work?"** → `angelus/agent.py`
-- **"How are API routes defined?"** → `angelus/webapp.py` → `angelus/api/`
+- **"How does the agent loop work?"** → `llmfetcher/agent.py`
+- **"How are API routes defined?"** → `angelus/webapp.py`
 - **"What classes/models exist?"** → `angelus/classes/INDEX.md`
-- **"How does TLB RAG work?"** → `angelus/rag_module_tlb/INDEX.md`
-- **"How does the swarm work?"** → `angelus/swarm_module/INDEX.md`
-- **"What tools are available?"** → `angelus/tools/INDEX.md`
+- **"How does graph context / archive retrieval work?"** → `llmfetcher/graph_memory/` and `llmfetcher/context_handlers/`
+- **"How does the swarm work?"** → `llmfetcher/swarm_module/INDEX.md`
+- **"What tools are available?"** → `llmfetcher/tools/INDEX.md`
 - **"What tests exist?"** → `tests/INDEX.md`
 - **"Where is the frontend code?"** → `frontend/INDEX.md` → `frontend/static/INDEX.md`
 - **"How does LLMFetcher work?"** → `llmfetcher/INDEX.md`

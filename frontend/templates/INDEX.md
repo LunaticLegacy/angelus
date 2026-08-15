@@ -6,4 +6,4 @@ Single-page application shell for the Angelus workbench.
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Full SPA: chat pane, session sidebar, settings panel, inspector drawer (graph/trace/metrics/plan tabs), connector management. Loads all JS modules from `static/`. |
+| `index.html` | Full SPA shell: session sidebar, chat and live steer composers, modal settings (connector/Agent/future sections), new-session and connector dialogs, and inspector tabs (plan/Agents/trace/usage). It loads the active classic script `static/app.js` and `app.css`; it does **not** load the legacy ES modules in `static/`. |
