@@ -158,6 +158,19 @@ fallback after force-stop; ordinary timeout retries and fallback remain
 unchanged.  The API is called exclusively by an Agent force-stop and leaves no
 closed handler for reuse because that Agent run is terminal.
 
+### `RunConfig.max_retries` / `LLMFetcher._sleep_before_retry()`
+
+The Agent execution setting `max_retries` is session-local browser state and
+means the number of *additional* attempts following a timeout; it defaults to
+three and is validated from zero through ten. `webapp._build_agent()` passes it
+to the session's `LLMBackendConfig`, and the credential-free runtime profile
+records it for later diagnosis. `LLMFetcher` therefore performs at most one
+initial request plus `max_retries` timeout retries, waiting 1, 2, 4, then at
+most 8 seconds between attempts. The wait observes terminal force-stop, which
+cancels instead of issuing another request. Non-timeout failures remain
+fallback-eligible in multi-backend callers; each backend appears only once in
+the fallback order, so the primary never receives a duplicate retry budget.
+
 ### `webapp._default_state_root(project_root)` / `STATE_ROOT`
 
 Resolves the browser Workbench state location before module startup creates it.
@@ -417,7 +430,9 @@ paths and requires them to be descendants of the configured knowledge root,
 so a sibling path sharing the same string prefix cannot escape the sandbox.
 
 `agentStateView()` is the shared status projection used by the selector,
-Inspector list and graph. Live trace evidence temporarily outranks an older
+Inspector list, graph, and per-Agent usage cards. Usage refreshes the graph
+snapshot before rendering so its lights match the persisted execution state.
+Live trace evidence temporarily outranks an older
 in-browser graph response; the reconciled graph supplies refresh state. Green
 means running, orange queued, blue completed and awaiting acknowledgement, red
 failed/interrupted, and gray idle/cancelled/acknowledged. Clicking a blue dot
