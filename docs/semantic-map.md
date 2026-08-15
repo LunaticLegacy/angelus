@@ -10,6 +10,24 @@ the `angelus web` and session-management commands. `angelus.agent.Agent`
 extends the base Agent behavior with durable safe-stop persistence, and is the
 Agent class consumed by the Angelus Swarm and TLB RAG adapter.
 
+## `angelus.session_memory.SessionMemoryStore`
+
+Owns immutable, generation-numbered session manifests, registered artifact
+metadata, and validated handoff files under the webapp state root. It has no
+base class or known subclasses. `webapp._session_memory_store()` constructs it;
+session-memory tools call `snapshot()`, `get_manifest()`,
+`register_artifact()`, and `create_handoff()`.
+
+### `SessionMemoryStore._collect_evidence(session_id, artifacts)` / `snapshot(session_id)`
+
+`snapshot()` carries registered artifact metadata from the latest manifest into
+the next immutable generation and passes it to `_collect_evidence()`. Along
+with conversation, context, graph, event, and prior-handoff records,
+`_collect_evidence()` emits an `artifact` evidence record for every registered
+artifact. The record contains metadata only, never attachment bytes, so a
+session containing only an uploaded artifact can create a handoff whose
+evidence is validated against that snapshot.
+
 ### `angelus.rag_module_tlb.create_read_file_tool(root)`
 
 Creates the Angelus TLB worker's private file-reading tool. Its handler calls

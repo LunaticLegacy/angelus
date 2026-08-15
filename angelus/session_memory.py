@@ -74,7 +74,20 @@ class SessionMemoryStore:
         name = "memory-manifest.json" if generation is None else f"memory-manifest.{generation}.json"
         return self.session_dir(session_id) / name
 
-    def _collect_evidence(self, session_id: str) -> list[dict[str, Any]]:
+    def _collect_evidence(
+        self, session_id: str, artifacts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Collect durable evidence that is available to a session snapshot.
+
+        Args:
+            session_id: Identifier of the session whose persisted state is read.
+            artifacts: Registered artifact metadata from the prior manifest.
+                Metadata is recorded as evidence without exposing artifact bytes.
+
+        Returns:
+            JSON-compatible evidence records that an immutable handoff can
+            reference.
+        """
         root = self.session_dir(session_id)
         evidence: list[dict[str, Any]] = []
         def add(kind: str, body: Any, *, timeline: int = 0, summary: str = "") -> None:
@@ -107,17 +120,34 @@ class SessionMemoryStore:
             if isinstance(raw, dict):
                 add("handoff", json.dumps({"handoff_id": raw.get("handoff_id"), "work": raw.get("work", {})}, ensure_ascii=False),
                     summary=_safe_text(raw.get("work", {}).get("title", "handoff"), 400))
+        # Registered artifacts are transferable evidence even before the
+        # session has accumulated conversation or event-log records.
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                continue
+            add(
+                "artifact",
+                json.dumps(artifact, ensure_ascii=False, sort_keys=True),
+                summary=_safe_text(artifact.get("logical_name", "artifact"), 400),
+            )
         return evidence
 
     def snapshot(self, session_id: str) -> dict[str, Any]:
-        """Create a new immutable manifest generation from durable session state."""
+        """Create a new immutable manifest generation from durable session state.
+
+        Args:
+            session_id: Identifier of the session to snapshot.
+
+        Returns:
+            The newly persisted manifest, including evidence and registered
+            artifact metadata from the immediately preceding generation.
+        """
         latest = _read_json(self._manifest_path(session_id), {})
         generation = int(latest.get("generation", 0)) + 1 if isinstance(latest, dict) else 1
-        root = self.session_dir(session_id)
         artifacts = list((_read_json(self._manifest_path(session_id), {}) or {}).get("artifacts", []))
         manifest = {"schema_version": 1, "session_id": session_id, "generation": generation,
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "evidence": self._collect_evidence(session_id), "artifacts": artifacts}
+                    "evidence": self._collect_evidence(session_id, artifacts), "artifacts": artifacts}
         _atomic_json(self._manifest_path(session_id, generation), manifest)
         _atomic_json(self._manifest_path(session_id), manifest)
         return manifest
