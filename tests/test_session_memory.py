@@ -42,6 +42,7 @@ def test_artifact_snapshot_and_immutable_handoff(tmp_path: Path) -> None:
     assert copy.read_bytes().startswith(b"alpha") and copy.stat().st_mode & 0o222 == 0
     manifest = store.snapshot("source")
     evidence = manifest["evidence"]
+    assert any(item["kind"] == "artifact" and artifact["artifact_id"] in item["body"] for item in evidence)
     handoff = store.create_handoff("source", {"source": {"agent_id": "coordinator"}, "target": {"session_ids": ["target"]},
         "work": {"title": "handoff", "status": "ready"}, "evidence": [{"evidence_id": evidence[0]["evidence_id"]}],
         "artifacts": [{"artifact_id": artifact["artifact_id"]}], "supersedes": None})
