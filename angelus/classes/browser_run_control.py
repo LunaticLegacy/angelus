@@ -5,7 +5,12 @@ from llmfetcher.agent import AgentRunControl
 
 
 class BrowserRunControl(AgentRunControl):
-    """Thread-safe implementation of llmfetcher's cooperative run controls."""
+    """Thread-safe browser controls with cooperative and terminal stop modes.
+
+    ``stop()`` is observed only at Agent safe boundaries.  ``force_stop()``
+    additionally exposes ``force_stopped`` so the current model request can
+    close its provider transport and the browser worker can end immediately.
+    """
 
     def __init__(self) -> None:
         self._stopped = threading.Event()

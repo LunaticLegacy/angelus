@@ -31,6 +31,12 @@ class ActiveRun:
             self.processes.discard(process)
 
     def force_stop(self) -> None:
+        """Terminally cancel model I/O and kill registered tool processes.
+
+        The control event lets ``Agent`` abort the provider transport for an
+        in-flight model request.  Registered shell processes are killed here
+        because they are outside the provider client's ownership.
+        """
         self.control.force_stop()
         with self.processes_lock:
             processes = list(self.processes)

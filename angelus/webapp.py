@@ -2312,7 +2312,7 @@ def stop_run(workspace_id: str, session_id: str) -> dict[str, bool]:
 
 @app.post("/api/workspaces/{workspace_id}/runs/{session_id}/force-stop")
 def force_stop_run(workspace_id: str, session_id: str) -> dict[str, bool]:
-    """Immediately stop the Agent and terminate registered tool processes."""
+    """Interrupt an in-flight model request and kill registered tool processes."""
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
