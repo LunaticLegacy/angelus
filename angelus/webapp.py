@@ -367,9 +367,14 @@ def _write_connectors(connectors: list[dict[str, Any]]) -> None:
 
 def _public_connector(record: dict[str, Any]) -> dict[str, Any]:
     """Return browser-safe connector metadata without its credential."""
-    public = dict(record)
-    public["has_api_key"] = bool(public.pop("api_key", ""))
-    return public
+    return {
+        "id": str(record.get("id", "")),
+        "name": str(record.get("name", "")),
+        "provider": str(record.get("provider", "openai")),
+        "model": str(record.get("model", "")),
+        "api_url": str(record.get("api_url", "")),
+        "has_api_key": bool(record.get("api_key", "")),
+    }
 
 
 def _resolve_connector_key(config: RunConfig) -> RunConfig:
