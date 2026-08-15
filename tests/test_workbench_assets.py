@@ -66,3 +66,15 @@ def test_retry_count_is_session_persisted_and_sent_with_runs() -> None:
     assert 'max_retries: Number($("max-retries").value)' in script
     assert '"max-retries"' in script
     assert "workbench-40" in template
+
+
+def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
+    """Keep per-Agent usage cards aligned with the canonical status projection."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "const view=agentStateView(agent.id)" in script
+    assert 'class="agent-state ${escapeHtml(view.ui)}"' in script
+    assert "apiJson(graphUrl()).catch(()=>null)" in script
+    assert ".usage-agent .agent-state.running" in stylesheet
+    assert "workbench-40" in INDEX_TEMPLATE.read_text(encoding="utf-8")
