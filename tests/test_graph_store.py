@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from llmfetcher.graph_memory.graph_store import (
     GraphStore,
@@ -169,6 +170,21 @@ class SerializationTests(unittest.TestCase):
             self.assertEqual(len(g2), 1)
         self.assertFalse(GraphStore().save(""))
         self.assertFalse(GraphStore().load("/nonexistent/x.json"))
+
+    def test_save_failure_keeps_previous_file_and_removes_temporary_file(self):
+        g = GraphStore()
+        g.upsert_entity("new", timeline=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.json"
+            path.write_text("old graph", encoding="utf-8")
+            with patch(
+                "llmfetcher.graph_memory.graph_store.os.replace",
+                side_effect=OSError("replace failed"),
+            ):
+                self.assertFalse(g.save(path))
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "old graph")
+            self.assertEqual(list(Path(tmp).glob(".graph.json.*.tmp")), [])
 
 
 if __name__ == "__main__":

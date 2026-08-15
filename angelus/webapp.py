@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -12,6 +13,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -95,6 +97,11 @@ _MARKDOWN = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("
 _sessions: dict[tuple[str, str], BrowserSession] = {}
 _sessions_lock = threading.Lock()
 _deleting_workspaces: set[str] = set()
+# Event hooks can be called by concurrently running swarm workers.  Keep each
+# NDJSON record contiguous (and durably flushed) rather than relying on the
+# implementation details of text-mode append writes.
+_event_log_locks: dict[Path, threading.Lock] = {}
+_event_log_locks_guard = threading.Lock()
 
 
 def _safe_id(value: str, label: str) -> str:
@@ -294,6 +301,46 @@ def _event_payload(event: ExecutionEvent) -> dict[str, Any]:
     }
 
 
+def _redacted_api_url(value: str) -> str:
+    """Return an endpoint identity without URL credentials or query secrets."""
+    try:
+        parsed = urlsplit(value.strip())
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host + parsed.path, "", "", ""))
+    except ValueError:
+        return ""
+
+
+def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
+    """Build a credential-free, stable description of one run's semantics.
+
+    The browser configuration is otherwise ephemeral.  Keeping this snapshot
+    next to the run terminal makes a restored context auditable without ever
+    serializing the API key or the full (potentially private) system prompt.
+    """
+    system_prompt_digest = hashlib.sha256(config.system_prompt.encode("utf-8")).hexdigest()
+    profile = {
+        "schema_version": 1,
+        "provider": config.provider.strip(),
+        "model": config.model.strip(),
+        "api_url": _redacted_api_url(config.api_url),
+        "system_prompt_sha256": system_prompt_digest,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "max_rounds": config.max_rounds,
+        "max_context_threshold": config.max_context_threshold,
+        "enable_shell": config.enable_shell,
+        "enable_swarm": config.enable_swarm,
+        "max_swarm_agents": config.max_swarm_agents,
+    }
+    canonical = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return {**profile, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+
+
 def render_markdown(text: str) -> str:
     """Convert trusted-to-render model Markdown into safe display HTML.
 
@@ -450,8 +497,14 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
             rendered with ``str`` so observability cannot break execution.
     """
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
-    with event_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    serialized = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
+    with _event_log_locks_guard:
+        lock = _event_log_locks.setdefault(event_path, threading.Lock())
+    with lock:
+        with event_path.open("a", encoding="utf-8") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str, Any]]:
@@ -1009,6 +1062,94 @@ def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> 
             turn["content_html"] = render_markdown(str(turn.get("content", "")))
             turn["reasoning_html"] = render_markdown(str(turn.get("reasoning", "")))
     return turns
+
+
+def _archived_context_page(
+    workspace_id: str,
+    session_id: str,
+    agent_name: str = "coordinator",
+    *,
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return a bounded, read-only page of compacted raw context evidence.
+
+    ``ContextHandlerLinear`` stores messages removed from the active prompt in
+    its append-only ``archive`` list.  The archive is intentionally separate
+    from the current transcript: it is evidence for retrieval and audit, not
+    material which should be re-injected into every model request.  Contexts
+    written before that field was introduced simply return an empty page.
+
+    The cursor is an exclusive chronological archive offset, matching the
+    event-log API.  Returned items are newest first so callers can show the
+    most recently compacted evidence without loading a whole long session.
+    """
+    workspace_id = _safe_id(workspace_id, "workspace")
+    session_id = _safe_id(session_id, "session")
+    agent_name = _safe_id(agent_name, "agent")
+    context_path = _session_path(workspace_id, session_id) / "contexts" / f"{agent_name}.json"
+    try:
+        raw = json.loads(context_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+
+    archive = raw.get("archive", []) if isinstance(raw, dict) else []
+    if not isinstance(archive, list):
+        archive = []
+    evidence: list[dict[str, Any]] = []
+    for item in archive:
+        if not isinstance(item, dict):
+            continue
+        timeline = item.get("timeline")
+        role = item.get("role")
+        # Do not manufacture provenance for malformed or pre-schema entries.
+        if not isinstance(timeline, int) or isinstance(timeline, bool) or not isinstance(role, str):
+            continue
+        tool_calls = item.get("tool_calls", [])
+        evidence.append({
+            "timeline": timeline,
+            "role": role,
+            "content": str(item.get("content", "")),
+            "reasoning": str(item.get("content_reasoning", "")),
+            "tool_calls": tool_calls if isinstance(tool_calls, list) else [],
+            "tags": item.get("tags", []) if isinstance(item.get("tags", []), list) else [],
+        })
+
+    page_limit = max(1, min(limit, 500))
+    end = len(evidence) if before is None else max(0, min(before, len(evidence)))
+    start = max(0, end - page_limit)
+    return {
+        "evidence": list(reversed(evidence[start:end])),
+        "total": len(evidence),
+        "next_before": start if start else None,
+    }
+
+
+@app.get("/api/workspaces/{workspace_id}/sessions/{session_id}/archive")
+def get_session_archive(
+    workspace_id: str,
+    session_id: str,
+    agent: str = "coordinator",
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Expose archived raw context evidence without changing model context."""
+    return _archived_context_page(
+        workspace_id, session_id, agent, before=before, limit=limit,
+    )
+
+
+@app.get("/api/sessions/{session_id}/archive")
+def get_session_archive_by_id(
+    session_id: str,
+    agent: str = "coordinator",
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Expose archived coordinator evidence for standalone browser sessions."""
+    return _archived_context_page(
+        session_id, session_id, agent, before=before, limit=limit,
+    )
 
 
 def _agent_turns_from_events(
@@ -1576,11 +1717,19 @@ def start_run(request: RunRequest) -> dict[str, str]:
         active = ActiveRun(control=BrowserRunControl())
         session.active = active
     started_at = time.time()
+    runtime_profile = _runtime_profile_snapshot(request.config)
     _persist_json(_run_state_path(workspace_id, session_id), {
         "status": "running", "run_id": session_id, "started_at": started_at,
+        "runtime_profile": runtime_profile,
     })
     _append_conversation_turn(workspace_id, session_id, {
         "role": "user", "content": request.message, "reasoning": "", "tools": [],
+    })
+    _append_session_event(workspace_id, session_id, {
+        "event": "run_started",
+        "run_id": session_id,
+        "timestamp": started_at,
+        "runtime_profile": runtime_profile,
     })
 
     def execute() -> None:
@@ -1701,6 +1850,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             run_state = {
                 "status": terminal_status, "run_id": session_id,
                 "started_at": started_at, "finished_at": time.time(),
+                "runtime_profile": runtime_profile,
             }
             if error_message:
                 run_state["error"] = error_message

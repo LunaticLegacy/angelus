@@ -317,6 +317,24 @@ class BuildMessageTests(unittest.TestCase):
 
 
 class PersistenceTests(unittest.TestCase):
+    def test_save_flushes_pending_messages_before_persisting_graph(self):
+        h = GraphContextHandler(
+            compacting_fetcher=_RecordingCompactor(),
+            graph_update_every=100,
+        )
+        h.add_user_message("inspect durable.py")
+        self.assertEqual(len(h._pending), 1)
+        self.assertEqual(len(h.store), 0)
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ctx.json"
+            self.assertTrue(h.save(path))
+
+            self.assertEqual(h._pending, [])
+            restored = GraphStore()
+            self.assertTrue(restored.load(f"{path}.graph.json"))
+            self.assertIsNotNone(restored.find_entity_by_name("durable.py"))
+
     def test_save_load_roundtrip(self):
         store = _chain_store()
         h = GraphContextHandler(
