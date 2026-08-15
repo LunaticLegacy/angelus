@@ -41,5 +41,6 @@ The following files form a prior ES-module decomposition. They are **not loaded 
 | `appendAgentBehavior` | Group agent lifecycle events into expandable block |
 | `renderAgentSelector` | Build agent filter dropdown from graph evidence |
 | `rehydrateSelectedView` | Restore filter state after refresh |
+| `switchSession` | Persist the current settings, then restore the selected session's settings and durable views |
 
-It also owns settings-dialog navigation, encrypted connector CRUD calls, persistent session-status rendering, Swarm topology/Agent inspector rendering, and token-ledger presentation.
+It also owns settings-dialog navigation, encrypted connector CRUD calls, persistent session-status rendering, Swarm topology/Agent inspector rendering, and token-ledger presentation. Direct event listeners must target IDs present in `templates/index.html`; `tests/test_workbench_assets.py` enforces that contract.

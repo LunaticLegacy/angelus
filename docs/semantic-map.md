@@ -246,6 +246,17 @@ sidebar quick list. The quick list owns a bounded six-row scroll area, so a
 large registry cannot push connection and Agent settings below the viewport;
 the selected session is scrolled into view after each rebuild.
 
+### `frontend/static/app.js.switchSession()` / settings listeners
+
+`switchSession()` calls `persistSettings()` before changing the selected
+session, then calls `restoreSettings()` after the new session and connector
+state have loaded. Connector changes use the same persistence helper. Settings
+dialog listeners target only controls defined in `frontend/templates/index.html`;
+there are no compatibility calls to removed `persistAgentSettings`,
+`restoreAgentSettings`, `persistConnection`, or `openSettingsDialog` helpers.
+`tests/test_workbench_assets.py` checks both the direct listener IDs and the
+current helper names so a script/template drift fails before browser startup.
+
 ## `llmfetcher.task_planning.TaskPlanStore`
 
 Owns one session-local task-plan JSON file. It has no base class or subclasses.

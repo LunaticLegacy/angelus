@@ -213,7 +213,7 @@ async function loadHistory() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { persistAgentSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; traceBefore=null; traceEvents=[]; durableEventCount=0; await loadWorkspaces(selected); await loadConnectors(); restoreAgentSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function switchSession(selected) { persistSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; traceBefore=null; traceEvents=[]; durableEventCount=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 
 async function start(message) {
   // Show the submitted prompt immediately in every filter; the durable reload
@@ -286,15 +286,12 @@ $("new-session-form").addEventListener("submit", async event=>{
   await createAndSwitchSession(name);
 });
 $("delete-workspace").addEventListener("click",async()=>{const selected=$("workspace").selectedOptions[0];if(!selected)return;const name=selected.text;if(!confirm(`删除会话“${name}”及其所有数据？此操作不可恢复。`))return;const confirmation=prompt(`请输入会话名称“${name}”以确认删除：`);if(confirmation !== name)return;const response=await fetch(`/api/sessions/${sessionId}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation})});const payload=await response.json();if(response.status===404){await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已不存在",`${name} 已被移除，已切换到有效会话。`);return;}if(!response.ok){alert(payload.detail||"无法删除会话");return;}if(payload.status==="stopping"){trace("正在停止并删除会话",payload.message);return;}await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已删除",name);});
-$("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(()=>{ persistConnection(); updateModelSummary(); });});
+$("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(()=>{ persistSettings(); updateModelSummary(); });});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
 $("settings-section").addEventListener("change", event=>showSettingsSection(event.target.value));
 $("cancel-new-connector").addEventListener("click", ()=>$("new-connector-dialog").close());
-$("settings").addEventListener("click", openSettingsDialog);
-$("cancel-settings").addEventListener("click", ()=>$("settings-dialog").close());
-$("settings-form").addEventListener("submit", event=>{ event.preventDefault(); updateModelSummary(); $("settings-dialog").close(); });
 $("new-connector-form").addEventListener("submit", async event=>{event.preventDefault(); const input=$("new-connector-name"); const name=input.value.trim(); if(!name){input.focus();return;} $("new-connector-dialog").close(); try{await createConnector(name);}catch(error){trace("保存连接器失败",error.message);connectorFeedback("保存失败","error");alert(`无法保存连接器：${error.message}`);}});
 $("save-connector").addEventListener("click", async()=>{try{await saveSelectedConnector();}catch(error){trace("更新连接器失败",error.message);connectorFeedback("保存失败","error");alert(`无法保存连接器：${error.message}`);}});
 $("delete-connector").addEventListener("click", async()=>{if(!connectorId||!confirm("删除这个连接及其保存的密钥？"))return;const response=await fetch(`/api/connectors/${connectorId}`,{method:"DELETE"});if(!response.ok){alert("无法删除连接");return;}connectorId="";localStorage.llmfetcherConnector="";await loadConnectors();trace("已删除连接");});
@@ -307,5 +304,5 @@ $("refresh-steer").addEventListener("click",()=>loadSteers().catch(error=>trace(
 $("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
-async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreAgentSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true),loadSteers()]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 initializeConsole().catch(error=>trace("工作空间/会话加载失败", error.message));
