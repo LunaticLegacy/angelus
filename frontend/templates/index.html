@@ -30,19 +30,27 @@
     <dialog id="settings-dialog" class="session-dialog settings-dialog" aria-labelledby="settings-title">
       <div class="settings-dialog-form">
         <header class="settings-dialog-head"><div><p class="eyebrow">WORKBENCH</p><h2 id="settings-title">设置</h2></div><button id="close-settings" class="dialog-close" type="button" aria-label="关闭设置" onclick="document.getElementById('settings-dialog').close()">×</button></header>
-        <label class="settings-section-picker">设置类别<select id="settings-section"><option value="connection">连接器</option><option value="agent">Agent 执行</option><option value="future">更多设置（即将推出）</option></select></label>
-        <section data-settings-panel="connection" class="settings-page active">
-          <div class="settings-page-heading"><div><h3>连接器</h3><p>连接配置保存在本机受限文件中。</p></div><div><button id="new-connector" class="mini-button" type="button" title="保存为新连接">＋</button><button id="delete-connector" class="mini-button danger" type="button" title="删除连接">×</button></div></div>
+        <div class="settings-dialog-body">
+          <nav class="settings-navigation" aria-label="设置类别" role="tablist">
+            <button class="settings-nav-item active" type="button" data-settings-section="connection" role="tab" aria-selected="true">连接器</button>
+            <button class="settings-nav-item" type="button" data-settings-section="agent" role="tab" aria-selected="false">Agent 执行</button>
+            <button class="settings-nav-item" type="button" data-settings-section="future" role="tab" aria-selected="false">更多设置</button>
+          </nav>
+          <div class="settings-pages">
+        <section data-settings-panel="connection" class="settings-page active" role="tabpanel">
+          <div class="settings-page-heading"><div><h3>连接器</h3><p><b>全局共享</b> · 连接配置保存在本机受限文件中。</p></div><div><button id="new-connector" class="mini-button" type="button" title="保存为新连接">＋</button><button id="delete-connector" class="mini-button danger" type="button" title="删除连接">×</button></div></div>
           <div class="connection-field"><i></i><select id="connector" aria-label="选择已保存连接"><option value="">未保存的临时连接</option></select><button id="save-connector" type="button" title="保存当前连接">保存</button></div>
           <div class="model-chip"><span class="model-symbol">◈</span><div><strong id="model-label">模型配置</strong><small id="provider-label">OpenAI compatible</small></div><i></i></div>
           <div class="settings-fields"><label>Provider<select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label><label>模型<input id="model" placeholder="gpt-4.1-mini" /></label><label>API URL<input id="api-url" placeholder="https://api.openai.com/v1" /></label><label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label></div>
         </section>
-        <section data-settings-panel="agent" class="settings-page">
-          <div class="settings-page-heading"><div><h3>Agent 执行</h3><p>这些选项会随当前会话保存在浏览器本地。</p></div></div>
+        <section data-settings-panel="agent" class="settings-page" role="tabpanel">
+          <div class="settings-page-heading"><div><h3>Agent 执行</h3><p><b>当前会话独立</b> · 这些选项会保存在浏览器本地。</p></div></div>
           <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div>
-          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><label>会话检索授权 <em>额外会话 ID，以逗号分隔；未填写仅当前会话</em><textarea id="session-memory-sessions" rows="2" placeholder="research, implementation"></textarea></label>
+          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
         </section>
-        <section data-settings-panel="future" class="settings-page settings-placeholder"><span>⌘</span><h3>更多设置</h3><p>这里会容纳未来的工作台偏好、检索策略与高级运行选项。</p></section>
+        <section data-settings-panel="future" class="settings-page settings-placeholder" role="tabpanel"><span>⌘</span><h3>更多设置</h3><p>这里会容纳未来的工作台偏好、检索策略与高级运行选项。</p></section>
+          </div>
+        </div>
       </div>
     </dialog>
     <aside class="sidebar">
@@ -89,6 +97,6 @@
         <section id="inspector-steer" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">STEER INSTRUCTIONS</p><h3>调整指令</h3></div><button id="refresh-steer" class="refresh-button" type="button">↻</button></div><div id="steer-list" class="steer-list"><p class="empty">运行中发送的调整指令会显示在这里。</p></div></section>
       </div>
     </aside>
-    <script src="/static/app.js?v=workbench-36"></script>
+    <script src="/static/app.js?v=workbench-38"></script>
   </body>
 </html>
