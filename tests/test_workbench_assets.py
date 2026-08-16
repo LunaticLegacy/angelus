@@ -65,7 +65,7 @@ def test_retry_count_is_session_persisted_and_sent_with_runs() -> None:
     assert 'value="3"' in template
     assert 'max_retries: Number($("max-retries").value)' in script
     assert '"max-retries"' in script
-    assert "workbench-41" in template
+    assert re.search(r'/static/app\.js\?v=workbench-\d+', template)
 
 
 def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
@@ -77,7 +77,7 @@ def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
     assert 'class="agent-state ${escapeHtml(view.ui)}"' in script
     assert "apiJson(graphUrl()).catch(()=>null)" in script
     assert ".usage-agent .agent-state.running" in stylesheet
-    assert "workbench-41" in INDEX_TEMPLATE.read_text(encoding="utf-8")
+    assert re.search(r'/static/app\.js\?v=workbench-\d+', INDEX_TEMPLATE.read_text(encoding="utf-8"))
 
 
 def test_applied_steering_is_a_right_aligned_chat_input() -> None:
@@ -94,4 +94,4 @@ def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     assert 'if(role === "steer") return appendSteerMessage(content);' in script
     assert 'className="message steer"' in script
     assert ".message.user,.message.steer { margin-left:auto; }" in stylesheet
-    assert "workbench-41" in template
+    assert re.search(r'/static/app\.js\?v=workbench-\d+', template)
