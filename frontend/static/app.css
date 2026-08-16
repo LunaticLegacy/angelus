@@ -247,3 +247,20 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 :root[data-theme="light"] .steer .bubble { border-color:#d8b25c; background:#fdf6e3; }
 /* Connection settings dialog opened from the sidebar gear button. */
 #settings-dialog { width:min(720px, calc(100vw - 32px)); }
+
+/* ================================================================
+   Settings dialog — light theme overrides.
+   The settings dialog is a dedicated surface (settings-dialog) whose
+   inner panels hard-code dark colours, so they need explicit light
+   overrides instead of inheriting the generic .session-dialog rules.
+   ================================================================ */
+:root[data-theme="light"] .settings-dialog-body { background:#ffffff; border-color:#d6dfef; }
+:root[data-theme="light"] .settings-navigation { background:#f4f6fb; }
+:root[data-theme="light"] .settings-nav-item:hover { background:#e9edf6; color:var(--soft); }
+:root[data-theme="light"] .settings-nav-item.active { background:#e7e1fa; color:#4a3ec4; }
+:root[data-theme="light"] .dialog-close { background:#e9edf6; }
+:root[data-theme="light"] .settings-page em { color:#8b96ab; }
+:root[data-theme="light"] .memory-session-picker { background:#f7f9fd; border-color:#d6dfef; }
+:root[data-theme="light"] .memory-session-chip { border-color:#c6bdf2; background:#e7e1fa; color:#5546c8; }
+:root[data-theme="light"] .memory-session-option:hover,
+:root[data-theme="light"] .memory-session-option.selected { background:#eef2fb; }
