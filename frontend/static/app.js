@@ -69,14 +69,18 @@ function renderMemorySessionPicker() { const options=$("session-memory-options")
 function removeWelcome() { $("chat").querySelector(".welcome")?.remove(); }
 async function copyResult(text, button) { try { await navigator.clipboard.writeText(text); button.textContent="已复制"; setTimeout(()=>button.textContent="复制结果",1200); } catch { button.textContent="复制失败"; } }
 function renderTools(tools=[]) { if(!tools.length)return ""; const calls=tools.map(tool=>`<article class="tool-call"><strong>${escapeHtml(tool.name)}</strong><p>参数</p><pre>${escapeHtml(JSON.stringify(tool.arguments,null,2))}</pre><p>结果</p><pre>${escapeHtml(tool.result || "(无返回内容)")}</pre></article>`).join(""); return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`; }
-/** Render a user or selected-Agent transcript turn with an explicit speaker. */
-function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="") { if(role === "steer") return appendSteerMessage(content); removeWelcome(); const el=document.createElement("article"); el.className=`message ${role}`; const body=contentHtml || escapeHtml(content); const bodyClass=contentHtml ? "markdown" : "plain-text"; const thought=reasoningHtml || escapeHtml(reasoning); const copy=role === "assistant" && content ? `<button class="copy-result" type="button">复制结果</button>` : ""; const bubble=content ? `<div class="bubble ${bodyClass}">${body}</div>` : ""; const isUser=role === "user"; const speaker=isUser ? "你" : (agentName || selectedAgent || "Coordinator"); const kind=isUser ? "用户输入" : "Agent 回复"; el.innerHTML=`<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${kind}</small>${copy}</div>${bubble}${reasoning ? `<details class="reasoning"><summary>思考过程</summary><div class="markdown">${thought}</div></details>` : ""}${renderTools(tools)}`; el.querySelector(".copy-result")?.addEventListener("click",()=>copyResult(content,el.querySelector(".copy-result"))); $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight; }
+/** Build one transcript message element without touching the live DOM. */
+function buildMessageElement(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="") { if(role === "steer") { const el=document.createElement("article"); el.className="message steer"; el.innerHTML=`<div class="message-meta"><div class="role role-steer"><i></i><span>调整指令</span></div><small>已应用</small></div><div class="bubble plain-text">${escapeHtml(content)}</div>`; return el; } const el=document.createElement("article"); el.className=`message ${role}`; const body=contentHtml || escapeHtml(content); const bodyClass=contentHtml ? "markdown" : "plain-text"; const thought=reasoningHtml || escapeHtml(reasoning); const copy=role === "assistant" && content ? `<button class="copy-result" type="button">复制结果</button>` : ""; const bubble=content ? `<div class="bubble ${bodyClass}">${body}</div>` : ""; const isUser=role === "user"; const speaker=isUser ? "你" : (agentName || selectedAgent || "Coordinator"); const kind=isUser ? "用户输入" : "Agent 回复"; el.innerHTML=`<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${kind}</small>${copy}</div>${bubble}${reasoning ? `<details class="reasoning"><summary>思考过程</summary><div class="markdown">${thought}</div></details>` : ""}${renderTools(tools)}`; el.querySelector(".copy-result")?.addEventListener("click",()=>copyResult(content,el.querySelector(".copy-result"))); return el; }
+/** Append a single transcript turn live (real-time path). */
+function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="") { if(role === "steer") return appendSteerMessage(content); removeWelcome(); $("chat").append(buildMessageElement(role, content, reasoning, contentHtml, reasoningHtml, tools, agentName)); $("chat").scrollTop=$("chat").scrollHeight; }
 /** Display a durable run failure in the chat pane without hiding prior work. */
 function appendRunErrorBlock(title, message) { removeWelcome(); const el=document.createElement("article"); el.className="run-error"; el.innerHTML=`<strong>⚠ ${escapeHtml(title)}</strong><p>${escapeHtml(message || "未提供错误详情。")}</p>`; $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight; }
 /** Render one durably applied steering message beside the original user input. */
 function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEvents.has(eventKey)) return; if(eventKey) renderedSteerEvents.add(eventKey); removeWelcome(); const el=document.createElement("article"); el.className="message steer"; el.innerHTML=`<div class="message-meta"><div class="role role-steer"><i></i><span>调整指令</span></div><small>已应用</small></div><div class="bubble plain-text">${escapeHtml(text)}</div>`; $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight; }
 /** Load the canonical session transcript using the same detailed message UI. */
-async function loadAllAgentBehavior() { const [{total=0},{messages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; renderedSteerEvents.clear(); $("chat").innerHTML=""; for(const message of messages) appendMessage(message.role,message.content,message.reasoning,message.content_html,message.reasoning_html,message.tools,message.role === "assistant" ? "coordinator" : ""); if(!messages.length) $("chat").innerHTML=`<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>`; }
+/** Bulk-render a transcript into #chat in a single layout pass. */
+function renderMessagesInto(messages, assistantLabel="coordinator") { const chat=$("chat"); chat.innerHTML=""; if(!messages.length){ chat.innerHTML=`<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>`; return; } const fragment=document.createDocumentFragment(); for(const message of messages) fragment.append(buildMessageElement(message.role,message.content,message.reasoning,message.content_html,message.reasoning_html,message.tools,message.role === "assistant" ? assistantLabel : "")); chat.append(fragment); chat.scrollTop=chat.scrollHeight; }
+async function loadAllAgentBehavior() { const [{total=0},{messages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; renderedSteerEvents.clear(); renderMessagesInto(messages, "coordinator"); }
 /** Build one escaped, expandable Trace card from persisted or live event data. */
 function traceElement(title, message="", data=null, kind="") { const el=document.createElement("article"); el.className=`trace-event ${kind}`; const detail=data ? `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>` : ""; const label=kind==="tool"?"TOOL CALL":"STATUS"; el.innerHTML=`<button class="trace-toggle" type="button" aria-expanded="false"><span class="trace-summary"><i></i><strong>${escapeHtml(title)}</strong><small>${label}</small></span><span class="trace-chevron">⌄</span></button><div class="trace-details"><p>${escapeHtml(message)}</p>${detail}</div>`; el.querySelector(".trace-toggle").addEventListener("click",()=>{const expanded=el.classList.toggle("expanded");el.querySelector(".trace-toggle").setAttribute("aria-expanded",String(expanded));}); return el; }
 function trace(title, message="", data=null, kind="") { const target=$("trace"); target.querySelector(".empty")?.remove(); target.prepend(traceElement(title,message,data,kind)); }
@@ -204,15 +208,20 @@ async function loadHistory() {
     apiJson(`/api/sessions/${sessionId}/events?limit=1`),
   ]);
   durableEventCount = total;
-  $("chat").innerHTML = "";
   renderedSteerEvents.clear();
-  for (const message of messages) {
-    appendMessage(message.role, message.content, message.reasoning,
-      message.content_html, message.reasoning_html, message.tools, selectedAgent);
-  }
+  const chat = $("chat");
+  chat.innerHTML = "";
   if (!messages.length) {
-    $("chat").innerHTML = `<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`;
+    chat.innerHTML = `<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`;
+    return;
   }
+  const fragment = document.createDocumentFragment();
+  for (const message of messages) {
+    fragment.append(buildMessageElement(message.role, message.content, message.reasoning,
+      message.content_html, message.reasoning_html, message.tools, selectedAgent));
+  }
+  chat.append(fragment);
+  chat.scrollTop = chat.scrollHeight;
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
