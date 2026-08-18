@@ -10,7 +10,7 @@ implementation are provided by `llmfetcher`.
 | Entry | Type | Purpose |
 |---|---|---|
 | [`classes/`](classes/INDEX.md) | Package | Web request models and in-memory run/session control dataclasses |
-| [`api/`](api/) | Package | FastAPI routers: `connectors.py` (provider/connector CRUD), `runs.py` (start/status/SSE/stop/force-stop/steer), `sessions.py` (workspace/session/plan/history/archive/graph/usage/artifacts/handoffs), plus the `include_api_routes` assembly and static console index |
+| [`api/`](api/) | Package | FastAPI routers: `connectors.py` (provider/connector CRUD), `runs.py` (start/status/SSE/stop/force-stop/steer), `sessions.py` (workspace/session/plan/history/archive/graph/usage/artifacts/handoffs), `compact.py` (manual context compaction with staged progress), plus the `include_api_routes` assembly and static console index |
 | `webapp.py` | Module | 52-line FastAPI assembly shell: mounts static files, includes the `api/` routers, and re-exports every module so `uvicorn angelus.webapp:app`, the CLI, and the regression suite keep working unchanged |
 | `storage.py` | Module | Durable state root, session registry, append-only event ledger, JSON persistence, and in-memory concurrency guards shared by the API and run worker threads |
 | `connectors.py` | Module | RSA-OAEP encrypted connector credential storage; resolves `connector_id` → decrypted key only inside the server process |

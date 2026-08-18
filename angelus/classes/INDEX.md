@@ -11,6 +11,7 @@ Each class has its own module and is re-exported by `__init__.py`.
 | `run_request.py` | `RunRequest` | `BaseModel` | Incoming run: `session_id`, `workspace_id`, user message, and nested `RunConfig` |
 | `connector_request.py` | `ConnectorRequest` | `BaseModel` | Named persisted connector fields only: name, provider, model, API URL, and API key. It deliberately excludes Agent behavior settings; `connectors.py` encrypts the key before disk persistence. |
 | `steer_request.py` | `SteerRequest` | `BaseModel` | Mid-run instruction queued for the next safe Agent boundary |
+| `compact_request.py` | `CompactRequest` | `BaseModel` | Manual context compaction: target agent name plus the browser run config used to build the compactor |
 | `workspace_request.py` | `WorkspaceRequest` | `BaseModel` | Create or rename a user-visible local workspace/session name |
 | `workspace_delete_request.py` | `WorkspaceDeleteRequest` | `BaseModel` | Explicit confirmation required to delete a workspace/session directory |
 | `task_plan_request.py` | `TaskPlanRequest` | `BaseModel` | Complete task-plan replacement: goal, optional summary, and task records |

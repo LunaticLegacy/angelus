@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
 from ..storage import FRONTEND_ROOT
+from .compact import router as compact_router
 from .connectors import router as connectors_router
 from .runs import router as runs_router
 from .sessions import router as sessions_router
@@ -23,3 +24,4 @@ def include_api_routes(app: FastAPI) -> None:
     app.include_router(connectors_router)
     app.include_router(runs_router)
     app.include_router(sessions_router)
+    app.include_router(compact_router)
