@@ -294,7 +294,19 @@ def stream_events(workspace_id: str, session_id: str, after: int = 0) -> Streami
     session = _get_session(workspace_id, session_id)
     active = session.active
     if active is None:
-        raise HTTPException(status_code=404, detail="No active run")
+        # No live worker (e.g. the run finished between a status check and the
+        # SSE reconnect): replay the durable tail once and close instead of
+        # letting the browser retry a 404 connection forever.
+        def replay_historical():
+            events = _read_session_event_log(workspace_id, session_id)
+            for index, payload in enumerate(events):
+                if index >= max(0, after):
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        return StreamingResponse(
+            replay_historical(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     def generate():
         next_index = max(0, after)
