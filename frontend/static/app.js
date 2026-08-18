@@ -268,7 +268,8 @@ function showSlashHelp() {
     ["","参数支持引号、转义与 --key=value"],
   ];
   const el=document.createElement("article"); el.className="message assistant";
-  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助</small></div><div class="bubble plain-text"><pre>${rows.map(([cmd,desc])=>`${escapeHtml(cmd.padEnd(26))}${escapeHtml(desc)}`).join("\n")}</pre></div>`;
+  const body=rows.map(([cmd,desc])=>`<tr><td>${escapeHtml(cmd)}</td><td>${escapeHtml(desc)}</td></tr>`).join("");
+  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助</small></div><div class="bubble markdown"><table><thead><tr><th>指令</th><th>说明</th></tr></thead><tbody>${body}</tbody></table><p>参数支持引号分组、反斜杠转义与 <code>--key=value</code> 命名参数。</p></div>`;
   $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight;
 }
 function sessionByName(name) { return availableSessions.find(item=>item.name===name || item.id===name); }
