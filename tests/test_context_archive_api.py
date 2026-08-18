@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from angelus import webapp
+from angelus import storage, webapp
 
 
 class ContextArchiveApiTests(unittest.TestCase):
     def test_archive_page_exposes_raw_evidence_and_timeline_with_pagination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            webapp.WORKSPACE_ROOT = Path(directory)
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 context = webapp._context_path("work", "session", "coordinator")
                 context.write_text(json.dumps({"archive": [
@@ -33,12 +33,12 @@ class ContextArchiveApiTests(unittest.TestCase):
                 self.assertIsNone(older["next_before"])
                 self.assertEqual([item["timeline"] for item in older["evidence"]], [1])
             finally:
-                webapp.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_ROOT = original_root
 
     def test_archive_page_is_empty_for_legacy_or_malformed_contexts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            webapp.WORKSPACE_ROOT = Path(directory)
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 context = webapp._context_path("work", "legacy", "coordinator")
                 context.write_text(json.dumps({"messages": [{"role": "user", "content": "old"}]}), encoding="utf-8")
@@ -49,7 +49,7 @@ class ContextArchiveApiTests(unittest.TestCase):
                 context.write_text(json.dumps({"archive": [{"timeline": "bad", "role": "user"}, None]}), encoding="utf-8")
                 self.assertEqual(webapp._archived_context_page("work", "legacy")["evidence"], [])
             finally:
-                webapp.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_ROOT = original_root
 
 
 if __name__ == "__main__":

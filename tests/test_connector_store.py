@@ -5,15 +5,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from angelus import webapp
+from angelus import storage, webapp
 from angelus.classes import ConnectorRequest, RunConfig
 
 
 def test_connector_store_round_trip() -> None:
     """Persist multiple connector records without touching the real local store."""
     with tempfile.TemporaryDirectory() as directory:
-        original_index = webapp.CONNECTOR_INDEX
-        webapp.CONNECTOR_INDEX = Path(directory) / "connectors.json"
+        original_index = storage.CONNECTOR_INDEX
+        storage.CONNECTOR_INDEX = Path(directory) / "connectors.json"
         try:
             connectors = [
                 {"id": "openai", "name": "OpenAI", "provider": "openai", "model": "gpt-4.1-mini", "api_key": "key-a"},
@@ -22,7 +22,7 @@ def test_connector_store_round_trip() -> None:
             webapp._write_connectors(connectors)
             assert webapp._read_connectors() == connectors
             stored = webapp._read_connector_records()
-            assert "key-a" not in (webapp.CONNECTOR_INDEX.read_text(encoding="utf-8"))
+            assert "key-a" not in (storage.CONNECTOR_INDEX.read_text(encoding="utf-8"))
             assert stored[0]["api_key_encrypted"]["algorithm"] == "RSA-OAEP-SHA256"
             assert webapp.list_connectors()["connectors"][0]["has_api_key"] is True
             assert "api_key" not in webapp.list_connectors()["connectors"][0]
@@ -31,14 +31,14 @@ def test_connector_store_round_trip() -> None:
             ))
             assert resolved.api_key == "key-a"
         finally:
-            webapp.CONNECTOR_INDEX = original_index
+            storage.CONNECTOR_INDEX = original_index
 
 
 def test_blank_connector_update_keeps_saved_key_and_response_is_redacted() -> None:
     """A selected connector must remain usable without sending its key back."""
     with tempfile.TemporaryDirectory() as directory:
-        original_index = webapp.CONNECTOR_INDEX
-        webapp.CONNECTOR_INDEX = Path(directory) / "connectors.json"
+        original_index = storage.CONNECTOR_INDEX
+        storage.CONNECTOR_INDEX = Path(directory) / "connectors.json"
         try:
             created = webapp.create_connector(ConnectorRequest(
                 name="Saved", model="model", api_key="private-key",
@@ -50,4 +50,4 @@ def test_blank_connector_update_keeps_saved_key_and_response_is_redacted() -> No
             assert updated["has_api_key"] is True
             assert webapp._read_connectors()[0]["api_key"] == "private-key"
         finally:
-            webapp.CONNECTOR_INDEX = original_index
+            storage.CONNECTOR_INDEX = original_index

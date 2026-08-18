@@ -36,6 +36,7 @@ let traceBefore = null;
 let traceEvents = [];
 let durableEventCount = 0;
 let renderedSteerEvents = new Set();
+let renderedRoundEvents = new Set();
 let currentAgents = [];
 let currentGraph = {nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};
 let availableSessions = [];
@@ -80,7 +81,7 @@ function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEve
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
 function renderMessagesInto(messages, assistantLabel="coordinator") { const chat=$("chat"); chat.innerHTML=""; if(!messages.length){ chat.innerHTML=`<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>`; return; } const fragment=document.createDocumentFragment(); for(const message of messages) fragment.append(buildMessageElement(message.role,message.content,message.reasoning,message.content_html,message.reasoning_html,message.tools,message.role === "assistant" ? assistantLabel : "")); chat.append(fragment); chat.scrollTop=chat.scrollHeight; }
-async function loadAllAgentBehavior() { const [{total=0},{messages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; renderedSteerEvents.clear(); renderMessagesInto(messages, "coordinator"); }
+async function loadAllAgentBehavior() { const [{total=0},{messages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; renderedSteerEvents.clear(); renderedRoundEvents.clear(); renderMessagesInto(messages, "coordinator"); }
 /** Build one escaped, expandable Trace card from persisted or live event data. */
 function traceElement(title, message="", data=null, kind="status", meta={}) { const el=document.createElement("article"); el.className=`trace-event kind-${kind || "status"}`; const detail=data ? `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>` : ""; const labels={status:"状态",tool:"工具",result:"结果",error:"错误",stopped:"已停止"}; const label=labels[kind] || "状态"; const agent=meta.agent ? `<span class="trace-agent">${escapeHtml(meta.agent)}</span>` : ""; const time=meta.time ? `<time class="trace-time">${escapeHtml(meta.time)}</time>` : ""; el.innerHTML=`<button class="trace-toggle" type="button" aria-expanded="false"><span class="trace-summary"><span class="trace-title"><strong>${escapeHtml(title)}</strong>${agent}</span><small class="trace-label">${label}</small></span>${time}<span class="trace-chevron">⌄</span></button><div class="trace-details"><p>${escapeHtml(message)}</p>${detail}</div>`; el.querySelector(".trace-toggle").addEventListener("click",()=>{const expanded=el.classList.toggle("expanded");el.querySelector(".trace-toggle").setAttribute("aria-expanded",String(expanded));}); return el; }
 function traceKind(event) { const ev=event && event.event; const type=String((event && (event.type || event.event)) || "event"); if(ev==="error") return "error"; if(ev==="result") return "result"; if(ev==="stopped") return "stopped"; if(type.includes("tool")) return "tool"; return "status"; }
@@ -211,6 +212,7 @@ async function loadHistory() {
   ]);
   durableEventCount = total;
   renderedSteerEvents.clear();
+  renderedRoundEvents.clear();
   const chat = $("chat");
   chat.innerHTML = "";
   if (!messages.length) {
@@ -241,18 +243,91 @@ async function start(message) {
 }
 function handleEvent(event) {
   durableEventCount+=1;
-  if(event.event === "lifecycle") { traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents); if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
-  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all") loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); else if(selectedAgent === resultAgent) appendMessage("assistant", event.content, event.reasoning, event.content_html, event.reasoning_html, [], resultAgent); updateHeaderMetrics(event); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); traceEvents.unshift(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
+  if(event.event === "lifecycle") { traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents); if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); if(roundContent || roundReasoning){ const roundKey=`${event.timestamp||""}:${roundAgent}:${roundData.round||""}:${roundContent}`; if(!renderedRoundEvents.has(roundKey)){ renderedRoundEvents.add(roundKey); appendMessage("assistant", roundContent, roundReasoning, "", "", [], roundAgent); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
+  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); traceEvents.unshift(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); traceEvents.unshift({...event,type:"agent:error",agent:event.agent || "coordinator"}); tracePayload(event); renderAgentSelector(currentAgents); appendRunErrorBlock("运行失败",event.message); setStatus("运行失败", "error"); return; }
   if(event.event === "stopped") { setWorkspaceIndicator(workspaceId,"done"); traceEvents.unshift(event); tracePayload(event); }
   if(event.event === "done") { setWorkspaceIndicator(workspaceId,"done"); finish(); }
 }
 function finish() { source?.close(); source=null; sourceWorkspaceId=""; setRunning(false); if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
+/* ---- Slash commands -------------------------------------------------- */
+function showSlashHelp() {
+  removeWelcome();
+  const rows=[
+    ["/help","显示本帮助"],
+    ["/new <会话名>","创建并切换到新会话"],
+    ["/switch <会话名>","切换到已有会话"],
+    ["/clear","清空聊天区视图（会话记录仍保留）"],
+    ["/connectors","打开连接设置"],
+    ["/settings [--panel=…]","打开设置对话框"],
+    ["/plan /agents /usage /trace","切换右侧检查器面板"],
+    ["/stop /force-stop","停止 / 强行停止当前运行"],
+    ["/agent <agentId>","查看指定 Agent 会话"],
+    ["/delete <会话名>","删除会话（需确认）"],
+    ["/compact [--agent=<id>]","手动压缩上下文为摘要"],
+    ["","参数支持引号、转义与 --key=value"],
+  ];
+  const el=document.createElement("article"); el.className="message assistant";
+  const body=rows.map(([cmd,desc])=>`<tr><td>${escapeHtml(cmd)}</td><td>${escapeHtml(desc)}</td></tr>`).join("");
+  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助</small></div><div class="bubble markdown"><table><thead><tr><th>指令</th><th>说明</th></tr></thead><tbody>${body}</tbody></table><p>参数支持引号分组、反斜杠转义与 <code>--key=value</code> 命名参数。</p></div>`;
+  $("chat").append(el); $("chat").scrollTop=$("chat").scrollHeight;
+}
+function sessionByName(name) { return availableSessions.find(item=>item.name===name || item.id===name); }
+async function switchSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } await switchSession(target.id); trace("已切换会话", target.name); }
+async function deleteSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } if(!confirm(`删除会话「${target.name}」？此操作不可撤销。`)) return; const response=await fetch(`/api/sessions/${encodeURIComponent(target.id)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:target.id})}); if(!response.ok){ const payload=await response.json().catch(()=>({})); throw new Error(payload.detail||"删除失败"); } await loadWorkspaces(); setStatus(`已删除会话「${target.name}」`); trace("已删除会话", target.name); }
+async function runStop() { await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/stop`,{method:"POST"}); $("stop").disabled=true; setStatus("等待安全停止", "running"); }
+async function runForceStop() { if(!confirm("强行停止当前会话？这会中断当前模型请求，并立即终止正在执行的 Shell 工具进程。")) return; $("force-stop").disabled=true; $("stop").disabled=true; setStatus("正在强行停止", "running"); const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/force-stop`,{method:"POST"}); if(!response.ok){const message=`${response.status} ${response.statusText}`;trace("强行停止失败",message);appendRunErrorBlock("强行停止失败",message);setStatus("停止失败","error"); setRunning(true); return;} trace("强行停止","已请求中断当前模型调用并终止工具进程。"); }
+let compacting=false;
+async function runCompact(agent="coordinator") {
+  if(compacting){ setStatus("压缩已在进行中…", "running"); return; }
+  if($("composer").hidden){ setStatus("运行结束后才能压缩上下文", "error"); return; }
+  compacting=true; $("message").disabled=true;
+  const startedSession=sessionId;
+  try {
+    setStatus("正在压缩上下文…", "running"); trace("上下文压缩", `开始压缩 ${agent} 的上下文…`);
+    const response=await fetch(`/api/sessions/${sessionId}/compact`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent, config: config()})});
+    if(!response.ok || !response.body){ const payload=await response.json().catch(()=>({})); const detail=payload.detail||`${response.status} ${response.statusText}`; setStatus(`压缩失败：${detail}`, "error"); trace("压缩失败", detail); return; }
+    const reader=response.body.getReader(); const decoder=new TextDecoder(); let buffer="";
+    while(true){ const {done, value}=await reader.read(); if(done) break; buffer+=decoder.decode(value,{stream:true}); const lines=buffer.split("\n"); buffer=lines.pop()||""; for(const line of lines){ if(!line.trim()) continue; let record; try{ record=JSON.parse(line); }catch{ continue; } handleCompactStage(record, startedSession); } }
+  } catch(error){ setStatus(`压缩失败：${error.message}`,"error"); trace("压缩失败", error.message); }
+  finally { compacting=false; if(sessionId===startedSession) $("message").disabled=false; }
+}
+function handleCompactStage(record, startedSession) {
+  if(sessionId!==startedSession) return; /* 切换会话后忽略旧压缩流 */
+  const {stage, detail, kind}=record;
+  if(kind==="error"){ setStatus(detail,"error"); trace("压缩失败", detail); }
+  else if(stage==="done"){ setStatus(detail,"idle"); trace("上下文压缩", detail); loadInspectorAgents().catch(()=>{}); }
+  else setStatus(detail,"running");
+}
+const slashHandlers = {
+  help: ()=> showSlashHelp(),
+  "new": (args)=> args.length ? createAndSwitchSession(args.join(" ")) : setStatus("用法：/new <会话名>", "error"),
+  "switch": (args)=> args.length ? switchSessionByName(args.join(" ")).catch(error=>setStatus(`切换失败：${error.message}`,"error")) : setStatus("用法：/switch <会话名>", "error"),
+  clear: ()=> { renderMessagesInto([]); trace("聊天区已清空","仅清空当前视图，会话记录仍会保留。"); },
+  connectors: ()=> openConnectorDialog(),
+  settings: (args,flags)=> openSettings(flags.panel || "connection"),
+  plan: ()=> selectInspectorPanel("inspector-plan"),
+  agents: ()=> selectInspectorPanel("inspector-agents"),
+  usage: ()=> selectInspectorPanel("inspector-usage"),
+  trace: ()=> selectInspectorPanel("inspector-trace"),
+  stop: ()=> runStop().catch(error=>trace("停止失败",error.message)),
+  "force-stop": ()=> runForceStop().catch(error=>trace("强行停止失败",error.message)),
+  agent: (args)=> args.length ? selectAgent(args[0]) : setStatus("用法：/agent <agentId>，可用 /agents 查看", "error"),
+  delete: (args)=> args.length ? deleteSessionByName(args.join(" ")).catch(error=>{ setStatus(`删除失败：${error.message}`,"error"); trace("删除失败",error.message); }) : setStatus("用法：/delete <会话名>", "error"),
+  compact: (args,flags)=> runCompact(String(flags.agent || "coordinator")),
+};
+function dispatchSlashCommand(parsed) {
+  const { command, args, flags } = parsed;
+  const handler = slashHandlers[command];
+  if(!handler){ setStatus(`未知指令 /${command}，输入 /help 查看可用指令`, "error"); return; }
+  handler(args, flags);
+}
+
 /** Resize the composer to its content, restoring the compact size when empty. */
 function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,170)}px`; }
-function connectRunEvents(runId) { source?.close(); const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?after=${durableEventCount}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId) handleEvent(JSON.parse(event.data)); }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); }; }
-async function restoreRunState() { try { const state=await apiJson(`/api/workspaces/${workspaceId}/runs/${sessionId}/status`); if(state.active && state.run_id){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(state.run_id); return; } if(state.status === "error" || state.status === "interrupted"){ const title=state.status === "interrupted" ? "执行已中断" : "上次运行失败"; setStatus(title,"error"); appendRunErrorBlock(title,state.error); trace(title,state.error); return; } if(state.status === "completed") setStatus("已完成"); else if(state.status === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
-$("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; $("message").value=""; resizeComposer(); start(message);});
+function connectRunEvents(runId, after=durableEventCount) { source?.close(); const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?after=${after}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId) handleEvent(JSON.parse(event.data)); }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); else if(eventSource.readyState===EventSource.CONNECTING && source===eventSource) setStatus("连接中断，正在重连…", "running"); }; }
+async function restoreRunState() { try { const state=await apiJson(`/api/workspaces/${workspaceId}/runs/${sessionId}/status`); if(state.active && state.run_id){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(state.run_id, durableEventCount); return; } if(state.status === "error" || state.status === "interrupted"){ const title=state.status === "interrupted" ? "执行已中断" : "上次运行失败"; setStatus(title,"error"); appendRunErrorBlock(title,state.error); trace(title,state.error); return; } if(state.status === "completed") setStatus("已完成"); else if(state.status === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
+$("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; $("message").value=""; resizeComposer(); const parsed=parseSlashCommand(message); if(parsed){ dispatchSlashCommand(parsed); return; } start(message);});
 $("message").addEventListener("keydown", (event)=>{
   // Plain Enter submits; Shift/Alt+Enter insert a newline in the textarea.
   if(event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return;
@@ -264,8 +339,8 @@ $("steer-composer").addEventListener("submit", event=>{event.preventDefault(); c
 $("steer-message").addEventListener("keydown", event=>{ if(event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return; event.preventDefault(); $("steer-composer").requestSubmit(); });
 $("steer-message").addEventListener("input", resizeSteerComposer);
 $("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",updateModelSummary);
-$("stop").addEventListener("click", async()=>{await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/stop`,{method:"POST"}); $("stop").disabled=true;setStatus("等待安全停止", "running");});
-$("force-stop").addEventListener("click", async()=>{if(!confirm("强行停止当前会话？这会中断当前模型请求，并立即终止正在执行的 Shell 工具进程。"))return; $("force-stop").disabled=true; $("stop").disabled=true; setStatus("正在强行停止", "running"); const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/force-stop`,{method:"POST"}); if(!response.ok){const message=`${response.status} ${response.statusText}`;trace("强行停止失败",message);appendRunErrorBlock("强行停止失败",message);setStatus("停止失败","error"); setRunning(true); return;} trace("强行停止","已请求中断当前模型调用并终止工具进程。");});
+$("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
+$("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 async function createAndSwitchSession(name) {
   if(!name?.trim()) return;
