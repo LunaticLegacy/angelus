@@ -10,7 +10,13 @@ implementation are provided by `llmfetcher`.
 | Entry | Type | Purpose |
 |---|---|---|
 | [`classes/`](classes/INDEX.md) | Package | Web request models and in-memory run/session control dataclasses |
-| `webapp.py` | Module | FastAPI control plane: workspaces, sessions, encrypted connectors, runs/SSE, history, archive, graph, usage, and plans |
+| [`api/`](api/) | Package | FastAPI routers: `connectors.py` (provider/connector CRUD), `runs.py` (start/status/SSE/stop/force-stop/steer), `sessions.py` (workspace/session/plan/history/archive/graph/usage/artifacts/handoffs), plus the `include_api_routes` assembly and static console index |
+| `webapp.py` | Module | 52-line FastAPI assembly shell: mounts static files, includes the `api/` routers, and re-exports every module so `uvicorn angelus.webapp:app`, the CLI, and the regression suite keep working unchanged |
+| `storage.py` | Module | Durable state root, session registry, append-only event ledger, JSON persistence, and in-memory concurrency guards shared by the API and run worker threads |
+| `connectors.py` | Module | RSA-OAEP encrypted connector credential storage; resolves `connector_id` → decrypted key only inside the server process |
+| `history.py` | Module | Transcript, archive, usage, and legacy-context rebuilds from the event ledger; legacy `.llmfetcher` state migration |
+| `runtime.py` | Module | llmfetcher Agent/Swarm construction (`_build_agent` / `_build_swarm`), credential-free runtime-profile snapshots, session memory and task-plan stores |
+| `markdown.py` | Module | Bounded LRU safe Markdown→HTML rendering shared by history rebuilds and the API |
 | `cli.py` | Module | Angelus CLI layer: local `web` and `session` commands plus delegated llmfetcher commands |
 | `task_planning.py` | Module | Session-local JSON task-plan store used by the web API and Agent planning tools |
 | `__init__.py` | Module | Public Angelus facade; re-exports llmfetcher Agent and Swarm primitives |
@@ -44,19 +50,21 @@ source for browser-provided API keys.
 
 ## Primary Control-Plane Flows
 
-- **Run / stop / force-stop / steer** → `webapp.py`: a `BrowserSession`
+- **Run / stop / force-stop / steer** → `api/runs.py`: a `BrowserSession`
   prevents concurrent runs. Normal stop is cooperative and takes effect at a
   completed model/tool boundary. Force-stop cancels the active provider
   transport, prevents retry/fallback, and kills registered Shell processes.
   Runs append durable events before notifying SSE clients; normal, stopped,
-  and error terminals update `run-state.json`.
-- **History and observability** → `webapp.py`: session messages, archive,
-  graph, events, per-call token ledger, and Agent/Swarm views are reconstructed
-  from durable session artifacts.
-- **Agent construction** → `webapp.py._build_agent`: creates a session-owned
+  and error terminals update `run-state.json`. `stream_events` replays the
+  durable event ledger when no run is active (the reconnect path) and streams
+  live events during a run.
+- **History and observability** → `api/sessions.py` + `history.py`: session
+  messages, archive, graph, events, per-call token ledger, and Agent/Swarm
+  views are reconstructed from durable session artifacts.
+- **Agent construction** → `runtime._build_agent`: creates a session-owned
   llmfetcher Agent with persisted graph context, a zero-context semantic graph
   worker, task-planning tools, and optionally sandboxed shell tools.
-- **Swarm execution** → `webapp.py._build_swarm` plus llmfetcher Swarm:
+- **Swarm execution** → `runtime._build_swarm` plus llmfetcher Swarm:
   Angelus persists its display view and relays lifecycle events; individual
   workers retain their own session-local context paths.
 - **CLI** → `cli.py`: `web` starts the local FastAPI console; `session list`
@@ -65,7 +73,13 @@ source for browser-provided API keys.
 
 ## Intent Routing
 
-- **HTTP endpoint, persistence, connectors, SSE, UI data** → `webapp.py`
+- **HTTP endpoints, SSE, static console** → `api/` routers (`connectors.py`,
+  `runs.py`, `sessions.py`), assembled by `webapp.py`
+- **Persistence, state root, concurrency guards** → `storage.py`
+- **Connector credentials (encrypt/resolve)** → `connectors.py`
+- **History / archive / usage rebuilds** → `history.py`
+- **Agent / Swarm construction** → `runtime.py`
+- **Markdown rendering** → `markdown.py`
 - **Request and in-memory run models** → `classes/INDEX.md`
 - **Task-plan persistence** → `task_planning.py`
 - **Agent, context, graph memory, tools, or Swarm algorithm** → corresponding
