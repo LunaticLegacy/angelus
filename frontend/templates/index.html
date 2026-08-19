@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-28" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-32" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -53,6 +53,14 @@
         </div>
       </div>
     </dialog>
+    <dialog id="context-graph-dialog" class="session-dialog context-graph-dialog" aria-labelledby="context-graph-title">
+      <div class="context-graph-dialog-body">
+        <header class="context-graph-dialog-head"><div><p class="eyebrow">AGENT CONTEXT</p><h2 id="context-graph-title">上下文图</h2><p id="context-graph-subtitle">读取 Agent 已保存的上下文图。</p></div><button id="close-context-graph" class="dialog-close" type="button" aria-label="关闭上下文图">×</button></header>
+        <div id="context-graph-summary" class="context-graph-summary"></div>
+        <div id="context-graph-canvas" class="context-graph-canvas" aria-label="上下文实体关系图"></div>
+        <div class="context-graph-details"><section><h3>实体</h3><div id="context-graph-nodes" class="context-graph-nodes"></div></section><section><h3>详情</h3><div id="context-graph-detail" class="context-graph-detail"><p class="empty">点击图中的实体查看其摘要、出现时间和关联。</p></div></section></div>
+      </div>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
 
@@ -95,6 +103,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-51"></script>
+    <script type="module" src="/static/app.js?v=workbench-56"></script>
   </body>
 </html>

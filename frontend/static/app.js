@@ -157,7 +157,61 @@ function stateLabel(state) { return ({idle:"待机",queued:"等待执行",runnin
 function stateView(canonical, message, agentId) { const acknowledged=canonical==="completed" && acknowledgedAgents().has(agentId); const ui=acknowledged?"idle":canonical==="queued"?"pending":["failed","interrupted"].includes(canonical)?"error":canonical==="cancelled"?"idle":canonical; return {canonical,ui,message:acknowledged?"已确认完成":message}; }
 function agentRunState(agentId, agents=currentAgents) { return agentStateView(agentId,agents).ui; }
 function acknowledgeAgent(agentId) { const acknowledged=acknowledgedAgents(); if(agentId === "all") currentAgents.filter(agent=>agent.id !== "all" && agentRunState(agent.id) === "completed").forEach(agent=>acknowledged.add(agent.id)); else acknowledged.add(agentId); localStorage.setItem(acknowledgementKey(),JSON.stringify([...acknowledged])); renderAgentSelector(currentAgents); }
-function renderAgentSelector(agents=[]) { const row=$("agent-row"); const visible=agents.length ? agents : [{id:"all",name:"全部",kind:"filter"}]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"当前会话":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return `<button class="${agent.id==="all"?"agent-filter":"agent-card"} ${selected?"selected active":""}" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></button>`;}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); }
+/** Render a secondary context-graph action without changing Agent-card selection. */
+function agentCard(agent, selected, tone, icon, subtitle, view, title) {
+  if (agent.id === "all") return `<button class="agent-filter ${selected?"selected active":""}" type="button" data-agent="all" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="agent-state ${view.ui}" data-ack-agent="all" title="${escapeHtml(title)}"></i></button>`;
+  return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span></button><button class="agent-context-button" type="button" data-context-agent="${escapeHtml(agent.id)}" title="查看 ${escapeHtml(agent.name)} 的上下文图" aria-label="查看 ${escapeHtml(agent.name)} 的上下文图">◎</button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
+}
+function renderAgentSelector(agents=[]) { const row=$("agent-row"); const visible=agents.length ? agents : [{id:"all",name:"全部",kind:"filter"}]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"当前会话":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openContextGraph(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); }
+
+/** Map untrusted entity types to the finite visual palette used by the graph. */
+function contextNodeTone(type) { return ({file:"blue",tool:"amber",person:"pink",decision:"green",module:"purple",framework:"purple"})[String(type).toLowerCase()] || "slate"; }
+/** Render the selected entity and its in-graph relationships into the dialog detail pane. */
+function renderContextGraphDetail(graph, nodeId) {
+  const node=(graph.nodes||[]).find(item=>item.id===nodeId); const target=$("context-graph-detail");
+  if(!node){target.innerHTML='<p class="empty">选择一个实体查看详情。</p>';return;}
+  const relations=(graph.edges||[]).filter(edge=>edge.source_id===nodeId||edge.target_id===nodeId);
+  const names=Object.fromEntries((graph.nodes||[]).map(item=>[item.id,item.name]));
+  const aliases=(node.aliases||[]).length ? `<p><b>别名</b>${escapeHtml(node.aliases.join("、"))}</p>` : "";
+  const summary=node.summary ? `<p><b>摘要</b>${escapeHtml(node.summary)}</p>` : '<p class="muted">尚无实体摘要。</p>';
+  const rows=relations.length ? relations.map(edge=>{const other=edge.source_id===nodeId?edge.target_id:edge.source_id;return `<li>${escapeHtml(edge.relation)} <span>· ${escapeHtml(names[other]||other)} · 时间线 ${edge.last_seen}</span></li>`;}).join("") : '<li class="muted">尚无可展示的内部关系。</li>';
+  target.innerHTML=`<header><span class="context-entity-dot ${contextNodeTone(node.entity_type)}"></span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.entity_type)} · 出现 ${Number(node.freq||0)} 次</small></div></header>${summary}${aliases}<p><b>时间线</b>${Number(node.first_seen||0)} — ${Number(node.last_seen||0)}</p><h4>关联</h4><ul>${rows}</ul>`;
+}
+/** Build the bounded relationship view, then bind entity selections for the current graph. */
+function renderContextGraph(payload) {
+  const graph=payload.graph||{}; const nodes=graph.nodes||[]; const edges=graph.edges||[];
+  $("context-graph-title").textContent=`${payload.agent} · 上下文图`;
+  $("context-graph-subtitle").textContent=graph.available?"这是 Agent 最近一次持久化 checkpoint 的长期记忆索引。":"该 Agent 尚未生成可查看的上下文图。";
+  const ctx=payload.context||{};
+  $("context-graph-summary").innerHTML=`<span>实体 <b>${Number(graph.node_count||0)}</b></span><span>关系 <b>${Number(graph.edge_count||0)}</b></span><span>社区 <b>${Number(graph.community_count||0)}</b></span><span>上下文 <b>${Number(ctx.messages||0)}</b> 条</span>${graph.truncated?'<small>仅显示最近的 60 个实体</small>':""}`;
+  const canvas=$("context-graph-canvas"), list=$("context-graph-nodes");
+  if(!graph.available || !nodes.length){canvas.innerHTML='<p class="empty">尚无实体。图会在 Agent 处理消息并完成 checkpoint 后出现。</p>';list.innerHTML="";$("context-graph-detail").innerHTML='<p class="empty">没有可检查的实体。</p>';return;}
+  // Spread dense graphs across the full landscape canvas while leaving space
+  // above and below every label instead of shrinking them into the center.
+  const width=640,height=270,centerX=width/2,centerY=height/2;
+  const radiusX=Math.min(245,Math.max(140,nodes.length*14));
+  const radiusY=Math.min(95,Math.max(68,nodes.length*5));
+  const positions=Object.fromEntries(nodes.map((node,index)=>{const angle=(Math.PI*2*index/nodes.length)-Math.PI/2;return [node.id,{x:centerX+Math.cos(angle)*radiusX,y:centerY+Math.sin(angle)*radiusY}];}));
+  // Each point is the visual center of its absolutely positioned entity
+  // button, so a relation starts and ends at the center of its two entities.
+  const lines=edges.map(edge=>{const source=positions[edge.source_id],target=positions[edge.target_id];if(!source||!target)return "";return `<line x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" class="${edge.valid===false?"invalid":""}"><title>${escapeHtml(edge.relation)}</title></line>`;}).join("");
+  const points=nodes.map(node=>{const point=positions[node.id];return `<button type="button" class="context-graph-point ${contextNodeTone(node.entity_type)}" data-context-node="${escapeHtml(node.id)}" style="left:${(point.x/width)*100}%;top:${(point.y/height)*100}%" title="${escapeHtml(node.name)} · ${escapeHtml(node.entity_type)}">${escapeHtml(node.name.slice(0,18))}</button>`;}).join("");
+  // Stretch the SVG to the canvas instead of preserving its intrinsic ratio.
+  // This gives SVG endpoints the same percentage coordinate system as buttons.
+  canvas.innerHTML=`<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>${points}`;
+  list.innerHTML=nodes.map(node=>`<button type="button" class="context-graph-list-item" data-context-node="${escapeHtml(node.id)}"><span class="context-entity-dot ${contextNodeTone(node.entity_type)}"></span><span><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.entity_type)} · ${Number(node.freq||0)} 次</small></span></button>`).join("");
+  document.querySelectorAll("[data-context-node]").forEach(control=>control.addEventListener("click",()=>renderContextGraphDetail(graph,control.dataset.contextNode)));
+  renderContextGraphDetail(graph,nodes[0].id);
+}
+/** Fetch a single Agent's persisted graph and open it in the theme-aware dialog. */
+async function openContextGraph(agentId) {
+  const dialog=$("context-graph-dialog"); if(!dialog) return;
+  $("context-graph-title").textContent=`${agentId} · 上下文图`; $("context-graph-subtitle").textContent="正在读取最近一次持久化 checkpoint…";
+  $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
+  if(!dialog.open) dialog.showModal();
+  try { renderContextGraph(await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context-graph`)); }
+  catch(error) { $("context-graph-subtitle").textContent="无法读取上下文图。"; $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; }
+}
 async function loadAgents() { try { const payload=await apiJson(`/api/sessions/${sessionId}/agents`); renderAgentSelector(payload.agents); } catch(error) { trace("Agent 列表加载失败",error.message); renderAgentSelector(); } }
 async function selectAgent(agentId) { if(!agentId || agentId===selectedAgent) return; selectedAgent=agentId; try { await rehydrateSelectedView({reloadAgents:true}); } catch(error) { trace("Agent 会话加载失败",error.message); } }
 function renderGraph(graph) { const target=$("execution-graph"); const nodes=graph.nodes||[]; if(!nodes.length){target.innerHTML=`<p class="empty">当前 session 尚未启动 Swarm。</p>`;return;} const nodeIds=new Set(nodes.map(node=>node.id));const incoming={},outgoing={},parent={};for(const edge of graph.edges||[]){if(!nodeIds.has(edge.source)||!nodeIds.has(edge.target))continue;if((edge.kind||"dependency")==="dispatch"){if(edge.source!==edge.target)parent[edge.target]=edge.source;continue;}(incoming[edge.target]??=[]).push(edge.source);(outgoing[edge.source]??=[]).push(edge.target);}for(const node of nodes){if(node.parent&&nodeIds.has(node.parent)&&node.parent!==node.id)parent[node.id]=node.parent;}const children={};for(const [child,ancestor] of Object.entries(parent))(children[ancestor]??=[]).push(child);const byId=Object.fromEntries(nodes.map(node=>[node.id,node]));const rendered=new Set();const renderNode=(nodeId,depth=0,path=new Set())=>{const node=byId[nodeId];if(!node||path.has(nodeId))return "";rendered.add(nodeId);const nextPath=new Set(path).add(nodeId);const view=agentStateView(nodeId);const deps=incoming[nodeId]||[];const downstream=outgoing[nodeId]||[];const descendants=(children[nodeId]||[]).sort().map(child=>renderNode(child,depth+1,nextPath)).join("");return `<div class="graph-branch"><article class="graph-node ${view.ui}" style="--graph-depth:${depth}"><div class="graph-node-head"><strong>${escapeHtml(node.id)}</strong><i class="graph-node-state ${view.ui}"></i></div><span>${node.dynamic?"子智能体":node.kind==="routing"?"路由节点":"Agent"} · ${escapeHtml(stateLabel(view.canonical))}</span>${node.parent?`<small>调度者：${escapeHtml(node.parent)}</small>`:""}${deps.length?`<small>依赖：${escapeHtml(deps.join("、"))}</small>`:""}${downstream.length?`<small>下游：${escapeHtml(downstream.join("、"))}</small>`:""}${view.message?`<small>${escapeHtml(view.message)}</small>`:""}</article>${descendants?`<div class="graph-children">${descendants}</div>`:""}</div>`;};const roots=nodes.filter(node=>!parent[node.id]).map(node=>node.id).sort();const html=roots.map(id=>renderNode(id)).join("");const leftovers=nodes.filter(node=>!rendered.has(node.id)).map(node=>renderNode(node.id)).join("");target.innerHTML=html+leftovers; }
@@ -186,16 +240,22 @@ function agentContextStats(agent) {
   return `<small class="agent-context" title="消息 ${messages} 条 · 字符 ${chars + abstractChars} · 压缩阈值 ${threshold}">上下文：${messages} 条 · ${charsLabel} 字符${thresholdLabel}${ratioLabel}${compactLabel}</small>`;
 }
 
+/** Render the delegation tree; activating one Agent opens its context graph. */
 function renderAgentTopology(agents, graph) {
   const target=$("inspector-agents-list");
   if(!agents.length){target.innerHTML=`<p class="empty">当前 session 尚未创建 Agent。</p>`;return;}
   const byId=Object.fromEntries(agents.map(agent=>[agent.id,agent])); const parent={}; const children={};
+  // Prefer explicit parents, then recover the same hierarchy from dispatch edges.
   for(const agent of agents) if(agent.parent && byId[agent.parent] && agent.parent!==agent.id) parent[agent.id]=agent.parent;
   for(const edge of graph.edges||[]) if(edge.kind==="dispatch" && byId[edge.source] && byId[edge.target] && edge.source!==edge.target) parent[edge.target]=edge.source;
   for(const [child,leader] of Object.entries(parent)) (children[leader]??=[]).push(child);
   const taskByAgent={}; for(const [taskId,agentId] of Object.entries(graph.assignments||{})) (taskByAgent[agentId]??=[]).push(taskId);
-  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${agent.dynamic?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
+  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文图" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${agent.dynamic?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
   const roots=agents.filter(agent=>!parent[agent.id]).map(agent=>agent.id).sort((a,b)=>a==="coordinator"?-1:b==="coordinator"?1:a.localeCompare(b)); const html=roots.map(id=>render(id)).join("")+agents.filter(agent=>!rendered.has(agent.id)).map(agent=>render(agent.id)).join(""); target.innerHTML=html;
+  target.querySelectorAll("[data-context-agent]").forEach(control=>{
+    control.addEventListener("click",()=>openContextGraph(control.dataset.contextAgent));
+    control.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openContextGraph(control.dataset.contextAgent);}});
+  });
 }
 async function loadInspectorAgents() { const [agentPayload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/agents`),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,graphPayload);renderAgentSelector(agentPayload.agents); }
 function usageCells(usage) { return [["Input",usage.input],["Output",usage.output],["Total",usage.total],["Cached",usage.cached],["Reasoning",usage.reasoning]].map(([label,value])=>`<span>${label}<b>${Number(value || 0).toLocaleString()}</b></span>`).join(""); }
@@ -340,6 +400,7 @@ $("message").addEventListener("input", resizeComposer);
 $("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",updateModelSummary);
 $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
+$("close-context-graph").addEventListener("click", ()=>$("context-graph-dialog").close());
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 async function createAndSwitchSession(name) {
   if(!name?.trim()) return;
