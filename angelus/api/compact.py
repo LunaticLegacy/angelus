@@ -25,10 +25,35 @@ from ..storage import _get_session, _safe_id, _session_path
 router = APIRouter()
 
 
-def _stage(stage: str, detail: str, kind: str = "progress") -> str:
-    """Serialize one progress record as an NDJSON line."""
+def _stage(
+    stage: str,
+    detail: str,
+    kind: str = "progress",
+    *,
+    error: str | None = None,
+    raw_content: str | None = None,
+) -> str:
+    """Serialize one compaction progress record as an NDJSON line.
+
+    Args:
+        stage: Stable progress stage identifier consumed by the browser.
+        detail: Human-readable status text safe to render directly.
+        kind: Event category: ``progress``, ``done``, or ``error``.
+        error: Optional diagnostic reason for a failed compaction attempt.
+        raw_content: Optional unparseable model ``content`` returned by the
+            compactor. It is streamed to the current browser request only and
+            is never persisted with the session context.
+
+    Returns:
+        One newline-delimited JSON event for the streaming response.
+    """
+    payload: dict[str, str] = {"stage": stage, "detail": detail, "kind": kind}
+    if error:
+        payload["error"] = error
+    if raw_content:
+        payload["raw_content"] = raw_content
     return json.dumps(
-        {"stage": stage, "detail": detail, "kind": kind},
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
     ) + "\n"
@@ -66,7 +91,9 @@ def compact_session(session_id: str, request: CompactRequest) -> StreamingRespon
     Returns:
         An NDJSON stream of progress stages; the final record carries
         ``kind: "done"`` (success) or ``kind: "error"`` (failure with the
-        context left untouched).
+        context left untouched). A failed model parse also carries a
+        transient ``error`` reason and ``raw_content`` field for the browser
+        to inspect; neither is persisted in session state.
 
     Raises:
         HTTPException: 409 when the session has an active run (compaction
@@ -112,10 +139,21 @@ def compact_session(session_id: str, request: CompactRequest) -> StreamingRespon
         try:
             compacted = handler.compact()
         except Exception as exc:  # pragma: no cover - defensive
-            yield _stage("error", f"压缩失败：{exc}", "error")
+            yield _stage(
+                "error",
+                "压缩模型请求失败，上下文保持原样",
+                "error",
+                error=handler.last_compaction_error or str(exc),
+            )
             return
         if not compacted:
-            yield _stage("error", "压缩失败，上下文保持原样", "error")
+            yield _stage(
+                "error",
+                "压缩失败，上下文保持原样",
+                "error",
+                error=handler.last_compaction_error,
+                raw_content=handler.last_compaction_raw,
+            )
             return
         yield _stage("saving", "摘要已生成，正在保存…", "progress")
         if not handler.save(context_path):
