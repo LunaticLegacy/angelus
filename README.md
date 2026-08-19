@@ -94,6 +94,23 @@ npm run build     # 构建安装包
 
 开发时可通过 `ANGELUS_BACKEND_EXECUTABLE` 指定自定义后端可执行文件。
 
+## 持续集成与发布
+
+GitHub Actions 已配置在 `.github/workflows/desktop-release.yml`：
+
+- 每次推送 `v*` 标签时，自动构建 Linux、Windows、macOS Intel 和 macOS Apple Silicon 安装包；
+- 构建产物自动上传到 GitHub Release，并以 Draft 形式等待发布确认；
+- Pull Request 和主分支推送继续由基础 CI 执行测试、编译检查和 Python 包构建。
+
+创建发布版本：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Linux 本地构建 AppImage 需要 `linuxdeploy`、`patchelf` 和 WebKitGTK 开发包；CI 已自动安装这些依赖。若只需本地 Debian/RPM 包，可按 Tauri CLI 的 `--bundles deb,rpm` 选项构建。
+
 ## 数据与隐私
 
 每个会话独立保存在 `workspace/<session>/`，包括：
