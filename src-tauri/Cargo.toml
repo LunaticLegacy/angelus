@@ -1,0 +1,13 @@
+[package]
+name = "angelus-desktop"
+version = "0.1.0"
+description = "Desktop shell for the Angelus Agent workbench"
+authors = ["Angelus contributors"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.8", features = [] }
+url = "2.5"

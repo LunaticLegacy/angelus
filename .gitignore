@@ -25,6 +25,7 @@ htmlcov/
 # IDE and editor files
 .vscode/
 .idea/
+node_modules/
 *.swp
 *.swo
 *~
@@ -56,3 +57,10 @@ workspace/
 # Local RAG datasets and generated indexes are not part of the superproject.
 benchmark/
 workspace/
+
+# Tauri and PyInstaller build outputs.
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+/*-backend.spec

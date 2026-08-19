@@ -1,0 +1,15 @@
+{
+  "name": "angelus-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tauri desktop shell for the Angelus local Agent workbench",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:backend": "bash scripts/build-backend.sh"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4"
+  }
+}
