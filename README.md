@@ -98,7 +98,7 @@ npm run build     # 构建安装包
 
 GitHub Actions 已配置在 `.github/workflows/desktop-release.yml`：
 
-- 每次推送 `v*` 标签时，自动构建 Linux、Windows、macOS Intel 和 macOS Apple Silicon 安装包；
+- 每次推送 `v*` 标签时，自动构建 Linux 和 Windows 安装包；
 - 构建产物自动上传到 GitHub Release，并以 Draft 形式等待发布确认；
 - Pull Request 和主分支推送继续由基础 CI 执行测试、编译检查和 Python 包构建。
 

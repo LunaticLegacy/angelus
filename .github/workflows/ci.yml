@@ -103,14 +103,6 @@ jobs:
             os: windows-latest
             bundles: nsis,msi
             artifact: windows
-          - name: macOS Intel
-            os: macos-13
-            bundles: app,dmg
-            artifact: macos-intel
-          - name: macOS Apple Silicon
-            os: macos-14
-            bundles: app,dmg
-            artifact: macos-arm64
     runs-on: ${{ matrix.os }}
     needs: [test, checks]
     steps:
