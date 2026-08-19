@@ -19,7 +19,7 @@ class WebAppContextThresholdTests(unittest.TestCase):
         self.assertEqual(webapp.RunConfig(model="demo").max_retries, 3)
 
     def test_build_agent_uses_browser_context_threshold(self) -> None:
-        """Pass a session's configured threshold into its history handler."""
+        """Pass browser settings and graph retrieval policy into its handler."""
         config = webapp.RunConfig(
             model="demo",
             api_key="test-key",
@@ -29,6 +29,7 @@ class WebAppContextThresholdTests(unittest.TestCase):
 
         self.assertEqual(agent.max_context_threshold, 8192)
         self.assertEqual(agent.context_handler.compress_threshold, 8192)
+        self.assertEqual(agent.context_handler.retrieval_trigger, "every_message")
         self.assertEqual(agent.llm_fetcher.default_backend_config.max_retries, 3)
 
     def test_context_threshold_rejects_unusable_values(self) -> None:

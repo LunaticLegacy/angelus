@@ -126,6 +126,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
             compacting_fetcher=fetcher,
             extraction_fetcher=semantic_worker,
             query_fetcher=semantic_worker,
+            retrieval_trigger="every_message",
             max_context_threshold=config.max_context_threshold,
         ),
     )

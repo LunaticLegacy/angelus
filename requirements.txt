@@ -1,0 +1,6 @@
+# Install the checked-out LLMFetcher submodule and Angelus itself together.
+# On Python 3.14, bootstrap with:
+#   python -m pip install --upgrade pip setuptools
+#   python -m pip install --no-build-isolation -r requirements.txt
+-e ./llmfetcher
+-e .[test]
