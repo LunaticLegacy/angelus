@@ -79,7 +79,7 @@ function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(c
 /** Append a single transcript turn live (real-time path). */
 function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="") { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools},agentName); }
 /** Display a durable run failure in the chat pane without hiding prior work. */
-function appendRunErrorBlock(title, message) { chatView.appendError(title, message); }
+function appendRunErrorBlock(title, message, rawContent="") { chatView.appendError(title, message, rawContent); }
 /** Render one durably applied steering message beside the original user input. */
 function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEvents.has(eventKey)) return; if(eventKey) renderedSteerEvents.add(eventKey); chatView.append({role:"steer",content:text}); }
 /** Load the canonical session transcript using the same detailed message UI. */
@@ -356,8 +356,8 @@ async function runCompact(agent="coordinator") {
 }
 function handleCompactStage(record, startedSession) {
   if(sessionId!==startedSession) return; /* 切换会话后忽略旧压缩流 */
-  const {stage, detail, kind}=record;
-  if(kind==="error"){ setStatus(detail,"error"); trace("压缩失败", detail); }
+  const {stage, detail, kind, error="", raw_content:rawContent=""}=record;
+  if(kind==="error"){ const diagnostic=error ? `${detail}\n原因：${error}` : detail; setStatus(detail,"error"); trace("压缩失败", diagnostic); appendRunErrorBlock("上下文压缩失败", diagnostic, rawContent); }
   else if(stage==="done"){ setStatus(detail,"idle"); trace("上下文压缩", detail); loadInspectorAgents().catch(()=>{}); }
   else setStatus(detail,"running");
 }

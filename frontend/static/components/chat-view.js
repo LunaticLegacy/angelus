@@ -69,11 +69,15 @@ export function createChatView({ getAgentLabel }) {
     chat.scrollTop = chat.scrollHeight;
   }
 
-  function appendError(title, message) {
+  function appendError(title, message, rawContent = "") {
+    /** Display a user-visible failure and, when supplied, its raw model reply. */
     removeWelcome();
     const element = document.createElement("article");
     element.className = "run-error";
-    element.innerHTML = `<strong>⚠ ${escapeHtml(title)}</strong><p>${escapeHtml(message || "未提供错误详情。")}</p>`;
+    const raw = rawContent
+      ? `<details class="run-error-raw"><summary>查看 Agent 原始返回</summary><pre>${escapeHtml(rawContent)}</pre></details>`
+      : "";
+    element.innerHTML = `<strong>⚠ ${escapeHtml(title)}</strong><p>${escapeHtml(message || "未提供错误详情。")}</p>${raw}`;
     $("chat").append(element);
     $("chat").scrollTop = $("chat").scrollHeight;
   }

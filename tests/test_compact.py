@@ -137,6 +137,8 @@ class TestCompact:
             assert last["stage"] == "error"
             assert last["kind"] == "error"
             assert "保持原样" in last["detail"]
+            assert "<context_abstract>" in last["error"]
+            assert last["raw_content"] == "抱歉，我无法总结这些内容。"
             assert context_path.read_text(encoding="utf-8") == before
         finally:
             storage.WORKSPACE_ROOT = original_root
