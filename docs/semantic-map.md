@@ -16,8 +16,11 @@ Projects the newest lifecycle evidence, then the persisted graph
 usage cards. `agentId` identifies one Agent and `agents` is the visible Agent
 list used to calculate the aggregate `all` state. A session-wide active run
 never changes an Agent's state by itself: an Agent without evidence returns
-`idle` with the message “尚无执行事件”. It is called by all three Agent-status
-renderers and has no I/O beyond reading browser-local acknowledgements.
+`idle` with the message “尚无执行事件”. When the persisted run terminal is
+`completed`, the aggregate `all` state is completed even if an individual
+worker remains failed; the worker's own state is unchanged. It is called by
+all three Agent-status renderers and has no I/O beyond reading browser-local
+acknowledgements.
 
 ### `frontend.static.components.dom.$(id)` / `escapeHtml(text)`
 
@@ -570,10 +573,11 @@ the plan view when a browser persisted the removed steer-inspector tab.
 
 The Swarm configuration fields are included in connector and run payloads.
 `loadGraph()` fetches the session graph view at initialization, session switch,
-manual refresh, and graph lifecycle events. `renderGraph()` nests only explicit
-dynamic dispatch parents, lists dependency upstream/downstream separately, and
-uses the shared Agent state projection for labels and colors. The trace
-prefixes every event with its emitting Agent identity.
+manual refresh, and graph lifecycle events. The Agents inspector renders only
+`renderAgentTopology()` so hierarchy, task assignment, and status are not
+duplicated by a second execution-graph tree. The graph snapshot still supplies
+the selector, topology, usage status projection, and task assignment data. The
+trace prefixes every event with its emitting Agent identity.
 
 ### `web/static/app.js` composer keyboard handling
 

@@ -104,6 +104,23 @@ def test_running_session_does_not_turn_unknown_agents_into_running_agents() -> N
     assert "const persisted=currentGraph.node_states?.[agentId];" in script
 
 
+def test_completed_swarm_is_blue_even_when_a_worker_failed() -> None:
+    """Represent successful coordinator recovery as a completed aggregate run."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'currentGraph.run_status?.status==="completed"' in script
+    assert 'return stateView("completed","当前会话：运行完毕",agentId);' in script
+    assert 'finish(); loadGraph().then(loadAgents)' in script
+
+
+def test_agents_panel_renders_only_the_single_topology_tree() -> None:
+    """Avoid presenting the same Swarm hierarchy twice in the Agents panel."""
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="inspector-agents-list"' in template
+    assert 'id="execution-graph"' not in template
+
+
 def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     """Keep applied steering beside the original user messages in chat."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
