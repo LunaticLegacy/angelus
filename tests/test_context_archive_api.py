@@ -9,6 +9,53 @@ from angelus import storage, webapp
 
 
 class ContextArchiveApiTests(unittest.TestCase):
+    def test_agent_context_graph_is_bounded_and_exposes_only_visible_relations(self) -> None:
+        """The graph inspector receives a safe per-Agent persisted snapshot."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
+            try:
+                graph_path = webapp._context_path("work", "session", "worker")
+                graph_path.with_name(f"{graph_path.name}.graph.json").write_text(json.dumps({
+                    "nodes": {
+                        "file:a.py": {"id": "file:a.py", "name": "a.py", "entity_type": "file", "last_seen": 5, "freq": 2},
+                        "tool:rg": {"id": "tool:rg", "name": "rg", "entity_type": "tool", "last_seen": 4, "freq": 1},
+                        "concept:hidden": {"id": "concept:hidden", "name": "hidden", "last_seen": 1},
+                    },
+                    "edges": [
+                        {"source_id": "file:a.py", "target_id": "tool:rg", "relation": "uses", "weight": 2, "last_seen": 5, "evidence": [3]},
+                        {"source_id": "file:a.py", "target_id": "concept:hidden", "relation": "mentions"},
+                    ],
+                    "communities": {"0": [{"level": 0, "community_id": "one", "summary": "source tools"}]},
+                }), encoding="utf-8")
+
+                payload = webapp._agent_context_graph("work", "worker", limit=2)
+
+                self.assertTrue(payload["available"])
+                self.assertTrue(payload["truncated"])
+                self.assertEqual(payload["node_count"], 3)
+                self.assertEqual([node["id"] for node in payload["nodes"]], ["file:a.py", "tool:rg"])
+                self.assertEqual(payload["edges"], [{
+                    "source_id": "file:a.py", "target_id": "tool:rg", "relation": "uses", "weight": 2.0,
+                    "first_seen": 0, "last_seen": 5, "valid": True, "evidence": [3],
+                }])
+                self.assertEqual(payload["community_count"], 1)
+            finally:
+                storage.WORKSPACE_ROOT = original_root
+
+    def test_agent_context_graph_is_empty_when_companion_file_is_missing(self) -> None:
+        """Old linear-only contexts remain inspectable without an API error."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
+            try:
+                payload = webapp._agent_context_graph("work", "coordinator")
+                self.assertFalse(payload["available"])
+                self.assertEqual(payload["nodes"], [])
+                self.assertEqual(payload["edges"], [])
+            finally:
+                storage.WORKSPACE_ROOT = original_root
+
     def test_archive_page_exposes_raw_evidence_and_timeline_with_pagination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             original_root = storage.WORKSPACE_ROOT

@@ -574,6 +574,121 @@ def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
 
     return stats
 
+
+def _agent_context_graph(
+    session_id: str,
+    agent_name: str,
+    *,
+    limit: int = 60,
+) -> dict[str, Any]:
+    """Return a bounded, browser-safe snapshot of one Agent's memory graph.
+
+    Args:
+        session_id: Browser-stable session that owns the Agent context files.
+        agent_name: Graph-local Agent identity used in the context filename.
+        limit: Maximum number of most-recent entities to expose. It is clamped
+            to ``1..120`` so a large persisted graph cannot overload the UI.
+
+    Returns:
+        A read-only graph view containing display-safe entity, relation, and
+        community fields plus total counts. Missing, legacy, or malformed
+        companion files return the same empty shape with ``available=False``.
+
+    Side Effects:
+        Reads ``contexts/<agent>.json.graph.json`` only; it never changes
+        persisted context or graph state.
+    """
+    def _integer(value: Any, default: int = 0) -> int:
+        """Convert persisted numeric metadata without trusting old graph files."""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _number(value: Any) -> float:
+        """Convert a persisted relation weight while preserving an empty fallback."""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    result: dict[str, Any] = {
+        "available": False,
+        "node_count": 0,
+        "edge_count": 0,
+        "community_count": 0,
+        "truncated": False,
+        "nodes": [],
+        "edges": [],
+        "communities": [],
+    }
+    try:
+        safe_session = _safe_id(session_id, "session")
+        safe_agent = _safe_id(agent_name, "agent")
+        path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json.graph.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return result
+    if not isinstance(raw, dict):
+        return result
+
+    # Normalize persisted data before filtering it, keeping the browser API
+    # independent from GraphStore's in-memory dataclasses.
+    raw_nodes = raw.get("nodes", {})
+    raw_edges = raw.get("edges", [])
+    raw_communities = raw.get("communities", {})
+    node_items = [item for item in raw_nodes.values() if isinstance(item, dict)] if isinstance(raw_nodes, dict) else []
+    edge_items = [item for item in raw_edges if isinstance(item, dict)] if isinstance(raw_edges, list) else []
+    community_items = [
+        item
+        for items in raw_communities.values()
+        if isinstance(items, list)
+        for item in items
+        if isinstance(item, dict)
+    ] if isinstance(raw_communities, dict) else []
+    result.update({
+        "available": True,
+        "node_count": len(node_items),
+        "edge_count": len(edge_items),
+        "community_count": len(community_items),
+    })
+    bounded_limit = max(1, min(_integer(limit, 60), 120))
+    node_items.sort(key=lambda item: (
+        -_integer(item.get("last_seen", 0)),
+        -_integer(item.get("freq", 0)),
+        str(item.get("name", "")).casefold(),
+    ))
+    visible = node_items[:bounded_limit]
+    visible_ids = {str(item.get("id", "")) for item in visible}
+    result["truncated"] = len(node_items) > len(visible)
+    result["nodes"] = [{
+        "id": str(item.get("id", "")),
+        "name": str(item.get("name", item.get("id", ""))),
+        "entity_type": str(item.get("entity_type", "concept")),
+        "summary": str(item.get("summary", ""))[:1_000],
+        "aliases": [str(alias)[:200] for alias in item.get("aliases", []) if isinstance(alias, str)][:12],
+        "first_seen": _integer(item.get("first_seen", 0)),
+        "last_seen": _integer(item.get("last_seen", 0)),
+        "freq": _integer(item.get("freq", 0)),
+    } for item in visible]
+    result["edges"] = [{
+        "source_id": str(item.get("source_id", "")),
+        "target_id": str(item.get("target_id", "")),
+        "relation": str(item.get("relation", "related_to")),
+        "weight": _number(item.get("weight", 0)),
+        "first_seen": _integer(item.get("first_seen", 0)),
+        "last_seen": _integer(item.get("last_seen", 0)),
+        "valid": bool(item.get("valid", True)),
+        "evidence": [int(value) for value in item.get("evidence", []) if isinstance(value, int) and not isinstance(value, bool)][:20],
+    } for item in edge_items if str(item.get("source_id", "")) in visible_ids and str(item.get("target_id", "")) in visible_ids]
+    result["communities"] = [{
+        "level": _integer(item.get("level", 0)),
+        "community_id": str(item.get("community_id", "")),
+        "summary": str(item.get("summary", ""))[:1_000],
+        "member_entity_ids": [str(value) for value in item.get("member_entity_ids", []) if isinstance(value, str)][:30],
+    } for item in community_items[:12]]
+    return result
+
 __all__ = [
     "_history_context_paths",
     "_read_session_history",
@@ -587,5 +702,6 @@ __all__ = [
     "_display_tools_from_event",
     "_read_agent_history",
     "_agent_context_stats",
+    "_agent_context_graph",
     "render_markdown",
 ]

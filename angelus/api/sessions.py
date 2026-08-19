@@ -17,6 +17,7 @@ from ..classes import (
     WorkspaceRequest,
 )
 from ..history import (
+    _agent_context_graph,
     _agent_context_stats,
     _archived_context_page,
     _read_agent_history,
@@ -201,6 +202,36 @@ def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:
             "context": _agent_context_stats(session_id, "coordinator"),
         })
     return {"agents": agents}
+
+
+@router.get("/api/sessions/{session_id}/agents/{agent_name}/context-graph")
+def get_agent_context_graph(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Expose one Agent's persisted long-term memory graph for inspection.
+
+    Args:
+        session_id: Browser-visible session that owns the Agent context.
+        agent_name: Graph-local Agent identity. ``all`` is rejected because
+            every Agent owns an isolated graph rather than a shared one.
+
+    Returns:
+        A bounded graph snapshot and linear-context statistics. The graph is
+        read from its persisted companion file, so it reflects the most recent
+        completed checkpoint rather than mutable in-process state.
+
+    Raises:
+        HTTPException: If ``agent_name`` is the aggregate UI filter.
+    """
+    safe_session = _safe_id(session_id, "session")
+    if agent_name == "all":
+        raise HTTPException(status_code=422, detail="Select one Agent to inspect its context graph")
+    safe_agent = _safe_id(agent_name, "agent")
+    # Keep graph and linear statistics separate: a graph is a retrieval index,
+    # while the context file remains the authoritative active conversation.
+    return {
+        "agent": safe_agent,
+        "context": _agent_context_stats(safe_session, safe_agent),
+        "graph": _agent_context_graph(safe_session, safe_agent),
+    }
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/graph")
 def get_session_graph(workspace_id: str, session_id: str) -> dict[str, Any]:
@@ -580,4 +611,4 @@ def delete_session(session_id: str, request: WorkspaceDeleteRequest) -> dict[str
     """Delete one session after confirmation and cooperative run shutdown."""
     return delete_workspace(session_id, request)
 
-__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]
+__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]
