@@ -90,8 +90,28 @@ jobs:
           /tmp/angelus-wheel-check/bin/python -c "import angelus; print('Angelus imported successfully')"
 
   desktop-build:
-    name: Desktop build check
-    runs-on: ubuntu-24.04
+    name: Desktop build check (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            bundles: deb,rpm
+            artifact: linux
+          - name: Windows
+            os: windows-latest
+            bundles: nsis,msi
+            artifact: windows
+          - name: macOS Intel
+            os: macos-13
+            bundles: app,dmg
+            artifact: macos-intel
+          - name: macOS Apple Silicon
+            os: macos-14
+            bundles: app,dmg
+            artifact: macos-arm64
+    runs-on: ${{ matrix.os }}
     needs: [test, checks]
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +134,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
@@ -126,12 +147,12 @@ jobs:
           python -m pip install -r requirements-desktop.txt
           npm ci
 
-      - name: Build Linux desktop packages
-        run: npm run build -- --bundles deb,rpm
+      - name: Build desktop packages
+        run: npm run build -- --bundles ${{ matrix.bundles }}
 
       - name: Upload desktop packages
         uses: actions/upload-artifact@v4
         with:
-          name: angelus-linux-packages
-          path: src-tauri/target/release/bundle/{deb,rpm}/*
+          name: angelus-${{ matrix.artifact }}-packages
+          path: src-tauri/target/release/bundle/**/*
           if-no-files-found: error
