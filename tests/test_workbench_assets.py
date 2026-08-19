@@ -86,7 +86,9 @@ def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
     stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
 
-    assert template.index('id="composer"') < template.index('id="steer-composer"')
+    assert 'id="steer-composer"' not in template
+    assert 'id="steer-hint"' in template
+    assert template.index('id="composer"') < template.index('id="steer-hint"')
     assert 'id="inspector-steer"' not in template
     assert 'data-inspector-panel="inspector-steer"' not in template
     assert 'selectInspectorPanel("inspector-steer")' not in script
