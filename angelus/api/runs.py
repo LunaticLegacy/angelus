@@ -120,7 +120,13 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     so this adapter supplies the browser-visible coordinator
                     identity required to group lifecycle records.
                     """
-                    payload = {"event": "lifecycle", **_event_payload(event)}
+                    # ``_event_payload`` belongs to the runtime module.  Use
+                    # the module-qualified helper here: this router imports
+                    # ``runtime`` rather than its private helpers, and an
+                    # unresolved name would otherwise be swallowed by the
+                    # Agent hook dispatcher, silently dropping all lifecycle
+                    # (including tool) events.
+                    payload = {"event": "lifecycle", **runtime._event_payload(event)}
                     payload["agent"] = payload["agent"] or "coordinator"
                     _append_session_event(workspace_id, session_id, payload)
                     active.events.put(payload)
