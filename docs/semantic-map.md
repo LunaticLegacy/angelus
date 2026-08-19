@@ -1,5 +1,55 @@
 # Semantic map
 
+## `frontend.static` Workbench component boundary
+
+`frontend/templates/index.html` loads `frontend/static/app.js` as a browser ES
+module. `app.js` remains the Workbench composition root: it owns mutable
+session/run state, REST and SSE calls, and invokes the component views below.
+It is called by the template and calls `createChatView()`, `createTraceView()`,
+and `renderTaskPlanItem()`; it has no class hierarchy. The components do not
+make network calls or own durable application state.
+
+### `frontend.static.app.agentStateView(agentId, agents)`
+
+Projects the newest lifecycle evidence, then the persisted graph
+`node_states`, into the shared status shown by the selector, topology, and
+usage cards. `agentId` identifies one Agent and `agents` is the visible Agent
+list used to calculate the aggregate `all` state. A session-wide active run
+never changes an Agent's state by itself: an Agent without evidence returns
+`idle` with the message “尚无执行事件”. It is called by all three Agent-status
+renderers and has no I/O beyond reading browser-local acknowledgements.
+
+### `frontend.static.components.dom.$(id)` / `escapeHtml(text)`
+
+`$()` returns the static-template element identified by `id`; callers must
+provide an existing Workbench ID. `escapeHtml()` converts arbitrary text to
+HTML-safe text using a detached DOM node. Both are called by active components
+and have no persistent side effects.
+
+### `frontend.static.components.chat-view.createChatView({ getAgentLabel })`
+
+Creates the transcript component used by `app.js`. `getAgentLabel` is a
+controller callback that supplies the currently selected Agent for live
+assistant messages. Its returned `append(message, agentName)`,
+`appendError(title, message)`, and `render(messages, assistantLabel)` methods
+mutate only `#chat`; the component binds copy-result buttons and may write to
+the browser clipboard. It calls DOM helpers and is called only by the active
+composition root.
+
+### `frontend.static.components.trace-view.createTraceView()`
+
+Creates the expandable Trace component used by `app.js`. Its returned
+`append()` and `appendEvent()` methods classify and render event records into
+`#trace`; its internal toggle handlers mutate only the card's expanded state.
+It calls `escapeHtml()` and is called by the active composition root.
+
+### `frontend.static.components.task-plan-view.renderTaskPlanItem(task, depth)`
+
+Recursively converts one API task record and its `subtasks` into escaped
+inspector HTML. `depth` is a CSS-only nesting level and is incremented for
+descendants. It makes no I/O and is called by `app.js` when refreshing the
+task-plan endpoint.
+
 ## `angelus` runtime boundary
 
 Angelus owns the local control plane while importing provider backends, core
