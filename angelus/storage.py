@@ -22,7 +22,15 @@ from .markdown import render_markdown
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parent
-FRONTEND_ROOT = PROJECT_ROOT / "frontend"
+# The packaged sidecar extracts frontend assets to a temporary directory and
+# advertises that location through the environment; source checkouts retain
+# the existing project-relative layout.
+_configured_frontend_root = os.environ.get("ANGELUS_FRONTEND_ROOT")
+FRONTEND_ROOT = (
+    Path(_configured_frontend_root).resolve()
+    if _configured_frontend_root
+    else PROJECT_ROOT / "frontend"
+)
 
 def _default_state_root(project_root: Path = PROJECT_ROOT) -> Path:
     """Choose the local Workbench state directory for one source checkout.

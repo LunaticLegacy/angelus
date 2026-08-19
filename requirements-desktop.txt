@@ -1,0 +1,2 @@
+# Build dependency for the Tauri Python sidecar.
+pyinstaller>=6.10
