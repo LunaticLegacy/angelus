@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from angelus import webapp
+from angelus import storage, webapp
 
 
 class SessionObservabilityTests(unittest.TestCase):
@@ -16,16 +16,16 @@ class SessionObservabilityTests(unittest.TestCase):
     def test_session_list_exposes_four_state_indicator(self) -> None:
         """Sidebar status is a compact projection of each durable run state."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            original_index = webapp.WORKSPACE_INDEX
+            original_root = storage.WORKSPACE_ROOT
+            original_index = storage.WORKSPACE_INDEX
             running_key = ("running", "running")
-            with webapp._sessions_lock:
-                prior_running = webapp._sessions.get(running_key)
-                webapp._sessions[running_key] = webapp.BrowserSession(
+            with storage._sessions_lock:
+                prior_running = storage._sessions.get(running_key)
+                storage._sessions[running_key] = webapp.BrowserSession(
                     active=webapp.ActiveRun(control=webapp.BrowserRunControl()),
                 )
-            webapp.WORKSPACE_ROOT = Path(directory)
-            webapp.WORKSPACE_INDEX = Path(directory) / "sessions.json"
+            storage.WORKSPACE_ROOT = Path(directory)
+            storage.WORKSPACE_INDEX = Path(directory) / "sessions.json"
             try:
                 webapp._write_workspaces([
                     {"id": "idle", "name": "Idle"}, {"id": "running", "name": "Running"},
@@ -38,18 +38,18 @@ class SessionObservabilityTests(unittest.TestCase):
 
                 self.assertEqual(statuses, {"idle": "idle", "running": "running", "error": "error", "done": "done"})
             finally:
-                webapp.WORKSPACE_ROOT = original_root
-                webapp.WORKSPACE_INDEX = original_index
-                with webapp._sessions_lock:
-                    webapp._sessions.pop(running_key, None)
+                storage.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_INDEX = original_index
+                with storage._sessions_lock:
+                    storage._sessions.pop(running_key, None)
                     if prior_running is not None:
-                        webapp._sessions[running_key] = prior_running
+                        storage._sessions[running_key] = prior_running
 
     def test_event_page_is_newest_first_and_usage_uses_round_deltas(self) -> None:
         """Keep historical trace order and avoid cumulative-usage double counts."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            webapp.WORKSPACE_ROOT = Path(directory)
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 event_path = webapp._session_path("demo", "demo") / "events.ndjson"
                 event_path.write_text("\n".join([
@@ -66,7 +66,7 @@ class SessionObservabilityTests(unittest.TestCase):
                 self.assertEqual(summary["usage"], {"input": 10, "output": 3, "total": 13, "cached": 1, "reasoning": 1})
                 self.assertEqual([agent["id"] for agent in summary["agents"]], ["worker", "coordinator"])
             finally:
-                webapp.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_ROOT = original_root
 
     def test_usage_prefers_canonical_per_call_ledger(self) -> None:
         """The display-only round payload must not double-count ledger calls."""
@@ -87,11 +87,11 @@ class SessionObservabilityTests(unittest.TestCase):
     def test_orphaned_running_state_becomes_persisted_interruption(self) -> None:
         """Expose a restart-lost worker as a durable, explainable terminal state."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
+            original_root = storage.WORKSPACE_ROOT
             key = ("demo", "demo")
-            with webapp._sessions_lock:
-                prior_session = webapp._sessions.pop(key, None)
-            webapp.WORKSPACE_ROOT = Path(directory)
+            with storage._sessions_lock:
+                prior_session = storage._sessions.pop(key, None)
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 webapp._persist_json(webapp._run_state_path(*key), {
                     "status": "running",
@@ -108,20 +108,20 @@ class SessionObservabilityTests(unittest.TestCase):
                 self.assertEqual(persisted["status"], "interrupted")
                 self.assertEqual(persisted["error"], status["error"])
             finally:
-                webapp.WORKSPACE_ROOT = original_root
-                with webapp._sessions_lock:
-                    webapp._sessions.pop(key, None)
+                storage.WORKSPACE_ROOT = original_root
+                with storage._sessions_lock:
+                    storage._sessions.pop(key, None)
                     if prior_session is not None:
-                        webapp._sessions[key] = prior_session
+                        storage._sessions[key] = prior_session
 
     def test_graph_read_reconciles_legacy_states_and_dispatch_edges(self) -> None:
         """Project an old failed graph into precise task and node terminals."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
+            original_root = storage.WORKSPACE_ROOT
             key = ("demo", "demo")
-            with webapp._sessions_lock:
-                prior_session = webapp._sessions.pop(key, None)
-            webapp.WORKSPACE_ROOT = Path(directory)
+            with storage._sessions_lock:
+                prior_session = storage._sessions.pop(key, None)
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 session_path = webapp._session_path(*key)
                 webapp._persist_json(session_path / "run-state.json", {
@@ -175,11 +175,11 @@ class SessionObservabilityTests(unittest.TestCase):
                     graph["edges"],
                 )
             finally:
-                webapp.WORKSPACE_ROOT = original_root
-                with webapp._sessions_lock:
-                    webapp._sessions.pop(key, None)
+                storage.WORKSPACE_ROOT = original_root
+                with storage._sessions_lock:
+                    storage._sessions.pop(key, None)
                     if prior_session is not None:
-                        webapp._sessions[key] = prior_session
+                        storage._sessions[key] = prior_session
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from angelus import webapp
+from angelus import storage, webapp
 
 
 class SessionSteersTests(unittest.TestCase):
@@ -16,8 +16,8 @@ class SessionSteersTests(unittest.TestCase):
     def test_get_session_steers_returns_applied_instructions_in_order(self) -> None:
         """Reconstruct steer history from the durable append-only event log."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            webapp.WORKSPACE_ROOT = Path(directory)
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 event_path = webapp._session_path("demo", "demo") / "events.ndjson"
                 event_path.write_text("\n".join([
@@ -37,13 +37,13 @@ class SessionSteersTests(unittest.TestCase):
                 self.assertEqual(payload["steers"][1]["messages"], ["换个角度"])
                 self.assertEqual(payload["steers"][0]["timestamp"], 100)
             finally:
-                webapp.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_ROOT = original_root
 
     def test_get_session_steers_ignores_non_steer_and_malformed_events(self) -> None:
         """Skip lifecycle records without an applied-steering payload."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            webapp.WORKSPACE_ROOT = Path(directory)
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 event_path = webapp._session_path("demo", "demo") / "events.ndjson"
                 event_path.write_text("\n".join([
@@ -56,7 +56,7 @@ class SessionSteersTests(unittest.TestCase):
                 payload = webapp.get_session_steers("demo")
                 self.assertEqual(payload["steers"], [])
             finally:
-                webapp.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_ROOT = original_root
 
 
 if __name__ == "__main__":

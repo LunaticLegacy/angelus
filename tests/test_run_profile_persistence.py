@@ -10,9 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-from angelus import webapp
+from angelus import runtime, storage, webapp
 from angelus.classes import RunConfig
 from angelus.classes import RunRequest
+from llmfetcher.events import ExecutionEvent
 from llmfetcher.llm_types import LLMOutput
 
 
@@ -26,6 +27,23 @@ class _CompletedAgent:
 
     def run(self, _message: str, **_kwargs: object) -> LLMOutput:
         return LLMOutput(content="done", provider="openai", backend_name="browser", model="test")
+
+
+class _ToolLifecycleAgent(_CompletedAgent):
+    """Emit a tool lifecycle event through the hook registered by ``start_run``."""
+
+    def add_hook(self, hook: object) -> None:
+        self._hook = hook
+
+    def run(self, message: str, **kwargs: object) -> LLMOutput:
+        self._hook(ExecutionEvent(  # type: ignore[attr-defined,operator]
+            source="agent",
+            agent_name="",
+            event_type="agent:tools_completed",
+            message="Completed 1 tool call(s)",
+            data={"round": 1, "tool_calls": [{"name": "shell", "ok": True}]},
+        ))
+        return super().run(message, **kwargs)
 
 
 class _ImmediateThread:
@@ -67,8 +85,8 @@ class RunProfilePersistenceTests(unittest.TestCase):
     def test_concurrent_event_appends_remain_complete_json_records(self) -> None:
         """Swarm worker hooks must not interleave their NDJSON records."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
-            webapp.WORKSPACE_ROOT = Path(directory)
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
             try:
                 workers = [
                     threading.Thread(
@@ -86,24 +104,24 @@ class RunProfilePersistenceTests(unittest.TestCase):
                 self.assertEqual(len(events), 32)
                 self.assertEqual({event["index"] for event in events}, set(range(32)))
             finally:
-                webapp.WORKSPACE_ROOT = original_root
+                storage.WORKSPACE_ROOT = original_root
 
     def test_start_run_persists_profile_in_state_and_event_log(self) -> None:
         """Run provenance survives both the active and terminal state rewrite."""
         with tempfile.TemporaryDirectory() as directory:
-            original_root = webapp.WORKSPACE_ROOT
+            original_root = storage.WORKSPACE_ROOT
             key = ("demo", "demo")
-            webapp.WORKSPACE_ROOT = Path(directory)
-            with webapp._sessions_lock:
-                prior = webapp._sessions.pop(key, None)
+            storage.WORKSPACE_ROOT = Path(directory)
+            with storage._sessions_lock:
+                prior = storage._sessions.pop(key, None)
             request = RunRequest(
                 workspace_id="demo", session_id="demo", message="hello",
                 config=RunConfig(model="test", api_key="hidden", system_prompt="private"),
             )
             try:
                 with (
-                    patch.object(webapp, "_workspace_exists", return_value=True),
-                    patch.object(webapp, "_build_agent", return_value=_CompletedAgent()),
+                    patch.object(storage, "_workspace_exists", return_value=True),
+                    patch.object(runtime, "_build_agent", return_value=_CompletedAgent()),
                     patch.object(webapp.threading, "Thread", _ImmediateThread),
                 ):
                     webapp.start_run(request)
@@ -118,8 +136,40 @@ class RunProfilePersistenceTests(unittest.TestCase):
                     state["runtime_profile"]["fingerprint"],
                 )
             finally:
-                webapp.WORKSPACE_ROOT = original_root
-                with webapp._sessions_lock:
-                    webapp._sessions.pop(key, None)
+                storage.WORKSPACE_ROOT = original_root
+                with storage._sessions_lock:
+                    storage._sessions.pop(key, None)
                     if prior is not None:
-                        webapp._sessions[key] = prior
+                        storage._sessions[key] = prior
+
+    def test_start_run_persists_single_agent_tool_lifecycle_event(self) -> None:
+        """Single-Agent hooks must survive serialization into the durable Trace."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            key = ("demo", "demo")
+            storage.WORKSPACE_ROOT = Path(directory)
+            with storage._sessions_lock:
+                prior = storage._sessions.pop(key, None)
+            request = RunRequest(
+                workspace_id="demo", session_id="demo", message="use a tool",
+                config=RunConfig(model="test", api_key="hidden"),
+            )
+            try:
+                with (
+                    patch.object(storage, "_workspace_exists", return_value=True),
+                    patch.object(runtime, "_build_agent", return_value=_ToolLifecycleAgent()),
+                    patch.object(webapp.threading, "Thread", _ImmediateThread),
+                ):
+                    webapp.start_run(request)
+
+                events = webapp._read_session_event_log(*key)
+                lifecycle = next(event for event in events if event["event"] == "lifecycle")
+                self.assertEqual(lifecycle["type"], "agent:tools_completed")
+                self.assertEqual(lifecycle["agent"], "coordinator")
+                self.assertEqual(lifecycle["data"]["tool_calls"][0]["name"], "shell")
+            finally:
+                storage.WORKSPACE_ROOT = original_root
+                with storage._sessions_lock:
+                    storage._sessions.pop(key, None)
+                    if prior is not None:
+                        storage._sessions[key] = prior

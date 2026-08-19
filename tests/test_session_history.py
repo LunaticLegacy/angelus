@@ -4,14 +4,14 @@ import json
 import tempfile
 from pathlib import Path
 
-from angelus import webapp
+from angelus import storage, webapp
 
 
 def test_session_history_returns_display_turns_and_bounded_tool_results() -> None:
     """Restore user/assistant text together with persisted tool audit data."""
     with tempfile.TemporaryDirectory() as directory:
-        original_root = webapp.WORKSPACE_ROOT
-        webapp.WORKSPACE_ROOT = Path(directory)
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
         try:
             path = webapp._context_path("default", "session")
             path.parent.mkdir(exist_ok=True)
@@ -24,29 +24,29 @@ def test_session_history_returns_display_turns_and_bounded_tool_results() -> Non
             assert "<h1>Hi</h1>" in history[1]["content_html"]
             assert history[1]["tools"] == [{"name": "lookup", "arguments": {"q": "test"}, "result": "secret"}]
         finally:
-            webapp.WORKSPACE_ROOT = original_root
+            storage.WORKSPACE_ROOT = original_root
 
 
 def test_context_path_creates_agent_context_directory() -> None:
     """Provision the parent directory required for Agent context persistence."""
     with tempfile.TemporaryDirectory() as directory:
-        original_root = webapp.WORKSPACE_ROOT
-        webapp.WORKSPACE_ROOT = Path(directory)
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
         try:
             path = webapp._context_path("default", "session", "coordinator")
             assert path == Path(directory) / "default" / "contexts" / "coordinator.json"
             assert path.parent.is_dir()
         finally:
-            webapp.WORKSPACE_ROOT = original_root
+            storage.WORKSPACE_ROOT = original_root
 
 
 def test_session_history_falls_back_to_pre_session_directory_context() -> None:
     """Restore chats written before per-Agent session directories existed."""
     with tempfile.TemporaryDirectory() as directory:
-        original_root = webapp.WORKSPACE_ROOT
-        webapp.WORKSPACE_ROOT = Path(directory)
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
         try:
-            legacy = webapp.WORKSPACE_ROOT / "default" / "session.json"
+            legacy = storage.WORKSPACE_ROOT / "default" / "session.json"
             legacy.parent.mkdir(parents=True)
             legacy.write_text(json.dumps({"messages": [
                 {"role": "user", "content": "Legacy", "content_reasoning": ""},
@@ -55,14 +55,14 @@ def test_session_history_falls_back_to_pre_session_directory_context() -> None:
                 "role": "user", "content": "Legacy", "reasoning": "", "tools": [],
             }]
         finally:
-            webapp.WORKSPACE_ROOT = original_root
+            storage.WORKSPACE_ROOT = original_root
 
 
 def test_agent_history_rebuilds_all_runs_and_completed_tools_from_events() -> None:
     """Keep every browser prompt after Agent context compaction."""
     with tempfile.TemporaryDirectory() as directory:
-        original_root = webapp.WORKSPACE_ROOT
-        webapp.WORKSPACE_ROOT = Path(directory)
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
         try:
             session_path = webapp._session_path("doc", "doc")
             session_path.mkdir(parents=True, exist_ok=True)
@@ -94,14 +94,14 @@ def test_agent_history_rebuilds_all_runs_and_completed_tools_from_events() -> No
             }]
             assert history[1]["reasoning_html"] == "<p>Check</p>\n"
         finally:
-            webapp.WORKSPACE_ROOT = original_root
+            storage.WORKSPACE_ROOT = original_root
 
 
 def test_aggregate_history_prefers_durable_events_and_restores_steer() -> None:
     """The aggregate chat uses its append-only log, not a stale transcript."""
     with tempfile.TemporaryDirectory() as directory:
-        original_root = webapp.WORKSPACE_ROOT
-        webapp.WORKSPACE_ROOT = Path(directory)
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
         try:
             session_path = webapp._session_path("doc", "doc")
             session_path.mkdir(parents=True, exist_ok=True)
@@ -124,14 +124,14 @@ def test_aggregate_history_prefers_durable_events_and_restores_steer() -> None:
                 ("user", "Current prompt"), ("steer", "Change direction"), ("assistant", "Current answer"),
             ]
         finally:
-            webapp.WORKSPACE_ROOT = original_root
+            storage.WORKSPACE_ROOT = original_root
 
 
 def test_agent_history_uses_context_when_no_durable_events_exist() -> None:
     """Retain compatibility with Agent contexts created before event logs."""
     with tempfile.TemporaryDirectory() as directory:
-        original_root = webapp.WORKSPACE_ROOT
-        webapp.WORKSPACE_ROOT = Path(directory)
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
         try:
             context = webapp._context_path("legacy", "legacy", "worker")
             context.write_text(json.dumps({"messages": [
@@ -144,4 +144,4 @@ def test_agent_history_uses_context_when_no_durable_events_exist() -> None:
             assert [turn["content"] for turn in history] == ["Old prompt", "Old answer"]
             assert history[1]["reasoning_html"] == "<p>Old thought</p>\n"
         finally:
-            webapp.WORKSPACE_ROOT = original_root
+            storage.WORKSPACE_ROOT = original_root

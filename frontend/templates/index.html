@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-26" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-32" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -53,6 +53,14 @@
         </div>
       </div>
     </dialog>
+    <dialog id="context-graph-dialog" class="session-dialog context-graph-dialog" aria-labelledby="context-graph-title">
+      <div class="context-graph-dialog-body">
+        <header class="context-graph-dialog-head"><div><p class="eyebrow">AGENT CONTEXT</p><h2 id="context-graph-title">上下文图</h2><p id="context-graph-subtitle">读取 Agent 已保存的上下文图。</p></div><button id="close-context-graph" class="dialog-close" type="button" aria-label="关闭上下文图">×</button></header>
+        <div id="context-graph-summary" class="context-graph-summary"></div>
+        <div id="context-graph-canvas" class="context-graph-canvas" aria-label="上下文实体关系图"></div>
+        <div class="context-graph-details"><section><h3>实体</h3><div id="context-graph-nodes" class="context-graph-nodes"></div></section><section><h3>详情</h3><div id="context-graph-detail" class="context-graph-detail"><p class="empty">点击图中的实体查看其摘要、出现时间和关联。</p></div></section></div>
+      </div>
+    </dialog>
     <aside class="sidebar">
       <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
 
@@ -76,8 +84,7 @@
 
       <section id="chat" class="chat"><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
 
-      <form id="composer" class="composer"><div class="composer-box"><textarea id="message" placeholder="给 Agent 一个任务…" rows="1" required></textarea><div class="composer-meta"><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
-      <form id="steer-composer" class="steer-composer" hidden><div class="composer-box"><div class="steer-hint"><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><textarea id="steer-message" placeholder="调整正在执行的 Agent…" rows="1" maxlength="100000"></textarea><div class="composer-meta"><span>Enter 发送 · Shift / Alt + Enter 换行</span></div></div><button id="steer-send" class="send-button" type="submit" aria-label="发送调整指令">➤</button></form>
+      <form id="composer" class="composer"><div class="composer-box"><div class="steer-hint" id="steer-hint" hidden><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><textarea id="message" placeholder="给 Agent 一个任务… （/ 开头为指令，/help 查看）" rows="1" required></textarea><div class="composer-meta"><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
     </main>
 
     <aside class="activity" aria-label="会话执行信息">
@@ -90,11 +97,12 @@
       </nav>
       <div class="inspector-panels">
         <section id="inspector-plan" class="inspector-panel active"><div class="section-title"><div><p class="eyebrow">TASK PLAN</p><h3>任务计划</h3></div><button id="refresh-plan" class="refresh-button" type="button">↻</button></div><p id="plan-summary" class="plan-summary">Agent 生成的任务计划会显示在这里。</p><div id="task-plan" class="task-plan"><p class="empty">尚未建立任务计划。</p></div></section>
-        <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>协作拓扑</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><p class="agents-legend"><i></i>缩进表示调度关系；任务标签表示当前指派。</p><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div><div id="execution-graph" class="execution-graph"><p class="empty">当前 session 尚未启动 Swarm。</p></div></section>
+        <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>协作拓扑</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><p class="agents-legend"><i></i>缩进表示调度关系；任务标签表示当前指派。</p><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div></section>
         <section id="inspector-trace" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">EVENT STREAM</p><h3>Trace</h3></div><button id="refresh-trace" class="refresh-button" type="button">↻</button></div><div id="trace" class="trace"><p class="empty">当前 session 尚无事件。</p></div><button id="load-more-trace" class="load-more-trace" type="button" hidden>加载更早事件</button></section>
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
-    <script src="/static/app.js?v=workbench-42"></script>
+    <script src="/static/slash.js"></script>
+    <script type="module" src="/static/app.js?v=workbench-56"></script>
   </body>
 </html>

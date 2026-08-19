@@ -6,14 +6,15 @@ JavaScript modules and CSS for the Angelus workbench UI.
 
 | Entry | Type | Purpose |
 |-------|------|---------|
-| `app.js` | Classic script | The only JavaScript file currently loaded by `templates/index.html`. It owns bootstrap, session/connector settings, runs and SSE, chat replay (including durable steering inputs), the main-panel steer composer, usage, and Agent-swarm topology. |
+| `app.js` | ES-module composition root | The JavaScript entry loaded by `templates/index.html`. It coordinates session/connector settings, runs and SSE, and feature refreshes while delegating reusable rendering to `components/`. |
+| `components/` | Active ES modules | DOM-safe components: `dom.js` provides shared DOM primitives, `chat-view.js` owns transcript cards, `trace-view.js` owns expandable Trace cards, and `task-plan-view.js` owns recursive task markup. |
 | `app.css` | File | Styles for the entire workbench: responsive three-column layout, dialogs, sidebar session states, chat, settings, and inspector views. |
 
 `index.html` deliberately cache-versions both active assets. Update those version query strings when a browser-visible change needs an immediate refresh.
 
 ## Legacy Module Inventory
 
-The following files form a prior ES-module decomposition. They are **not loaded by the current HTML shell**, so they are useful only as migration/reference material until the active `app.js` is split again. Do not treat their APIs or DOM assumptions as current behavior.
+The following files form a prior ES-module decomposition. They are **not imported by the active composition root**, so they are useful only as migration/reference material. Do not treat their APIs or DOM assumptions as current behavior.
 
 | Entry | Type | Purpose |
 |-------|------|---------|

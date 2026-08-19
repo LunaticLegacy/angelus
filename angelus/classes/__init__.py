@@ -2,6 +2,7 @@
 
 from .run_config import RunConfig
 from .run_request import RunRequest
+from .compact_request import CompactRequest
 from .steer_request import SteerRequest
 from .workspace_request import WorkspaceRequest
 from .workspace_delete_request import WorkspaceDeleteRequest
@@ -15,6 +16,7 @@ from .browser_session import BrowserSession
 __all__ = [
     "RunConfig",
     "RunRequest",
+    "CompactRequest",
     "SteerRequest",
     "WorkspaceRequest",
     "WorkspaceDeleteRequest",

@@ -7,6 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_SCRIPT = PROJECT_ROOT / "frontend" / "static" / "app.js"
 INDEX_TEMPLATE = PROJECT_ROOT / "frontend" / "templates" / "index.html"
+COMPONENTS_DIR = PROJECT_ROOT / "frontend" / "static" / "components"
 
 
 def test_event_listeners_target_existing_template_elements() -> None:
@@ -17,6 +18,20 @@ def test_event_listeners_target_existing_template_elements() -> None:
     listener_ids = set(re.findall(r'\\$\\("([^"]+)"\\)\\.addEventListener', script))
 
     assert listener_ids <= element_ids
+
+
+def test_active_workbench_uses_component_views_through_an_es_module_entrypoint() -> None:
+    """Keep the running Workbench on the componentized module path."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'type="module" src="/static/app.js?v=workbench-' in template
+    assert 'from "./components/chat-view.js"' in script
+    assert 'from "./components/trace-view.js"' in script
+    assert 'from "./components/task-plan-view.js"' in script
+    assert (COMPONENTS_DIR / "chat-view.js").is_file()
+    assert (COMPONENTS_DIR / "trace-view.js").is_file()
+    assert (COMPONENTS_DIR / "task-plan-view.js").is_file()
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:
@@ -80,18 +95,48 @@ def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
     assert re.search(r'/static/app\.js\?v=workbench-\d+', INDEX_TEMPLATE.read_text(encoding="utf-8"))
 
 
+def test_running_session_does_not_turn_unknown_agents_into_running_agents() -> None:
+    """Keep each Agent light tied to evidence, not the session-wide run flag."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'if(runActive && agentId !== "all")' not in script
+    assert 'return stateView("idle","尚无执行事件",agentId);' in script
+    assert "const persisted=currentGraph.node_states?.[agentId];" in script
+
+
+def test_completed_swarm_is_blue_even_when_a_worker_failed() -> None:
+    """Represent successful coordinator recovery as a completed aggregate run."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'currentGraph.run_status?.status==="completed"' in script
+    assert 'return stateView("completed","当前会话：运行完毕",agentId);' in script
+    assert 'finish(); loadGraph().then(loadAgents)' in script
+
+
+def test_agents_panel_renders_only_the_single_topology_tree() -> None:
+    """Avoid presenting the same Swarm hierarchy twice in the Agents panel."""
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="inspector-agents-list"' in template
+    assert 'id="execution-graph"' not in template
+
+
 def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     """Keep applied steering beside the original user messages in chat."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
+    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
     stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
 
-    assert template.index('id="composer"') < template.index('id="steer-composer"')
+    assert 'id="steer-composer"' not in template
+    assert 'id="steer-hint"' in template
+    assert template.index('id="composer"') < template.index('id="steer-hint"')
     assert 'id="inspector-steer"' not in template
     assert 'data-inspector-panel="inspector-steer"' not in template
     assert 'selectInspectorPanel("inspector-steer")' not in script
     assert "function appendSteerMessage" in script
     assert 'if(role === "steer") return appendSteerMessage(content);' in script
-    assert 'className="message steer"' in script
+    assert 'chatView.append({role:"steer",content:text})' in script
+    assert 'className = "message steer"' in chat_component
     assert ".message.user,.message.steer { margin-left:auto; }" in stylesheet
     assert re.search(r'/static/app\.js\?v=workbench-\d+', template)

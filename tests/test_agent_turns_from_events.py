@@ -31,7 +31,7 @@ class AgentTurnsFromEventsTests(unittest.TestCase):
 
     def _read_turns(self, agent_name: str) -> list[dict]:
         """Read turns using the same session path logic."""
-        with patch("angelus.webapp._session_path", return_value=self.workspace / self.session):
+        with patch("angelus.storage._session_path", return_value=self.workspace / self.session):
             return _agent_turns_from_events(
                 str(self.workspace), self.session, agent_name
             )

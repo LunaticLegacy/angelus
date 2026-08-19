@@ -130,6 +130,26 @@ class RetrievalTriggerTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(h._last_retrieved_gen, 0)
 
+    def test_every_message_trigger_retrieves_each_user_message(self):
+        h = GraphContextHandler(
+            compacting_fetcher=_RecordingCompactor(),
+            store=_chain_store(),
+            retrieval_trigger="every_message",
+        )
+        calls: list[str] = []
+        original_retrieve = h.retrieve
+
+        def record_retrieve(query: str):
+            calls.append(query)
+            return original_retrieve(query)
+
+        h.retrieve = record_retrieve  # type: ignore[method-assign]
+        h.add_user_message("first question")
+        h.add_user_message("second question")
+        h.add_user_message("third question")
+
+        self.assertEqual(calls, ["first question", "second question", "third question"])
+
     def test_manual_trigger_requires_explicit_retrieve(self):
         h = GraphContextHandler(
             compacting_fetcher=_RecordingCompactor(),
