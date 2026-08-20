@@ -31,6 +31,21 @@ fn reserve_port() -> Result<u16, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Resolve the persistent backend state directory.
+///
+/// Desktop builds store sessions and connectors under the per-user app data
+/// directory so research traces survive application restarts.  An explicit
+/// ``ANGELUS_STATE_DIR`` always wins and is used by tests and scripting.
+fn backend_state_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(dir) = env::var("ANGELUS_STATE_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("workspace"))
+        .map_err(|error| format!("unable to resolve app data directory: {error}"))
+}
+
 /// Resolve the packaged sidecar, or use the explicit executable for development.
 fn backend_command(app: &tauri::AppHandle, port: u16) -> Result<Command, String> {
     let mut command = if let Ok(executable) = env::var("ANGELUS_BACKEND_EXECUTABLE") {
@@ -56,6 +71,21 @@ fn backend_command(app: &tauri::AppHandle, port: u16) -> Result<Command, String>
 
     // Keep the backend loopback-only; the desktop webview is its only client.
     command.args(["--host", "127.0.0.1", "--port", &port.to_string()]);
+
+    // Pin backend state to a stable directory.  Packaged PyInstaller
+    // ``--onefile`` sidecars run from a temporary extraction directory, so
+    // the backend's default project-local ``workspace`` would otherwise be
+    // wiped on every exit.  Source/debug runs keep the project-local
+    // workspace unless ANGELUS_STATE_DIR is explicitly provided.
+    if cfg!(debug_assertions) {
+        if let Ok(dir) = env::var("ANGELUS_STATE_DIR") {
+            command.env("LLMFETCHER_STATE_DIR", dir);
+        }
+    } else {
+        let dir = backend_state_dir(app)?;
+        command.env("LLMFETCHER_STATE_DIR", &dir);
+    }
+
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
