@@ -20,18 +20,17 @@ def test_event_listeners_target_existing_template_elements() -> None:
     assert listener_ids <= element_ids
 
 
-def test_workspace_selection_is_distinct_from_opening_its_session() -> None:
-    """Selecting a workspace target must not silently replace the open chat."""
+def test_workspace_button_opens_current_directory_without_replacing_the_session() -> None:
+    """The workspace button is a host-file-manager action, not a session switch."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
     assert 'id="open-workspace"' in template
     assert 'id="workspace-open-hint"' in template
-    assert "let selectedWorkspaceId = sessionId;" in script
-    assert "function selectWorkspace(id)" in script
-    assert '$("workspace").addEventListener("change", event=>selectWorkspace(event.target.value));' in script
+    assert "open-folder" in script
+    assert "encodeURIComponent(workspaceId)" in script
+    assert '$("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId)' in script
     assert '$("open-workspace").addEventListener("click"' in script
-    assert "encodeURIComponent(targetId)" in script
 
 
 def test_active_workbench_uses_component_views_through_an_es_module_entrypoint() -> None:

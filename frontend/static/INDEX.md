@@ -6,7 +6,7 @@ JavaScript modules and CSS for the Angelus workbench UI.
 
 | Entry | Type | Purpose |
 |-------|------|---------|
-| `app.js` | ES-module composition root | The JavaScript entry loaded by `templates/index.html`. It coordinates session/connector settings, including a distinct workspace target and explicit “open workspace” operation; MCP tool enablement and server definitions; runs and SSE (including server-rendered live Agent Markdown); an Agent-selectable task-plan view; and plugin status/settings plus confirmed registration/load/unload controls while delegating reusable rendering to `components/`. |
+| `app.js` | ES-module composition root | The JavaScript entry loaded by `templates/index.html`. It coordinates session/connector settings, including an explicit request to open the current workspace directory in the host file manager; MCP tool enablement and server definitions; runs and SSE (including server-rendered live Agent Markdown); an Agent-selectable task-plan view; and plugin status/settings plus confirmed registration/load/unload controls while delegating reusable rendering to `components/`. |
 | `components/` | Active ES modules | DOM-safe components: `dom.js` provides shared DOM primitives, `chat-view.js` owns transcript cards, `trace-view.js` owns expandable Trace cards, and `task-plan-view.js` owns recursive task markup. |
 | `plugins.js` | Active ES module | Plugin frontend bridge: fetches the loadable plugin set, validates namespaced UI registrations, loads manifest-whitelisted assets, records settings metadata, and removes browser contributions when a plugin is unloaded. |
 | `slash.js` | Active global script | DOM-free shell-style slash-command parser, also covered by `slash.test.js`. |

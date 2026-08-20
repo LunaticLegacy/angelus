@@ -21,6 +21,7 @@ swarm, TLB-RAG, and utilities.
 | `test_graph_store.py` | Graph storage, relations, communities, and persistence |
 | `test_plugin_api.py` | Plugin REST/static bridge, public response redaction, route isolation, and asset traversal protection |
 | `test_plugin_bootstrap.py` | Packaged starter plugins copy once into the persistent directory beside `workspace/` without overwriting users |
+| `test_workspace_opening.py` | Current-workspace button opens the selected session directory through the host file manager. |
 | `test_plugin_manager.py` | Plugin discovery, lifecycle, registration, enable/disable state, and failure isolation |
 | `test_plugin_registry.py` | Plugin path resolution, manifest validation, and atomic `plugins.json` registry operations |
 | `test_mcp_tools.py` | Official MCP SDK stdio discovery, native tool bridging, schema preservation, invocation, and safe environment configuration |
