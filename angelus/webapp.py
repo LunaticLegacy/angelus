@@ -9,7 +9,10 @@ keep working through this module.
 
 from __future__ import annotations
 
+import logging
 import threading
+
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +46,35 @@ migrate_legacy_state()
 app = FastAPI(title="llmfetcher Console", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=FRONTEND_ROOT / "static"), name="static")
 include_api_routes(app)
+
+
+def _assemble_plugins(app: FastAPI) -> Any:
+    """Wire the plugin system (swarm S2-S10) onto the console app.
+
+    A single :class:`PluginManager` is created at import time, bound to the
+    same ``STATE_ROOT`` that drives ``plugins.json`` and the two-tier plugin
+    directories.  ``load_all()`` is isolated per plugin (a broken plugin is
+    marked BLOCKED and never crashes the console).  The manager is also
+    exposed on ``app.state`` so ``/api/providers`` can merge plugin-registered
+    connector kinds.
+    """
+    from . import plugin_registry
+    from .plugins.bridge_routes import include_plugin_routes
+    from .plugins.manager import PluginManager
+
+    manager = PluginManager(state_root=STATE_ROOT, registry=plugin_registry)
+    try:
+        manager.load_all()
+    except Exception as exc:  # defensive: load_all isolates per plugin
+        logging.getLogger("angelus.webapp").warning(
+            "plugin load_all failed: %s", exc
+        )
+    include_plugin_routes(app, manager, registry=plugin_registry)
+    app.state.plugin_manager = manager
+    return manager
+
+
+plugin_manager = _assemble_plugins(app)
 
 
 def main() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from llmfetcher.llm_fetcher import LLMFetcher
 
@@ -18,8 +18,18 @@ router = APIRouter()
 
 
 @router.get("/api/providers")
-def providers() -> dict[str, list[str]]:
-    """Expose the providers currently registered by the library."""
+def providers(request: Request) -> dict[str, list[str]]:
+    """Expose built-in providers plus plugin-registered connector kinds.
+
+    Plugin connector kinds come from the PluginManager attached to
+    ``app.state.plugin_manager`` (wired by ``angelus.webapp``); when no
+    plugin system is present the response degrades to the built-in set.
+    """
+    manager = getattr(getattr(request.app, "state", None), "plugin_manager", None)
+    if manager is not None:
+        from ..plugins.bridge_connectors import aggregate_providers
+
+        return {"providers": list(aggregate_providers(manager))}
     return {"providers": list(LLMFetcher.list_available_backend_providers())}
 
 @router.get("/api/connectors")

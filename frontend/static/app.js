@@ -3,6 +3,7 @@ import { $, escapeHtml } from "./components/dom.js";
 import { createChatView } from "./components/chat-view.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
+import { initPlugins } from "./plugins.js";
 
 /* ================================================================
  *  Theme (light / dark) — wired to the ☾ sidebar-footer button.
@@ -453,5 +454,5 @@ $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("
 $("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
-async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await initPlugins(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 initializeConsole().catch(error=>trace("工作空间/会话加载失败", error.message));
