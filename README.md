@@ -96,6 +96,13 @@ angelus web --host 127.0.0.1 --port 8765
 
 打开 <http://127.0.0.1:8765>，先创建连接器，再新建会话即可开始工作。
 
+### Kimi Code 连接器
+
+在“设置 → 连接器”的 Provider 中选择 **Kimi Code**，工作台会自动填写
+`https://api.kimi.com/coding/v1` 和默认模型 `kimi-for-coding`。填入在 Kimi
+Code Console 创建的 API Key 后即可保存为连接器；该 Key 与 Kimi 开放平台的
+API Key 不通用。具备相应会员权限时，也可将模型改为 `k3` 或 `k3-256k`。
+
 ## 桌面应用
 
 桌面壳会启动本地 FastAPI 控制面，并在窗口退出时回收 Python 子进程。发布构建将 Python 后端打包为 sidecar，最终用户不需要预先安装 Python。

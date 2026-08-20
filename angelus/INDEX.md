@@ -25,6 +25,8 @@ Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、
 | `cli.py` | CLI | 本地 `web` / `session` / `plugin` 命令与 llmfetcher 命令委托。 |
 | `__init__.py` / `__main__.py` | Package entry | 公共门面与 `python -m angelus` 入口。 |
 
+| `provider_adapters.py` | Provider presets | Maps first-party provider presets such as Kimi Code to supported LLMFetcher backends and default endpoints. |
+
 ## Durable State Ownership
 
 `LLMFETCHER_STATE_DIR` 可指定状态根目录；否则使用本地工作区。连接器与插件注册表在全局范围共享，而会话目录彼此隔离。

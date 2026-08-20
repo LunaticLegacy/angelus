@@ -44,6 +44,8 @@ swarm, TLB-RAG, and utilities.
 | `test_webapp_context_threshold.py` | Webapp context-threshold and browser retry-count configuration |
 | `test_workspace_deletion.py` | Workspace deletion: cleanup, active run handling |
 
+`test_provider_adapters.py` covers Kimi Code discovery, OpenAI-compatible backend resolution, manual-compaction parity, and credential-safe provenance.
+
 ## Intent Routing
 
 - **Agent tests** → `test_agent_stop_persistence.py`, `test_agent_turns_from_events.py`

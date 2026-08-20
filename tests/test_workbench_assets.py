@@ -166,6 +166,19 @@ def test_light_plan_agent_picker_overrides_the_dark_surface() -> None:
     assert ":root[data-theme=\"light\"] .plan-agent-picker select" in stylesheet
 
 
+def test_kimi_code_connector_preset_survives_provider_refresh() -> None:
+    """Kimi Code is a named connector choice, not a fragile manual preset."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'value="kimi-code"' in template
+    assert 'const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";' in script
+    assert 'const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";' in script
+    assert "function applyProviderPreset()" in script
+    assert "providerLabel(x)" in script
+    assert 'id="provider-hint"' in template
+
+
 def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     """Keep applied steering beside the original user messages in chat."""
     script = APP_SCRIPT.read_text(encoding="utf-8")

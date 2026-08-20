@@ -1,6 +1,6 @@
 # frontend/templates/ — HTML Templates INDEX
 
-Single-page application shell for the Angelus workbench.
+Single-page application shell for the Angelus workbench, including the Kimi Code connector option and its explanatory key hint.
 
 ## Route Map — Leaf Files
 

@@ -19,6 +19,7 @@ from llmfetcher.tools.spawn_tools import create_swarm_tools
 from .classes import ActiveRun, RunConfig
 from .markdown import render_markdown
 from .mcp_tools import create_mcp_tools
+from .provider_adapters import resolve_provider
 from .session_memory import CAPABILITIES, SessionMemoryStore, create_session_memory_tools
 from . import storage
 from .storage import (
@@ -74,11 +75,12 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
     serializing the API key or the full (potentially private) system prompt.
     """
     system_prompt_digest = hashlib.sha256(config.system_prompt.encode("utf-8")).hexdigest()
+    _, effective_api_url = resolve_provider(config.provider, config.api_url)
     profile = {
         "schema_version": 1,
         "provider": config.provider.strip(),
         "model": config.model.strip(),
-        "api_url": _redacted_api_url(config.api_url),
+        "api_url": _redacted_api_url(effective_api_url),
         "system_prompt_sha256": system_prompt_digest,
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
@@ -120,12 +122,13 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         Configured Agent with planning and optional shell tools. Credentials
         remain in memory and are never written to the session directory.
     """
+    provider, api_url = resolve_provider(config.provider, config.api_url)
     backend = LLMBackendConfig(
         name="browser",
-        provider=config.provider.strip(),
+        provider=provider,
         model=config.model.strip(),
         api_key=config.api_key,
-        api_url=config.api_url.strip() or None,
+        api_url=api_url or None,
         timeout=120,
         max_retries=config.max_retries,
     )

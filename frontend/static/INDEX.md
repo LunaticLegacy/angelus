@@ -12,7 +12,7 @@ JavaScript modules and CSS for the Angelus workbench UI.
 | `slash.js` | Active global script | DOM-free shell-style slash-command parser, also covered by `slash.test.js`. |
 | `app.css` | File | Styles for the entire workbench: responsive three-column layout, dialogs, sidebar session states, chat, settings, and inspector views. |
 
-`index.html` deliberately cache-versions both active assets. Update those version query strings when a browser-visible change needs an immediate refresh.
+`index.html` deliberately cache-versions both active assets. Update those version query strings when a browser-visible change needs an immediate refresh. The active connector flow includes a Kimi Code preset that fills the documented endpoint and default coding model while retaining user-defined overrides.
 
 ## Legacy Module Inventory
 

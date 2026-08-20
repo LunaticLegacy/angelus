@@ -42,7 +42,8 @@
           <div class="settings-page-heading"><div><h3>连接器</h3><p><b>全局共享</b> · 连接配置保存在本机受限文件中。</p></div><div><button id="new-connector" class="mini-button" type="button" title="保存为新连接">＋</button><button id="delete-connector" class="mini-button danger" type="button" title="删除连接">×</button></div></div>
           <div class="connection-field"><i></i><select id="connector" aria-label="选择已保存连接"><option value="">未保存的临时连接</option></select><button id="save-connector" type="button" title="保存当前连接">保存</button></div>
           <div class="model-chip"><span class="model-symbol">◈</span><div><strong id="model-label">模型配置</strong><small id="provider-label">OpenAI compatible</small></div><i></i></div>
-          <div class="settings-fields"><label>Provider<select id="provider"><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label><label>模型<input id="model" placeholder="gpt-4.1-mini" /></label><label>API URL<input id="api-url" placeholder="https://api.openai.com/v1" /></label><label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label></div>
+          <div class="settings-fields"><label>Provider<select id="provider"><option value="openai">OpenAI compatible</option><option value="kimi-code">Kimi Code</option><option value="anthropic">Anthropic</option><option value="litellm">LiteLLM</option><option value="openvino">OpenVINO</option><option value="onnxruntime">ONNX Runtime</option></select></label><label>模型<input id="model" placeholder="gpt-4.1-mini" /></label><label>API URL<input id="api-url" placeholder="https://api.openai.com/v1" /></label><label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="仅保留在当前浏览器" /></label></div>
+          <p id="provider-hint" class="provider-hint" hidden></p>
         </section>
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>Agent 执行</h3><p><b>当前会话独立</b> · 这些选项会保存在浏览器本地。</p></div></div>
@@ -110,6 +111,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-66"></script>
+    <script type="module" src="/static/app.js?v=workbench-69"></script>
   </body>
 </html>

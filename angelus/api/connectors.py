@@ -11,6 +11,7 @@ from llmfetcher.llm_fetcher import LLMFetcher
 
 from ..classes import ConnectorRequest
 from ..connectors import _public_connector, _read_connectors, _write_connectors
+from ..provider_adapters import visible_provider_kinds
 from ..storage import _safe_id, _sessions_lock
 
 router = APIRouter()
@@ -29,8 +30,8 @@ def providers(request: Request) -> dict[str, list[str]]:
     if manager is not None:
         from ..plugins.bridge_connectors import aggregate_providers
 
-        return {"providers": list(aggregate_providers(manager))}
-    return {"providers": list(LLMFetcher.list_available_backend_providers())}
+        return {"providers": list(visible_provider_kinds(aggregate_providers(manager)))}
+    return {"providers": list(visible_provider_kinds(LLMFetcher.list_available_backend_providers()))}
 
 @router.get("/api/connectors")
 def list_connectors() -> dict[str, list[dict[str, Any]]]:

@@ -51,6 +51,10 @@ let pendingRoundTools = new Map();
 let pluginStatuses = [];
 let selectedPluginKey = "";
 
+const KIMI_CODE_PROVIDER = "kimi-code";
+const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
+const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";
+
 const value = (id) => $(id).value.trim();
 function mcpServers() { const raw=$("mcp-servers").value.trim(); if(!raw)return []; let servers; try { servers=JSON.parse(raw); } catch { throw new Error("MCP 服务器配置必须是合法 JSON"); } if(!Array.isArray(servers))throw new Error("MCP 服务器配置必须是 JSON 数组"); return servers; }
 const config = () => ({
@@ -73,7 +77,10 @@ function persistSettings() { if(!workspaceId) return; localStorage.setItem(setti
 function restoreSettings() { try { let settings=JSON.parse(localStorage.getItem(settingsKey()) || "null"); let draft=JSON.parse(localStorage.getItem(connectionDraftKey()) || "null"); const legacy=JSON.parse(localStorage.getItem(`llmfetcherSettings:${workspaceId}`) || "null"); if(legacy) { settings ??={}; agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_"); if(legacy[key] !== undefined) settings[key]=legacy[key];}); settings.enable_shell ??=legacy.enable_shell; settings.enable_mcp ??=legacy.enable_mcp; settings.enable_swarm ??=legacy.enable_swarm; if(!connectorId) { draft ??={}; connectionDraftIds.forEach(id=>{const key=id.replaceAll("-","_"); if(legacy[key] !== undefined) draft[key]=legacy[key];}); } localStorage.setItem(settingsKey(),JSON.stringify(settings)); if(draft) localStorage.setItem(connectionDraftKey(),JSON.stringify(draft)); localStorage.removeItem(`llmfetcherSettings:${workspaceId}`); } if(settings) { agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_"); if(settings[key] !== undefined) $(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell); $("enable-mcp").checked=Boolean(settings.enable_mcp); $("enable-swarm").checked=Boolean(settings.enable_swarm); } if(!connectorId && draft) connectionDraftIds.forEach(id=>{const key=id.replaceAll("-","_"); if(draft[key] !== undefined) $(id).value=draft[key];}); } catch { /* Ignore malformed browser-local settings. */ } renderMemorySessionPicker(); }
 function bindSettingsPersistence() { [...agentSettingsIds,...connectionDraftIds,"enable-shell","enable-mcp","enable-swarm"].forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,persistSettings))); }
 function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
-function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || "模型配置"; $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; }
+function providerLabel(provider) { return provider===KIMI_CODE_PROVIDER ? "Kimi Code" : provider; }
+function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。" : ""; }
+function applyProviderPreset() { if($("provider").value!==KIMI_CODE_PROVIDER) { updateProviderHint(); return; } const apiUrl=$("api-url"), model=$("model"); if(!apiUrl.value.trim() || apiUrl.value.trim()==="https://api.openai.com/v1") apiUrl.value=KIMI_CODE_BASE_URL; if(!model.value.trim() || model.value.trim()==="gpt-4.1-mini") model.value=KIMI_CODE_DEFAULT_MODEL; updateProviderHint(); }
+function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || "模型配置"; $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; updateProviderHint(); }
 /** Return explicitly selected, non-current session IDs for run-scoped memory grants. */
 function selectedMemorySessions() { return [...new Set($("session-memory-sessions").value.split(",").map(value=>value.trim()).filter(value=>value && value !== sessionId))]; }
 /** Render searchable session choices and removable selections without exposing session content. */
@@ -104,7 +111,7 @@ async function apiJson(path) { const response=await fetch(path); if(!response.ok
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
 async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); if(!sessions.length) throw new Error("会话列表为空"); availableSessions=sessions; const select=$("workspace"); select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===workspaceId); $("workspace-open-hint").textContent=opened?`当前工作空间：${opened.name}`:""; const recent=$("recent-sessions"); recent.innerHTML=sessions.map(item=>`<button class="recent-session ${item.id===workspaceId?"active":""}" type="button" data-workspace-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status||"idle")}" title="会话状态：${escapeHtml(({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[item.status]||"待机")}">${escapeHtml(item.name)}</button>`).join(""); recent.querySelectorAll("[data-workspace-id]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.workspaceId).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
-function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
+function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
 async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; localStorage.llmfetcherConnector=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
 /** Give connector saves a visible local result instead of relying on hidden Trace. */
@@ -420,7 +427,7 @@ $("message").addEventListener("keydown", (event)=>{
   $("composer").requestSubmit();
 });
 $("message").addEventListener("input", resizeComposer);
-$("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",updateModelSummary);
+$("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",()=>{applyProviderPreset(); updateModelSummary();});
 $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
 $("close-context-graph").addEventListener("click", ()=>$("context-graph-dialog").close());
@@ -478,6 +485,6 @@ $("load-more-trace").addEventListener("click",()=>loadTrace(false).catch(error=>
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
 $("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
-async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(x)}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
-async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await initPlugins(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
+async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await initPlugins(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); applyProviderPreset(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 initializeConsole().catch(error=>trace("工作空间/会话加载失败", error.message));
