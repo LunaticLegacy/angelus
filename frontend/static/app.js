@@ -54,6 +54,7 @@ let selectedPluginKey = "";
 const KIMI_CODE_PROVIDER = "kimi-code";
 const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
 const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";
+const KIMI_CODE_TEMPERATURE = 1;
 
 const value = (id) => $(id).value.trim();
 function mcpServers() { const raw=$("mcp-servers").value.trim(); if(!raw)return []; let servers; try { servers=JSON.parse(raw); } catch { throw new Error("MCP 服务器配置必须是合法 JSON"); } if(!Array.isArray(servers))throw new Error("MCP 服务器配置必须是 JSON 数组"); return servers; }
@@ -78,8 +79,8 @@ function restoreSettings() { try { let settings=JSON.parse(localStorage.getItem(
 function bindSettingsPersistence() { [...agentSettingsIds,...connectionDraftIds,"enable-shell","enable-mcp","enable-swarm"].forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,persistSettings))); }
 function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
 function providerLabel(provider) { return provider===KIMI_CODE_PROVIDER ? "Kimi Code" : provider; }
-function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。" : ""; }
-function applyProviderPreset() { if($("provider").value!==KIMI_CODE_PROVIDER) { updateProviderHint(); return; } const apiUrl=$("api-url"), model=$("model"); if(!apiUrl.value.trim() || apiUrl.value.trim()==="https://api.openai.com/v1") apiUrl.value=KIMI_CODE_BASE_URL; if(!model.value.trim() || model.value.trim()==="gpt-4.1-mini") model.value=KIMI_CODE_DEFAULT_MODEL; updateProviderHint(); }
+function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。该模型只接受温度 1，已自动锁定。" : ""; }
+function applyProviderPreset() { const temperature=$("temperature"), isKimi=$("provider").value===KIMI_CODE_PROVIDER; temperature.disabled=isKimi; if(!isKimi) { updateProviderHint(); return; } const apiUrl=$("api-url"), model=$("model"); if(!apiUrl.value.trim() || apiUrl.value.trim()==="https://api.openai.com/v1") apiUrl.value=KIMI_CODE_BASE_URL; if(!model.value.trim() || model.value.trim()==="gpt-4.1-mini") model.value=KIMI_CODE_DEFAULT_MODEL; temperature.value=KIMI_CODE_TEMPERATURE; updateProviderHint(); }
 function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || "模型配置"; $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; updateProviderHint(); }
 /** Return explicitly selected, non-current session IDs for run-scoped memory grants. */
 function selectedMemorySessions() { return [...new Set($("session-memory-sessions").value.split(",").map(value=>value.trim()).filter(value=>value && value !== sessionId))]; }

@@ -9,6 +9,9 @@ the adapter remains explicit, testable, and available to every Agent path.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
+
+from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 
 
 KIMI_CODE_PROVIDER = "kimi-code"
@@ -17,6 +20,7 @@ KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
 # members. Users with the appropriate tier can choose ``k3`` or ``k3-256k``
 # in the same connector without changing the adapter.
 KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding"
+KIMI_CODE_TEMPERATURE = 1.0
 
 
 def visible_provider_kinds(providers: Iterable[str]) -> tuple[str, ...]:
@@ -38,10 +42,45 @@ def resolve_provider(provider: str, api_url: str = "") -> tuple[str, str]:
     return provider_id, endpoint
 
 
+def effective_temperature(provider: str, temperature: float) -> float:
+    """Return the provider-supported sampling temperature for one request."""
+    if provider.strip().lower() == KIMI_CODE_PROVIDER:
+        return KIMI_CODE_TEMPERATURE
+    return temperature
+
+
+class KimiCodeFetcher(LLMFetcher):
+    """Force Kimi Code's required temperature across all internal requests.
+
+    Agent graph extraction, retrieval, and compaction call ``fetch`` directly
+    with their own temperatures. Intercepting at the fetcher boundary keeps
+    those hidden model requests valid as well as ordinary user turns.
+    """
+
+    def fetch(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs["temperature"] = KIMI_CODE_TEMPERATURE
+        return super().fetch(*args, **kwargs)
+
+    def fetch_stream(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs["temperature"] = KIMI_CODE_TEMPERATURE
+        return super().fetch_stream(*args, **kwargs)
+
+
+def create_fetcher(backend: LLMBackendConfig, provider: str) -> LLMFetcher:
+    """Build a fetcher that applies any provider-level request constraints."""
+    if provider.strip().lower() == KIMI_CODE_PROVIDER:
+        return KimiCodeFetcher([backend])
+    return LLMFetcher([backend])
+
+
 __all__ = [
     "KIMI_CODE_BASE_URL",
     "KIMI_CODE_DEFAULT_MODEL",
     "KIMI_CODE_PROVIDER",
+    "KIMI_CODE_TEMPERATURE",
+    "KimiCodeFetcher",
+    "create_fetcher",
+    "effective_temperature",
     "resolve_provider",
     "visible_provider_kinds",
 ]

@@ -174,7 +174,9 @@ def test_kimi_code_connector_preset_survives_provider_refresh() -> None:
     assert 'value="kimi-code"' in template
     assert 'const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";' in script
     assert 'const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";' in script
+    assert "const KIMI_CODE_TEMPERATURE = 1;" in script
     assert "function applyProviderPreset()" in script
+    assert "temperature.disabled=isKimi" in script
     assert "providerLabel(x)" in script
     assert 'id="provider-hint"' in template
 

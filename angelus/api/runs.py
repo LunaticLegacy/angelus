@@ -19,6 +19,7 @@ from llmfetcher.swarm_module import AgentFailure
 from ..classes import ActiveRun, BrowserRunControl, RunRequest, SteerRequest
 from .. import connectors, runtime, storage
 from ..history import render_markdown
+from ..provider_adapters import effective_temperature
 from ..storage import (
     _append_conversation_turn,
     _append_session_event,
@@ -133,7 +134,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 agent.add_hook(capture)
                 output = agent.run(
                     request.message,
-                    temperature=config.temperature,
+                    temperature=effective_temperature(config.provider, config.temperature),
                     control=active.control,
                 )
                 usage = {

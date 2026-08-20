@@ -20,7 +20,7 @@ from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from ..classes import CompactRequest
 from ..connectors import _resolve_connector_key
 from ..history import _agent_context_stats
-from ..provider_adapters import resolve_provider
+from ..provider_adapters import create_fetcher, resolve_provider
 from ..storage import _get_session, _safe_id, _session_path
 
 router = APIRouter()
@@ -77,7 +77,7 @@ def _build_compactor_fetcher(config: Any) -> LLMFetcher:
         timeout=120,
         max_retries=config.max_retries,
     )
-    return LLMFetcher([backend])
+    return create_fetcher(backend, config.provider)
 
 
 @router.post("/api/sessions/{session_id}/compact")

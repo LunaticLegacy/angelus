@@ -19,7 +19,7 @@ from llmfetcher.tools.spawn_tools import create_swarm_tools
 from .classes import ActiveRun, RunConfig
 from .markdown import render_markdown
 from .mcp_tools import create_mcp_tools
-from .provider_adapters import resolve_provider
+from .provider_adapters import create_fetcher, effective_temperature, resolve_provider
 from .session_memory import CAPABILITIES, SessionMemoryStore, create_session_memory_tools
 from . import storage
 from .storage import (
@@ -82,7 +82,7 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
         "model": config.model.strip(),
         "api_url": _redacted_api_url(effective_api_url),
         "system_prompt_sha256": system_prompt_digest,
-        "temperature": config.temperature,
+        "temperature": effective_temperature(config.provider, config.temperature),
         "max_tokens": config.max_tokens,
         "max_rounds": config.max_rounds,
         "max_retries": config.max_retries,
@@ -132,7 +132,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         timeout=120,
         max_retries=config.max_retries,
     )
-    fetcher = LLMFetcher([backend])
+    fetcher = create_fetcher(backend, config.provider)
     semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
