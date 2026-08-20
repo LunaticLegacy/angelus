@@ -5,12 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from llmfetcher.llm_fetcher import LLMFetcher
 
 from ..classes import ConnectorRequest
 from ..connectors import _public_connector, _read_connectors, _write_connectors
+from ..provider_adapters import visible_provider_kinds
 from ..storage import _safe_id, _sessions_lock
 
 router = APIRouter()
@@ -18,9 +19,19 @@ router = APIRouter()
 
 
 @router.get("/api/providers")
-def providers() -> dict[str, list[str]]:
-    """Expose the providers currently registered by the library."""
-    return {"providers": list(LLMFetcher.list_available_backend_providers())}
+def providers(request: Request) -> dict[str, list[str]]:
+    """Expose built-in providers plus plugin-registered connector kinds.
+
+    Plugin connector kinds come from the PluginManager attached to
+    ``app.state.plugin_manager`` (wired by ``angelus.webapp``); when no
+    plugin system is present the response degrades to the built-in set.
+    """
+    manager = getattr(getattr(request.app, "state", None), "plugin_manager", None)
+    if manager is not None:
+        from ..plugins.bridge_connectors import aggregate_providers
+
+        return {"providers": list(visible_provider_kinds(aggregate_providers(manager)))}
+    return {"providers": list(visible_provider_kinds(LLMFetcher.list_available_backend_providers()))}
 
 @router.get("/api/connectors")
 def list_connectors() -> dict[str, list[dict[str, Any]]]:

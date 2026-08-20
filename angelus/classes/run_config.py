@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from typing import Any
 
 
 class RunConfig(BaseModel):
@@ -23,6 +24,11 @@ class RunConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=10)
     max_context_threshold: int = Field(default=262144, ge=1024, le=16777216)
     enable_shell: bool = False
+    # MCP server definitions are session-local browser settings.  Each entry
+    # is validated again by ``mcp_tools`` immediately before the SDK connects.
+    # ``env`` holds host environment-variable *names*, never secret values.
+    enable_mcp: bool = False
+    mcp_servers: list[dict[str, Any]] = Field(default_factory=list)
     enable_swarm: bool = False
     max_swarm_agents: int = Field(default=4, ge=1, le=16)
     # These grants are intentionally run-scoped and are never inferred from a

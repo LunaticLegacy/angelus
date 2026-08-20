@@ -19,6 +19,8 @@ class ActiveRun:
     events: queue.Queue[dict[str, Any]] = field(default_factory=queue.Queue)
     done: threading.Event = field(default_factory=threading.Event)
     swarm: AgentSwarm | None = None
+    mcp_bridge: Any | None = None
+    mcp_tools: list[Any] = field(default_factory=list)
     processes: set[Any] = field(default_factory=set)
     processes_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -48,3 +50,8 @@ class ActiveRun:
                     process.kill()
                 except (OSError, ProcessLookupError):
                     pass
+        if self.mcp_bridge is not None:
+            try:
+                self.mcp_bridge.close()
+            except Exception:
+                pass

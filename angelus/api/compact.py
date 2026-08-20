@@ -20,6 +20,7 @@ from llmfetcher.llm_fetcher import LLMBackendConfig, LLMFetcher
 from ..classes import CompactRequest
 from ..connectors import _resolve_connector_key
 from ..history import _agent_context_stats
+from ..provider_adapters import create_fetcher, resolve_provider
 from ..storage import _get_session, _safe_id, _session_path
 
 router = APIRouter()
@@ -66,16 +67,17 @@ def _build_compactor_fetcher(config: Any) -> LLMFetcher:
     credentials are resolved server-side from the browser's run config and
     never written to the session directory.
     """
+    provider, api_url = resolve_provider(config.provider, config.api_url)
     backend = LLMBackendConfig(
         name="browser",
-        provider=config.provider.strip(),
+        provider=provider,
         model=config.model.strip(),
         api_key=config.api_key,
-        api_url=config.api_url.strip() or None,
+        api_url=api_url or None,
         timeout=120,
         max_retries=config.max_retries,
     )
-    return LLMFetcher([backend])
+    return create_fetcher(backend, config.provider)
 
 
 @router.post("/api/sessions/{session_id}/compact")

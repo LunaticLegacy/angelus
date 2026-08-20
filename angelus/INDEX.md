@@ -1,86 +1,51 @@
-# angelus/ — Main Package INDEX
+# angelus/ — Control Plane INDEX
 
-Angelus is the local control plane layered on the pinned `llmfetcher` submodule.
-It owns the browser API, durable session projections, connector credentials, and
-run controls; model backends, the Agent loop, graph memory, tools, and Swarm
-implementation are provided by `llmfetcher`.
+Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、运行控制、会话投影、连接器凭据、跨会话记忆和插件宿主；模型调用、Agent loop、图记忆、工具与 Swarm 算法留在 `llmfetcher/` 子模块。
 
 ## Route Map
 
-| Entry | Type | Purpose |
+| Entry | Type | Responsibility |
 |---|---|---|
-| [`classes/`](classes/INDEX.md) | Package | Web request models and in-memory run/session control dataclasses |
-| [`api/`](api/) | Package | FastAPI routers: `connectors.py` (provider/connector CRUD), `runs.py` (start/status/SSE/stop/force-stop/steer), `sessions.py` (workspace/session/plan/history/archive/graph/usage/artifacts/handoffs), `compact.py` (manual context compaction with staged progress and transient failure diagnostics), plus the `include_api_routes` assembly and static console index |
-| `webapp.py` | Module | 52-line FastAPI assembly shell: mounts static files, includes the `api/` routers, and re-exports every module so `uvicorn angelus.webapp:app`, the CLI, and the regression suite keep working unchanged |
-| `storage.py` | Module | Durable state root, session registry, append-only event ledger, JSON persistence, and in-memory concurrency guards shared by the API and run worker threads |
-| `connectors.py` | Module | RSA-OAEP encrypted connector credential storage; resolves `connector_id` → decrypted key only inside the server process |
-| `history.py` | Module | Transcript, archive, usage, and legacy-context rebuilds from the event ledger; legacy `.llmfetcher` state migration |
-| `runtime.py` | Module | llmfetcher Agent/Swarm construction (`_build_agent` / `_build_swarm`), credential-free runtime-profile snapshots, session memory and task-plan stores |
-| `markdown.py` | Module | Bounded LRU safe Markdown→HTML rendering shared by history rebuilds and the API |
-| `cli.py` | Module | Angelus CLI layer: local `web` and `session` commands plus delegated llmfetcher commands |
-| `task_planning.py` | Module | Session-local JSON task-plan store used by the web API and Agent planning tools |
-| `__init__.py` | Module | Public Angelus facade; re-exports llmfetcher Agent and Swarm primitives |
-| `__main__.py` | Module | `python -m angelus` entry point |
+| [`api/`](api/INDEX.md) | FastAPI routers | 浏览器 HTTP/SSE 路由与 SPA 根页面。 |
+| [`classes/`](classes/INDEX.md) | Data models | 请求模型以及内存态运行/会话控制类。 |
+| [`plugins/`](plugins/INDEX.md) | Plugin runtime | 插件发现、生命周期、权限、完整性与宿主桥接。 |
+| `webapp.py` | Application assembly | 创建 FastAPI app、挂载静态资源、初始化插件管理器并注册 API。 |
+| `runtime.py` | Runtime construction | 构建 Agent / Swarm、运行配置快照、按 Agent 隔离的计划与会话记忆存储，并为实时 Agent round 生成安全 Markdown HTML。 |
+| `storage.py` | Durable state | 状态根目录、会话注册表、事件账本、JSON 持久化与并发保护。 |
+| `history.py` | Read models | 从事件和上下文投影重建历史、归档、图和用量。 |
+| `connectors.py` | Credentials | 连接器 CRUD、RSA-OAEP 凭据加密与服务端解析。 |
+| `session_memory.py` | Cross-session memory | 按运行级许可提供快照式会话/产物检索工具。 |
+| `task_planning.py` | Plans | 会话本地 JSON 任务计划存储。 |
+| `markdown.py` | Rendering | 受限 LRU 的安全 Markdown → HTML 渲染。 |
+| `plugin_manifest.py` | Manifest validation | 手写的插件清单 v1 字段级校验。 |
+| `plugin_paths.py` | Plugin locations | 与 `workspace/` 并列的持久插件目录解析，以及环境变量覆盖。 |
+| `plugin_bootstrap.py` | Packaged examples | 首次启动时将发布包内的示例插件复制到持久插件目录，绝不自动执行或覆盖用户文件。 |
+| `mcp_tools.py` | MCP bridge | 用官方 Python `mcp` SDK 连接服务器、发现远端工具并桥接为原生 Agent 工具。 |
+| `plugin_registry.py` | Plugin registry | 原子读写 `plugins.json` 中的安装、启用与授权记录。 |
+| `cli.py` | CLI | 本地 `web` / `session` / `plugin` 命令与 llmfetcher 命令委托。 |
+| `__init__.py` / `__main__.py` | Package entry | 公共门面与 `python -m angelus` 入口。 |
+
+| `provider_adapters.py` | Provider presets | Maps first-party provider presets such as Kimi Code to supported LLMFetcher backends and default endpoints. |
 
 ## Durable State Ownership
 
-`LLMFETCHER_STATE_DIR` selects the local state root; otherwise Angelus uses its
-default local workspace directory.  All state below is local and is not a
-source for browser-provided API keys.
+`LLMFETCHER_STATE_DIR` 可指定状态根目录；否则使用本地工作区。连接器与插件注册表在全局范围共享，而会话目录彼此隔离。
 
-| Scope | Records | Notes |
-|---|---|---|
-| Global state root | `sessions.json`, `connectors.json`, RSA keypair | Connector records are shared across sessions. API keys in `connectors.json` are RSA-OAEP-SHA256 ciphertext; the private key stays local with owner-only permissions. API responses expose only connector metadata and `has_api_key`. |
-| One session directory | `conversation.json`, `events.ndjson`, `run-state.json` | Display transcript, append-only lifecycle ledger, and credential-free runtime-profile/status projection. The event ledger is the authoritative source for new history/usage reconstruction; `conversation.json` remains a display-safe compatibility projection. |
-| One session directory | `contexts/<agent>.json` and related graph files | llmfetcher-managed active context, compaction archive, and graph-memory projections. These are rebuildable/Agent-facing state, distinct from the browser transcript. |
-| One session directory | `task-plan.json`, `graph-view.json` | Durable task plan and Swarm execution-graph view. |
+| Scope | Records |
+|---|---|
+| Global state root | `sessions.json`、`connectors.json`、RSA 密钥对、`plugins.json` |
+| Session directory | `conversation.json`、`events.ndjson`、`run-state.json`、`task-plan.json`、`graph-view.json` |
+| Agent context | `contexts/<agent>.json` 及其线性归档和图记忆伴随文件 |
 
-## Settings and Credential Boundaries
-
-- **Connector settings** are named, global records: provider, model, API URL,
-  and encrypted API key. `connector_id` resolves its key only in the server
-  process; an API key is never returned to the browser.
-- **Agent execution settings** arrive in `RunConfig`: system prompt,
-  temperature, token/round/context limits, shell, and Swarm options. The
-  browser keeps its per-session UI preferences; Angelus persists only a
-  credential-free runtime-profile snapshot (including a system-prompt digest)
-  beside each run.
-- A direct, unsaved browser key is run-only. It is not written to session state
-  or connector storage.
-
-## Primary Control-Plane Flows
-
-- **Run / stop / force-stop / steer** → `api/runs.py`: a `BrowserSession`
-  prevents concurrent runs. Normal stop is cooperative and takes effect at a
-  completed model/tool boundary. Force-stop cancels the active provider
-  transport, prevents retry/fallback, and kills registered Shell processes.
-  Runs append durable events before notifying SSE clients; normal, stopped,
-  and error terminals update `run-state.json`. `stream_events` replays the
-  durable event ledger when no run is active (the reconnect path) and streams
-  live events during a run.
-- **History and observability** → `api/sessions.py` + `history.py`: session
-  messages, archive, graph, events, per-call token ledger, and Agent/Swarm
-  views are reconstructed from durable session artifacts.
-- **Agent construction** → `runtime._build_agent`: creates a session-owned
-  llmfetcher Agent with persisted graph context, a zero-context semantic graph
-  worker, task-planning tools, and optionally sandboxed shell tools.
-- **Swarm execution** → `runtime._build_swarm` plus llmfetcher Swarm:
-  Angelus persists its display view and relays lifecycle events; individual
-  workers retain their own session-local context paths.
-- **CLI** → `cli.py`: `web` starts the local FastAPI console; `session list`
-  and `session create` manage browser-visible sessions. Core run/chat/backend/
-  tool commands are delegated to llmfetcher.
+API 密钥不返回给浏览器。持久化的运行配置不含密钥；直接输入的浏览器密钥只在当前请求中使用。
 
 ## Intent Routing
 
-- **HTTP endpoints, SSE, static console** → `api/` routers (`connectors.py`,
-  `runs.py`, `sessions.py`), assembled by `webapp.py`
-- **Persistence, state root, concurrency guards** → `storage.py`
-- **Connector credentials (encrypt/resolve)** → `connectors.py`
-- **History / archive / usage rebuilds** → `history.py`
-- **Agent / Swarm construction** → `runtime.py`
-- **Markdown rendering** → `markdown.py`
-- **Request and in-memory run models** → `classes/INDEX.md`
-- **Task-plan persistence** → `task_planning.py`
-- **Agent, context, graph memory, tools, or Swarm algorithm** → corresponding
-  package in `llmfetcher/`, not `angelus/`
+- **HTTP 端点、SSE 或静态控制台** → `api/INDEX.md`
+- **持久化、状态目录、事件账本** → `storage.py`
+- **历史、归档、图或用量读模型** → `history.py`
+- **Agent / Swarm 构建** → `runtime.py`
+- **连接器凭据** → `connectors.py`
+- **跨会话记忆授权** → `session_memory.py`
+- **插件契约、注册表或运行时** → `plugin_*.py` 与 `plugins/INDEX.md`
+- **请求与内存态控制模型** → `classes/INDEX.md`

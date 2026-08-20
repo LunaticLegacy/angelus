@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -120,14 +122,16 @@ def delete_workspace(workspace_id: str, request: WorkspaceDeleteRequest) -> dict
     return {"status": "deleted", "message": "Workspace and its session data were deleted"}
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/plan")
-def get_task_plan(workspace_id: str, session_id: str) -> dict[str, Any]:
-    """Return the current persisted task plan for one browser session."""
-    return _plan_store(workspace_id, session_id).read()
+def get_task_plan(
+    workspace_id: str, session_id: str, agent: str = "coordinator"
+) -> dict[str, Any]:
+    """Return one selected Agent's persisted task plan for a browser session."""
+    return _plan_store(workspace_id, session_id, agent).read()
 
 @router.get("/api/sessions/{session_id}/plan")
-def get_session_plan(session_id: str) -> dict[str, Any]:
-    """Return the task plan for one independent browser session."""
-    return _plan_store(session_id, session_id).read()
+def get_session_plan(session_id: str, agent: str = "coordinator") -> dict[str, Any]:
+    """Return one selected Agent's task plan for an independent session."""
+    return _plan_store(session_id, session_id, agent).read()
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/messages")
 def get_session_history(workspace_id: str, session_id: str, agent: str = "all") -> dict[str, list[dict[str, Any]]]:
@@ -510,26 +514,35 @@ def get_session_usage(session_id: str) -> dict[str, Any]:
     return _session_usage_summary(_read_session_event_log(safe_session_id, safe_session_id))
 
 @router.put("/api/workspaces/{workspace_id}/sessions/{session_id}/plan")
-def replace_task_plan(workspace_id: str, session_id: str, request: TaskPlanRequest) -> dict[str, Any]:
-    """Allow a user to replace their supervised task plan from the UI."""
+def replace_task_plan(
+    workspace_id: str, session_id: str, request: TaskPlanRequest,
+    agent: str = "coordinator",
+) -> dict[str, Any]:
+    """Allow a user to replace one selected Agent's supervised task plan."""
     try:
-        return _plan_store(workspace_id, session_id).replace(goal=request.goal, summary=request.summary, tasks=request.tasks)
+        return _plan_store(workspace_id, session_id, agent).replace(goal=request.goal, summary=request.summary, tasks=request.tasks)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.patch("/api/workspaces/{workspace_id}/sessions/{session_id}/plan/tasks/{task_id}")
-def update_task_plan_status(workspace_id: str, session_id: str, task_id: str, request: TaskStatusRequest) -> dict[str, Any]:
-    """Persist a status change made by a task-block control in the UI."""
+def update_task_plan_status(
+    workspace_id: str, session_id: str, task_id: str, request: TaskStatusRequest,
+    agent: str = "coordinator",
+) -> dict[str, Any]:
+    """Persist a status change in one selected Agent's task plan."""
     try:
-        return _plan_store(workspace_id, session_id).update_status(task_id, request.status)
+        return _plan_store(workspace_id, session_id, agent).update_status(task_id, request.status)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.patch("/api/sessions/{session_id}/plan/tasks/{task_id}")
-def update_session_plan_status(session_id: str, task_id: str, request: TaskStatusRequest) -> dict[str, Any]:
-    """Persist one task-status transition within an independent session."""
+def update_session_plan_status(
+    session_id: str, task_id: str, request: TaskStatusRequest,
+    agent: str = "coordinator",
+) -> dict[str, Any]:
+    """Persist one task-status transition within one selected Agent plan."""
     try:
-        return _plan_store(session_id, session_id).update_status(task_id, request.status)
+        return _plan_store(session_id, session_id, agent).update_status(task_id, request.status)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -553,6 +566,24 @@ def create_workspace(request: WorkspaceRequest) -> dict[str, str]:
 def create_session(request: WorkspaceRequest) -> dict[str, str]:
     """Create one browser-visible session and its private workspace path."""
     return create_workspace(request)
+
+
+@router.post("/api/sessions/{session_id}/open-folder")
+def open_session_folder(session_id: str) -> dict[str, str]:
+    """Open one session's local workspace directory in the host file manager."""
+    safe_session = _safe_id(session_id, "session")
+    directory = _session_path(safe_session, safe_session)
+    directory.mkdir(parents=True, exist_ok=True)
+    command = (
+        ["explorer.exe", str(directory)] if sys.platform == "win32"
+        else ["open", str(directory)] if sys.platform == "darwin"
+        else ["xdg-open", str(directory)]
+    )
+    try:
+        subprocess.Popen(command)
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="Unable to open the workspace directory") from exc
+    return {"path": str(directory)}
 
 @router.get("/api/sessions/{session_id}/memory/capabilities")
 def get_session_memory_capabilities(session_id: str) -> dict[str, Any]:
@@ -611,4 +642,4 @@ def delete_session(session_id: str, request: WorkspaceDeleteRequest) -> dict[str
     """Delete one session after confirmation and cooperative run shutdown."""
     return delete_workspace(session_id, request)
 
-__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]
+__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "open_session_folder", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]

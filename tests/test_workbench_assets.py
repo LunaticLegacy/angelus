@@ -20,6 +20,19 @@ def test_event_listeners_target_existing_template_elements() -> None:
     assert listener_ids <= element_ids
 
 
+def test_workspace_button_opens_current_directory_without_replacing_the_session() -> None:
+    """The workspace button is a host-file-manager action, not a session switch."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="open-workspace"' in template
+    assert 'id="workspace-open-hint"' in template
+    assert "open-folder" in script
+    assert "encodeURIComponent(workspaceId)" in script
+    assert '$("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId)' in script
+    assert '$("open-workspace").addEventListener("click"' in script
+
+
 def test_active_workbench_uses_component_views_through_an_es_module_entrypoint() -> None:
     """Keep the running Workbench on the componentized module path."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
@@ -53,7 +66,7 @@ def test_settings_categories_use_left_navigation_buttons() -> None:
     navigation_sections = set(re.findall(r'data-settings-section="([^"]+)"', template))
     panel_sections = set(re.findall(r'data-settings-panel="([^"]+)"', template))
 
-    assert navigation_sections == panel_sections == {"connection", "agent", "future"}
+    assert navigation_sections == panel_sections == {"connection", "agent", "plugins", "future"}
     assert 'id="settings-section"' not in template
     assert 'querySelectorAll("[data-settings-section]")' in script
 
@@ -119,6 +132,53 @@ def test_agents_panel_renders_only_the_single_topology_tree() -> None:
 
     assert 'id="inspector-agents-list"' in template
     assert 'id="execution-graph"' not in template
+
+
+def test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height() -> None:
+    """The inspector exposes isolated plans and no longer caps topology height."""
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="plan-agent"' in template
+    assert "selectedPlanAgent" in script
+    assert "agent=${encodeURIComponent(selectedPlanAgent)}" in script
+    assert ".inspector-agents-list { flex:1 1 auto; min-height:0; max-height:none;" in stylesheet
+
+
+def test_agent_settings_expose_native_mcp_tool_configuration() -> None:
+    """Keep MCP discovery an explicit Agent-run setting with JSON validation."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="enable-mcp"' in template
+    assert 'id="mcp-servers"' in template
+    assert "function mcpServers()" in script
+    assert "enable_mcp:" in script
+    assert "mcp_servers:" in script
+
+
+def test_light_plan_agent_picker_overrides_the_dark_surface() -> None:
+    """The plan Agent selector must remain readable in the light theme."""
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert ":root[data-theme=\"light\"] .plan-agent-picker" in stylesheet
+    assert ":root[data-theme=\"light\"] .plan-agent-picker select" in stylesheet
+
+
+def test_kimi_code_connector_preset_survives_provider_refresh() -> None:
+    """Kimi Code is a named connector choice, not a fragile manual preset."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'value="kimi-code"' in template
+    assert 'const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";' in script
+    assert 'const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";' in script
+    assert "const KIMI_CODE_TEMPERATURE = 1;" in script
+    assert "function applyProviderPreset()" in script
+    assert "temperature.disabled=isKimi" in script
+    assert "providerLabel(x)" in script
+    assert 'id="provider-hint"' in template
 
 
 def test_applied_steering_is_a_right_aligned_chat_input() -> None:

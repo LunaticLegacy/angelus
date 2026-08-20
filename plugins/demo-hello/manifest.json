@@ -1,0 +1,22 @@
+{
+  "name": "demo-hello",
+  "display_name": "Demo Hello 插件",
+  "version": "0.1.0",
+  "api_version": "1",
+  "description": "前端显示演示插件：注册面板（panel）/命令（command）/工具（tool）/钩子（hook）/API 路由（route），覆盖插件系统五类扩展点全链路。",
+  "author": "angelus",
+  "license": "MIT",
+  "entry": "main",
+  "entry_type": "module",
+  "tools": ["demo_hello"],
+  "permissions": [
+    {"action": "event.subscribe", "scope": "tool.after"},
+    {"action": "http", "scope": "https://api.example.com/*"}
+  ],
+  "frontend": {
+    "assets": ["plugin.js", "plugin.css"],
+    "panels": ["status"],
+    "commands": ["hello"],
+    "settings": true
+  }
+}

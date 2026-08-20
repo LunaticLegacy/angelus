@@ -17,6 +17,9 @@ from llmfetcher.tools.shell_tools import create_shell_tools
 from llmfetcher.tools.spawn_tools import create_swarm_tools
 
 from .classes import ActiveRun, RunConfig
+from .markdown import render_markdown
+from .mcp_tools import create_mcp_tools
+from .provider_adapters import create_fetcher, effective_temperature, resolve_provider
 from .session_memory import CAPABILITIES, SessionMemoryStore, create_session_memory_tools
 from . import storage
 from .storage import (
@@ -32,12 +35,22 @@ from .task_planning import TaskPlanStore, create_task_planning_tools
 
 def _event_payload(event: ExecutionEvent) -> dict[str, Any]:
     """Convert library events to JSON values suitable for Server-Sent Events."""
+    data = event.data
+    # A completed model round reaches the browser before the durable-history
+    # reload.  Render it here with the same raw-HTML-disabled renderer used by
+    # history so live Agent replies and reloaded replies never diverge.
+    if event.event_type == "agent:round" and isinstance(data, dict):
+        data = dict(data)
+        content = str(data.get("assistant_content") or "")
+        reasoning = str(data.get("reasoning_content") or "")
+        data["assistant_content_html"] = render_markdown(content)
+        data["reasoning_content_html"] = render_markdown(reasoning)
     return {
         "type": event.event_type,
         "source": event.source,
         "agent": event.agent_name,
         "message": event.message,
-        "data": event.data,
+        "data": data,
         "timestamp": event.timestamp,
     }
 
@@ -62,18 +75,28 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
     serializing the API key or the full (potentially private) system prompt.
     """
     system_prompt_digest = hashlib.sha256(config.system_prompt.encode("utf-8")).hexdigest()
+    _, effective_api_url = resolve_provider(config.provider, config.api_url)
     profile = {
         "schema_version": 1,
         "provider": config.provider.strip(),
         "model": config.model.strip(),
-        "api_url": _redacted_api_url(config.api_url),
+        "api_url": _redacted_api_url(effective_api_url),
         "system_prompt_sha256": system_prompt_digest,
-        "temperature": config.temperature,
+        "temperature": effective_temperature(config.provider, config.temperature),
         "max_tokens": config.max_tokens,
         "max_rounds": config.max_rounds,
         "max_retries": config.max_retries,
         "max_context_threshold": config.max_context_threshold,
         "enable_shell": config.enable_shell,
+        "enable_mcp": config.enable_mcp,
+        "mcp_servers": sorted(
+            (
+                {"name": str(server.get("name", "")), "transport": str(server.get("transport", "stdio"))}
+                for server in config.mcp_servers
+                if isinstance(server, dict)
+            ),
+            key=lambda server: (server["name"], server["transport"]),
+        ),
         "enable_swarm": config.enable_swarm,
         "max_swarm_agents": config.max_swarm_agents,
         "session_memory_allowlists": {
@@ -99,16 +122,17 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         Configured Agent with planning and optional shell tools. Credentials
         remain in memory and are never written to the session directory.
     """
+    provider, api_url = resolve_provider(config.provider, config.api_url)
     backend = LLMBackendConfig(
         name="browser",
-        provider=config.provider.strip(),
+        provider=provider,
         model=config.model.strip(),
         api_key=config.api_key,
-        api_url=config.api_url.strip() or None,
+        api_url=api_url or None,
         timeout=120,
         max_retries=config.max_retries,
     )
-    fetcher = LLMFetcher([backend])
+    fetcher = create_fetcher(backend, config.provider)
     semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
@@ -137,17 +161,11 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
             unregister_process=active.unregister_process if active else None,
             force_stop_event=active.control.force_stopped if active else None,
         ))
+    agent.add_tools(_mcp_tools(config, active))
     def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
-        if active is not None:
-            active.events.put({
-                "event": "lifecycle",
-                **_event_payload(ExecutionEvent(
-                    source="plan", agent_name=agent_name,
-                    event_type=event_type,
-                    message=f"Plan updated ({plan.get('goal', '')[:80]})",
-                    data={"plan": plan},
-                )),
-            })
+        _publish_plan_change(
+            active, workspace_id, session_id, agent_name, event_type, plan
+        )
 
     agent.add_tools(create_task_planning_tools(
         _plan_store(workspace_id, session_id),
@@ -157,6 +175,19 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
     ))
     return agent
+
+
+def _mcp_tools(config: RunConfig, active: ActiveRun | None) -> list[Any]:
+    """Open one SDK-backed MCP bridge and share it across every run Agent."""
+    if not config.enable_mcp:
+        return []
+    if active is None:
+        raise RuntimeError("MCP tools require an active browser run for lifecycle cleanup")
+    if active.mcp_bridge is None:
+        bridge, tools = create_mcp_tools(config.mcp_servers)
+        active.mcp_bridge = bridge
+        active.mcp_tools = tools
+    return list(active.mcp_tools)
 
 def _memory_capabilities(config: RunConfig, current_session: str) -> dict[str, set[str]]:
     """Freeze the four explicit session grants for one Agent run."""
@@ -178,11 +209,49 @@ def _session_memory_store() -> SessionMemoryStore:
     """Create a store whose audit records use the normal durable event log."""
     return SessionMemoryStore(storage.WORKSPACE_ROOT, lambda session, payload: _append_session_event(session, session, payload))
 
-def _plan_store(workspace_id: str, session_id: str) -> TaskPlanStore:
-    """Return the session-local plan store after validating path components."""
+def _publish_plan_change(
+    active: ActiveRun | None,
+    workspace_id: str,
+    session_id: str,
+    agent_name: str,
+    event_type: str,
+    plan: dict[str, Any],
+) -> None:
+    """Persist and relay one Agent-owned plan mutation to the workbench."""
+    payload = {
+        "event": "lifecycle",
+        **_event_payload(ExecutionEvent(
+            source="plan",
+            agent_name=agent_name,
+            event_type=event_type,
+            message=f"{agent_name} plan updated ({plan.get('goal', '')[:80]})",
+            data={"plan": plan},
+        )),
+    }
+    _append_session_event(workspace_id, session_id, payload)
+    if active is not None:
+        active.events.put(payload)
+
+
+def _plan_store(
+    workspace_id: str, session_id: str, agent_name: str = "coordinator"
+) -> TaskPlanStore:
+    """Return one Agent-owned plan store inside a browser session.
+
+    ``coordinator`` retains the historical ``task-plan.json`` path so existing
+    sessions remain readable.  Every subagent receives an isolated sibling
+    under ``plans/`` and can therefore never replace the coordinator tree.
+    """
     workspace_id = _safe_id(workspace_id, "workspace")
     session_id = _safe_id(session_id, "session")
-    return TaskPlanStore(_session_path(workspace_id, session_id) / "task-plan.json")
+    agent_name = _safe_id(agent_name, "agent")
+    session_dir = _session_path(workspace_id, session_id)
+    path = (
+        session_dir / "task-plan.json"
+        if agent_name == "coordinator"
+        else session_dir / "plans" / f"{agent_name}.json"
+    )
+    return TaskPlanStore(path)
 
 def _build_swarm(config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun) -> AgentSwarm:
     """Build a coordinator-led swarm bound to one private session directory.
@@ -204,23 +273,36 @@ def _build_swarm(config: RunConfig, workspace_id: str, session_id: str, active: 
     coordinator = _build_agent(config, workspace_id, session_id, active=active)
     swarm = AgentSwarm(max_concurrency_agents=config.max_swarm_agents)
     swarm.add_agent("coordinator", coordinator)
-    worker_tools = create_task_planning_tools(_plan_store(workspace_id, session_id))
-    # Dynamic workers receive the same frozen session grants as their
-    # coordinator.  The closures are run-scoped and do not expose new grants.
-    worker_tools.extend(create_session_memory_tools(
-        _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
-    ))
-    if config.enable_shell:
-        worker_tools.extend(create_shell_tools(
-            sandbox_cwd=str(_session_path(workspace_id, session_id)),
-            register_process=active.register_process,
-            unregister_process=active.unregister_process,
-            force_stop_event=active.control.force_stopped,
+    def worker_tools_for(agent_name: str) -> list[Any]:
+        """Create non-shared tools whose plan handlers close over one worker."""
+        def on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
+            _publish_plan_change(
+                active, workspace_id, session_id, agent_name, event_type, plan
+            )
+
+        tools = create_task_planning_tools(
+            _plan_store(workspace_id, session_id, agent_name),
+            on_changed=on_plan_changed,
+        )
+        tools.extend(create_session_memory_tools(
+            _session_memory_store(), session_id,
+            _memory_capabilities(config, session_id), uuid.uuid4().hex,
         ))
+        if config.enable_shell:
+            tools.extend(create_shell_tools(
+                sandbox_cwd=str(_session_path(workspace_id, session_id)),
+                register_process=active.register_process,
+                unregister_process=active.unregister_process,
+                force_stop_event=active.control.force_stopped,
+            ))
+        tools.extend(_mcp_tools(config, active))
+        return tools
+
     coordinator.add_tools(create_swarm_tools(
         swarm=swarm,
         llm_fetcher=coordinator.llm_fetcher,
-        worker_tool_pool=worker_tools,
+        worker_tool_pool=[],
+        worker_tool_factory=worker_tools_for,
         coordinator_name="coordinator",
         worker_max_rounds=config.max_rounds,
         worker_max_tokens=config.max_tokens,

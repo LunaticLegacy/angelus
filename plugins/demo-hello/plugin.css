@@ -1,0 +1,44 @@
+/* demo-hello panel styling (loaded via manifest.frontend.assets whitelist) */
+.demo-hello-card {
+  padding: 12px 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.demo-hello-card .eyebrow {
+  color: var(--muted, #8a94a6);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0 0 6px;
+}
+.demo-hello-card h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.demo-hello-card p {
+  margin: 0 0 10px;
+  color: var(--text, #1f2430);
+}
+.demo-hello-card code {
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+.demo-hello-card button {
+  margin: 6px 0 10px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  background: transparent;
+  cursor: pointer;
+}
+.demo-hello-card .demo-hello-result {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}

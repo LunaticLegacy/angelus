@@ -8,6 +8,7 @@
 import { $ } from "./utils.js";
 import { getState, setState, subscribe } from "./state.js";
 import { apiJson, apiPost } from "./api.js";
+import { initPlugins } from "./plugins.js";
 import { disconnect, connectRun } from "./events.js";
 import {
   persistSettings,
@@ -314,6 +315,7 @@ if (location.protocol === "file:") {
 
 async function initialize() {
   bindSettingsPersistence();
+  await initPlugins(); // S8 — plugin bridge & asset loading (non-fatal)
   await _loadProviders();
 
   await loadSessions();
