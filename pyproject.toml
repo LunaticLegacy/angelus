@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "angelus"
-version = "0.1.0"
+version = "0.3.0a0"
 description = "Local observable Agent control plane built on LLMFetcher"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "llmfetcher==0.4.0",
     "markdown-it-py",
+    "mcp>=2,<3",
     "pydantic",
     "uvicorn",
 ]

@@ -28,6 +28,7 @@ class DemoHelloPlugin(AngelusPlugin):
     def setup(self, runtime: PluginRuntime) -> None:
         runtime.logger.info("demo-hello setup: registering tool/hook/route")
         self._state_dir: Path = Path(runtime.state_dir)
+        self._greeting = str(runtime.settings.get("greeting", "Hello"))
 
         runtime.register_tool(
             "demo_hello",
@@ -56,7 +57,7 @@ class DemoHelloPlugin(AngelusPlugin):
     def _tool_hello(self, name: str = "world", **_: Any) -> dict[str, Any]:
         """Agent-visible tool: greets ``name`` (default "world")."""
         return {
-            "message": f"Hello, {name}!",
+            "message": f"{self._greeting}, {name}!",
             "from": "plugin.demo-hello",
             "server_time": round(time.time(), 3),
         }
@@ -82,7 +83,7 @@ class DemoHelloPlugin(AngelusPlugin):
         return {
             "plugin": "demo-hello",
             "version": self.version,
-            "message": "Hello from the demo plugin API ✦",
+            "message": f"{self._greeting} from the demo plugin API ✦",
             "server_time": round(time.time(), 3),
         }
 

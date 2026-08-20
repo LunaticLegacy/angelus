@@ -2,7 +2,7 @@
 
 Covers the S3 checklist from ``docs/plugin-swarm-execution.md`` §5:
 
-* two-tier discovery (workspace shadows global), invalid manifests -> ERROR,
+* application-directory discovery plus legacy injected-directory precedence, invalid manifests -> ERROR,
   lifecycle preserved across re-discovery;
 * ``angelus_plugins.<name>`` namespaced import (no top-level pollution,
   modules purged on teardown);

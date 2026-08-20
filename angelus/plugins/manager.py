@@ -1,16 +1,17 @@
-"""PluginManager: two-tier discovery, namespaced import, lifecycle (S3).
+"""PluginManager: application-level discovery, namespaced import, lifecycle (S3).
 
 Responsibilities (contract ``docs/plugin-api.md`` §4, decisions D1/D2):
 
-* **Discovery** — scan the two plugin tiers
-  (``<workspace>/plugins`` + ``<app_data>/plugins``, via ``plugin_paths``);
-  the workspace tier shadows the global tier on name collisions.  Manifests
-  are validated with the S2 handwritten validator; invalid plugins are
-  recorded with structured errors and never loaded.
+* **Discovery** — production instances scan the persistent
+  ``<app_data>/plugins`` directory next to ``workspace/`` (via
+  ``plugin_paths``).  Explicit legacy directory overrides remain available
+  only for embeddings and tests.  Manifests are validated with the S2
+  handwritten validator; invalid plugins are recorded with structured errors
+  and never loaded.
 * **Namespaced import** — every plugin is imported under the
   ``angelus_plugins.<name>`` namespace.  The plugin package is pre-registered
-  in ``sys.modules`` bound to its resolved directory, so shadowing is exact,
-  hyphenated manifest names work, and plugin imports never pollute the
+  in ``sys.modules`` bound to its resolved directory, so hyphenated manifest
+  names work, and plugin imports never pollute the
   top-level namespace.
 * **Lifecycle** — ``setup()`` failures isolate the plugin (state → ``blocked``,
   registrations rolled back) without crashing the host; ``teardown()`` is
@@ -143,19 +144,31 @@ class PluginManager:
         """Create a manager.
 
         Args:
-            state_root: Workspace root; drives the two-tier plugin dirs via
-                ``angelus.plugin_paths`` when the dirs are not injected
-                explicitly.
-            workspace_dir: Session-tier plugin dir override.
-            global_dir: Global-tier plugin dir override (``ANGELUS_PLUGIN_DIR``
-                applies when resolved through ``plugin_paths``).
+            state_root: Workspace root; when no directory overrides are
+                injected, plugins resolve to its persistent sibling
+                ``<app_data>/plugins`` via ``angelus.plugin_paths``.
+            workspace_dir: Legacy test/embedding override for a higher-
+                priority plugin directory.
+            global_dir: Legacy test/embedding override for a lower-priority
+                plugin directory.
             registry: Object exposing the S2 ``plugin_registry`` interface
                 (``list_plugins``/``get_plugin``/``set_enabled``/...).
                 Defaults to the ``angelus.plugin_registry`` module (lazily
                 imported so this module stays importable in isolation).
             logger: Manager logger.
         """
-        if workspace_dir is None or global_dir is None:
+        self._scan_tiers: tuple[tuple[str, Path], ...]
+        if workspace_dir is None and global_dir is None:
+            from angelus import plugin_paths
+
+            persistent_dir = Path(plugin_paths.plugin_dir(state_root)).resolve()
+            # The production application has exactly one plugin directory,
+            # beside workspace/.  Keep legacy properties as aliases for
+            # embedding code that still reads them.
+            self._workspace_dir = persistent_dir
+            self._global_dir = persistent_dir
+            self._scan_tiers = (("application", persistent_dir),)
+        else:
             # S2 dependency, imported lazily so this module can be imported
             # before the registry layer lands in the merged tree.
             from angelus import plugin_paths
@@ -165,8 +178,12 @@ class PluginManager:
             if global_dir is None:
                 global_dir = plugin_paths.global_plugin_dir(state_root)
 
-        self._workspace_dir = Path(workspace_dir).resolve()
-        self._global_dir = Path(global_dir).resolve()
+            self._workspace_dir = Path(workspace_dir).resolve()
+            self._global_dir = Path(global_dir).resolve()
+            self._scan_tiers = (
+                ("workspace", self._workspace_dir),
+                ("global", self._global_dir),
+            )
         self._registry: Any = registry
         self._manifest: Any = None  # lazy angelus.plugin_manifest
         self._logger = logger or logging.getLogger("angelus.plugins.manager")
@@ -203,10 +220,7 @@ class PluginManager:
         loader = self._manifest_loader()
         found: dict[str, PluginRecord] = {}
 
-        for tier, base in (
-            ("workspace", self._workspace_dir),
-            ("global", self._global_dir),
-        ):
+        for tier, base in self._scan_tiers:
             if not base.is_dir():
                 continue
             for child in sorted(base.iterdir()):
@@ -229,7 +243,7 @@ class PluginManager:
                     continue
                 name = manifest["name"]
                 if name in found:
-                    continue  # workspace tier shadows global tier
+                    continue  # Explicit legacy override order retains priority.
                 found[name] = PluginRecord(
                     name=name,
                     plugin_dir=child,
@@ -490,7 +504,7 @@ class PluginManager:
                 NAMESPACE_ROOT, None, is_package=True
             )
             sys.modules[NAMESPACE_ROOT] = pkg
-        for path in (str(self._workspace_dir), str(self._global_dir)):
+        for path in dict.fromkeys(str(base) for _, base in self._scan_tiers):
             if path not in pkg.__path__:
                 pkg.__path__.append(path)
         return pkg

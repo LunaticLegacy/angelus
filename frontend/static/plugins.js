@@ -24,9 +24,9 @@
  *    authority (the /api/plugins payload intentionally carries no manifest).
  * 4. Disabled plugins never appear in the UI: their scripts are never
  *    loaded, hence they can never register panels/commands/settings.
- * 5. Desktop settings page is out of scope this iteration (decision D3):
- *    registerSettings validates and records the registration but renders no
- *    settings UI yet — the bridge API is a placeholder for the v1.1 page.
+ * 5. The host settings page reads registerSettings metadata for active
+ *    plugins, then provides a bounded JSON editor backed by the dedicated
+ *    plugin-settings API. The bridge remains the only plugin UI entry point.
  */
 
 import { apiJson } from "./api.js";
@@ -94,22 +94,24 @@ function _assertLoaded(plugin) {
  * Asset injection — whitelist enforced by the backend (404 = skip)
  * ================================================================ */
 
-function _injectScript(src) {
+function _injectScript(src, pluginName) {
   return new Promise((resolve) => {
     const el = document.createElement("script");
     el.src = src;
     el.async = false;
+    el.dataset.angelusPlugin = pluginName;
     el.addEventListener("load", () => resolve(true));
     el.addEventListener("error", () => resolve(false));
     document.head.appendChild(el);
   });
 }
 
-function _injectStylesheet(src) {
+function _injectStylesheet(src, pluginName) {
   return new Promise((resolve) => {
     const el = document.createElement("link");
     el.rel = "stylesheet";
     el.href = src;
+    el.dataset.angelusPlugin = pluginName;
     el.addEventListener("load", () => resolve(true));
     el.addEventListener("error", () => resolve(false));
     document.head.appendChild(el);
@@ -122,14 +124,38 @@ function _pluginAssetUrl(pluginName, asset) {
 
 async function _loadPluginAssets(plugin) {
   for (const asset of ENTRY_SCRIPTS) {
-    const ok = await _injectScript(_pluginAssetUrl(plugin.name, asset));
+    const ok = await _injectScript(_pluginAssetUrl(plugin.name, asset), plugin.name);
     if (!ok) {
       _warn(plugin.name, `前端入口 ${asset} 不在白名单或加载失败，已跳过`);
     }
   }
   for (const asset of ENTRY_STYLES) {
-    await _injectStylesheet(_pluginAssetUrl(plugin.name, asset));
+    await _injectStylesheet(_pluginAssetUrl(plugin.name, asset), plugin.name);
   }
+}
+
+/** Remove the host-owned browser contributions of a stopped plugin.
+ *
+ * Python teardown remains the authority for runtime resources.  This only
+ * clears script/link tags and UI registrations owned by the workbench so a
+ * subsequently reloaded plugin receives a clean browser-side activation.
+ */
+export function unloadPlugin(pluginName) {
+  if (!_validName(pluginName)) return;
+  _loadedPlugins.delete(pluginName);
+  for (const [key, panel] of _panels) {
+    if (panel.plugin !== pluginName) continue;
+    document.querySelector(`[data-inspector-panel="plugin-${pluginName}-${panel.id}"]`)?.remove();
+    document.getElementById(`plugin-${pluginName}-${panel.id}`)?.remove();
+    _panels.delete(key);
+  }
+  for (const [key, command] of _commands) {
+    if (command.plugin === pluginName) _commands.delete(key);
+  }
+  _settings.delete(pluginName);
+  document.querySelectorAll("[data-angelus-plugin]").forEach((element) => {
+    if (element.dataset.angelusPlugin === pluginName) element.remove();
+  });
 }
 
 /* ================================================================
@@ -294,9 +320,9 @@ function _createBridge() {
     },
 
     /**
-     * Register plugin settings UI (desktop settings page — NOT in this
-     * iteration, decision D3).  Validates and records the registration so
-     * the v1.1 settings page can consume it; renders nothing for now.
+     * Register plugin settings metadata for the host settings page.
+     * spec may provide title and description; persisted values remain under
+     * host control and are never handed to arbitrary browser code directly.
      */
     registerSettings(plugin, spec) {
       if (!_validName(plugin) || !_assertLoaded(plugin)) return { ok: false };
@@ -358,9 +384,14 @@ export async function loadPlugins() {
   const enabled = plugins.filter(
     (p) => p && typeof p === "object" && _validName(p.name) && p.enabled === true
   );
+  const enabledNames = new Set(enabled.map((plugin) => plugin.name));
+  [..._loadedPlugins].forEach((name) => {
+    if (!enabledNames.has(name)) unloadPlugin(name);
+  });
 
   for (const plugin of enabled) {
     try {
+      if (_loadedPlugins.has(plugin.name)) continue;
       // Mark as loaded BEFORE injecting so synchronous register* calls
       // inside the plugin script pass the enabled-only gate.
       _loadedPlugins.add(plugin.name);

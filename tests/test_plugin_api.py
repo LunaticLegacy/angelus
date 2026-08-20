@@ -236,6 +236,122 @@ def test_detail_disabled_plugin_404(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert response.status_code == 404
 
 
+def test_status_includes_disabled_and_active_plugin_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, manager, _ = _build_app(monkeypatch, tmp_path, "alpha")
+    _write_plugin(tmp_path / "workspace-plugins", "bravo")
+    _add_registry_record(plugin_registry, "bravo", enabled=False)
+    manager.discover()
+
+    response = client.get("/api/plugins/status")
+
+    assert response.status_code == 200
+    by_name = {entry["name"]: entry for entry in response.json()["plugins"]}
+    assert by_name["alpha"]["state"] == "active"
+    assert by_name["alpha"]["enabled"] is True
+    assert by_name["bravo"]["enabled"] is False
+    assert "settings" not in by_name["alpha"]
+
+
+def test_workbench_can_register_a_discovered_plugin_without_executing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The UI may adopt only manager-discovered local directories."""
+    client, manager, _ = _build_app(monkeypatch, tmp_path, "alpha")
+    _write_plugin(tmp_path / "workspace-plugins", "bravo")
+    manager.discover()
+
+    status = {entry["name"]: entry for entry in client.get("/api/plugins/status").json()["plugins"]}
+    assert status["bravo"]["id"] is None
+    assert status["bravo"]["registered"] is False
+    assert client.post("/api/plugins/discovered/bravo/register").status_code == 409
+
+    registered = client.post(
+        "/api/plugins/discovered/bravo/register", json={"confirm": True}
+    )
+    assert registered.status_code == 200
+    entry = registered.json()["plugin"]
+    assert entry["id"]
+    assert entry["registered"] is True
+    assert entry["enabled"] is False
+    assert manager.plugin("bravo").state.value == "discovered"
+
+
+def test_workbench_can_load_and_unload_plugin_with_permission_confirmation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Lifecycle controls mount fresh routes and remove them on unload."""
+    client, manager, _ = _build_app(monkeypatch, tmp_path, "alpha")
+    plugin_dir = _write_plugin(tmp_path / "workspace-plugins", "bravo")
+    manifest_path = plugin_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["permissions"] = [{"action": "network", "scope": "bravo.example.com"}]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    record = _add_registry_record(plugin_registry, "bravo", enabled=False)
+    manager.discover()
+
+    plugin_id = record["id"]
+    assert client.post(f"/api/plugins/{plugin_id}/load").status_code == 409
+    assert client.post(
+        f"/api/plugins/{plugin_id}/load", json={"confirm": True}
+    ).status_code == 409
+
+    loaded = client.post(
+        f"/api/plugins/{plugin_id}/load",
+        json={"confirm": True, "grant_permissions": True},
+    )
+    assert loaded.status_code == 200
+    assert loaded.json()["plugin"]["state"] == "active"
+    assert client.get("/plugins/bravo/api/info").status_code == 200
+    assert plugin_registry.get_plugin(plugin_id)["permissions_granted"] == [
+        "network:bravo.example.com"
+    ]
+
+    unloaded = client.post(
+        f"/api/plugins/{plugin_id}/unload", json={"confirm": True}
+    )
+    assert unloaded.status_code == 200
+    assert unloaded.json()["plugin"]["enabled"] is False
+    assert client.get("/plugins/bravo/api/info").status_code == 404
+    assert client.get("/plugins/bravo/static/plugin.js").status_code == 404
+
+    reloaded = client.post(f"/api/plugins/{plugin_id}/load", json={"confirm": True})
+    assert reloaded.status_code == 200
+    assert client.get("/plugins/bravo/api/info").status_code == 200
+
+
+def test_plugin_settings_are_persisted_without_exposing_them_in_listing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, manager, records = _build_app(monkeypatch, tmp_path, "alpha")
+    manager.plugin("alpha").manifest["frontend"]["settings"] = True
+    plugin_id = records["alpha"]["id"]
+
+    assert client.get(f"/api/plugins/{plugin_id}/settings").json()["settings"] == {}
+    saved = client.put(
+        f"/api/plugins/{plugin_id}/settings", json={"greeting": "你好", "limit": 3}
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["settings"] == {"greeting": "你好", "limit": 3}
+    assert client.get(f"/api/plugins/{plugin_id}/settings").json()["settings"]["greeting"] == "你好"
+    assert "settings" not in client.get("/api/plugins").json()["plugins"][0]
+
+
+def test_plugin_settings_reject_credential_shaped_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, manager, records = _build_app(monkeypatch, tmp_path, "alpha")
+    manager.plugin("alpha").manifest["frontend"]["settings"] = True
+
+    response = client.put(
+        f"/api/plugins/{records['alpha']['id']}/settings", json={"api_key": "do-not-store"}
+    )
+
+    assert response.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # static assets — whitelist + traversal hardening
 # ---------------------------------------------------------------------------
@@ -249,11 +365,11 @@ def test_static_asset_served_from_whitelist(
     response = client.get("/plugins/alpha/static/plugin.js")
 
     assert response.status_code == 200
-    assert response.text == "/* alpha frontend asset */\n"
+    assert response.text.replace("\r\n", "\n") == "/* alpha frontend asset */\n"
 
     nested = client.get("/plugins/alpha/static/assets/logo.txt")
     assert nested.status_code == 200
-    assert nested.text == "logo of alpha\n"
+    assert nested.text.replace("\r\n", "\n") == "logo of alpha\n"
 
 
 def test_static_traversal_attempts_404(

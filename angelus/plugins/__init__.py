@@ -2,7 +2,7 @@
 
 Public surface:
 
-* :class:`PluginManager` — two-tier discovery, ``angelus_plugins.<name>``
+* :class:`PluginManager` — persistent application-directory discovery, ``angelus_plugins.<name>``
   namespaced import, lifecycle (setup/teardown isolation), enable/disable
   state machine backed by ``plugins.json``, duplicate-load de-duplication.
 * :class:`AngelusPlugin` — base class plugins subclass.

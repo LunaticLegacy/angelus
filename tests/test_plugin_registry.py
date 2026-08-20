@@ -2,7 +2,7 @@
 plugins.json v1 registry (swarm S2 acceptance).
 
 Covers the S2 checklist from ``docs/plugin-swarm-execution.md`` §5:
-two-tier directory resolution with ``ANGELUS_PLUGIN_DIR`` override, field-level
+application-level directory resolution with ``ANGELUS_PLUGIN_DIR`` override, field-level
 manifest errors, atomic registry writes without ``.tmp`` residue, and the
 empty-registry read contract.
 """
@@ -18,56 +18,49 @@ from angelus import plugin_manifest, plugin_paths, plugin_registry, storage
 
 
 # ---------------------------------------------------------------------------
-# plugin_paths — two-tier directories + ANGELUS_PLUGIN_DIR override
+# plugin_paths — application-level directory + ANGELUS_PLUGIN_DIR override
 # ---------------------------------------------------------------------------
 
 
-def test_plugin_dirs_resolve_two_tiers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """workspace/plugins + app_data/plugins resolve from STATE_ROOT."""
+def test_plugin_dir_is_parallel_to_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Plugins resolve beside, rather than inside, the state-root workspace."""
     workspace_root = tmp_path / "workspace"
     monkeypatch.setattr(storage, "STATE_ROOT", workspace_root)
     monkeypatch.delenv(plugin_paths.PLUGIN_DIR_ENV, raising=False)
 
-    workspace, global_plugins = plugin_paths.plugin_dirs()
-
-    assert workspace == (workspace_root / "plugins").resolve()
-    # app data root is the parent of the workspace root (desktop model).
-    assert global_plugins == (tmp_path / "plugins").resolve()
+    assert plugin_paths.plugin_dir() == (tmp_path / "plugins").resolve()
+    assert plugin_paths.plugin_dirs() == ((tmp_path / "plugins").resolve(),)
 
 
-def test_plugin_dirs_explicit_state_root(tmp_path: Path) -> None:
+def test_plugin_dir_explicit_state_root(tmp_path: Path) -> None:
     """Explicit state_root avoids touching the real STATE_ROOT."""
-    workspace, global_plugins = plugin_paths.plugin_dirs(state_root=tmp_path / "ws")
-    assert workspace == (tmp_path / "ws" / "plugins").resolve()
-    assert global_plugins == (tmp_path / "plugins").resolve()
+    assert plugin_paths.plugin_dir(state_root=tmp_path / "ws") == (tmp_path / "plugins").resolve()
 
 
-def test_global_plugin_dir_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """ANGELUS_PLUGIN_DIR replaces the global tier entirely."""
+def test_plugin_dir_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """ANGELUS_PLUGIN_DIR replaces the application plugin directory."""
     custom = tmp_path / "custom-plugins"
     monkeypatch.setenv(plugin_paths.PLUGIN_DIR_ENV, str(custom))
-    assert plugin_paths.global_plugin_dir() == custom.resolve()
+    assert plugin_paths.plugin_dir() == custom.resolve()
 
 
-def test_env_override_does_not_affect_workspace_tier(
+def test_legacy_path_aliases_resolve_to_application_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ANGELUS_PLUGIN_DIR only overrides the global tier, never workspace."""
+    """Older callers cannot accidentally restore a workspace-local directory."""
     workspace_root = tmp_path / "workspace"
     monkeypatch.setattr(storage, "STATE_ROOT", workspace_root)
     monkeypatch.setenv(plugin_paths.PLUGIN_DIR_ENV, str(tmp_path / "custom"))
 
-    workspace, global_plugins = plugin_paths.plugin_dirs()
-
-    assert workspace == (workspace_root / "plugins").resolve()
-    assert global_plugins == (tmp_path / "custom").resolve()
+    assert plugin_paths.workspace_plugin_dir() == (tmp_path / "custom").resolve()
+    assert plugin_paths.global_plugin_dir() == (tmp_path / "custom").resolve()
 
 
-def test_ensure_plugin_dirs_creates_both_tiers(tmp_path: Path) -> None:
-    """ensure_plugin_dirs creates workspace + global plugin directories."""
-    workspace, global_plugins = plugin_paths.ensure_plugin_dirs(state_root=tmp_path / "ws")
-    assert workspace.is_dir()
-    assert global_plugins.is_dir()
+def test_ensure_plugin_dir_creates_application_directory(tmp_path: Path) -> None:
+    """ensure_plugin_dirs creates the persistent sibling directory."""
+    root = plugin_paths.ensure_plugin_dirs(state_root=tmp_path / "ws")
+    assert root == (tmp_path / "plugins").resolve()
+    assert root.is_dir()
 
 
 # ---------------------------------------------------------------------------

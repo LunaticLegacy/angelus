@@ -22,7 +22,7 @@
 | # | 决策点 | 默认值 | 理由 |
 |---|--------|--------|------|
 | D1 | 插件加载模型 | **同进程 import**（命名空间 `angelus_plugins.<name>`），子进程隔离列为 v2 路线 | MVP 简单；同权限与内建工具一致 |
-| D2 | 插件放置 | **两级**：`<workspace>/plugins`（会话级）+ `<app_data>/plugins`（全局，仿 workspace 根） | 与既有 workspace 模型一致 |
+| D2 | 插件放置 | **应用级**：`<app_data>/plugins`，与 `workspace/` 并列 | 插件跨会话稳定，适配桌面 sidecar 的临时解压模型 |
 | D3 | 桌面版设置页 | **本期不纳入**，仅保留 `/api/plugins` 后端 + 前端机制，桌面设置 UI 留 v1.1 | 缩减范围，避免 Tauri 侧改动 |
 | D4 | 示例插件 | **网络搜索工具**：演示 register_tool + register_hook（搜索前后事件）全链路 | 覆盖工具与钩子两条主线 |
 
@@ -89,14 +89,14 @@ TaskAssignment(
 
 ### S2 — 目录与注册表（P1） · recipient=`registry` · 依赖：S1 · 估时 30min
 
-- **objective**：实现插件目录解析 `angelus/plugin_paths.py`（两级：workspace/plugins + app_data/plugins，全局插件目录可通过 `ANGELUS_PLUGIN_DIR` 覆盖）；实现 `manifest.json` 校验器（按附录 A schema，不新增 jsonschema 依赖，手写校验并返回结构化错误）；实现 `plugins.json` 注册表（仿 connectors.py 原子写：`with_suffix(".tmp")` + `replace()`，字段见附录 B），首次启用写入 permissions_granted。
+- **objective**：实现插件目录解析 `angelus/plugin_paths.py`（`<app_data>/plugins`，与 workspace 并列，可通过 `ANGELUS_PLUGIN_DIR` 覆盖）；实现 `manifest.json` 校验器（按附录 A schema，不新增 jsonschema 依赖，手写校验并返回结构化错误）；实现 `plugins.json` 注册表（仿 connectors.py 原子写：`with_suffix(".tmp")` + `replace()`，字段见附录 B），首次启用写入 permissions_granted。
 - **handoff**：`manifest schema 见 docs/plugin-api.md 附录 A；原子写模式参照 angelus/connectors.py:_write_connectors；依赖清单无 jsonschema，禁止新增大依赖。`
 - **artifacts**：`angelus/plugin_paths.py`、`angelus/plugin_manifest.py`、`angelus/plugin_registry.py`、`tests/test_plugin_registry.py`（骨架可后补）
 - **验收**：见 §5-S2。
 
 ### S3 — PluginManager 核心（P2 前半） · recipient=`runtime-core` · 依赖：S1、S2 · 估时 25min
 
-- **objective**：实现 `angelus/plugins/manager.py`：发现（扫描两级目录、读注册表）、加载（`importlib` 以 `angelus_plugins.<name>` 命名空间隔离 import）、生命周期（setup/teardown，异常不击穿主进程）、启用/禁用状态机；实现 `angelus/plugins/base.py`：`AngelusPlugin` 基类 + `PluginRuntime`（暴露 register_tool/register_route/register_hook/register_connector 与 state_dir、logger、settings）。
+- **objective**：实现 `angelus/plugins/manager.py`：发现（扫描应用级目录、读注册表）、加载（`importlib` 以 `angelus_plugins.<name>` 命名空间隔离 import）、生命周期（setup/teardown，异常不击穿主进程）、启用/禁用状态机；实现 `angelus/plugins/base.py`：`AngelusPlugin` 基类 + `PluginRuntime`（暴露 register_tool/register_route/register_hook/register_connector 与 state_dir、logger、settings）。
 - **handoff**：`命名空间 angelus_plugins.<name>；setup 抛异常则标记 blocked 并回滚注册；teardown 幂等；所有注册表先登记后生效。`
 - **artifacts**：`angelus/plugins/__init__.py`、`angelus/plugins/manager.py`、`angelus/plugins/base.py`
 - **验收**：见 §5-S3。
@@ -167,7 +167,7 @@ TaskAssignment(
 - [ ] 扩展点盘点与代码事实一致：llmfetcher/tools 工厂名、angelus/api 四 router、connectors.py、frontend/static 模块均被点名。
 
 ### S2 验收
-- [ ] `python -c "from angelus.plugin_paths import plugin_dirs; ..."` 可解析两级目录，`ANGELUS_PLUGIN_DIR` 覆盖生效。
+- [ ] `python -c "from angelus.plugin_paths import plugin_dir; ..."` 可解析与 workspace 并列的目录，`ANGELUS_PLUGIN_DIR` 覆盖生效。
 - [ ] manifest 校验器：对附录 A 的合法样例返回通过；对缺 name/version/entry、非法 permissions 的样例返回结构化错误（字段级）。
 - [ ] plugins.json 写入为原子替换（观察 `.tmp` 文件不留残骸）；空注册表时读返回 `{"version":1,"plugins":[]}`。
 - [ ] `pytest tests/test_plugin_registry.py -q` 通过（若骨架阶段仅存占位，则在 S11 补全前不得假通过）。

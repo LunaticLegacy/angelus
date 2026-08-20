@@ -196,18 +196,24 @@ class AngelusPlugin:
 | **hooks** | `llmfetcher/events.py` 的 ExecutionHook 体系（`Agent.add_hook` / `ExecutionGraph.add_hook`） | `register_hook(event, handler, *, priority=0)` | `angelus/plugins/bridge_hooks.py` | 白名单过滤；单钩子失败隔离 |
 | **routes** | `angelus/api/__init__.py::include_api_routes` 装配点 | `register_route(method, path, handler)` | `angelus/plugins/bridge_routes.py` | 前缀 `/plugins/<name>/api` 隔离；静态资源白名单 + Path 规范化防穿越 |
 | **connectors** | `angelus/connectors.py` provider 发现 + `GET /api/providers` | `register_connector(kind, factory)` | `angelus/plugins/bridge_connectors.py` | 只读路径；凭据仍走 RSA-OAEP 加密存储，插件不能读取已存密钥（读路径走 `_public_connector` 脱敏） |
-| **frontend** | `frontend/static/` 模块体系（入口 `main.js`） | `window.Angelus.registerPanel/registerCommand/registerSettings` | `frontend/static/plugins.js`（由 `main.js` 引入） | 仅加载启用插件；静态资源白名单；CSP 仅放开同源自域插件路径 |
+| **frontend** | `frontend/static/` 模块体系（入口 `app.js`） | `window.Angelus.registerPanel/registerCommand/registerSettings` | `frontend/static/plugins.js`（由 `app.js` 引入） | 仅加载启用插件；静态资源白名单；CSP 仅放开同源自域插件路径；设置由宿主的受限 JSON 编辑器持久化 |
 
 ### 6.1 REST 端点（附录 D 事实化）
 
 ```
 GET /api/plugins                     → {"plugins": [{"id","name","version","api_version","enabled","checksum","source","installed_at"}]}
 GET /api/plugins/{id}                → 上条目 + {"permissions_granted": [...]}（不含 manifest 全文）
-POST /api/plugins/{id}/enable        → 200 {"ok": true}；setup 失败 → 400 {"ok": false, "error": "..."}
-POST /api/plugins/{id}/disable       → 200 {"ok": true}
+GET /api/plugins/status              → 发现到的完整状态（含 disabled/blocked/error、已声明/已授予权限；不含 settings）
+POST /api/plugins/discovered/{name}/register → 需 {"confirm": true}；仅登记已发现的本地目录，不执行代码
+POST /api/plugins/{id}/load          → 需 {"confirm": true}；缺少已声明权限时还需 {"grant_permissions": true}
+POST /api/plugins/{id}/unload        → 需 {"confirm": true}；teardown、停用并移除插件路由，不删除文件
+GET /api/plugins/{id}/settings       → 已声明 `frontend.settings: true` 的非敏感 JSON 设置
+PUT /api/plugins/{id}/settings       → 持久化受限 JSON；拒绝 api_key/token/password/secret 等凭据形字段
 GET  /plugins/{name}/static/{asset}  → 白名单静态资源；穿越/未启用 → 404
 *    /plugins/{name}/api/*           → 插件 APIRouter 挂载点（前缀隔离）
 ```
+
+工作台“设置 → 插件”中的已发现项均可选中。尚未登记的本地目录可先“加入工作台”：该操作只计算完整性校验并写入本机注册表，不接收任意路径/URL，也不执行插件代码。随后可在确认后运行时加载或卸载插件：加载会展示并要求确认尚未授予的 manifest 权限，只能授予插件自己声明的能力；卸载会执行 teardown、撤销前端面板/命令/资源和插件路由，但保留插件文件、注册记录与设置。安装任意新来源和删除插件文件仍通过 `angelus plugin ...` CLI 完成。设置保存不会热重载 Python 插件；新值会在下一次插件加载时作为 `PluginRuntime.settings` 提供。
 
 ---
 
@@ -225,11 +231,10 @@ GET  /plugins/{name}/static/{asset}  → 白名单静态资源；穿越/未启�
 
 ## 8. 目录放置（D2 事实化）
 
-两级目录（`ANGELUS_PLUGIN_DIR` 可覆盖全局级）：
+唯一的持久目录（`ANGELUS_PLUGIN_DIR` 可覆盖）：
 
 | 层级 | 路径 | 生命周期 |
 |------|------|----------|
-| 会话级 | `<workspace>/plugins`（`STATE_ROOT`，即 `workspace/`） | 随工作区 |
-| 全局级 | `<app_data>/plugins`（仿 `_default_state_root` 的 workspace 模型；`ANGELUS_PLUGIN_DIR` 覆盖时取该值） | 跨工作区 |
+| 应用级 | `<app_data>/plugins`（与 `STATE_ROOT` 的 `workspace/` 并列） | 跨工作区 |
 
 插件私有数据目录 `state_dir = <plugin_dir>/<name>/data`。

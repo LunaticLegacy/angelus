@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-33" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-67" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -34,6 +34,7 @@
           <nav class="settings-navigation" aria-label="设置类别" role="tablist">
             <button class="settings-nav-item active" type="button" data-settings-section="connection" role="tab" aria-selected="true">连接器</button>
             <button class="settings-nav-item" type="button" data-settings-section="agent" role="tab" aria-selected="false">Agent 执行</button>
+            <button class="settings-nav-item" type="button" data-settings-section="plugins" role="tab" aria-selected="false">插件</button>
             <button class="settings-nav-item" type="button" data-settings-section="future" role="tab" aria-selected="false">更多设置</button>
           </nav>
           <div class="settings-pages">
@@ -46,7 +47,12 @@
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>Agent 执行</h3><p><b>当前会话独立</b> · 这些选项会保存在浏览器本地。</p></div></div>
           <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
-          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><section class="mcp-settings" aria-labelledby="mcp-settings-title"><label class="toggle-line"><span id="mcp-settings-title">启用 MCP 工具</span><input id="enable-mcp" type="checkbox" /><i></i></label><p>通过官方 MCP SDK 发现并调用工具；不通过 Shell 复刻协议。配置仅保存服务器与环境变量名称。</p><label>MCP 服务器（JSON）<textarea id="mcp-servers" rows="7" spellcheck="false" placeholder='[{"name":"filesystem","transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\Users\\you\\Documents"],"env":[]}]'></textarea></label></section><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+        </section>
+        <section data-settings-panel="plugins" class="settings-page plugin-settings-page" role="tabpanel">
+          <div class="settings-page-heading"><div><h3>插件</h3><p><b>全局状态</b> · 查看发现、启用和加载结果；插件配置保存在本机注册表中。</p></div><button id="refresh-plugins" class="mini-button" type="button" title="刷新插件状态">↻</button></div>
+          <p id="plugin-settings-feedback" class="plugin-settings-feedback" aria-live="polite"></p>
+          <div class="plugin-settings-layout"><div id="plugin-status-list" class="plugin-status-list" aria-label="插件状态"></div><div id="plugin-settings-detail" class="plugin-settings-detail"><p class="empty">选择一个声明设置能力的插件以查看配置。</p></div></div>
         </section>
         <section data-settings-panel="future" class="settings-page settings-placeholder" role="tabpanel"><span>⌘</span><h3>更多设置</h3><p>这里会容纳未来的工作台偏好、检索策略与高级运行选项。</p></section>
           </div>
@@ -66,7 +72,8 @@
 
       <section class="side-block">
         <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button" type="button" title="删除当前会话" aria-label="删除当前会话">⌫</button></div></div>
-        <div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div>
+        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择待打开的工作空间"></select><span>⌄</span></div><button id="open-workspace" class="open-workspace-button" type="button">打开</button></div>
+        <p id="workspace-open-hint" class="workspace-open-hint" aria-live="polite"></p>
         <div id="recent-sessions" class="recent-sessions"></div>
       </section>
 
@@ -96,13 +103,13 @@
         <button type="button" data-inspector-panel="inspector-usage">用量</button>
       </nav>
       <div class="inspector-panels">
-        <section id="inspector-plan" class="inspector-panel active"><div class="section-title"><div><p class="eyebrow">TASK PLAN</p><h3>任务计划</h3></div><button id="refresh-plan" class="refresh-button" type="button">↻</button></div><p id="plan-summary" class="plan-summary">Agent 生成的任务计划会显示在这里。</p><div id="task-plan" class="task-plan"><p class="empty">尚未建立任务计划。</p></div></section>
+        <section id="inspector-plan" class="inspector-panel active"><div class="section-title"><div><p class="eyebrow">TASK PLAN</p><h3>任务计划</h3></div><button id="refresh-plan" class="refresh-button" type="button">↻</button></div><label class="plan-agent-picker" for="plan-agent"><span>计划所属 Agent</span><select id="plan-agent" aria-label="选择 Agent 的任务计划"><option value="coordinator">协调者（总计划）</option></select></label><p id="plan-summary" class="plan-summary">Agent 生成的任务计划会显示在这里。</p><div id="task-plan" class="task-plan"><p class="empty">尚未建立任务计划。</p></div></section>
         <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>协作拓扑</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><p class="agents-legend"><i></i>缩进表示调度关系；任务标签表示当前指派。</p><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div></section>
         <section id="inspector-trace" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">EVENT STREAM</p><h3>Trace</h3></div><button id="refresh-trace" class="refresh-button" type="button">↻</button></div><div id="trace" class="trace"><p class="empty">当前 session 尚无事件。</p></div><button id="load-more-trace" class="load-more-trace" type="button" hidden>加载更早事件</button></section>
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-57"></script>
+    <script type="module" src="/static/app.js?v=workbench-66"></script>
   </body>
 </html>

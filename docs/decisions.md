@@ -13,15 +13,15 @@
 - **v2 路线**：子进程隔离（sandbox）属运行时模型变更，不改变 manifest 契约；届时随 `api_version` v2 文档发布新的加载/权限语义。
 - **安全含义**：同进程模型下权限校验（S10）是唯一边界，未授权权限一律拒绝并记日志，不静默放行（见 `docs/security.md`）。
 
-## D2 插件放置：两级目录
+## D2 插件放置：与 workspace 并列的持久目录
 
-**最终选择**：**两级**：`<workspace>/plugins`（会话级）+ `<app_data>/plugins`（全局级）；全局插件目录可通过环境变量 `ANGELUS_PLUGIN_DIR` 覆盖。
+**最终选择**：唯一的 `<app_data>/plugins`，与 `<app_data>/workspace` 并列；可通过环境变量 `ANGELUS_PLUGIN_DIR` 覆盖。
 
 - **路径事实**：
-  - 会话级：`<workspace>/plugins`（`angelus/storage.py::STATE_ROOT`，即 `WORKSPACE_ROOT`）；
-  - 全局级：`<app_data>/plugins`（仿 `_default_state_root()` 的 workspace 模型）；
-  - 覆盖：`ANGELUS_PLUGIN_DIR` 存在时全局级取该值。
-- **理由**：与既有 workspace 模型（sessions.json / connectors.json 均位于 STATE_ROOT）一致，用户心智负担小。
+  - 默认：`<app_data>/plugins`，即 `STATE_ROOT`（`<app_data>/workspace`）的父目录；
+  - 覆盖：`ANGELUS_PLUGIN_DIR` 存在时取该值；
+  - 桌面发布包：内置的示例插件在首次启动时复制到此目录，保留用户修改且不自动执行。
+- **理由**：插件跨会话稳定存在，不会随着 workspace 删除；PyInstaller one-file sidecar 的临时解压目录也不会被误作安装位置。
 - 插件私有数据目录：`state_dir = <plugin_dir>/<name>/data`。
 
 ## D3 桌面版设置页：本期不纳入

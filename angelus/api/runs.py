@@ -195,6 +195,11 @@ def start_run(request: RunRequest) -> dict[str, str]:
             _append_session_event(workspace_id, session_id, error_payload)
             active.events.put(error_payload)
         finally:
+            if active.mcp_bridge is not None:
+                try:
+                    active.mcp_bridge.close()
+                except Exception:
+                    pass
             if active.swarm is not None:
                 try:
                     # Close and persist every dynamic task before publishing

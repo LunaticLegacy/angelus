@@ -14,7 +14,7 @@ Browser-based workbench for Angelus. Single-page app with vanilla JS, no framewo
 - **No framework**: Plain HTML + vanilla ES modules + CSS
 - **SSE**: EventSource for live run streaming
 - **REST**: Fetch-based API calls for CRUD operations
-- **Active runtime**: `templates/index.html` loads `static/app.js` as an ES-module composition root. It owns cross-feature coordination; reusable DOM views are in `static/components/`.
+- **Active runtime**: `templates/index.html` loads the global slash-command parser `static/slash.js` and `static/app.js` as the ES-module composition root. `app.js` owns cross-feature coordination, initializes the active plugin bridge in `static/plugins.js`, and delegates reusable DOM views to `static/components/`.
 - **Legacy module split**: the older `static/*.js` and `static/inspector/*.js` modules remain unreferenced migration artifacts. They are distinct from the active `static/components/` directory and must not be changed under the assumption that they run in production.
 
 ## Intent Routing
@@ -22,5 +22,7 @@ Browser-based workbench for Angelus. Single-page app with vanilla JS, no framewo
 - **HTML structure** → `templates/index.html`
 - **Active workbench behavior** → `static/app.js`
 - **Reusable active UI components** → `static/components/`
+- **Slash-command parsing** → `static/slash.js`
+- **Plugin UI bridge, asset loader and runtime lifecycle controls** → `static/plugins.js` + `static/app.js`
 - **Static/legacy module inventory** → `static/INDEX.md`
 - **Inspector panels** → `static/inspector/INDEX.md`

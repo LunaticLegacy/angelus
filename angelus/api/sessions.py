@@ -120,14 +120,16 @@ def delete_workspace(workspace_id: str, request: WorkspaceDeleteRequest) -> dict
     return {"status": "deleted", "message": "Workspace and its session data were deleted"}
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/plan")
-def get_task_plan(workspace_id: str, session_id: str) -> dict[str, Any]:
-    """Return the current persisted task plan for one browser session."""
-    return _plan_store(workspace_id, session_id).read()
+def get_task_plan(
+    workspace_id: str, session_id: str, agent: str = "coordinator"
+) -> dict[str, Any]:
+    """Return one selected Agent's persisted task plan for a browser session."""
+    return _plan_store(workspace_id, session_id, agent).read()
 
 @router.get("/api/sessions/{session_id}/plan")
-def get_session_plan(session_id: str) -> dict[str, Any]:
-    """Return the task plan for one independent browser session."""
-    return _plan_store(session_id, session_id).read()
+def get_session_plan(session_id: str, agent: str = "coordinator") -> dict[str, Any]:
+    """Return one selected Agent's task plan for an independent session."""
+    return _plan_store(session_id, session_id, agent).read()
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/messages")
 def get_session_history(workspace_id: str, session_id: str, agent: str = "all") -> dict[str, list[dict[str, Any]]]:
@@ -510,26 +512,35 @@ def get_session_usage(session_id: str) -> dict[str, Any]:
     return _session_usage_summary(_read_session_event_log(safe_session_id, safe_session_id))
 
 @router.put("/api/workspaces/{workspace_id}/sessions/{session_id}/plan")
-def replace_task_plan(workspace_id: str, session_id: str, request: TaskPlanRequest) -> dict[str, Any]:
-    """Allow a user to replace their supervised task plan from the UI."""
+def replace_task_plan(
+    workspace_id: str, session_id: str, request: TaskPlanRequest,
+    agent: str = "coordinator",
+) -> dict[str, Any]:
+    """Allow a user to replace one selected Agent's supervised task plan."""
     try:
-        return _plan_store(workspace_id, session_id).replace(goal=request.goal, summary=request.summary, tasks=request.tasks)
+        return _plan_store(workspace_id, session_id, agent).replace(goal=request.goal, summary=request.summary, tasks=request.tasks)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.patch("/api/workspaces/{workspace_id}/sessions/{session_id}/plan/tasks/{task_id}")
-def update_task_plan_status(workspace_id: str, session_id: str, task_id: str, request: TaskStatusRequest) -> dict[str, Any]:
-    """Persist a status change made by a task-block control in the UI."""
+def update_task_plan_status(
+    workspace_id: str, session_id: str, task_id: str, request: TaskStatusRequest,
+    agent: str = "coordinator",
+) -> dict[str, Any]:
+    """Persist a status change in one selected Agent's task plan."""
     try:
-        return _plan_store(workspace_id, session_id).update_status(task_id, request.status)
+        return _plan_store(workspace_id, session_id, agent).update_status(task_id, request.status)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 @router.patch("/api/sessions/{session_id}/plan/tasks/{task_id}")
-def update_session_plan_status(session_id: str, task_id: str, request: TaskStatusRequest) -> dict[str, Any]:
-    """Persist one task-status transition within an independent session."""
+def update_session_plan_status(
+    session_id: str, task_id: str, request: TaskStatusRequest,
+    agent: str = "coordinator",
+) -> dict[str, Any]:
+    """Persist one task-status transition within one selected Agent plan."""
     try:
-        return _plan_store(session_id, session_id).update_status(task_id, request.status)
+        return _plan_store(session_id, session_id, agent).update_status(task_id, request.status)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

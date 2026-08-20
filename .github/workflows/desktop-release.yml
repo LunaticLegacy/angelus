@@ -67,4 +67,4 @@ jobs:
           releaseName: Angelus ${{ github.ref_type == 'tag' && github.ref_name || format('manual-{0}', github.run_number) }}
           releaseBody: Automated desktop builds for ${{ github.ref_name }}.
           releaseDraft: true
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

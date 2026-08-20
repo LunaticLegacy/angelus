@@ -8,6 +8,7 @@ import sys
 # continues to use the repository's normal frontend directory.
 if hasattr(sys, "_MEIPASS"):
     os.environ.setdefault("ANGELUS_FRONTEND_ROOT", os.path.join(sys._MEIPASS, "frontend"))
+    os.environ.setdefault("ANGELUS_BUNDLED_PLUGIN_ROOT", os.path.join(sys._MEIPASS, "starter-plugins"))
 
 from angelus.cli import main
 

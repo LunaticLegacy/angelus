@@ -17,6 +17,6 @@
     "assets": ["plugin.js", "plugin.css"],
     "panels": ["status"],
     "commands": ["hello"],
-    "settings": false
+    "settings": true
   }
 }

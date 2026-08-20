@@ -51,10 +51,11 @@
     },
   });
 
-  // 3) Settings placeholder — desktop settings page not in this iteration (D3).
+  // 3) Settings metadata — the host renders a safe JSON editor and persists
+  // it in the plugin registry. `greeting` is consumed at the next plugin load.
   window.Angelus.registerSettings(plugin, {
     title: "Demo Hello 设置",
-    description: "本期不渲染设置页（D3）；注册已被桥记录。",
+    description: "可设置 greeting，例如“你好”。保存后重新加载插件即可应用到工具与 API。",
   });
 
   console.info("[demo-hello] panel:", panel, "command:", command);

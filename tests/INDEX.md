@@ -10,6 +10,7 @@ swarm, TLB-RAG, and utilities.
 | `test_agent_stop_persistence.py` | Cooperative-stop persistence, force-stop interruption of in-flight model requests, and cancellation-without-retry regression coverage |
 | `test_agent_turns_from_events.py` | `_agent_turns_from_events()` reconstructs conversation turns from event log |
 | `test_archive_retrieval.py` | Bounded lexical retrieval over compacted raw archive records |
+| `test_compact.py` | Manual context-compaction endpoint, staged events, and failure handling |
 | `test_connector_store.py` | Connector CRUD, API-key encryption/redaction, and server-side resolution |
 | `test_context_archive_api.py` | Archived raw-context API pagination and provenance fields |
 | `test_execution_graph_persistence.py` | ExecutionGraph persistence and recovery |
@@ -18,14 +19,22 @@ swarm, TLB-RAG, and utilities.
 | `test_graph_retriever.py` | Graph retrieval scoring, expansion, and rendering |
 | `test_graph_semantic.py` | Stateless semantic graph worker and reranking boundary |
 | `test_graph_store.py` | Graph storage, relations, communities, and persistence |
+| `test_plugin_api.py` | Plugin REST/static bridge, public response redaction, route isolation, and asset traversal protection |
+| `test_plugin_bootstrap.py` | Packaged starter plugins copy once into the persistent directory beside `workspace/` without overwriting users |
+| `test_plugin_manager.py` | Plugin discovery, lifecycle, registration, enable/disable state, and failure isolation |
+| `test_plugin_registry.py` | Plugin path resolution, manifest validation, and atomic `plugins.json` registry operations |
+| `test_mcp_tools.py` | Official MCP SDK stdio discovery, native tool bridging, schema preservation, invocation, and safe environment configuration |
 | `test_retrieved_context.py` | RetrievedContextHandler: TLB-RAG memory injection |
 | `test_run_profile_persistence.py` | Credential-free runtime profile and durable event persistence |
 | `test_session_history.py` | Session history rebuild from events and legacy context files |
+| `test_session_memory.py` | Explicit cross-session memory/artifact grants and snapshot evidence boundaries |
+| `test_session_steers.py` | Durable retrieval and ordering of applied steering instructions |
 | `test_session_observability.py` | Session event logging, SSE streaming |
 | `test_shell_tools.py` | Shell tool execution, sandboxing |
 | `test_state_root.py` | `_default_state_root()`: workspace directory resolution |
+| `test_sse_stream.py` | Durable SSE replay and live event-stream behavior |
 | `test_swarm_failure_isolation.py` | Worker failure isolation and coordinator reporting |
-| `test_task_planning.py` | TaskPlanStore: CRUD operations on JSON plans |
+| `test_task_planning.py` | TaskPlanStore: JSON plan CRUD plus coordinator/worker plan-path isolation |
 | `test_tlb_rag.py` | TLB-RAG handler: traversal, cache, retrieval |
 | `test_tlb_reliability.py` | TLB-RAG reliability: edge cases, error handling |
 | `test_web_markdown.py` | `render_markdown()`: CommonMark rendering |
@@ -36,8 +45,9 @@ swarm, TLB-RAG, and utilities.
 ## Intent Routing
 
 - **Agent tests** → `test_agent_stop_persistence.py`, `test_agent_turns_from_events.py`
-- **Web/API tests** → `test_connector_store.py`, `test_web_markdown.py`, `test_webapp_context_threshold.py`, `test_workspace_deletion.py`
-- **Context tests** → `test_archive_retrieval.py`, `test_context_archive_api.py`, `test_graph_handler.py`, `test_retrieved_context.py`, `test_session_history.py`
+- **Web/API tests** → `test_compact.py`, `test_connector_store.py`, `test_sse_stream.py`, `test_web_markdown.py`, `test_webapp_context_threshold.py`, `test_workspace_deletion.py`
+- **Context tests** → `test_archive_retrieval.py`, `test_context_archive_api.py`, `test_graph_handler.py`, `test_retrieved_context.py`, `test_session_history.py`, `test_session_memory.py`
+- **Plugin / MCP tests** → `test_plugin_api.py`, `test_plugin_bootstrap.py`, `test_plugin_manager.py`, `test_plugin_registry.py`, `test_mcp_tools.py`
 - **Swarm tests** → `test_execution_graph_persistence.py`, `test_swarm_failure_isolation.py`
 - **TLB-RAG tests** → `test_tlb_rag.py`, `test_tlb_reliability.py`
 - **Other** → `test_session_observability.py`, `test_shell_tools.py`, `test_state_root.py`, `test_task_planning.py`

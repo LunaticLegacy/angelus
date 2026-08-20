@@ -5,8 +5,8 @@ delegate to the unified :mod:`llmfetcher.cli`; this module layers the local
 browser console (``web``), session management (``session``) and the plugin
 management surface (``plugin``) on top.
 
-The ``plugin`` command manages the two-tier plugin system (workspace/plugins
-+ global plugins, decision D2): ``list`` mirrors the ``plugins.json`` registry,
+The ``plugin`` command manages the persistent application plugin directory
+next to ``workspace/`` (decision D2): ``list`` mirrors the ``plugins.json`` registry,
 ``install`` accepts a local directory, a git repository or a zip archive as the
 source and validates the manifest/checksum before copying the plugin into the
 chosen tier, ``enable``/``disable`` flip the persisted enabled flag through
@@ -87,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     install_p.add_argument(
         "--global", dest="global_tier", action="store_true",
-        help="Install into the global plugin tier instead of the workspace tier",
+        help="Compatibility flag; plugins are always installed beside workspace/",
     )
 
     for name, help_text in (
@@ -328,12 +328,9 @@ def _confirm_permissions(name: str, permissions: list[str], yes: bool) -> bool:
 
 
 def _plugin_dir_on_disk(plugin_paths, name: str) -> Path | None:
-    """Locate an installed plugin directory across both tiers, if present."""
-    for tier in plugin_paths.plugin_dirs():
-        candidate = tier / name
-        if candidate.is_dir():
-            return candidate
-    return None
+    """Locate an installed plugin in the persistent application directory."""
+    candidate = plugin_paths.plugin_dir() / name
+    return candidate if candidate.is_dir() else None
 
 
 def _resolve_plugin(registry, value: str) -> dict | None:
@@ -407,8 +404,7 @@ def _cmd_plugin_install(args: argparse.Namespace) -> None:
         if not _confirm_permissions(name, permissions, args.yes):
             _fail("permissions not granted; install aborted")
 
-        workspace_dir, global_dir = plugin_paths.plugin_dirs()
-        target_base = global_dir if args.global_tier else workspace_dir
+        target_base = plugin_paths.plugin_dir()
         target = target_base / name
         _copy_tree(root, target)
 
@@ -442,8 +438,7 @@ def _cmd_plugin_install(args: argparse.Namespace) -> None:
             "permissions_granted": permissions,
         }
         registry.add_plugin(record)
-        tier_label = "global" if args.global_tier else "workspace"
-        print(f"Installed plugin {name} v{version} [{kind}] ({tier_label} tier, id={record['id']})")
+        print(f"Installed plugin {name} v{version} [{kind}] (application directory, id={record['id']})")
         if permissions:
             print(f"Granted permissions: {', '.join(permissions)}")
         else:
@@ -453,18 +448,17 @@ def _cmd_plugin_install(args: argparse.Namespace) -> None:
 
 
 def _cmd_plugin_uninstall(args: argparse.Namespace) -> None:
-    """Remove the plugin directory (both tiers) and its registry record."""
+    """Remove the persistent plugin directory and its registry record."""
     _manifest, plugin_paths, registry = _plugin_modules()
     record = _resolve_plugin(registry, args.plugin)
     if record is None:
         _fail(f"plugin {args.plugin!r} not found in registry")
     name = record["name"]
     removed_dir = False
-    for tier in plugin_paths.plugin_dirs():
-        candidate = tier / name
-        if candidate.exists():
-            shutil.rmtree(candidate)
-            removed_dir = True
+    candidate = plugin_paths.plugin_dir() / name
+    if candidate.exists():
+        shutil.rmtree(candidate)
+        removed_dir = True
     registry.remove_plugin(record["id"])
     print(f"Uninstalled plugin {name} ({record['id']})")
     if not removed_dir:

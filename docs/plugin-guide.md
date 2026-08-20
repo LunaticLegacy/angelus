@@ -8,18 +8,17 @@
 
 ## 1. 插件放在哪里（两层级目录）
 
-插件按**两个层级**分布（决策 D2）：
+插件仅使用**一个持久目录**（决策 D2），与 `workspace/` 并列：
 
-| 层级 | 目录 | 生命周期 | 说明 |
-|------|------|----------|------|
-| workspace（会话级） | `<workspace>/plugins` | 跟随当前工作区 | 由 `plugin_paths.workspace_plugin_dir(state_root)` 解析 |
-| global（全局） | `<app_data>/plugins` | 跨工作区共享 | 可用环境变量 `ANGELUS_PLUGIN_DIR` 覆盖位置 |
+| 目录 | 生命周期 | 说明 |
+|------|----------|------|
+| `<app_data>/plugins` | 跨工作区共享 | `plugin_paths.plugin_dir(state_root)` 解析；可用 `ANGELUS_PLUGIN_DIR` 覆盖。 |
 
-- **遮蔽规则**：发现阶段 workspace 层级优先；同名插件同时存在时，workspace 版本胜出（global 版本被忽略）。
+桌面安装包附带 `demo-hello` 与 `example-tool`。首次启动时它们被复制到这个目录供发现；不会自动注册、执行或授予权限，也不会覆盖用户已有的同名目录。
 - **目录形态**：每个插件一个子目录，目录名建议与 `manifest.name` 一致，内部必须包含 `manifest.json` 与入口文件：
 
 ```
-<workspace>/plugins/
+<app_data>/plugins/
 └── example-tool/
     ├── manifest.json     # 插件清单（必填）
     ├── main.py           # 入口模块（entry=main）
@@ -229,6 +228,8 @@ def _search_provider_factory(self):
 
 命令名会被命名空间化为 `hello:search`。
 
+若 manifest 声明 `frontend.settings: true`，工作台“设置 → 插件”会显示该插件的状态与 JSON 设置编辑器。`registerSettings(plugin, { title, description })` 可提供页面标题和说明；设置会持久化到本机 `plugins.json`，不能包含 API Key、token、password 或 secret 等凭据形字段。Python 插件会在下次加载时从 `runtime.settings` 读取这些值。页面中的已发现插件都可以选中；若显示“加入工作台”，该操作只登记当前已发现的本地目录并校验完整性，不执行代码。登记后可加载/卸载：加载前必须确认执行插件代码，若存在尚未授予的 manifest 权限，还会单独显示并确认这些权限；卸载会 teardown 并移除前端贡献，但不会删除插件文件或配置。
+
 ---
 
 ## 6. 安装、启用与权限确认流程
@@ -257,6 +258,8 @@ angelus plugin disable <id-or-name>
 3. **禁用/卸载**：`disable` 执行 `teardown()` 并把 `enabled` 翻回 false；
    `uninstall` 删除插件目录并清理注册表项。
 
+工作台中的“卸载插件”对应运行时 `disable`（保留文件），而非 CLI 的 `uninstall`（删除文件）；这样可以安全地重新加载、检查状态或调整设置。
+
 > 未授权权限在调用时被权限门拦下（`angelus.plugins.security.check_permission`），
 > 并记录日志；示例插件声明但未授予 `network` 时，远程搜索路径不会执行。
 
@@ -280,7 +283,7 @@ angelus plugin disable <id-or-name>
 跟着 [`plugins/example-tool/`](../plugins/example-tool/) 走一遍
 **安装 → 启用 → 工具调用 → 钩子触发** 全链路：
 
-1. `angelus plugin install plugins/example-tool`（或复制到 `<workspace>/plugins/` 后安装）；
+1. `angelus plugin install plugins/example-tool`（或复制到 `<app_data>/plugins/` 后在工作台中登记）；
 2. `angelus plugin enable example-tool`；
 3. 在 agent 工具链中调用 `plugin.example-tool.web_search`（`query` 必填，`limit` 默认 5）；
 4. 每次工具调用前后，`tool.before`/`tool.after` 钩子把事件快照写入
