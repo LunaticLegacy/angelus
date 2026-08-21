@@ -69,7 +69,7 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
     """SSE, aggregate replay, and selected-Agent replay must render one card type."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
 
-    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools},agentName)" in script
+    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs},agentName)" in script
     assert "chatView.render(messages, assistantLabel)" in script
     assert "chatView.buildMessage(message, selectedAgent)" in script
 
@@ -177,6 +177,19 @@ def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
     assert "apiJson(graphUrl()).catch(()=>null)" in script
     assert ".usage-agent .agent-state.running" in stylesheet
     assert re.search(r'/static/app\.js\?v=workbench-\d+', INDEX_TEMPLATE.read_text(encoding="utf-8"))
+
+
+def test_usage_tiles_show_current_lifecycle_tokens_in_green() -> None:
+    """Each session usage tile and per-Agent card shows the latest run's tokens as a green +X line."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "function usageCells(usage, run=null)" in script
+    assert '<i class="usage-round">+${Number(run[key] || 0).toLocaleString()}</i>' in script
+    assert "usageCells(usage, payload.run)" in script
+    assert "usageCells(agent.usage, agent.run)" in script
+    assert '<small>${label}</small><b>${Number(usage[key] || 0).toLocaleString()}</b>' in script
+    assert ".usage-round { display:block; color:var(--green);" in stylesheet
 
 
 def test_running_session_does_not_turn_unknown_agents_into_running_agents() -> None:

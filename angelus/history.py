@@ -407,21 +407,12 @@ def _empty_usage() -> dict[str, int]:
     """Return the complete token-usage shape used by session aggregations."""
     return {"input": 0, "output": 0, "total": 0, "cached": 0, "reasoning": 0}
 
-def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate the canonical per-call token ledger for a browser session.
+def _usage_from_events(events: list[dict[str, Any]]) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+    """Aggregate usage events into (session-wide, per-agent) token dicts.
 
-    Args:
-        events: Chronological or reverse-chronological durable event records.
-            New logs contribute ``agent:usage`` and ``agent:internal_usage``
-            lifecycle records.  Old logs without either retain the
-            ``agent:round.round_usage`` compatibility path.
-
-    Returns:
-        A mapping with session-wide ``usage`` and per-agent usage records.
-
-    Ledger records are deltas, one for each provider call.  This means hidden
-    compaction and graph calls are visible, while the summary does not sum the
-    duplicate per-round display payload.
+    Ledger deltas (``agent:usage`` / ``agent:internal_usage``) are preferred
+    when present; otherwise the display-only ``agent:round.round_usage``
+    payload is used so legacy logs stay supported.
     """
     ledger_events = [
         event for event in events
@@ -450,11 +441,86 @@ def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
                 tokens = max(0, int(value))
                 total[key] += tokens
                 agent_usage[key] += tokens
+    return total, by_agent
+
+
+def _current_run_window(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the durable events of the most recent lifecycle run.
+
+    The "本次" (this lifecycle) window starts at the last ``run_started``
+    record and ends at the first user steering message
+    (``agent:steer_applied``), the run's ``done`` marker, or the end of the
+    log, whichever comes first.  Rounds emitted after a steering message are
+    "steer work" and must not inflate the current-lifecycle total.
+
+    Legacy logs without a ``run_started`` marker have no run boundary, so the
+    whole log is treated as a single window to keep the summary well-defined.
+    """
+    start = None
+    for index, event in enumerate(events):
+        if event.get("event") == "run_started":
+            start = index
+    if start is None:
+        return list(events)
+    for end in range(start + 1, len(events)):
+        event = events[end]
+        if event.get("event") == "done":
+            return events[start:end]
+        if (
+            event.get("event") == "lifecycle"
+            and event.get("type") == "agent:steer_applied"
+        ):
+            return events[start:end]
+    return events[start:]
+
+
+def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate the canonical per-call token ledger for a browser session.
+
+    Args:
+        events: Chronological or reverse-chronological durable event records.
+            New logs contribute ``agent:usage`` and ``agent:internal_usage``
+            lifecycle records.  Old logs without either retain the
+            ``agent:round.round_usage`` compatibility path.
+
+    Returns:
+        A mapping with session-wide ``usage``, per-agent usage records, a
+        ``run`` mapping carrying the most recent lifecycle's usage (the "+X"
+        line shown in the usage tiles, with steering rounds excluded), and a
+        ``round`` mapping carrying the most recently completed model round's
+        per-call usage.
+
+    Ledger records are deltas, one for each provider call.  This means hidden
+    compaction and graph calls are visible, while the summary does not sum the
+    duplicate per-round display payload.
+    """
+    total, by_agent = _usage_from_events(events)
     agents = [
         {"id": agent, "usage": usage}
         for agent, usage in sorted(by_agent.items(), key=lambda item: (-item[1]["total"], item[0]))
     ]
-    return {"usage": total, "agents": agents}
+    run_total, run_by_agent = _usage_from_events(_current_run_window(events))
+    for agent in agents:
+        agent["run"] = run_by_agent.get(agent["id"], _empty_usage())
+    # Per-round usage for the legacy "本轮" line: the most recently completed
+    # model round.  Scanned newest-first so the latest ``agent:round`` wins;
+    # the ``round_usage`` payload is the same one that backs chat-message token
+    # stats, so the usage tile stays consistent with the transcript.
+    round_usage = _empty_usage()
+    for event in reversed(events):
+        if event.get("event") != "lifecycle" or event.get("type") != "agent:round":
+            continue
+        data = event.get("data")
+        usage = data.get("round_usage") if isinstance(data, dict) else None
+        if not isinstance(usage, dict):
+            continue
+        for key in round_usage:
+            value = usage.get(key, 0)
+            if isinstance(value, (int, float)):
+                round_usage[key] = max(0, int(value))
+        break
+    return {"usage": total, "run": run_total, "agents": agents, "round": round_usage}
+
 
 def _archived_context_page(
     workspace_id: str,
@@ -748,6 +814,11 @@ def _agent_turns_from_events(
             turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": tools}
             turn["content_html"] = render_markdown(content)
             turn["reasoning_html"] = render_markdown(reasoning)
+            round_usage = data.get("round_usage")
+            if isinstance(round_usage, dict):
+                turn["usage"] = round_usage
+            if isinstance(data.get("model_duration_ms"), (int, float)):
+                turn["model_duration_ms"] = data["model_duration_ms"]
             turns.append(turn)
             last_assistant = (content, reasoning)
             if isinstance(round_number, int):
@@ -764,6 +835,9 @@ def _agent_turns_from_events(
             turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": []}
             turn["content_html"] = render_markdown(content)
             turn["reasoning_html"] = render_markdown(reasoning)
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                turn["usage"] = usage
             turns.append(turn)
             last_assistant = (content, reasoning)
     return turns

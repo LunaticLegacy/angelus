@@ -65,6 +65,12 @@ class SessionObservabilityTests(unittest.TestCase):
                 summary = webapp._session_usage_summary(webapp._read_session_event_log("demo", "demo"))
                 self.assertEqual(summary["usage"], {"input": 10, "output": 3, "total": 13, "cached": 1, "reasoning": 1})
                 self.assertEqual([agent["id"] for agent in summary["agents"]], ["worker", "coordinator"])
+                self.assertEqual(summary["round"], {"input": 7, "output": 1, "total": 8, "cached": 0, "reasoning": 0})
+                # Legacy log has no run_started marker, so the "本次" window
+                # falls back to the whole log.
+                self.assertEqual(summary["run"], summary["usage"])
+                for agent in summary["agents"]:
+                    self.assertEqual(agent["run"], agent["usage"])
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
@@ -82,7 +88,53 @@ class SessionObservabilityTests(unittest.TestCase):
         summary = webapp._session_usage_summary(events)
 
         self.assertEqual(summary["usage"], {"input": 7, "output": 3, "total": 10, "cached": 1, "reasoning": 1})
-        self.assertEqual(summary["agents"], [{"id": "coordinator", "usage": summary["usage"]}])
+        self.assertEqual(summary["agents"], [
+            {"id": "coordinator", "usage": summary["usage"], "run": summary["usage"]},
+        ])
+        self.assertEqual(summary["round"], {"input": 99, "output": 99, "total": 198, "cached": 0, "reasoning": 0})
+
+    def test_usage_run_tracks_current_lifecycle_and_excludes_steers(self) -> None:
+        """The "本次" (run) tile counts the latest run and drops steer work."""
+        events = [
+            # 旧 run：不应进入“本次”
+            {"event": "run_started", "run_id": "old", "timestamp": 1.0},
+            {"event": "lifecycle", "type": "agent:usage", "agent": "coordinator",
+             "data": {"usage": {"input": 100, "output": 10, "total": 110, "cached": 0, "reasoning": 0}}},
+            {"event": "done", "timestamp": 2.0},
+            # 当前 run（用户本次输入）
+            {"event": "run_started", "run_id": "new", "timestamp": 3.0},
+            {"event": "lifecycle", "type": "agent:usage", "agent": "coordinator",
+             "data": {"usage": {"input": 5, "output": 2, "total": 7, "cached": 1, "reasoning": 1}}},
+            {"event": "lifecycle", "type": "agent:usage", "agent": "worker",
+             "data": {"usage": {"input": 3, "output": 1, "total": 4, "cached": 0, "reasoning": 0}}},
+            # 用户 steer：之后的所有轮次都算 steer 工作，不计入“本次”
+            {"event": "lifecycle", "type": "agent:steer_applied", "agent": "coordinator",
+             "data": {"round": 2, "messages": ["调整方向"]}},
+            {"event": "lifecycle", "type": "agent:usage", "agent": "coordinator",
+             "data": {"usage": {"input": 50, "output": 20, "total": 70, "cached": 0, "reasoning": 5}}},
+            {"event": "done", "timestamp": 4.0},
+        ]
+
+        summary = webapp._session_usage_summary(events)
+
+        # 整会话：旧 run 与 steer 后续都计入
+        self.assertEqual(summary["usage"]["input"], 158)
+        self.assertEqual(summary["usage"]["output"], 33)
+        self.assertEqual(summary["usage"]["total"], 191)
+        # “本次”：仅当前 run 中 steer 之前的用量
+        self.assertEqual(
+            summary["run"],
+            {"input": 8, "output": 3, "total": 11, "cached": 1, "reasoning": 1},
+        )
+        by_id = {agent["id"]: agent for agent in summary["agents"]}
+        self.assertEqual(
+            by_id["coordinator"]["run"],
+            {"input": 5, "output": 2, "total": 7, "cached": 1, "reasoning": 1},
+        )
+        self.assertEqual(
+            by_id["worker"]["run"],
+            {"input": 3, "output": 1, "total": 4, "cached": 0, "reasoning": 0},
+        )
 
     def test_orphaned_running_state_becomes_persisted_interruption(self) -> None:
         """Expose a restart-lost worker as a durable, explainable terminal state."""

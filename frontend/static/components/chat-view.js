@@ -182,10 +182,28 @@ export function createChatView({ getAgentLabel }) {
     return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
   }
 
+  /** One-line token accounting footer for one model round. */
+  function buildTokenStats(usage, modelDurationMs = null) {
+    if (!usage || typeof usage !== "object") return "";
+    const n = (value) => Math.max(0, Number(value || 0));
+    const fmt = (value) => n(value).toLocaleString();
+    const input = n(usage.input);
+    const cached = n(usage.cached);
+    const miss = Math.max(0, input - cached);
+    const output = n(usage.output);
+    let text = `↑ ${fmt(input)} · 缓存命中 ${fmt(cached)} · 未命中 ${fmt(miss)} · ↓ ${fmt(output)}`;
+    const seconds = typeof modelDurationMs === "number" ? modelDurationMs / 1000 : 0;
+    if (seconds > 0 && output > 0) {
+      text += ` · ${(output / seconds).toFixed(1)} tok/s`;
+    }
+    return `<footer class="message-tokens">${escapeHtml(text)}</footer>`;
+  }
+
   /** Build one transcript card without inserting it into the document. */
   function buildMessage(message, agentName = "") {
     const { role, content, reasoning = "", content_html: contentHtml = "",
-      reasoning_html: reasoningHtml = "", tools = [] } = message;
+      reasoning_html: reasoningHtml = "", tools = [], usage = null,
+      model_duration_ms = null } = message;
     if (role === "steer") return buildSteer(content);
 
     const element = document.createElement("article");
@@ -199,7 +217,7 @@ export function createChatView({ getAgentLabel }) {
 
     // Reasoning is visible before the formal answer in both live and restored
     // transcript cards, so readers see the model's working context first.
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms) : ""}`;
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));
     return element;
