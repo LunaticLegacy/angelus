@@ -118,7 +118,7 @@ npm run build     # 构建安装包
 
 ## 数据、权限与隐私
 
-默认状态目录为本机 `workspace/`，也可通过 `LLMFETCHER_STATE_DIR` 指定其他磁盘、容器卷或临时目录。插件始终位于其同级的 `plugins/` 目录；桌面发布包内含 `demo-hello` 与 `example-tool` 两个示例，它们会在首次启动时复制到该持久目录，但不会自动加载或获得权限。每个会话独立保存：
+源码 CLI 默认使用 `<源码位置>/workspace`，插件统一使用其同级的 `<源码位置>/plugins`。桌面端则使用其应用数据位置下同样的 `workspace/` 与 `plugins/` 并列结构；`ANGELUS_STATE_DIR`（兼容旧的 `LLMFETCHER_STATE_DIR`）可指定该 `workspace/` 目录。CLI 可用 `angelus --state-dir <workspace目录> plugin …` 显式操作与桌面端相同的插件注册表和插件目录。每个会话独立保存：
 
 | 文件或目录 | 用途 |
 | --- | --- |

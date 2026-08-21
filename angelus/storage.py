@@ -22,6 +22,8 @@ from .markdown import render_markdown
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parent
+STATE_ROOT_ENV = "ANGELUS_STATE_DIR"
+LEGACY_STATE_ROOT_ENV = "LLMFETCHER_STATE_DIR"
 # The packaged sidecar extracts frontend assets to a temporary directory and
 # advertises that location through the environment; source checkouts retain
 # the existing project-relative layout.
@@ -61,8 +63,10 @@ def _default_state_root(project_root: Path = PROJECT_ROOT) -> Path:
     return project_root / "workspace"
 
 # Every browser-visible session owns one private directory under ``workspace``.
-# An explicit deployment override always takes precedence over checkout layout.
-_configured_state_root = os.environ.get("LLMFETCHER_STATE_DIR")
+# ``ANGELUS_STATE_DIR`` is the shared control-plane setting used by both the
+# desktop launcher and the standalone CLI. Retain the older LLMFetcher name
+# so existing scripts and deployments keep their data location.
+_configured_state_root = os.environ.get(STATE_ROOT_ENV) or os.environ.get(LEGACY_STATE_ROOT_ENV)
 STATE_ROOT = (
     Path(_configured_state_root).resolve()
     if _configured_state_root
@@ -382,6 +386,8 @@ __all__ = [
     "_session_event_page",
     "PACKAGE_ROOT",
     "PROJECT_ROOT",
+    "STATE_ROOT_ENV",
+    "LEGACY_STATE_ROOT_ENV",
     "FRONTEND_ROOT",
     "_configured_state_root",
     "STATE_ROOT",

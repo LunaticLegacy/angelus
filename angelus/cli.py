@@ -52,6 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = _build_library_parser()
     parser.prog = "angelus"
     parser.description = "Local observable Agent control plane built on LLMFetcher."
+    parser.add_argument(
+        "--state-dir",
+        metavar="WORKSPACE_DIR",
+        help="Workspace state directory; plugins resolve to its sibling plugins/ directory.",
+    )
 
     from argparse import _SubParsersAction
 
@@ -102,6 +107,26 @@ def _build_parser() -> argparse.ArgumentParser:
         subp.prog = subp.prog.replace("llmfetcher", "angelus", 1)
 
     return parser
+
+
+def _configure_state_root(state_dir: str | None) -> None:
+    """Apply one CLI state root before importing state-owning Angelus modules.
+
+    Args:
+        state_dir: Optional workspace directory supplied through ``--state-dir``.
+            When absent, environment-based and checkout-local defaults remain in
+            effect.
+
+    Side Effects:
+        Sets both the canonical ``ANGELUS_STATE_DIR`` and legacy
+        ``LLMFETCHER_STATE_DIR`` names. Keeping them equal ensures the plugin
+        registry and plugin directory share the same application root.
+    """
+    if not state_dir:
+        return
+    resolved = str(Path(state_dir).expanduser().resolve())
+    os.environ["ANGELUS_STATE_DIR"] = resolved
+    os.environ["LLMFETCHER_STATE_DIR"] = resolved
 
 
 def _cmd_web(args: argparse.Namespace) -> None:
@@ -479,6 +504,7 @@ def _cmd_plugin_set_enabled(args: argparse.Namespace, enabled: bool) -> None:
 def main(argv: list[str] | None = None) -> None:
     """Parse CLI arguments and dispatch the selected Angelus command."""
     args = _build_parser().parse_args(argv)
+    _configure_state_root(args.state_dir)
     if args.command == "list-backends":
         _cmd_list_backends()
     elif args.command == "list-tools":

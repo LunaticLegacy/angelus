@@ -29,7 +29,7 @@ Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、
 
 ## Durable State Ownership
 
-`LLMFETCHER_STATE_DIR` 可指定状态根目录；否则使用本地工作区。连接器与插件注册表在全局范围共享，而会话目录彼此隔离。
+`ANGELUS_STATE_DIR` 可指定状态根目录（兼容 `LLMFETCHER_STATE_DIR`）；否则使用本地工作区。连接器与插件注册表在全局范围共享，而会话目录彼此隔离。CLI 的 `--state-dir` 会同时设置两个名称，使插件目录和注册表保持同一应用根。
 
 | Scope | Records |
 |---|---|
