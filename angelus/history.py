@@ -46,6 +46,44 @@ class AgentContextMetadata:
     timeline: str
 
 
+@dataclass(frozen=True)
+class AgentContextPreview:
+    """Schema returned to the workbench for one Agent context inspection.
+
+    The model-facing message and tool payload fields deliberately remain JSON
+    objects: they are provider- and plugin-extensible.  This envelope fixes
+    the stable application contract around those payloads so callers no
+    longer infer response keys from an untyped mapping.
+
+    Attributes:
+        messages: Chronological provider-neutral messages reconstructed from
+            the saved Agent checkpoint.
+        metadata: One provenance record for each item in ``messages``.
+        request: Latest captured :class:`RemoteRequestSnapshot` serialized at
+            the Angelus/llmfetcher boundary, or ``None`` for older sessions.
+        total: Number of messages in the saved checkpoint.
+    """
+
+    messages: list[dict[str, Any]]
+    metadata: list[AgentContextMetadata]
+    request: dict[str, Any] | None
+    total: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the stable response envelope for FastAPI and JSON.
+
+        Returns:
+            A JSON-compatible mapping with metadata converted from its
+            dataclass schema while leaving provider-extensible payloads intact.
+        """
+        return {
+            "messages": self.messages,
+            "metadata": [asdict(item) for item in self.metadata],
+            "request": self.request,
+            "total": self.total,
+        }
+
+
 def _display_tool_result(value: Any) -> Any:
     """Recover structured tool data for every browser transcript path.
 
@@ -395,7 +433,7 @@ def _archived_context_page(
     }
 
 
-def _agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any]:
+def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPreview:
     """Return the complete model-ready form of an Agent's persisted context.
 
     Args:
@@ -421,7 +459,7 @@ def _agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any]:
     safe_agent = _safe_id(agent_name, "agent")
     path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
     if not path.is_file():
-        return {"messages": [], "metadata": [], "request": None, "total": 0}
+        return AgentContextPreview(messages=[], metadata=[], request=None, total=0)
 
     # Reuse the runtime's linear serializer so the preview keeps compacted
     # abstracts, tool-call shapes, and request-side tool-output limits.
@@ -499,12 +537,12 @@ def _agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any]:
         if event.get("event") == "lifecycle" and event.get("type") == "agent:remote_request" and event.get("agent") == safe_agent and isinstance(data.get("request"), dict):
             request = data["request"]
             break
-    return {
-        "messages": messages,
-        "metadata": [asdict(item) for item in metadata],
-        "request": request,
-        "total": len(messages),
-    }
+    return AgentContextPreview(
+        messages=messages,
+        metadata=metadata,
+        request=request,
+        total=len(messages),
+    )
 
 def _agent_turns_from_events(
     workspace_id: str,
@@ -862,6 +900,7 @@ def _agent_context_graph(
 __all__ = [
     "_history_context_paths",
     "AgentContextMetadata",
+    "AgentContextPreview",
     "_read_session_history",
     "_turns_from_legacy_context",
     "_turns_from_event_log",

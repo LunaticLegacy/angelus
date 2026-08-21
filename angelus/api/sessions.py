@@ -259,7 +259,7 @@ def get_agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any
     if agent_name == "all":
         raise HTTPException(status_code=422, detail="Select one Agent to inspect its context")
     safe_agent = _safe_id(agent_name, "agent")
-    return {"agent": safe_agent, **_agent_context_preview(safe_session, safe_agent)}
+    return {"agent": safe_agent, **_agent_context_preview(safe_session, safe_agent).to_dict()}
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/graph")
 def get_session_graph(workspace_id: str, session_id: str) -> dict[str, Any]:

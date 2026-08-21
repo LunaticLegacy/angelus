@@ -52,7 +52,8 @@
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `_display_tool_result(value)` | Normalizes new typed events and safely restores JSON or legacy `str(dict)`/`str(list)` results while leaving stdout text intact. | Called by `_read_session_history`, `_turns_from_legacy_context`, and `_display_tools_from_event`; every historical transcript path therefore feeds the shared frontend tool renderer with the same data shape as live SSE. |
-| `AgentContextMetadata` / `_agent_context_preview(session_id, agent_name)` | Defines the API schema for each expanded provider message and retrieves the latest credential-free `agent:remote_request` snapshot. The preview falls back to durable linear context only for sessions with no captured request. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
+| `AgentContextMetadata` / `AgentContextPreview` | Immutable API schemas for message provenance and the complete context-inspector response. The envelope fixes response keys while provider/plugin-extensible message and tool payloads remain JSON objects. | Constructed by `_agent_context_preview`; `AgentContextPreview.to_dict` is consumed by `api.sessions.get_agent_context_preview`. |
+| `_agent_context_preview(session_id, agent_name)` | Builds an `AgentContextPreview` and retrieves the latest credential-free `agent:remote_request` snapshot. It falls back to durable linear context only for sessions with no captured request. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
 
 ## `angelus.api.sessions`
 
@@ -73,6 +74,14 @@
 | --- | --- | --- |
 | `_tool_result_text(value)` | Produces the complete text representation required by the next model round, without formatting a lifecycle event. | Called while building the model-facing `tool_results` map in `Agent.run`. |
 | `Agent.run` tool-completion event | Keeps each raw tool result in `agent:tools_completed`; JSON-compatible values therefore cross the FastAPI/SSE boundary as objects rather than Python `str()` output. | Consumed by Angelus runtime event persistence and `frontend/static/app.js::liveTools`. |
+| `Agent.run` remote-request event | Serializes `RemoteRequestSnapshot` into an `agent:remote_request` lifecycle event before each provider attempt. | `LLMFetcher.fetch` calls the typed observer; Angelus history reads the durable event for context preview. |
+
+## `llmfetcher.llm_types` / `llmfetcher.llm_fetcher`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `RemoteRequestSnapshot` | Immutable, credential-free boundary schema for a dispatch-ready remote request: model, provider-neutral messages, generation settings, stream flag, and provider-prepared tool schemas. `to_dict` creates the persisted application payload. | Constructed by `LLMFetcher.fetch`; serialized by `Agent.run`; displayed through `angelus.history.AgentContextPreview`. |
+| `LLMFetcher.fetch(..., on_request)` | Invokes the optional typed preflight observer immediately before each provider call, after tool-schema preparation and before provider I/O. | Called by `Agent.run` and direct library consumers; constructs `RemoteRequestSnapshot`. |
 
 ## `llmfetcher.tools.spawn_tools`
 

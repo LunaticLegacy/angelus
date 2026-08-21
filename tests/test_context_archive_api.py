@@ -99,15 +99,15 @@ class ContextArchiveApiTests(unittest.TestCase):
                 ]}), encoding="utf-8")
 
                 preview = webapp._agent_context_preview("work", "coordinator")
-                self.assertEqual(preview["total"], 4)
-                self.assertEqual([item["role"] for item in preview["messages"]], ["user", "assistant", "tool", "user"])
-                self.assertEqual(preview["messages"][1]["tool_calls"][0]["arguments"], {"id": 2})
-                self.assertEqual(preview["messages"][2]["content"], "{'ok': True}")
-                self.assertEqual(preview["metadata"], [
-                    {"index": 1, "source": "coordinator", "type": "user", "length": 5, "timeline": "1"},
-                    {"index": 2, "source": "coordinator", "type": "assistant", "length": 6, "timeline": "2"},
-                    {"index": 3, "source": "tool · plan", "type": "tool", "length": 12, "timeline": "2"},
-                    {"index": 4, "source": "coordinator", "type": "user", "length": 5, "timeline": "3"},
+                self.assertEqual(preview.total, 4)
+                self.assertEqual([item["role"] for item in preview.messages], ["user", "assistant", "tool", "user"])
+                self.assertEqual(preview.messages[1]["tool_calls"][0]["arguments"], {"id": 2})
+                self.assertEqual(preview.messages[2]["content"], "{'ok': True}")
+                self.assertEqual([(item.index, item.source, item.type, item.length, item.timeline) for item in preview.metadata], [
+                    (1, "coordinator", "user", 5, "1"),
+                    (2, "coordinator", "assistant", 6, "2"),
+                    (3, "tool · plan", "tool", 12, "2"),
+                    (4, "coordinator", "user", 5, "3"),
                 ])
             finally:
                 storage.WORKSPACE_ROOT = original_root
@@ -134,8 +134,8 @@ class ContextArchiveApiTests(unittest.TestCase):
 
                 preview = webapp._agent_context_preview("work", "worker")
 
-                self.assertEqual(preview["request"]["messages"][0]["content"], "exact request")
-                self.assertEqual(preview["request"]["tools"][0]["function"]["name"], "search")
+                self.assertEqual(preview.request["messages"][0]["content"], "exact request")
+                self.assertEqual(preview.request["tools"][0]["function"]["name"], "search")
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
