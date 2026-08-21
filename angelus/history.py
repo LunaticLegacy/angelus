@@ -748,6 +748,11 @@ def _agent_turns_from_events(
             turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": tools}
             turn["content_html"] = render_markdown(content)
             turn["reasoning_html"] = render_markdown(reasoning)
+            round_usage = data.get("round_usage")
+            if isinstance(round_usage, dict):
+                turn["usage"] = round_usage
+            if isinstance(data.get("model_duration_ms"), (int, float)):
+                turn["model_duration_ms"] = data["model_duration_ms"]
             turns.append(turn)
             last_assistant = (content, reasoning)
             if isinstance(round_number, int):
@@ -764,6 +769,9 @@ def _agent_turns_from_events(
             turn = {"role": "assistant", "content": content, "reasoning": reasoning, "tools": []}
             turn["content_html"] = render_markdown(content)
             turn["reasoning_html"] = render_markdown(reasoning)
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                turn["usage"] = usage
             turns.append(turn)
             last_assistant = (content, reasoning)
     return turns
