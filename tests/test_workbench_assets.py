@@ -192,6 +192,7 @@ def test_agents_panel_renders_only_the_single_topology_tree() -> None:
 
     assert 'id="inspector-agents-list"' in template
     assert 'id="execution-graph"' not in template
+    assert "点击下方 Agent 卡片可查看该 Agent 的上下文。" in template
 
 
 def test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height() -> None:

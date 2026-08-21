@@ -70,6 +70,12 @@
 | `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` | Switches the dialog's top-level entity-graph/context panels. The raw preview renders only a captured remote-request snapshot; when present, its metadata table has the same message source. The near-viewport dialog keeps its chrome fixed and gives graph, metadata, and request body independent scroll regions. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `handleEvent` refreshes an open matching dialog on `agent:remote_request`. |
 | `loadContextPrompt(agentId)` | Requests the complete persisted model-context shape once, without cursors or pagination. | Called by `openContextGraph`; fetches `api.sessions.get_agent_context_preview`. |
 
+## `frontend/templates/index.html` — Agents inspector
+
+| Element | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `#inspector-agents .agents-legend` | Explains the delegation-tree indentation, task labels, and that selecting an Agent card opens that Agent’s context viewer. | `frontend/static/app.js::renderAgentTopology` renders the clickable cards. |
+
 ## `llmfetcher.agent`
 
 | Symbol | Responsibility | Calls / called by |
