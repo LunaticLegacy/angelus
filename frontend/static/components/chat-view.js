@@ -219,6 +219,26 @@ export function createChatView({ getAgentLabel }) {
     chat.scrollTop = chat.scrollHeight;
   }
 
+  function beginStream(agentName = "") {
+    /** Create one mutable assistant card for provider text/thinking deltas. */
+    removeWelcome();
+    const element = document.createElement("article");
+    const speaker = agentName || getAgentLabel() || "Coordinator";
+    element.className = "message assistant streaming";
+    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><section class="reasoning" aria-label="思考过程" hidden><h4>思考过程</h4><div class="markdown plain-text"></div></section><div class="bubble plain-text"></div>`;
+    $("chat").append(element);
+    return {
+      update(content, reasoning) {
+        const reasoningSection = element.querySelector(".reasoning");
+        reasoningSection.hidden = !reasoning;
+        reasoningSection.querySelector(".markdown").textContent = reasoning;
+        element.querySelector(".bubble").textContent = content;
+        $("chat").scrollTop = $("chat").scrollHeight;
+      },
+      remove() { element.remove(); },
+    };
+  }
+
   function appendError(title, message, rawContent = "") {
     /** Display a user-visible failure and, when supplied, its raw model reply. */
     removeWelcome();
@@ -247,5 +267,5 @@ export function createChatView({ getAgentLabel }) {
     chat.scrollTop = chat.scrollHeight;
   }
 
-  return { append, appendError, buildMessage, removeWelcome, render };
+  return { append, appendError, beginStream, buildMessage, removeWelcome, render };
 }

@@ -32,6 +32,15 @@ class ActiveRun:
         with self.processes_lock:
             self.processes.discard(process)
 
+    def publish_ephemeral_event(self, payload: dict[str, Any]) -> None:
+        """Queue one live-only browser event without adding it to the audit log.
+
+        Provider stream chunks are needed for a responsive transcript but are
+        intermediate transport fragments. The final ``agent:round`` event is
+        the durable, inspectable record of that output.
+        """
+        self.events.put({**payload, "ephemeral": True})
+
     def force_stop(self) -> None:
         """Terminally cancel model I/O and kill registered tool processes.
 

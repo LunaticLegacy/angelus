@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import uuid
 from typing import Any
@@ -111,6 +112,21 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
     canonical = json.dumps(profile, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return {**profile, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
+
+def _enable_optional_agent_controls(agent: Agent) -> None:
+    """Enable first-party streaming controls without requiring a new Agent ABI.
+
+    A desktop sidecar can temporarily import an older installed LLMFetcher
+    while the Angelus package has already advanced.  Constructor keyword
+    additions would make that mixed deployment fail before a run starts, so
+    opt into new behavior only through post-construction capabilities.
+    """
+    add_stop_turn = getattr(agent, "add_stop_turn_tool", None)
+    if callable(add_stop_turn):
+        add_stop_turn()
+    if hasattr(agent, "default_stream"):
+        agent.default_stream = True
+
 def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent_name: str = "coordinator", active: ActiveRun | None = None) -> Agent:
     """Create one session-owned Agent from current UI settings.
 
@@ -121,8 +137,9 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         agent_name: Graph-local identity used to isolate this Agent's context.
 
     Returns:
-        Configured Agent with planning and optional shell tools. Credentials
-        remain in memory and are never written to the session directory.
+        Configured Agent with planning, reserved ``stop_turn``, and optional
+        shell tools. Credentials remain in memory and are never written to
+        the session directory.
     """
     provider, api_url = resolve_provider(config.provider, config.api_url)
     backend = LLMBackendConfig(
@@ -138,7 +155,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
     semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
-        system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses."),
+        system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses. In a Swarm, every dispatched or revived work package must use a leaf plan task ID as plan_task_id; plans do not dispatch work by themselves."),
         # Keep browser-selected compaction behavior consistent for the
         # coordinator and every subsequently created session Agent.
         max_context_threshold=config.max_context_threshold,
@@ -156,6 +173,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
             max_context_threshold=config.max_context_threshold,
         ),
     )
+    _enable_optional_agent_controls(agent)
     if config.enable_shell:
         agent.add_tools(create_shell_tools(
             sandbox_cwd=str(_session_path(workspace_id, session_id)),
@@ -367,22 +385,39 @@ def _attach_swarm_runtime_tools(
     Side Effects:
         Adds dispatch, graph-control, and revival tools to ``coordinator``.
     """
-    coordinator.add_tools(create_swarm_tools(
-        swarm=swarm,
-        llm_fetcher=coordinator.llm_fetcher,
-        worker_tool_pool=[],
-        worker_tool_factory=lambda agent_name: _worker_tools_for(
+    swarm_tool_kwargs: dict[str, Any] = {
+        "swarm": swarm,
+        "llm_fetcher": coordinator.llm_fetcher,
+        "worker_tool_pool": [],
+        "worker_tool_factory": lambda agent_name: _worker_tools_for(
             config, workspace_id, session_id, active, agent_name,
         ),
-        worker_tool_binder=lambda agent_name, worker, tools: _bind_worker_context_tools(
+        "worker_tool_binder": lambda agent_name, worker, tools: _bind_worker_context_tools(
             workspace_id, session_id, agent_name, worker, tools,
         ),
-        coordinator_name="coordinator",
-        worker_max_rounds=config.max_rounds,
-        worker_max_tokens=config.max_tokens,
-        worker_max_context_threshold=config.max_context_threshold,
-        context_path_factory=lambda agent_name: _context_path(workspace_id, session_id, agent_name),
-    ))
+        "coordinator_name": "coordinator",
+        "worker_max_rounds": config.max_rounds,
+        "worker_max_tokens": config.max_tokens,
+        "worker_max_context_threshold": config.max_context_threshold,
+        "context_path_factory": lambda agent_name: _context_path(workspace_id, session_id, agent_name),
+    }
+    supported = inspect.signature(create_swarm_tools).parameters
+    optional_controls = {
+        "worker_enable_stop_turn": True,
+        "worker_default_stream": True,
+        "require_plan_task_id": True,
+        "plan_task_validator": lambda task_id: _plan_store(
+            workspace_id, session_id,
+        ).is_bindable_leaf(task_id),
+    }
+    swarm_tool_kwargs.update({
+        name: value for name, value in optional_controls.items()
+        if name in supported
+    })
+    coordinator.add_tools(create_swarm_tools(**{
+        name: value for name, value in swarm_tool_kwargs.items()
+        if name in supported
+    }))
 
 
 def _attach_swarm_observer(
@@ -400,14 +435,63 @@ def _attach_swarm_observer(
         active: Process-local holder whose SSE queue receives the event.
     """
     def capture(event: ExecutionEvent) -> None:
-        """Persist one event before waking browser SSE consumers."""
+        """Synchronize bound plan leaves, then persist one lifecycle event."""
+        _synchronize_plan_with_swarm_event(
+            event, workspace_id, session_id, active,
+        )
         payload = {"event": "lifecycle", **_event_payload(event)}
+        if event.event_type == "agent:stream_delta":
+            active.publish_ephemeral_event(payload)
+            return
         _append_session_event(workspace_id, session_id, payload)
         _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
         active.events.put(payload)
 
     swarm.add_hook(capture)
     _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
+
+
+def _synchronize_plan_with_swarm_event(
+    event: ExecutionEvent,
+    workspace_id: str,
+    session_id: str,
+    active: ActiveRun,
+) -> None:
+    """Project an assignment-bound Swarm lifecycle event into the main plan.
+
+    The TaskBus remains the scheduler of record.  This bridge only observes
+    its durable correlation metadata and updates the coordinator's *leaf*
+    plan task, after which :class:`TaskPlanStore` derives all parent states.
+    Unbound or worker-local tasks intentionally leave the coordinator plan
+    unchanged.
+    """
+    data = event.data if isinstance(event.data, dict) else {}
+    plan_task_id = str(data.get("plan_task_id", "")).strip()
+    assignment_id = str(data.get("task_id", "")).strip()
+    if not plan_task_id or not assignment_id:
+        return
+    store = _plan_store(workspace_id, session_id)
+    try:
+        if event.event_type in {"task:dispatched", "task:redispatched"}:
+            plan = store.bind_execution(plan_task_id, assignment_id)
+        elif event.event_type == "task:reported":
+            completed = str(data.get("status", "")).strip().lower() in {
+                "completed", "complete", "success", "succeeded", "done",
+            }
+            plan = store.update_execution_status(
+                plan_task_id, assignment_id,
+                "completed" if completed else "blocked",
+            )
+        elif event.event_type in {"task:finalized", "task:report_missing", "agent:error", "agent:failed", "agent:stopped"}:
+            plan = store.update_execution_status(plan_task_id, assignment_id, "blocked")
+        else:
+            return
+    except ValueError:
+        # A coordinator may deliberately dispatch unbound work, or replace the
+        # plan after dispatch.  That must not crash execution or conceal the
+        # authoritative Swarm event.
+        return
+    _publish_plan_change(active, workspace_id, session_id, "coordinator", "plan:execution", plan)
 
 
 def _synchronize_context_threshold(

@@ -36,6 +36,15 @@ class ActiveRunReuseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "active"):
             active.reset_for_next_turn()
 
+    def test_stream_fragment_is_marked_live_only(self) -> None:
+        """Keep provider deltas out of the durable-event persistence path."""
+        active = ActiveRun(control=BrowserRunControl())
+        active.publish_ephemeral_event({"type": "agent:stream_delta"})
+        self.assertEqual(
+            active.events.get_nowait(),
+            {"type": "agent:stream_delta", "ephemeral": True},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

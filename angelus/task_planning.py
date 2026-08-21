@@ -75,7 +75,9 @@ class TaskPlanStore:
         """
         if not goal.strip():
             raise ValueError("Plan goal is required")
-        plan = {"goal": goal.strip(), "summary": summary.strip(), "tasks": self._normalize_tasks(tasks), "updated_at": time.time()}
+        normalized_tasks = self._normalize_tasks(tasks)
+        self._assert_unique_ids(normalized_tasks)
+        plan = {"goal": goal.strip(), "summary": summary.strip(), "tasks": normalized_tasks, "updated_at": time.time()}
         with self._lock:
             self._write(plan)
         return plan
@@ -98,8 +100,84 @@ class TaskPlanStore:
         # Keep read-modify-write atomic for concurrent worker tool calls.
         with self._lock:
             plan = self.read()
-            if not self._set_status(plan.get("tasks", []), task_id, status):
+            task = self._find_task(plan.get("tasks", []), task_id)
+            if task is None:
                 raise ValueError(f"Unknown task: {task_id}")
+            if task.get("subtasks"):
+                raise ValueError(
+                    "Parent task status is derived from its subtasks; update a leaf task instead"
+                )
+            task["status"] = status
+            self._reconcile_parent_statuses(plan.get("tasks", []))
+            plan["updated_at"] = time.time()
+            self._write(plan)
+        return plan
+
+    def bind_execution(self, task_id: str, assignment_id: str) -> dict[str, Any]:
+        """Bind one dispatched Swarm assignment to a leaf task.
+
+        Args:
+            task_id: Stable ID of a leaf in this plan.
+            assignment_id: Stable TaskBus assignment ID created for that leaf.
+
+        Returns:
+            The updated plan with durable execution correlation metadata.
+
+        Raises:
+            ValueError: If either ID is blank, the task is unknown, or the
+                selected task is a parent whose status must remain derived.
+        """
+        normalized_assignment = assignment_id.strip()
+        if not normalized_assignment:
+            raise ValueError("Swarm assignment ID is required")
+        with self._lock:
+            plan = self.read()
+            task = self._find_task(plan.get("tasks", []), task_id)
+            if task is None:
+                raise ValueError(f"Unknown task: {task_id}")
+            if task.get("subtasks"):
+                raise ValueError("Only a leaf task can be bound to a Swarm assignment")
+            execution = task.setdefault("execution", {
+                "assignment_ids": [], "active_assignment_id": "", "updated_at": None,
+            })
+            assignment_ids = execution.setdefault("assignment_ids", [])
+            if normalized_assignment not in assignment_ids:
+                assignment_ids.append(normalized_assignment)
+            execution["active_assignment_id"] = normalized_assignment
+            execution["updated_at"] = time.time()
+            task["status"] = "in_progress"
+            self._reconcile_parent_statuses(plan.get("tasks", []))
+            plan["updated_at"] = time.time()
+            self._write(plan)
+        return plan
+
+    def is_bindable_leaf(self, task_id: str) -> bool:
+        """Return whether ``task_id`` currently names a coordinator-plan leaf."""
+        with self._lock:
+            task = self._find_task(self.read().get("tasks", []), task_id)
+            return task is not None and not bool(task.get("subtasks"))
+
+    def update_execution_status(
+        self, task_id: str, assignment_id: str, status: str,
+    ) -> dict[str, Any]:
+        """Apply one authoritative Swarm lifecycle state to its bound leaf.
+
+        Stale events from an earlier revival are retained for audit but cannot
+        overwrite the active assignment's status.
+        """
+        if status not in _STATUSES:
+            raise ValueError(f"Unknown task status: {status}")
+        with self._lock:
+            plan = self.read()
+            task = self._find_task(plan.get("tasks", []), task_id)
+            if task is None:
+                raise ValueError(f"Unknown task: {task_id}")
+            execution = task.get("execution")
+            if not isinstance(execution, dict) or execution.get("active_assignment_id") != assignment_id:
+                return plan
+            task["status"] = status
+            execution["updated_at"] = time.time()
+            self._reconcile_parent_statuses(plan.get("tasks", []))
             plan["updated_at"] = time.time()
             self._write(plan)
         return plan
@@ -114,24 +192,73 @@ class TaskPlanStore:
             priority = str(value.get("priority", "medium"))
             if status not in _STATUSES or priority not in _PRIORITIES:
                 raise ValueError("Task has an invalid status or priority")
-            normalized.append({
-                "id": str(value.get("id") or uuid.uuid4().hex), "title": str(value["title"]).strip(),
+            normalized_task = {
+                # ``task_id`` is retained as an input alias because models and
+                # older clients commonly use it in tool arguments.  The public
+                # persisted field remains the stable ``id``.
+                "id": str(value.get("id") or value.get("task_id") or uuid.uuid4().hex), "title": str(value["title"]).strip(),
                 "description": str(value.get("description", "")).strip(), "status": status,
                 "priority": priority, "estimated_minutes": value.get("estimated_minutes"),
                 "subtasks": self._normalize_tasks(value.get("subtasks", [])),
-            })
+            }
+            execution = value.get("execution")
+            if isinstance(execution, Mapping):
+                normalized_task["execution"] = {
+                    "assignment_ids": [str(item) for item in execution.get("assignment_ids", []) if str(item)],
+                    "active_assignment_id": str(execution.get("active_assignment_id", "")),
+                    "updated_at": execution.get("updated_at"),
+                }
+            normalized.append(normalized_task)
+        self._reconcile_parent_statuses(normalized)
         return normalized
 
     @staticmethod
-    def _set_status(tasks: list[dict[str, Any]], task_id: str, status: str) -> bool:
-        """Find one recursive task and mutate only its status field."""
+    def _assert_unique_ids(tasks: list[dict[str, Any]]) -> None:
+        """Reject duplicate task IDs before a plan can be bound to execution."""
+        seen: set[str] = set()
+
+        def visit(values: list[dict[str, Any]]) -> None:
+            for task in values:
+                task_id = str(task["id"])
+                if task_id in seen:
+                    raise ValueError(f"Duplicate task ID: {task_id}")
+                seen.add(task_id)
+                visit(task.get("subtasks", []))
+
+        visit(tasks)
+
+    @staticmethod
+    def _find_task(tasks: list[dict[str, Any]], task_id: str) -> dict[str, Any] | None:
+        """Return one task from a recursive plan tree by its stable ID."""
         for task in tasks:
             if task.get("id") == task_id:
-                task["status"] = status
-                return True
-            if TaskPlanStore._set_status(task.get("subtasks", []), task_id, status):
-                return True
-        return False
+                return task
+            found = TaskPlanStore._find_task(task.get("subtasks", []), task_id)
+            if found is not None:
+                return found
+        return None
+
+    @staticmethod
+    def _reconcile_parent_statuses(tasks: list[dict[str, Any]]) -> None:
+        """Derive every parent state from its direct child states.
+
+        Parent completion is never cascaded downward: marking a parent as
+        complete must not invent evidence for unfinished descendants.
+        """
+        for task in tasks:
+            children = task.get("subtasks", [])
+            if not children:
+                continue
+            TaskPlanStore._reconcile_parent_statuses(children)
+            states = {str(child.get("status", "not_started")) for child in children}
+            if "blocked" in states:
+                task["status"] = "blocked"
+            elif "in_progress" in states:
+                task["status"] = "in_progress"
+            elif states == {"completed"}:
+                task["status"] = "completed"
+            else:
+                task["status"] = "not_started"
 
     def _write(self, plan: Mapping[str, Any]) -> None:
         """Atomically write a normalized task plan to the session path."""
@@ -172,6 +299,6 @@ def create_task_planning_tools(
         return {"ok": True, "plan": plan}
 
     return [
-        Tool(name="set_task_plan", description="Create or replace the user's nested task plan. Use it for multi-step goals before executing work.", schemas=ToolSchema(properties=[ToolParameter(name="goal", description="User goal", required=True), ToolParameter(name="summary", description="Planning summary", required=True), ToolParameter(name="tasks", type="array", description="Nested tasks with title, description, priority, estimated_minutes and subtasks", required=True)]), handler=set_task_plan),
+        Tool(name="set_task_plan", description="Create or replace the user's nested task plan. Use it for multi-step goals before executing work.", schemas=ToolSchema(properties=[ToolParameter(name="goal", description="User goal", required=True), ToolParameter(name="summary", description="Planning summary", required=True), ToolParameter(name="tasks", type="array", description="Nested tasks with title, optional stable id (or task_id), description, priority, estimated_minutes and subtasks", required=True)]), handler=set_task_plan),
         Tool(name="update_task_status", description="Update a planned task as work progresses.", schemas=ToolSchema(properties=[ToolParameter(name="task_id", description="Task ID from the current plan", required=True), ToolParameter(name="status", description="not_started, in_progress, completed or blocked", enum=sorted(_STATUSES), required=True)]), handler=update_task_status),
     ]

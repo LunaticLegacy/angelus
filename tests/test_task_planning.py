@@ -22,6 +22,56 @@ def test_task_plan_round_trip_and_recursive_status_update() -> None:
         assert store.read()["goal"] == "Ship a release"
 
 
+def test_parent_status_is_derived_and_bound_execution_updates_its_ancestors() -> None:
+    """A Swarm-bound leaf controls derived parent status without false completion."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        store.replace(goal="Ship", summary="", tasks=[{
+            "id": "parent", "title": "Release", "subtasks": [
+                {"id": "leaf-a", "title": "Build"},
+                {"id": "leaf-b", "title": "Verify"},
+            ],
+        }])
+
+        try:
+            store.update_status("parent", "completed")
+        except ValueError as error:
+            assert "derived" in str(error)
+        else:
+            raise AssertionError("parent task must not be completed directly")
+
+        running = store.bind_execution("leaf-a", "assignment-a")
+        assert running["tasks"][0]["status"] == "in_progress"
+        completed = store.update_execution_status("leaf-a", "assignment-a", "completed")
+        assert completed["tasks"][0]["status"] == "not_started"
+        store.update_status("leaf-b", "completed")
+        assert store.read()["tasks"][0]["status"] == "completed"
+
+
+def test_stale_execution_event_cannot_replace_revived_assignment() -> None:
+    """An older worker assignment cannot overwrite the active revived task."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        store.replace(goal="Retry", summary="", tasks=[{"id": "leaf", "title": "Retry work"}])
+        store.bind_execution("leaf", "first")
+        store.bind_execution("leaf", "second")
+        plan = store.update_execution_status("leaf", "first", "blocked")
+        assert plan["tasks"][0]["status"] == "in_progress"
+        plan = store.update_execution_status("leaf", "second", "completed")
+        assert plan["tasks"][0]["status"] == "completed"
+
+
+def test_model_task_id_alias_is_preserved_for_later_swarm_binding() -> None:
+    """Accept the common tool-argument spelling instead of generating a UUID."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        plan = store.replace(goal="Inspect", summary="", tasks=[{
+            "task_id": "T1", "title": "Read sources",
+        }])
+        assert plan["tasks"][0]["id"] == "T1"
+        assert store.is_bindable_leaf("T1")
+
+
 def test_agent_plan_stores_are_isolated_and_keep_legacy_coordinator_path(
     monkeypatch, tmp_path: Path
 ) -> None:

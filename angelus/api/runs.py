@@ -143,7 +143,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     [agent], config.max_context_threshold,
                 )
                 def capture(event: ExecutionEvent) -> None:
-                    """Durably relay one named single-Agent event to the browser.
+                    """Relay one named single-Agent event to the browser.
 
                     Library-created single Agents do not assign an event name,
                     so this adapter supplies the browser-visible coordinator
@@ -157,6 +157,9 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     # (including tool) events.
                     payload = {"event": "lifecycle", **runtime._event_payload(event)}
                     payload["agent"] = payload["agent"] or "coordinator"
+                    if event.event_type == "agent:stream_delta":
+                        active.publish_ephemeral_event(payload)
+                        return
                     _append_session_event(workspace_id, session_id, payload)
                     active.events.put(payload)
                 agent.add_hook(capture)
@@ -352,6 +355,17 @@ def stream_events(workspace_id: str, session_id: str, after: int = 0) -> Streami
         )
 
     def generate():
+        """Tail durable audit events and relay non-durable stream fragments."""
+        def ephemeral_events():
+            """Yield only live-only queue entries; durable entries use the log."""
+            while True:
+                try:
+                    payload = active.events.get_nowait()
+                except queue.Empty:
+                    return
+                if payload.get("ephemeral"):
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
         next_index = max(0, after)
         while True:
             events = _read_session_event_log(workspace_id, session_id)
@@ -360,20 +374,12 @@ def stream_events(workspace_id: str, session_id: str, after: int = 0) -> Streami
                 next_index += 1
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             if active.done.is_set():
-                while True:
-                    try:
-                        active.events.get_nowait()
-                    except queue.Empty:
-                        break
+                yield from ephemeral_events()
                 break
             # The queue remains a local wake-up/compatibility buffer. Drain it
             # after reading the durable log so abandoned SSE clients cannot
             # retain an unbounded copy of events.
-            while True:
-                try:
-                    active.events.get_nowait()
-                except queue.Empty:
-                    break
+            yield from ephemeral_events()
             yield ": keepalive\n\n"
             time.sleep(0.25)
 
