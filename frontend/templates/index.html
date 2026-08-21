@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-70" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-71" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -88,6 +88,8 @@
         <div class="run-overview"><span class="status-dot"></span><strong id="status" class="status idle">准备就绪</strong><span class="overview-divider"></span><div><small>Tokens</small><b id="header-tokens">—</b></div><div><small>时长</small><b id="header-duration">—</b></div><button id="stop" class="stop-button" type="button" disabled><span>■</span> 停止</button><button id="force-stop" class="force-button" type="button" disabled>强行停止</button></div>
       </header>
 
+      <div id="compact-status" class="compact-status" hidden aria-live="polite"></div>
+
       <div id="agent-row" class="agent-row"></div>
 
       <section id="chat" class="chat"><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
@@ -111,6 +113,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-74"></script>
+    <script type="module" src="/static/app.js?v=workbench-75"></script>
   </body>
 </html>
