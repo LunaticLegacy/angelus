@@ -73,3 +73,9 @@
 | --- | --- | --- |
 | `_tool_result_text(value)` | Produces the complete text representation required by the next model round, without formatting a lifecycle event. | Called while building the model-facing `tool_results` map in `Agent.run`. |
 | `Agent.run` tool-completion event | Keeps each raw tool result in `agent:tools_completed`; JSON-compatible values therefore cross the FastAPI/SSE boundary as objects rather than Python `str()` output. | Consumed by Angelus runtime event persistence and `frontend/static/app.js::liveTools`. |
+
+## `llmfetcher.tools.spawn_tools`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `create_swarm_tools(..., worker_tool_pool, worker_tool_factory=None, ...)` | Creates coordinator graph-mutation and task-dispatch tools. A supplied name-bound factory returns a fresh worker-local tool set and takes precedence over the static fallback pool. | Called by `angelus.runtime._build_swarm`; both `dynamic_add_agent` and `dispatch_subagent(s)` call its `_tools_for_worker` helper before registering a new Agent. |
