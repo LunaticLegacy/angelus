@@ -52,20 +52,20 @@
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `_display_tool_result(value)` | Normalizes new typed events and safely restores JSON or legacy `str(dict)`/`str(list)` results while leaving stdout text intact. | Called by `_read_session_history`, `_turns_from_legacy_context`, and `_display_tools_from_event`; every historical transcript path therefore feeds the shared frontend tool renderer with the same data shape as live SSE. |
-| `_agent_context_page(session_id, agent_name, before, limit)` | Reads a clamped newest-first page of active persisted context, preserving typed tool arguments/results and returning an older-page cursor. | Called by `api.sessions.get_agent_context_page`; reads a context file only. |
+| `AgentContextMetadata` / `_agent_context_preview(session_id, agent_name)` | Defines the API schema for each expanded provider message and retrieves the latest credential-free `agent:remote_request` snapshot. The preview falls back to durable linear context only for sessions with no captured request. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
 
 ## `angelus.api.sessions`
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `get_agent_context_page(session_id, agent_name, before, limit)` | Serves one bounded page of the selected Agent's current context; rejects aggregate `all`. | Browser context viewer calls it from `frontend/static/app.js::loadContextPage`; delegates to `_agent_context_page`. |
+| `get_agent_context_preview(session_id, agent_name)` | Serves the selected Agent's complete persisted model-context preview; rejects aggregate `all`. | Browser context viewer calls it from `frontend/static/app.js::loadContextPrompt`; delegates to `_agent_context_preview`. |
 
 ## `frontend/static/app.js` — context viewer
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `renderContextPage(payload)` | Converts a page API response into the existing chat cards, so context tool data uses the exact same JSON/stdout renderer as live and historical transcripts. | Called by `loadContextPage`; calls `chatView.buildMessage`. |
-| `loadContextPage(agentId, before)` / `changeContextPage(direction)` | Requests 12 active-context entries at a time and maintains older/newer cursors. | Called by `openContextGraph` and the dialog pagination buttons. |
+| `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` / `formatPromptPreview(messages)` | Switches the dialog's top-level entity-graph/context panels and renders the context tab as one metadata table plus one scrollable raw-text preview. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `loadContextPrompt` calls the renderer. |
+| `loadContextPrompt(agentId)` | Requests the complete persisted model-context shape once, without cursors or pagination. | Called by `openContextGraph`; fetches `api.sessions.get_agent_context_preview`. |
 
 ## `llmfetcher.agent`
 

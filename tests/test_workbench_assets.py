@@ -70,17 +70,22 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
     assert "chatView.buildMessage(message, selectedAgent)" in script
 
 
-def test_context_graph_dialog_contains_paginated_active_context_viewer() -> None:
-    """Keep the context inspector's transcript controls wired to its API route."""
+def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
+    """Keep the context inspector's full prompt preview wired to its API route."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'id="context-transcript-list"' in template
-    assert 'id="context-page-newer"' in template
-    assert 'id="context-page-older"' in template
-    assert "function loadContextPage(agentId,before=null)" in script
-    assert "/context?${params}" in script
-    assert "chatView.buildMessage(message,contextPageAgent)" in script
+    assert 'data-context-dialog-tab="graph"' in template
+    assert 'data-context-dialog-tab="prompt"' in template
+    assert 'id="context-prompt-preview"' in template
+    assert 'id="context-metadata-list"' in template
+    assert 'id="context-prompt-cards"' not in template
+    assert "function selectContextDialogTab(tab)" in script
+    assert "function loadContextPrompt(agentId)" in script
+    assert "function formatPromptPreview(messages)" in script
+    assert "function decodePromptText(value)" in script
+    assert "item.source" in script
+    assert "/context`" in script
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:

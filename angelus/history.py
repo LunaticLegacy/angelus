@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import shutil
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,29 @@ from .storage import (
     _session_path,
     _write_workspaces,
 )
+
+
+@dataclass(frozen=True)
+class AgentContextMetadata:
+    """Schema for one provider message represented in an Agent context preview.
+
+    Attributes:
+        index: One-based chronological position in this preview response's
+            ``messages`` list. It is the snapshot-scoped selection key
+            reserved for a future explicit context-editing tool; a later
+            checkpoint may assign different indices.
+        source: Agent checkpoint/identity or the tool that produced the entry.
+        type: Provider message kind, such as ``user``, ``assistant``,
+            ``tool``, or ``abstract``.
+        length: Character count of the exact rendered message content.
+        timeline: Persisted source timeline or compacted timeline range.
+    """
+
+    index: int
+    source: str
+    type: str
+    length: int
+    timeline: str
 
 
 def _display_tool_result(value: Any) -> Any:
@@ -371,71 +395,115 @@ def _archived_context_page(
     }
 
 
-def _agent_context_page(
-    session_id: str,
-    agent_name: str,
-    *,
-    before: int | None = None,
-    limit: int = 12,
-) -> dict[str, Any]:
-    """Return one bounded page of an Agent's active persisted context.
+def _agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Return the complete model-ready form of an Agent's persisted context.
 
     Args:
         session_id: Browser-visible session that owns the context file.
         agent_name: Agent identity used in ``contexts/<agent>.json``.
-        before: Exclusive chronological offset for an older page. ``None``
-            selects the newest active-context records.
-        limit: Maximum returned records, clamped to ``1..50``.
 
     Returns:
-        Newest-first display records with role, content, reasoning, and typed
-        tool payloads, plus total count and the next older-page cursor.
+        Chronological provider-neutral messages generated from the durable
+        linear portion of context, the latest captured remote-request snapshot
+        when available, the number of returned messages, and one
+        metadata record per rendered message. Metadata identifies its source,
+        role/type, character length, and originating timeline. This
+        does not include the transient system prompt, a future user draft, or
+        graph retrieval that can only be computed after that future draft is
+        known.
 
     Side Effects:
-        Reads one context JSON file only. It neither alters model context nor
-        reads the separately compacted ``archive`` evidence.
+        Reads one context JSON file only. The handler is constructed solely to
+        deserialize and render the checkpoint; it never compacts, saves, or
+        calls a model.
     """
     safe_session = _safe_id(session_id, "session")
     safe_agent = _safe_id(agent_name, "agent")
     path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+    if not path.is_file():
+        return {"messages": [], "metadata": [], "request": None, "total": 0}
+
+    # Reuse the runtime's linear serializer so the preview keeps compacted
+    # abstracts, tool-call shapes, and request-side tool-output limits.
+    from llmfetcher.context_handlers.linear import ContextHandlerLinear
+
+    handler = ContextHandlerLinear(compacting_llmfetcher_handler=object())
+    if not handler.load(path):
+        return {"messages": [], "metadata": [], "request": None, "total": 0}
+    messages = handler.build_messages()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         raw = {}
 
-    source = raw.get("messages", []) if isinstance(raw, dict) else []
-    records: list[dict[str, Any]] = []
-    for index, item in enumerate(source if isinstance(source, list) else [], start=1):
-        if not isinstance(item, dict):
+    def timeline_label(value: Any) -> str:
+        """Format one persisted timeline or compacted range for display."""
+        if isinstance(value, list):
+            values = [item for item in value if isinstance(item, int) and not isinstance(item, bool)]
+            if values:
+                return str(values[0]) if len(values) == 1 else f"{values[0]}–{values[-1]}"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return "—"
+
+    metadata: list[AgentContextMetadata] = []
+    message_index = 0
+    abstract = raw.get("abstract") if isinstance(raw, dict) else None
+    if isinstance(abstract, dict) and message_index < len(messages):
+        rendered = messages[message_index]
+        metadata.append(AgentContextMetadata(
+            index=message_index + 1,
+            source=f"{safe_agent} · checkpoint",
+            type="abstract",
+            length=len(str(rendered.get("content", ""))),
+            timeline=timeline_label(abstract.get("source_timeline", [])),
+        ))
+        message_index += 1
+
+    # Mirror ContextHandlerLinear's assistant/tool expansion so each visible
+    # provider message gets provenance without changing the persisted context.
+    source_messages = raw.get("messages", []) if isinstance(raw, dict) else []
+    for item in source_messages if isinstance(source_messages, list) else []:
+        if not isinstance(item, dict) or message_index >= len(messages):
             continue
         role = str(item.get("role", "assistant"))
-        if role not in {"user", "assistant", "steer"}:
+        timeline = timeline_label(item.get("timeline"))
+        rendered = messages[message_index]
+        metadata.append(AgentContextMetadata(
+            index=message_index + 1,
+            source=safe_agent,
+            type=role,
+            length=len(str(rendered.get("content", ""))),
+            timeline=timeline,
+        ))
+        message_index += 1
+        if role != "assistant" or not isinstance(item.get("tool_calls"), list):
             continue
-        tools = []
-        for tool in item.get("tool_calls", []):
-            if not isinstance(tool, dict) or not isinstance(tool.get("call"), dict):
+        for tool in item["tool_calls"]:
+            if not isinstance(tool, dict) or message_index >= len(messages):
                 continue
-            call = tool["call"]
-            tools.append({
-                "name": str(call.get("name", "unknown")),
-                "arguments": call.get("arguments", {}),
-                "result": _display_tool_result(tool.get("result", "")),
-            })
-        records.append({
-            "timeline": item.get("timeline", index) if isinstance(item.get("timeline", index), int) else index,
-            "role": role,
-            "content": str(item.get("content", "")),
-            "reasoning": str(item.get("content_reasoning", item.get("reasoning", ""))),
-            "tools": tools,
-        })
-
-    page_limit = max(1, min(int(limit), 50))
-    end = len(records) if before is None else max(0, min(int(before), len(records)))
-    start = max(0, end - page_limit)
+            call = tool.get("call", {})
+            tool_name = str(call.get("name", "tool")) if isinstance(call, dict) else "tool"
+            rendered = messages[message_index]
+            metadata.append(AgentContextMetadata(
+                index=message_index + 1,
+                source=f"tool · {tool_name}",
+                type="tool",
+                length=len(str(rendered.get("content", ""))),
+                timeline=timeline,
+            ))
+            message_index += 1
+    request: dict[str, Any] | None = None
+    for event in reversed(_read_session_event_log(safe_session, safe_session)):
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if event.get("event") == "lifecycle" and event.get("type") == "agent:remote_request" and event.get("agent") == safe_agent and isinstance(data.get("request"), dict):
+            request = data["request"]
+            break
     return {
-        "messages": list(reversed(records[start:end])),
-        "total": len(records),
-        "next_before": start if start else None,
+        "messages": messages,
+        "metadata": [asdict(item) for item in metadata],
+        "request": request,
+        "total": len(messages),
     }
 
 def _agent_turns_from_events(
@@ -793,6 +861,7 @@ def _agent_context_graph(
 
 __all__ = [
     "_history_context_paths",
+    "AgentContextMetadata",
     "_read_session_history",
     "_turns_from_legacy_context",
     "_turns_from_event_log",
@@ -800,7 +869,7 @@ __all__ = [
     "_empty_usage",
     "_session_usage_summary",
     "_archived_context_page",
-    "_agent_context_page",
+    "_agent_context_preview",
     "_agent_turns_from_events",
     "_display_tools_from_event",
     "_read_agent_history",

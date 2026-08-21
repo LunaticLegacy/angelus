@@ -82,8 +82,8 @@ class ContextArchiveApiTests(unittest.TestCase):
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
-    def test_active_context_page_is_paginated_and_keeps_typed_tool_results(self) -> None:
-        """The context viewer reads the active prompt without loading it all."""
+    def test_active_context_preview_matches_model_message_shape(self) -> None:
+        """The viewer receives the full persisted prompt in send order."""
         with tempfile.TemporaryDirectory() as directory:
             original_root = storage.WORKSPACE_ROOT
             storage.WORKSPACE_ROOT = Path(directory)
@@ -98,14 +98,44 @@ class ContextArchiveApiTests(unittest.TestCase):
                     {"timeline": 3, "role": "user", "content": "third"},
                 ]}), encoding="utf-8")
 
-                newest = webapp._agent_context_page("work", "coordinator", limit=2)
-                self.assertEqual([item["timeline"] for item in newest["messages"]], [3, 2])
-                self.assertEqual(newest["messages"][1]["tools"][0]["result"], {"ok": True})
-                self.assertEqual(newest["next_before"], 1)
+                preview = webapp._agent_context_preview("work", "coordinator")
+                self.assertEqual(preview["total"], 4)
+                self.assertEqual([item["role"] for item in preview["messages"]], ["user", "assistant", "tool", "user"])
+                self.assertEqual(preview["messages"][1]["tool_calls"][0]["arguments"], {"id": 2})
+                self.assertEqual(preview["messages"][2]["content"], "{'ok': True}")
+                self.assertEqual(preview["metadata"], [
+                    {"index": 1, "source": "coordinator", "type": "user", "length": 5, "timeline": "1"},
+                    {"index": 2, "source": "coordinator", "type": "assistant", "length": 6, "timeline": "2"},
+                    {"index": 3, "source": "tool · plan", "type": "tool", "length": 12, "timeline": "2"},
+                    {"index": 4, "source": "coordinator", "type": "user", "length": 5, "timeline": "3"},
+                ])
+            finally:
+                storage.WORKSPACE_ROOT = original_root
 
-                older = webapp._agent_context_page("work", "coordinator", before=newest["next_before"], limit=2)
-                self.assertEqual([item["timeline"] for item in older["messages"]], [1])
-                self.assertIsNone(older["next_before"])
+    def test_context_preview_uses_latest_captured_remote_request(self) -> None:
+        """Prefer the actual credential-free request snapshot over a rebuild."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
+            try:
+                webapp._context_path("work", "work", "worker").write_text(
+                    json.dumps({"messages": []}), encoding="utf-8"
+                )
+                storage._append_session_event("work", "work", {
+                    "event": "lifecycle",
+                    "agent": "worker",
+                    "type": "agent:remote_request",
+                    "data": {"request": {
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "exact request"}],
+                        "tools": [{"type": "function", "function": {"name": "search"}}],
+                    }},
+                })
+
+                preview = webapp._agent_context_preview("work", "worker")
+
+                self.assertEqual(preview["request"]["messages"][0]["content"], "exact request")
+                self.assertEqual(preview["request"]["tools"][0]["function"]["name"], "search")
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
