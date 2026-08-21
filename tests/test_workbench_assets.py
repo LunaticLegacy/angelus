@@ -80,6 +80,8 @@ def test_reasoning_is_visible_transcript_content_not_a_disclosure() -> None:
 
     assert '<section class="reasoning" aria-label="思考过程">' in chat_component
     assert '<details class="reasoning">' not in chat_component
+    assert '${reasoning ? `<section class="reasoning"' in chat_component
+    assert '${thought}</div></section>` : ""}${content ? `<div class="bubble' in chat_component
 
 
 def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
@@ -109,6 +111,8 @@ def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     assert "width:min(1440px,calc(100vw - 32px))" in stylesheet
     assert "height:min(920px,calc(100vh - 32px))" in stylesheet
     assert ".context-prompt-preview { display:block; flex:1 1 auto; min-height:0; max-height:none;" in stylesheet
+    assert "#context-panel-graph { display:grid; grid-template-rows:auto 270px minmax(190px,1fr);" in stylesheet
+    assert "#context-panel-graph .context-graph-details { min-height:0; height:100%;" in stylesheet
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:
