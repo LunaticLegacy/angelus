@@ -116,6 +116,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
+| `ToolSchema` / `ToolSchema.to_dict()` | Represents either compact first-party `ToolParameter` declarations or a lossless external `raw_schema`; returns a fresh JSON-ready mapping and gives the external schema precedence so MCP nested constraints survive provider delivery. | Constructed by built-in tools and `angelus.mcp_tools.MCPToolBridge.start`; consumed by provider handlers through `Tool` objects. |
 | `RemoteRequestSnapshot` | Immutable, credential-free boundary schema for a dispatch-ready remote request: model, provider-neutral messages, generation settings, stream flag, and provider-prepared tool schemas. `to_dict` creates the persisted application payload. | Constructed by `LLMFetcher.fetch`; serialized by `Agent.run`; displayed through `angelus.history.AgentContextPreview`. |
 | `LLMFetcher.fetch(..., on_request)` | Invokes the optional typed preflight observer immediately before each provider call, after tool-schema preparation and before provider I/O. | Called by `Agent.run` and direct library consumers; constructs `RemoteRequestSnapshot`. |
 
