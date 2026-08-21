@@ -283,6 +283,7 @@ function agentContextStats(agent) {
   const threshold = Number(ctx.threshold || 0);
   const compacted = Boolean(ctx.compacted);
   const ratio = Number(ctx.ratio || 0);
+  const estimatedTokens = Number(ctx.estimated_tokens || 0);
 
   if (!messages && !chars && !abstractChars) {
     return `<small class="agent-context">上下文：—</small>`;
@@ -292,7 +293,8 @@ function agentContextStats(agent) {
   const ratioLabel = threshold > 0 ? ` · ${Math.round(ratio * 100)}%` : "";
   const compactLabel = compacted ? ` · 已压缩` : "";
   const thresholdLabel = threshold > 0 ? ` / 阈值 ${threshold.toLocaleString()}` : "";
-  return `<small class="agent-context" title="消息 ${messages} 条 · 字符 ${chars + abstractChars} · 压缩阈值 ${threshold}">上下文：${messages} 条 · ${charsLabel} 字符${thresholdLabel}${ratioLabel}${compactLabel}</small>`;
+  const tokensLabel = estimatedTokens > 0 ? ` · 估算 ${estimatedTokens.toLocaleString()} tokens` : "";
+  return `<small class="agent-context" title="消息 ${messages} 条 · 字符 ${chars + abstractChars} · 压缩阈值 ${threshold}${estimatedTokens > 0 ? ` · 估算 ${estimatedTokens.toLocaleString()} tokens` : ""}">上下文：${messages} 条 · ${charsLabel} 字符${thresholdLabel}${ratioLabel}${compactLabel}${tokensLabel}</small>`;
 }
 
 /** Render the delegation tree; activating one Agent opens its context graph. */

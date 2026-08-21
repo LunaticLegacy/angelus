@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .markdown import render_markdown
+from .context_stats import estimate_context_length
 from . import storage
 from .storage import (
     _conversation_path,
@@ -635,9 +636,14 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
             timeline=request_timeline,
         ) for index, message in enumerate(messages, start=1)]
         tool_schemas = [item for item in request.get("tools", []) if isinstance(item, dict)]
-        message_characters = sum(len(json.dumps(item, ensure_ascii=False, default=str)) for item in messages)
-        tool_characters = sum(len(json.dumps(item, ensure_ascii=False, default=str)) for item in tool_schemas)
-        stats = RemoteRequestStats(len(messages), message_characters, len(tool_schemas), tool_characters, (message_characters + tool_characters + 3) // 4)
+        estimate = estimate_context_length(messages, tool_schemas)
+        stats = RemoteRequestStats(
+            estimate.messages,
+            estimate.characters,
+            estimate.tool_schemas,
+            estimate.tool_schema_characters,
+            estimate.estimated_tokens,
+        )
     return AgentContextPreview(
         messages=messages,
         metadata=metadata,
@@ -829,9 +835,11 @@ def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
 
     Returns:
         Dict with ``messages``, ``characters``, ``abstract_characters``,
-        ``compacted``, ``threshold``, ``round`` and ``ratio`` keys. Missing
-        or malformed context files yield all-zero defaults so the UI can
-        render an empty state instead of failing.
+        ``compacted``, ``threshold``, ``round`` and ``ratio`` keys, plus the
+        unified ``estimated_tokens`` proxy and ``tool_schema_characters``
+        (always zero here because a checkpoint has no standalone tools
+        snapshot). Missing or malformed context files yield all-zero
+        defaults so the UI can render an empty state instead of failing.
     """
     stats = {
         "messages": 0,
@@ -841,6 +849,8 @@ def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
         "threshold": 0,
         "round": 0,
         "ratio": 0.0,
+        "estimated_tokens": 0,
+        "tool_schema_characters": 0,
     }
     try:
         safe_session = _safe_id(session_id, "session")
@@ -855,12 +865,11 @@ def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
 
     messages = raw.get("messages", [])
     if isinstance(messages, list):
-        stats["messages"] = len(messages)
-        stats["characters"] = sum(
-            len(json.dumps(msg, ensure_ascii=False, default=str))
-            for msg in messages
-            if isinstance(msg, dict)
-        )
+        estimate = estimate_context_length(messages)
+        stats["messages"] = estimate.messages
+        stats["characters"] = estimate.characters
+        stats["estimated_tokens"] = estimate.estimated_tokens
+        stats["tool_schema_characters"] = estimate.tool_schema_characters
 
     abstract = raw.get("abstract")
     if isinstance(abstract, dict):
