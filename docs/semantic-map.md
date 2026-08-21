@@ -81,6 +81,7 @@
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `_tool_result_text(value)` | Produces the complete text representation required by the next model round, without formatting a lifecycle event. | Called while building the model-facing `tool_results` map in `Agent.run`. |
+| `Agent._build_prompt()` | Returns only the configured system instruction. Registered Tool objects are deliberately excluded because `Agent.run` passes them once through `LLMFetcher.fetch(..., tools=...)` for provider-native schema preparation. | Called by `Agent.run`; regression-covered by `llmfetcher/tests/test_agent_prompt.py`; prevents message-body and top-level `tools` duplication in persisted remote-request snapshots. |
 | `Agent.run` tool-completion event | Keeps each raw tool result in `agent:tools_completed`; JSON-compatible values therefore cross the FastAPI/SSE boundary as objects rather than Python `str()` output. | Consumed by Angelus runtime event persistence and `frontend/static/app.js::liveTools`. |
 | `Agent.run` remote-request event | Serializes `RemoteRequestSnapshot` into an `agent:remote_request` lifecycle event before each provider attempt. | `LLMFetcher.fetch` calls the typed observer; Angelus history reads the durable event for context preview. |
 
