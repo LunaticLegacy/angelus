@@ -82,6 +82,33 @@ class ContextArchiveApiTests(unittest.TestCase):
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
+    def test_active_context_page_is_paginated_and_keeps_typed_tool_results(self) -> None:
+        """The context viewer reads the active prompt without loading it all."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(directory)
+            try:
+                context = webapp._context_path("work", "session", "coordinator")
+                context.write_text(json.dumps({"messages": [
+                    {"timeline": 1, "role": "user", "content": "first"},
+                    {"timeline": 2, "role": "assistant", "content": "second", "tool_calls": [{
+                        "call": {"name": "plan", "arguments": {"id": 2}},
+                        "result": {"ok": True},
+                    }]},
+                    {"timeline": 3, "role": "user", "content": "third"},
+                ]}), encoding="utf-8")
+
+                newest = webapp._agent_context_page("work", "coordinator", limit=2)
+                self.assertEqual([item["timeline"] for item in newest["messages"]], [3, 2])
+                self.assertEqual(newest["messages"][1]["tools"][0]["result"], {"ok": True})
+                self.assertEqual(newest["next_before"], 1)
+
+                older = webapp._agent_context_page("work", "coordinator", before=newest["next_before"], limit=2)
+                self.assertEqual([item["timeline"] for item in older["messages"]], [1])
+                self.assertIsNone(older["next_before"])
+            finally:
+                storage.WORKSPACE_ROOT = original_root
+
     def test_archive_page_is_empty_for_legacy_or_malformed_contexts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             original_root = storage.WORKSPACE_ROOT

@@ -25,12 +25,133 @@ export function createChatView({ getAgentLabel }) {
     }
   }
 
+  /**
+   * Convert a quoted Python literal into a JSON string without evaluating it.
+   *
+   * @param {string} source Legacy Python-repr container text.
+   * @returns {string|null} Equivalent JSON text, or ``null`` when malformed.
+   */
+  function legacyPythonContainerToJson(source) {
+    let json = "";
+    for (let index = 0; index < source.length; index += 1) {
+      const current = source[index];
+      if (current === "'" || current === '"') {
+        const quote = current;
+        let value = "";
+        let closed = false;
+        for (index += 1; index < source.length; index += 1) {
+          const next = source[index];
+          if (next === quote) { closed = true; break; }
+          if (next !== "\\") { value += next; continue; }
+          index += 1;
+          const escape = source[index];
+          if (escape === undefined) return null;
+          const simple = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v" };
+          if (Object.hasOwn(simple, escape)) { value += simple[escape]; continue; }
+          if (escape === "x" || escape === "u") {
+            const width = escape === "x" ? 2 : 4;
+            const hex = source.slice(index + 1, index + 1 + width);
+            if (!new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) return null;
+            value += String.fromCodePoint(Number.parseInt(hex, 16));
+            index += width;
+            continue;
+          }
+          value += escape;
+        }
+        if (!closed) return null;
+        json += JSON.stringify(value);
+        continue;
+      }
+      if (source.startsWith("True", index) && !/[A-Za-z0-9_]/.test(source[index - 1] || "") && !/[A-Za-z0-9_]/.test(source[index + 4] || "")) {
+        json += "true"; index += 3; continue;
+      }
+      if (source.startsWith("False", index) && !/[A-Za-z0-9_]/.test(source[index - 1] || "") && !/[A-Za-z0-9_]/.test(source[index + 5] || "")) {
+        json += "false"; index += 4; continue;
+      }
+      if (source.startsWith("None", index) && !/[A-Za-z0-9_]/.test(source[index - 1] || "") && !/[A-Za-z0-9_]/.test(source[index + 4] || "")) {
+        json += "null"; index += 3; continue;
+      }
+      json += current;
+    }
+    return json;
+  }
+
+  /**
+   * Decode JSON supplied as an object or as one/more JSON-encoded strings.
+   *
+   * A tool adapter may serialize its payload before it reaches the event log.
+   * Repeatedly unwrapping JSON-looking strings restores quotes, newlines, and
+   * Unicode escapes. A constrained non-evaluating fallback also recognizes
+   * old Python ``str(dict)`` event values so historical and live cards share
+   * the same structured renderer.
+   *
+   * @param {*} value Tool argument or result payload.
+   * @returns {{decoded: *, parsed: boolean}} Decoded JSON and parse status.
+   */
+  function decodeJson(value) {
+    let decoded = value;
+    let parsed = false;
+    for (let depth = 0; depth < 3 && typeof decoded === "string"; depth += 1) {
+      const text = decoded.trim();
+      if (!text || !/^(?:\{|\[|\")/.test(text)) break;
+      try {
+        decoded = JSON.parse(text);
+        parsed = true;
+      } catch {
+        const legacyJson = legacyPythonContainerToJson(text);
+        if (!legacyJson) break;
+        try {
+          decoded = JSON.parse(legacyJson);
+          parsed = true;
+        } catch {
+          break;
+        }
+      }
+    }
+    return { decoded, parsed: parsed || (value !== null && typeof value === "object") };
+  }
+
+  /**
+   * Render JSON as a bounded hierarchy instead of a single escaped blob.
+   *
+   * @param {*} value Parsed JSON value to render.
+   * @returns {string} Escaped HTML for a recursive JSON tree.
+   */
+  function renderJson(value) {
+    if (Array.isArray(value)) {
+      const children = value.map((item, index) => `<li><span class="json-key">[${index}]</span>${renderJson(item)}</li>`).join("");
+      return `<details class="json-node" open><summary>数组 · ${value.length} 项</summary><ul>${children}</ul></details>`;
+    }
+    if (value && typeof value === "object") {
+      const entries = Object.entries(value);
+      const children = entries.map(([key, item]) => `<li><span class="json-key">${escapeHtml(key)}</span>${renderJson(item)}</li>`).join("");
+      return `<details class="json-node" open><summary>对象 · ${entries.length} 项</summary><ul>${children}</ul></details>`;
+    }
+    if (value === null) return '<span class="json-value json-null">null</span>';
+    if (typeof value === "boolean" || typeof value === "number") return `<span class="json-value">${escapeHtml(String(value))}</span>`;
+    return `<span class="json-value json-string">${escapeHtml(String(value))}</span>`;
+  }
+
+  /**
+   * Choose the structured JSON view when possible; preserve stdout verbatim otherwise.
+   *
+   * @param {*} value Tool argument or result payload.
+   * @param {string} emptyText Placeholder for an absent payload.
+   * @returns {string} Escaped HTML for either JSON or a raw text block.
+   */
+  function renderToolPayload(value, emptyText) {
+    if (value === undefined || value === null || value === "") return `<p class="tool-empty">${escapeHtml(emptyText)}</p>`;
+    const { decoded, parsed } = decodeJson(value);
+    if (parsed) return `<div class="tool-json">${renderJson(decoded)}</div>`;
+    return `<pre class="tool-stdout">${escapeHtml(String(value))}</pre>`;
+  }
+
   function renderTools(tools = []) {
     if (!tools.length) return "";
     const calls = tools.map((tool) => `
       <article class="tool-call"><strong>${escapeHtml(tool.name)}</strong><p>参数</p>
-      <pre>${escapeHtml(JSON.stringify(tool.arguments, null, 2))}</pre><p>结果</p>
-      <pre>${escapeHtml(tool.result || "(无返回内容)")}</pre></article>`).join("");
+      ${renderToolPayload(tool.arguments, "无参数")}<p>结果</p>
+      ${renderToolPayload(tool.result, "无返回内容")}</article>`).join("");
     return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
   }
 

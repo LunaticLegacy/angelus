@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
 from pathlib import Path
@@ -19,6 +20,39 @@ from .storage import (
     _session_path,
     _write_workspaces,
 )
+
+
+def _display_tool_result(value: Any) -> Any:
+    """Recover structured tool data for every browser transcript path.
+
+    Args:
+        value: Raw event value, JSON text, legacy Python ``str(dict)`` text,
+            or ordinary stdout captured in a persisted Agent context.
+
+    Returns:
+        JSON-compatible structured data when ``value`` is an object/array or
+        safely decodes to one. Other values are returned unchanged so stdout
+        reaches the shared frontend renderer verbatim.
+
+    Notes:
+        Earlier contexts stored tool results with ``str(value)``. Parsing is
+        deliberately limited to JSON and :func:`ast.literal_eval`, never
+        runtime evaluation, so historical dict/list results regain hierarchy
+        without executing persisted content.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or len(text) > 2_000_000 or text[0] not in "[{":
+        return value
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            decoded = ast.literal_eval(text)
+        except (SyntaxError, ValueError, MemoryError, RecursionError):
+            return value
+    return decoded if isinstance(decoded, (dict, list)) else value
 
 
 
@@ -91,7 +125,7 @@ def _read_session_history(workspace_id: str, session_id: str) -> list[dict[str, 
             tool_calls.append({
                 "name": str(call.get("name", "unknown")),
                 "arguments": call.get("arguments", {}),
-                "result": str(item.get("result", "")),
+                "result": _display_tool_result(item.get("result", "")),
             })
         turn: dict[str, Any] = {"role": message["role"], "content": content, "reasoning": reasoning, "tools": tool_calls}
         if message["role"] == "assistant":
@@ -119,7 +153,7 @@ def _turns_from_legacy_context(path: Path) -> list[dict[str, Any]]:
         if not isinstance(message, dict) or message.get("role") not in {"user", "assistant", "steer"}:
             continue
         tools = [
-            {"name": str(item.get("call", {}).get("name", "unknown")), "arguments": item.get("call", {}).get("arguments", {}), "result": str(item.get("result", ""))}
+            {"name": str(item.get("call", {}).get("name", "unknown")), "arguments": item.get("call", {}).get("arguments", {}), "result": _display_tool_result(item.get("result", ""))}
             for item in message.get("tool_calls", [])
             if isinstance(item, dict) and isinstance(item.get("call"), dict)
         ]
@@ -336,6 +370,74 @@ def _archived_context_page(
         "next_before": start if start else None,
     }
 
+
+def _agent_context_page(
+    session_id: str,
+    agent_name: str,
+    *,
+    before: int | None = None,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Return one bounded page of an Agent's active persisted context.
+
+    Args:
+        session_id: Browser-visible session that owns the context file.
+        agent_name: Agent identity used in ``contexts/<agent>.json``.
+        before: Exclusive chronological offset for an older page. ``None``
+            selects the newest active-context records.
+        limit: Maximum returned records, clamped to ``1..50``.
+
+    Returns:
+        Newest-first display records with role, content, reasoning, and typed
+        tool payloads, plus total count and the next older-page cursor.
+
+    Side Effects:
+        Reads one context JSON file only. It neither alters model context nor
+        reads the separately compacted ``archive`` evidence.
+    """
+    safe_session = _safe_id(session_id, "session")
+    safe_agent = _safe_id(agent_name, "agent")
+    path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+
+    source = raw.get("messages", []) if isinstance(raw, dict) else []
+    records: list[dict[str, Any]] = []
+    for index, item in enumerate(source if isinstance(source, list) else [], start=1):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "assistant"))
+        if role not in {"user", "assistant", "steer"}:
+            continue
+        tools = []
+        for tool in item.get("tool_calls", []):
+            if not isinstance(tool, dict) or not isinstance(tool.get("call"), dict):
+                continue
+            call = tool["call"]
+            tools.append({
+                "name": str(call.get("name", "unknown")),
+                "arguments": call.get("arguments", {}),
+                "result": _display_tool_result(tool.get("result", "")),
+            })
+        records.append({
+            "timeline": item.get("timeline", index) if isinstance(item.get("timeline", index), int) else index,
+            "role": role,
+            "content": str(item.get("content", "")),
+            "reasoning": str(item.get("content_reasoning", item.get("reasoning", ""))),
+            "tools": tools,
+        })
+
+    page_limit = max(1, min(int(limit), 50))
+    end = len(records) if before is None else max(0, min(int(before), len(records)))
+    start = max(0, end - page_limit)
+    return {
+        "messages": list(reversed(records[start:end])),
+        "total": len(records),
+        "next_before": start if start else None,
+    }
+
 def _agent_turns_from_events(
     workspace_id: str,
     session_id: str,
@@ -468,7 +570,7 @@ def _display_tools_from_event(data: dict[str, Any]) -> list[dict[str, Any]]:
         tools.append({
             "name": str(item.get("name", "unknown")),
             "arguments": item.get("args", {}),
-            "result": str(item.get("result", "")),
+            "result": _display_tool_result(item.get("result", "")),
         })
     return tools
 
@@ -698,6 +800,7 @@ __all__ = [
     "_empty_usage",
     "_session_usage_summary",
     "_archived_context_page",
+    "_agent_context_page",
     "_agent_turns_from_events",
     "_display_tools_from_event",
     "_read_agent_history",

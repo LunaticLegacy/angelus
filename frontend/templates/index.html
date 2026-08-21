@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-68" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-70" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -66,6 +66,7 @@
         <div id="context-graph-summary" class="context-graph-summary"></div>
         <div id="context-graph-canvas" class="context-graph-canvas" aria-label="上下文实体关系图"></div>
         <div class="context-graph-details"><section><h3>实体</h3><div id="context-graph-nodes" class="context-graph-nodes"></div></section><section><h3>详情</h3><div id="context-graph-detail" class="context-graph-detail"><p class="empty">点击图中的实体查看其摘要、出现时间和关联。</p></div></section></div>
+        <section class="context-transcript" aria-labelledby="context-transcript-title"><header><div><p class="eyebrow">ACTIVE CONTEXT</p><h3 id="context-transcript-title">当前上下文</h3></div><div class="context-pagination"><button id="context-page-newer" type="button" disabled>较新</button><span id="context-page-status">—</span><button id="context-page-older" type="button" disabled>较早</button></div></header><div id="context-transcript-list" class="context-transcript-list"><p class="empty">选择 Agent 后读取当前上下文。</p></div></section>
       </div>
     </dialog>
     <aside class="sidebar">
@@ -111,6 +112,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-70"></script>
+    <script type="module" src="/static/app.js?v=workbench-74"></script>
   </body>
 </html>

@@ -1,6 +1,6 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js";
+import { createChatView } from "./components/chat-view.js?v=tool-payload-2";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { initPlugins, loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-controls-1";
@@ -88,8 +88,8 @@ function selectedMemorySessions() { return [...new Set($("session-memory-session
 function renderMemorySessionPicker() { const options=$("session-memory-options"), selected=$("session-memory-selected"), search=$("session-memory-search"); if(!options || !selected || !search) return; const chosen=selectedMemorySessions(), query=search.value.trim().toLowerCase(); const candidates=availableSessions.filter(item=>item.id !== sessionId && (`${item.name} ${item.id}`).toLowerCase().includes(query)); selected.innerHTML=chosen.length ? chosen.map(id=>{const item=availableSessions.find(candidate=>candidate.id===id); return `<button type="button" class="memory-session-chip" data-memory-session="${escapeHtml(id)}">${escapeHtml(item?.name || id)} ×</button>`;}).join("") : '<span class="memory-session-empty">未授权其他会话</span>'; options.innerHTML=candidates.length ? candidates.map(item=>`<button type="button" class="memory-session-option ${chosen.includes(item.id)?"selected":""}" data-memory-session="${escapeHtml(item.id)}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.id)}</small></button>`).join("") : '<p class="memory-session-empty">没有匹配的会话</p>'; document.querySelectorAll("[data-memory-session]").forEach(button=>button.addEventListener("click",()=>{const id=button.dataset.memorySession; const next=chosen.includes(id) ? chosen.filter(value=>value!==id) : [...chosen,id]; $("session-memory-sessions").value=next.join(","); persistSettings(); renderMemorySessionPicker();})); }
 const chatView = createChatView({ getAgentLabel: () => selectedAgent });
 const traceView = createTraceView();
-/** Normalize live tool lifecycle data (name/args/result) for chat rendering. */
-function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args||item.arguments||{}, result:String(item.result||"")})); }
+/** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
+function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??""})); }
 /** Append a single transcript turn live (real-time path). */
 function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="") { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools},agentName); }
 /** Display a durable run failure in the chat pane without hiding prior work. */
@@ -230,14 +230,38 @@ function renderContextGraph(payload) {
   document.querySelectorAll("[data-context-node]").forEach(control=>control.addEventListener("click",()=>renderContextGraphDetail(graph,control.dataset.contextNode)));
   renderContextGraphDetail(graph,nodes[0].id);
 }
+let contextPageAgent="",contextPageBefore=null,contextPageNext=null,contextPageNewer=[];
+/** Render one backend-paginated active-context page through the shared chat card renderer. */
+function renderContextPage(payload) {
+  const target=$("context-transcript-list"), messages=Array.isArray(payload.messages)?payload.messages:[];
+  target.innerHTML="";
+  if(!messages.length){target.innerHTML='<p class="empty">当前页没有可显示的上下文记录。</p>';} else {const fragment=document.createDocumentFragment(); for(const message of messages){const card=chatView.buildMessage(message,contextPageAgent);card.classList.add("context-message");const sequence=document.createElement("small");sequence.className="context-message-sequence";sequence.textContent=`上下文 #${message.timeline ?? "—"}`;card.querySelector(".message-meta")?.append(sequence);fragment.append(card);}target.append(fragment);}
+  contextPageNext=payload.next_before ?? null;
+  $("context-page-newer").disabled=!contextPageNewer.length;
+  $("context-page-older").disabled=contextPageNext===null;
+  const total=Number(payload.total||0), first=messages.length?messages[messages.length-1].timeline:"—", last=messages.length?messages[0].timeline:"—";
+  $("context-page-status").textContent=total?`${last}–${first} / ${total}`:"0 条";
+}
+/** Fetch a bounded context page, preserving cursors for newer/older navigation. */
+async function loadContextPage(agentId,before=null) {
+  const params=new URLSearchParams({limit:"12"});if(before!==null)params.set("before",String(before));
+  const payload=await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context?${params}`);
+  renderContextPage(payload);
+}
+/** Move through active context chronologically without loading the entire file. */
+async function changeContextPage(direction) {
+  if(direction==="older"&&contextPageNext!==null){contextPageNewer.push(contextPageBefore);contextPageBefore=contextPageNext;await loadContextPage(contextPageAgent,contextPageBefore);return;}
+  if(direction==="newer"&&contextPageNewer.length){contextPageBefore=contextPageNewer.pop();await loadContextPage(contextPageAgent,contextPageBefore);}
+}
 /** Fetch a single Agent's persisted graph and open it in the theme-aware dialog. */
 async function openContextGraph(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   $("context-graph-title").textContent=`${agentId} · 上下文图`; $("context-graph-subtitle").textContent="正在读取最近一次持久化 checkpoint…";
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
+  contextPageAgent=agentId;contextPageBefore=null;contextPageNext=null;contextPageNewer=[];$("context-transcript-list").innerHTML='<p class="empty">正在读取当前上下文…</p>';$("context-page-status").textContent="读取中…";$("context-page-newer").disabled=true;$("context-page-older").disabled=true;
   if(!dialog.open) dialog.showModal();
-  try { renderContextGraph(await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context-graph`)); }
-  catch(error) { $("context-graph-subtitle").textContent="无法读取上下文图。"; $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; }
+  try { const [graphPayload]=await Promise.all([apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context-graph`),loadContextPage(agentId)]);renderContextGraph(graphPayload); }
+  catch(error) { $("context-graph-subtitle").textContent="无法读取上下文图。"; $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`;$("context-transcript-list").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; }
 }
 async function loadAgents() { try { const payload=await apiJson(`/api/sessions/${sessionId}/agents`); renderAgentSelector(payload.agents); } catch(error) { trace("Agent 列表加载失败",error.message); renderAgentSelector(); } }
 async function selectAgent(agentId) { if(!agentId || agentId===selectedAgent) return; selectedAgent=agentId; try { await rehydrateSelectedView({reloadAgents:true}); } catch(error) { trace("Agent 会话加载失败",error.message); } }
@@ -432,6 +456,8 @@ $("model").addEventListener("input",updateModelSummary); $("provider").addEventL
 $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
 $("close-context-graph").addEventListener("click", ()=>$("context-graph-dialog").close());
+$("context-page-newer").addEventListener("click",()=>changeContextPage("newer").catch(error=>trace("读取较新上下文失败",error.message)));
+$("context-page-older").addEventListener("click",()=>changeContextPage("older").catch(error=>trace("读取较早上下文失败",error.message)));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 $("open-workspace").addEventListener("click",async()=>{try{const response=await fetch(`/api/sessions/${encodeURIComponent(workspaceId)}/open-folder`,{method:"POST"});const payload=await response.json();if(!response.ok)throw new Error(payload.detail||"无法打开工作空间目录");trace("已打开工作空间目录",payload.path||workspaceId);}catch(error){trace("打开工作空间目录失败",error.message);alert(`无法打开工作空间目录：${error.message}`);}});
 async function createAndSwitchSession(name) {

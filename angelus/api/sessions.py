@@ -19,6 +19,7 @@ from ..classes import (
     WorkspaceRequest,
 )
 from ..history import (
+    _agent_context_page,
     _agent_context_graph,
     _agent_context_stats,
     _archived_context_page,
@@ -236,6 +237,34 @@ def get_agent_context_graph(session_id: str, agent_name: str) -> dict[str, Any]:
         "context": _agent_context_stats(safe_session, safe_agent),
         "graph": _agent_context_graph(safe_session, safe_agent),
     }
+
+
+@router.get("/api/sessions/{session_id}/agents/{agent_name}/context")
+def get_agent_context_page(
+    session_id: str,
+    agent_name: str,
+    before: int | None = None,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Expose one paginated page of an Agent's active persisted context.
+
+    Args:
+        session_id: Browser-visible session that owns the selected Agent.
+        agent_name: One concrete Agent identity; aggregate ``all`` is invalid.
+        before: Exclusive offset for an older active-context page.
+        limit: Requested page size, clamped by the history read model.
+
+    Returns:
+        Agent ID and a newest-first page of display-safe context messages.
+
+    Raises:
+        HTTPException: If the aggregate Agent filter is requested.
+    """
+    safe_session = _safe_id(session_id, "session")
+    if agent_name == "all":
+        raise HTTPException(status_code=422, detail="Select one Agent to inspect its context")
+    safe_agent = _safe_id(agent_name, "agent")
+    return {"agent": safe_agent, **_agent_context_page(safe_session, safe_agent, before=before, limit=limit)}
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/graph")
 def get_session_graph(workspace_id: str, session_id: str) -> dict[str, Any]:
@@ -642,4 +671,4 @@ def delete_session(session_id: str, request: WorkspaceDeleteRequest) -> dict[str
     """Delete one session after confirmation and cooperative run shutdown."""
     return delete_workspace(session_id, request)
 
-__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "open_session_folder", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]
+__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_agent_context_page", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "open_session_folder", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]

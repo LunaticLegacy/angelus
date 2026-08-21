@@ -39,12 +39,48 @@ def test_active_workbench_uses_component_views_through_an_es_module_entrypoint()
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
     assert 'type="module" src="/static/app.js?v=workbench-' in template
-    assert 'from "./components/chat-view.js"' in script
+    assert 'from "./components/chat-view.js?v=tool-payload-2"' in script
     assert 'from "./components/trace-view.js"' in script
     assert 'from "./components/task-plan-view.js"' in script
     assert (COMPONENTS_DIR / "chat-view.js").is_file()
     assert (COMPONENTS_DIR / "trace-view.js").is_file()
     assert (COMPONENTS_DIR / "task-plan-view.js").is_file()
+
+
+def test_tool_payloads_use_structured_json_and_verbatim_stdout_views() -> None:
+    """Tool call cards must decode JSON escapes without altering raw stdout."""
+    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "function decodeJson(value)" in chat_component
+    assert "JSON.parse(text)" in chat_component
+    assert "function legacyPythonContainerToJson(source)" in chat_component
+    assert "legacyPythonContainerToJson(text)" in chat_component
+    assert 'class="tool-json"' in chat_component
+    assert 'class="tool-stdout"' in chat_component
+    assert ".tool-json { max-height:280px; overflow:auto;" in stylesheet
+
+
+def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
+    """SSE, aggregate replay, and selected-Agent replay must render one card type."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools},agentName)" in script
+    assert "chatView.render(messages, assistantLabel)" in script
+    assert "chatView.buildMessage(message, selectedAgent)" in script
+
+
+def test_context_graph_dialog_contains_paginated_active_context_viewer() -> None:
+    """Keep the context inspector's transcript controls wired to its API route."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="context-transcript-list"' in template
+    assert 'id="context-page-newer"' in template
+    assert 'id="context-page-older"' in template
+    assert "function loadContextPage(agentId,before=null)" in script
+    assert "/context?${params}" in script
+    assert "chatView.buildMessage(message,contextPageAgent)" in script
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:
