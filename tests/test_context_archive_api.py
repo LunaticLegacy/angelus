@@ -137,6 +137,8 @@ class ContextArchiveApiTests(unittest.TestCase):
                 self.assertEqual(preview.total, 1)
                 self.assertEqual(preview.metadata[0].type, "user")
                 self.assertEqual(preview.metadata[0].timeline, "request")
+                self.assertEqual(preview.stats.messages, 1)
+                self.assertEqual(preview.stats.tool_schemas, 1)
             finally:
                 storage.WORKSPACE_ROOT = original_root
 

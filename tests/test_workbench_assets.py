@@ -79,6 +79,7 @@ def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     assert 'data-context-dialog-tab="prompt"' in template
     assert 'id="context-prompt-preview"' in template
     assert 'id="context-metadata-list"' in template
+    assert 'id="context-request-stats"' in template
     assert 'id="context-prompt-cards"' not in template
     assert "function selectContextDialogTab(tab)" in script
     assert "function loadContextPrompt(agentId)" in script
@@ -90,6 +91,7 @@ def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     assert "let contextDialogAgent = \"\";" in script
     assert 'event.type === "agent:remote_request"' in script
     assert "loadContextPrompt(contextDialogAgent)" in script
+    assert "stats.tool_schema_characters" in script
     assert "width:min(1440px,calc(100vw - 32px))" in stylesheet
     assert "height:min(920px,calc(100vh - 32px))" in stylesheet
     assert ".context-prompt-preview { display:block; flex:1 1 auto; min-height:0; max-height:none;" in stylesheet

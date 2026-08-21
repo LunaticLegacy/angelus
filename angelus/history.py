@@ -47,6 +47,17 @@ class AgentContextMetadata:
 
 
 @dataclass(frozen=True)
+class RemoteRequestStats:
+    """Live size summary for one captured remote-request snapshot."""
+
+    messages: int
+    characters: int
+    tool_schemas: int
+    tool_schema_characters: int
+    estimated_tokens: int
+
+
+@dataclass(frozen=True)
 class AgentContextPreview:
     """Schema returned to the workbench for one Agent context inspection.
 
@@ -68,6 +79,7 @@ class AgentContextPreview:
     metadata: list[AgentContextMetadata]
     request: dict[str, Any] | None
     total: int
+    stats: RemoteRequestStats | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the stable response envelope for FastAPI and JSON.
@@ -81,6 +93,7 @@ class AgentContextPreview:
             "metadata": [asdict(item) for item in self.metadata],
             "request": self.request,
             "total": self.total,
+            "stats": asdict(self.stats) if self.stats is not None else None,
         }
 
 
@@ -594,6 +607,7 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
             request = data["request"]
             request_round = data.get("round") if isinstance(data.get("round"), int) else None
             break
+    stats: RemoteRequestStats | None = None
     if request is not None:
         # The visible request body and its metadata must describe the same
         # snapshot. Checkpoint provenance is intentionally not reused here.
@@ -606,11 +620,16 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
             length=len(json.dumps(message, ensure_ascii=False, default=str)),
             timeline=request_timeline,
         ) for index, message in enumerate(messages, start=1)]
+        tool_schemas = [item for item in request.get("tools", []) if isinstance(item, dict)]
+        message_characters = sum(len(json.dumps(item, ensure_ascii=False, default=str)) for item in messages)
+        tool_characters = sum(len(json.dumps(item, ensure_ascii=False, default=str)) for item in tool_schemas)
+        stats = RemoteRequestStats(len(messages), message_characters, len(tool_schemas), tool_characters, (message_characters + tool_characters + 3) // 4)
     return AgentContextPreview(
         messages=messages,
         metadata=metadata,
         request=request,
         total=len(messages),
+        stats=stats,
     )
 
 def _agent_turns_from_events(
@@ -933,6 +952,7 @@ def _agent_context_graph(
 __all__ = [
     "_history_context_paths",
     "AgentContextMetadata",
+    "RemoteRequestStats",
     "AgentContextPreview",
     "ContextGraphNode",
     "ContextGraphEdge",
