@@ -55,3 +55,26 @@ class ActiveRun:
                 self.mcp_bridge.close()
             except Exception:
                 pass
+
+    def reset_for_next_turn(self) -> None:
+        """Reuse this completed run holder without replacing its Swarm graph.
+
+        The persistent Swarm's shell, MCP, plan, and context tools close over
+        this ``ActiveRun``. Resetting mutable run controls in place therefore
+        preserves those handlers while making the next browser message a clean
+        execution turn.
+
+        Raises:
+            RuntimeError: If the prior execution has not reached ``done``.
+
+        Side Effects:
+            Clears stop/steer state, replaces the SSE wake-up queue, forgets
+            completed process handles, and clears the terminal event.
+        """
+        if not self.done.is_set():
+            raise RuntimeError("cannot reuse an active run")
+        self.control.reset()
+        self.events = queue.Queue()
+        with self.processes_lock:
+            self.processes.clear()
+        self.done.clear()

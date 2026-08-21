@@ -46,6 +46,29 @@ class _ToolLifecycleAgent(_CompletedAgent):
         return super().run(message, **kwargs)
 
 
+class _CompletedSwarm:
+    """Minimal retained Swarm stand-in for multi-turn run construction tests."""
+
+    def run(self, _message: str, **_kwargs: object) -> dict[str, LLMOutput]:
+        """Return the coordinator result expected by the browser run route."""
+        return {
+            "coordinator": LLMOutput(
+                content="done", provider="openai", backend_name="browser", model="test",
+            ),
+        }
+
+    def total_usage(self) -> dict[str, int]:
+        """Provide the aggregate usage shape persisted by ``start_run``."""
+        return {"input": 1, "output": 2, "total": 3, "cached": 0, "reasoning": 0}
+
+    def finalize_tasks(self) -> None:
+        """Match the terminal-cleanup method invoked by the run route."""
+
+    def view_snapshot(self) -> dict[str, list[object]]:
+        """Return the empty graph shape sufficient for persistence assertions."""
+        return {"nodes": [], "edges": []}
+
+
 class _ImmediateThread:
     """Execute a worker target synchronously while retaining Thread's start API."""
 
@@ -167,6 +190,37 @@ class RunProfilePersistenceTests(unittest.TestCase):
                 self.assertEqual(lifecycle["type"], "agent:tools_completed")
                 self.assertEqual(lifecycle["agent"], "coordinator")
                 self.assertEqual(lifecycle["data"]["tool_calls"][0]["name"], "shell")
+            finally:
+                storage.WORKSPACE_ROOT = original_root
+                with storage._sessions_lock:
+                    storage._sessions.pop(key, None)
+                    if prior is not None:
+                        storage._sessions[key] = prior
+
+    def test_start_run_reuses_completed_swarm_without_rebuilding_agents(self) -> None:
+        """A second Swarm turn must run the retained graph instead of replacing it."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            key = ("demo", "demo")
+            storage.WORKSPACE_ROOT = Path(directory)
+            with storage._sessions_lock:
+                prior = storage._sessions.pop(key, None)
+            request = RunRequest(
+                workspace_id="demo", session_id="demo", message="continue",
+                config=RunConfig(model="test", api_key="hidden", enable_swarm=True),
+            )
+            swarm = _CompletedSwarm()
+            try:
+                with (
+                    patch.object(storage, "_workspace_exists", return_value=True),
+                    patch.object(runtime, "_build_swarm", return_value=swarm) as build_swarm,
+                    patch.object(webapp.threading, "Thread", _ImmediateThread),
+                ):
+                    webapp.start_run(request)
+                    webapp.start_run(request)
+
+                self.assertEqual(build_swarm.call_count, 1)
+                self.assertIs(storage._sessions[key].active.swarm, swarm)
             finally:
                 storage.WORKSPACE_ROOT = original_root
                 with storage._sessions_lock:

@@ -55,13 +55,40 @@
 | `_display_tool_result(value)` | Normalizes new typed events and safely restores JSON or legacy `str(dict)`/`str(list)` results while leaving stdout text intact. | Called by `_read_session_history`, `_turns_from_legacy_context`, and `_display_tools_from_event`; every historical transcript path therefore feeds the shared frontend tool renderer with the same data shape as live SSE. |
 | `AgentContextMetadata` / `RemoteRequestStats` / `AgentContextPreview` | Immutable API schemas for message provenance, live request size accounting, and the complete context-inspector response. The envelope fixes response keys while provider/plugin-extensible message and tool payloads remain JSON objects. | Constructed by `_agent_context_preview`; `AgentContextPreview.to_dict` is consumed by `api.sessions.get_agent_context_preview`. |
 | `ContextGraphNode` / `ContextGraphEdge` / `ContextGraphCommunity` / `ContextGraphSnapshot` | Immutable, bounded browser schemas for persisted entity, relation, community, and aggregate graph data. | Constructed by `_agent_context_graph`; `ContextGraphSnapshot.to_dict` is consumed by `api.sessions.get_agent_context_graph`. |
+| `ContextGraphSnapshot.stale` / `_agent_context_graph(session_id, agent_name, limit)` | Marks the graph unavailable when the active linear context was version-edited, preventing entity relations derived from pre-edit text from being shown as current. | Reads `contexts/<agent>.json` before its graph companion; consumed by `api.sessions.get_agent_context_graph` and `frontend/static/app.js::renderContextGraph`. |
 | `_agent_context_preview(session_id, agent_name)` | Builds checkpoint metadata and retrieves the latest credential-free `agent:remote_request` snapshot. When a snapshot exists, its visible messages and metadata are derived from that same request; checkpoint data is never an exact-request fallback. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
+
+## `angelus.context_editing`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `ContextRecordRef` / `ContextEditOperation` / `ContextRevision` | Immutable dataclass schema for editable record identity, three allowed operations, and audit/recovery revisions. | Produced by `ContextEditStore.inspect/apply/restore`; serialized to revision snapshots and `context-edits.ndjson`. |
+| `ContextEditStore` | Owns one Agent's active checkpoint, atomically creates the first-edit baseline and every later full snapshot, checks optimistic revision IDs, writes append-only audit data, and restores only as a new forward revision. | Constructed by `runtime._build_agent`, `runtime._build_swarm` worker binder, and `api.sessions._editable_context_store`; invalidates the companion graph via `context_editing.graph_stale`. |
+| `create_context_editing_tools(store, persist_context, reload_context)` | Exposes inspect/edit/restore tools scoped to the owning Agent. Persist/reload callbacks make a live Agent use a successful mutation immediately. | Added by `_build_agent` and the `create_swarm_tools` worker binder. |
+
+## `angelus.runtime` — Swarm recovery
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `_persist_swarm_snapshot(swarm, workspace_id, session_id)` | Persists a quiescent `swarm-runtime.json` with local worker prompt blueprints, topology, TaskBus history, and declarative callbacks; excludes API keys and connector secrets. | Called by `api.runs.start_run` terminal cleanup after `finalize_tasks`; delegates to `AgentSwarm.save`. |
+| `_restore_swarm(config, workspace_id, session_id, active)` | Reconstructs a stopped Swarm after a process restart using the current request's ephemeral provider credentials plus the local blueprint. Reattaches coordinator control tools, worker report tools, and observers. | Called by `api.runs.start_run` only when no in-memory Swarm exists; delegates to `AgentSwarm.load` and `_build_agent`. |
+| `_attach_swarm_runtime_tools` / `_attach_swarm_observer` | Shares worker factories and event persistence between first construction and recovery. | Called by `_build_swarm` and `_restore_swarm`. |
+| `_synchronize_context_threshold` / `_synchronize_swarm_context_threshold` | Applies the current run setting to every participating Agent and saves its context before `Agent.run` reloads the checkpoint, keeping persisted topology stats aligned with the effective compaction threshold. | Called by `api.runs.start_run` on both single-Agent and Swarm paths; delegates to `Agent.set_context_threshold`. |
+
+## `angelus.classes.active_run` / `angelus.classes.browser_run_control`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `BrowserRunControl.reset()` | Clears terminal stop/force-stop state and stale steering messages without replacing the control object. | Called by `ActiveRun.reset_for_next_turn`; preserves event references captured by shell/tool handlers. |
+| `ActiveRun.reset_for_next_turn()` | Reopens a completed in-process Swarm holder in place, preserving its graph, Agent instances, and closure identity while replacing only per-turn queue/process state. | Called by `api.runs.start_run` before a subsequent Swarm turn in the same session. |
 
 ## `angelus.api.sessions`
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `get_agent_context_preview(session_id, agent_name)` | Serves the selected Agent's complete persisted model-context preview; rejects aggregate `all`. | Browser context viewer calls it from `frontend/static/app.js::loadContextPrompt`; delegates to `_agent_context_preview`. |
+| `_editable_context_store` / `inspect_editable_agent_context` / `edit_agent_context` / `restore_agent_context` | Refuse aggregate selections and live browser runs, then expose record inspection, version-checked checkpoint edits, and forward-only recovery through the session API. | HTTP clients call the three `/context/editable`, `/context/edit`, and `/context/restore` routes; delegates to `ContextEditStore`. |
+| `start_run(request)` — retained Swarm path | Reuses an in-memory completed `ActiveRun`/`AgentSwarm`; after a server restart it attempts `runtime._restore_swarm` before building a new graph. The execution thread calls `AgentSwarm.run` on the retained or rebuilt object. | Calls `ActiveRun.reset_for_next_turn`, conditionally calls `_restore_swarm`/`_build_swarm`, then calls `AgentSwarm.run`; terminal cleanup persists the recovery snapshot. |
 
 ## `frontend/static/app.js` — context viewer
 
@@ -96,4 +123,9 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `create_swarm_tools(..., worker_tool_pool, worker_tool_factory=None, ...)` | Creates coordinator graph-mutation and task-dispatch tools. A supplied name-bound factory returns a fresh worker-local tool set and takes precedence over the static fallback pool. | Called by `angelus.runtime._build_swarm`; both `dynamic_add_agent` and `dispatch_subagent(s)` call its `_tools_for_worker` helper before registering a new Agent. |
+| `create_swarm_tools(..., worker_tool_pool, worker_tool_factory=None, worker_tool_binder=None, ...)` | Creates coordinator graph-mutation and task-dispatch tools. A supplied name-bound factory returns a fresh worker-local tool set; an optional live-Agent binder then adds handlers needing the constructed worker's context or controls. `revive_agent` reuses a terminal worker with a new task record. | Called by `angelus.runtime._build_swarm`; both `dynamic_add_agent` and `dispatch_subagent(s)` call its binding path before registering a new Agent. |
+| `ExecutionGraph.task_id_for_agent` / `ExecutionGraph.redispatch_task` | Resolves a worker's current assignment and atomically advances a terminal dispatched worker to a newly queued immutable task without replacing its Agent instance or topology. | Exposed by `AgentSwarm`; `spawn_tools.revive_agent` uses it, while dynamic `report_task` handlers resolve the current task ID at call time. |
+| `ExecutionGraph.run(message, max_rounds, control)` — retained task filter | Builds each scheduling pass from the retained topology, but excludes dispatched workers whose TaskBus assignment is terminal. | Repeated by persistent `AgentSwarm` browser turns; completed/failed workers remain in `agent_dict` for inspection until explicitly removed or redispatched. |
+| `ExecutionGraph.to_snapshot/load` / `AgentSwarm.save/load` | Serializes and reconstructs quiescent topology, agents through application serializers, TaskBus state, and declarative dynamic mapper/router configuration. | Angelus runtime writes and restores `swarm-runtime.json`; custom callback persistence remains opt-in through explicit callback adapters. |
+| `create_task_report_tool(swarm, reporter, on_report)` | Creates a worker report handler that resolves the worker's current TaskBus ID at call time, including after revival or restart recovery. | Used by `create_swarm_tools` and `runtime._restore_swarm`. |
+| `Agent.set_context_threshold(max_context_threshold, persist=False)` | Updates an Agent's configured and linear/graph-backed compaction threshold, optionally flushing it to the checkpoint before the next run load. | Called by Angelus runtime threshold synchronization; compatible wrappers without this method are skipped rather than blocking a run. |

@@ -70,7 +70,21 @@ def start_run(request: RunRequest) -> dict[str, str]:
     with session.lock:
         if session.active and not session.active.done.is_set():
             raise HTTPException(status_code=409, detail="This chat already has an active run")
-        active = ActiveRun(control=BrowserRunControl())
+        if config.enable_swarm and session.active and session.active.swarm is not None:
+            # Keep the in-process execution graph and every Agent instance
+            # alive between user turns. Tool closures retain this ActiveRun,
+            # so reset it in place rather than replacing its identity.
+            active = session.active
+            active.reset_for_next_turn()
+        else:
+            active = ActiveRun(control=BrowserRunControl())
+            # A restarted backend has no in-memory BrowserSession. Recreate a
+            # completed Swarm from its credential-free local blueprint before
+            # falling back to a brand-new graph on the first resumed turn.
+            if config.enable_swarm:
+                active.swarm = runtime._restore_swarm(
+                    config, workspace_id, session_id, active,
+                )
         session.active = active
     started_at = time.time()
     runtime_profile = runtime._runtime_profile_snapshot(config)
@@ -95,8 +109,17 @@ def start_run(request: RunRequest) -> dict[str, str]:
         error_message = ""
         try:
             if config.enable_swarm:
-                swarm = runtime._build_swarm(config, workspace_id, session_id, active)
-                active.swarm = swarm
+                # A completed Swarm remains owned by this in-process session.
+                # Build it only for the first Swarm turn; rebuilding here would
+                # discard the retained worker instances just selected above.
+                swarm = active.swarm
+                if swarm is None:
+                    swarm = runtime._build_swarm(config, workspace_id, session_id, active)
+                    active.swarm = swarm
+                # Settings are browser-local drafts until this boundary. Make
+                # the selected threshold durable before every Agent reloads
+                # its old checkpoint during ``swarm.run``.
+                runtime._synchronize_swarm_context_threshold(swarm, config)
                 outputs = swarm.run(request.message, control=active.control)
                 output = outputs.get("coordinator")
                 if not isinstance(output, LLMOutput):
@@ -114,6 +137,11 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 usage = swarm.total_usage()
             else:
                 agent = runtime._build_agent(config, workspace_id, session_id, active=active)
+                # Single-Agent sessions load their checkpoint inside ``run``
+                # too, so persist the current setting before that load.
+                runtime._synchronize_context_threshold(
+                    [agent], config.max_context_threshold,
+                )
                 def capture(event: ExecutionEvent) -> None:
                     """Durably relay one named single-Agent event to the browser.
 
@@ -196,7 +224,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             _append_session_event(workspace_id, session_id, error_payload)
             active.events.put(error_payload)
         finally:
-            if active.mcp_bridge is not None:
+            if active.mcp_bridge is not None and active.swarm is None:
                 try:
                     active.mcp_bridge.close()
                 except Exception:
@@ -209,6 +237,9 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     _persist_json(
                         _session_path(workspace_id, session_id) / "graph-view.json",
                         active.swarm.view_snapshot(),
+                    )
+                    runtime._persist_swarm_snapshot(
+                        active.swarm, workspace_id, session_id,
                     )
                 except Exception as exc:
                     cleanup_error = f"{type(exc).__name__}: {exc}"
