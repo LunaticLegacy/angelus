@@ -87,6 +87,9 @@ def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     assert "/context`" in script
     assert "不能替代真实请求" in script
     assert "messages.length?formatPromptPreview(messages)" not in script
+    assert "width:min(1440px,calc(100vw - 32px))" in stylesheet
+    assert "height:min(920px,calc(100vh - 32px))" in stylesheet
+    assert ".context-prompt-preview { display:block; flex:1 1 auto; min-height:0; max-height:none;" in stylesheet
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:

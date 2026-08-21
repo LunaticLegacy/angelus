@@ -65,7 +65,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` | Switches the dialog's top-level entity-graph/context panels. The raw preview renders only a captured remote-request snapshot; when absent it states that no exact request is available, while the table remains checkpoint metadata. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `loadContextPrompt` calls the renderer. |
+| `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` | Switches the dialog's top-level entity-graph/context panels. The raw preview renders only a captured remote-request snapshot; when absent it states that no exact request is available, while the table remains checkpoint metadata. The near-viewport dialog keeps its chrome fixed and gives graph, metadata, and request body independent scroll regions. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `loadContextPrompt` calls the renderer. |
 | `loadContextPrompt(agentId)` | Requests the complete persisted model-context shape once, without cursors or pagination. | Called by `openContextGraph`; fetches `api.sessions.get_agent_context_preview`. |
 
 ## `llmfetcher.agent`
