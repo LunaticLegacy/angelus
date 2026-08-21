@@ -24,8 +24,9 @@ PLUGIN_DIR_ENV = "ANGELUS_PLUGIN_DIR"
 def _default_app_data_root(state_root: Path | None = None) -> Path:
     """Return the app-data root that owns the given workspace root.
 
-    The desktop release pins ``LLMFETCHER_STATE_DIR`` to ``<app_data>/workspace``,
-    so the app-data root is exactly the parent of the state root.  Source
+    The desktop release pins ``ANGELUS_STATE_DIR`` (and its compatibility alias
+    ``LLMFETCHER_STATE_DIR``) to ``<app_data>/workspace``, so the app-data root
+    is exactly the parent of the state root. Source
     checkouts keep the same shape: ``<project>/workspace`` is owned by the
     project root, placing global plugins at ``<project>/plugins``.
 

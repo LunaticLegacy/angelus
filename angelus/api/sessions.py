@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from ..context_editing import ContextEditError, ContextEditOperation, ContextEditStore
 from ..classes import (
     TaskPlanRequest,
     TaskStatusRequest,
@@ -19,6 +20,7 @@ from ..classes import (
     WorkspaceRequest,
 )
 from ..history import (
+    _agent_context_preview,
     _agent_context_graph,
     _agent_context_stats,
     _archived_context_page,
@@ -35,6 +37,7 @@ from ..storage import (
     _read_workspaces,
     _remove_workspace,
     _safe_id,
+    _context_path,
     _sessions,
     _sessions_lock,
     _session_event_page,
@@ -234,8 +237,165 @@ def get_agent_context_graph(session_id: str, agent_name: str) -> dict[str, Any]:
     return {
         "agent": safe_agent,
         "context": _agent_context_stats(safe_session, safe_agent),
-        "graph": _agent_context_graph(safe_session, safe_agent),
+        "graph": _agent_context_graph(safe_session, safe_agent).to_dict(),
     }
+
+
+@router.get("/api/sessions/{session_id}/agents/{agent_name}/context")
+def get_agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Expose the full model-ready preview of an Agent's active context.
+
+    Args:
+        session_id: Browser-visible session that owns the selected Agent.
+        agent_name: One concrete Agent identity; aggregate ``all`` is invalid.
+
+    Returns:
+        Agent ID and chronological provider-neutral persisted history. The
+        runtime combines it with its transient system prompt, next user
+        message, and any query-specific graph retrieval at dispatch time.
+
+    Raises:
+        HTTPException: If the aggregate Agent filter is requested.
+    """
+    safe_session = _safe_id(session_id, "session")
+    if agent_name == "all":
+        raise HTTPException(status_code=422, detail="Select one Agent to inspect its context")
+    safe_agent = _safe_id(agent_name, "agent")
+    return {"agent": safe_agent, **_agent_context_preview(safe_session, safe_agent).to_dict()}
+
+
+def _editable_context_store(session_id: str, agent_name: str) -> ContextEditStore:
+    """Bind browser context-edit requests to one inactive Agent checkpoint.
+
+    Args:
+        session_id: Browser-visible owner of the context directory.
+        agent_name: Concrete Agent identity; the aggregate ``all`` is invalid.
+
+    Returns:
+        Store scoped to ``contexts/<agent>.json`` for this session.
+
+    Raises:
+        HTTPException: If the aggregate filter is used or a run is active.
+
+    Notes:
+        Browser edits intentionally reject live runs: only the Agent-owned
+        tools can flush/reload an in-memory context safely during execution.
+    """
+    safe_session = _safe_id(session_id, "session")
+    if agent_name == "all":
+        raise HTTPException(status_code=422, detail="Select one Agent to edit its context")
+    if get_run_status(safe_session, safe_session).get("active"):
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the active run before editing from the browser; use the Agent context tools during a run.",
+        )
+    safe_agent = _safe_id(agent_name, "agent")
+    return ContextEditStore(_context_path(safe_session, safe_session, safe_agent), safe_agent)
+
+
+@router.get("/api/sessions/{session_id}/agents/{agent_name}/context/editable")
+def inspect_editable_agent_context(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Return stable active-context records plus every recovery revision.
+
+    Args:
+        session_id: Browser-visible session that owns the selected Agent.
+        agent_name: Concrete Agent identity, never the aggregate selector.
+
+    Returns:
+        Agent-scoped record references, current revision, graph-staleness, and
+        immutable restorable revision metadata.
+    """
+    return _editable_context_store(session_id, agent_name).inspect()
+
+
+def _parse_context_edit_operations(value: Any) -> list[ContextEditOperation]:
+    """Convert one browser JSON operation array into the typed edit schema.
+
+    Args:
+        value: JSON request field expected to contain operation objects.
+
+    Returns:
+        Validated dataclass operations in submitted order.
+
+    Raises:
+        ContextEditError: If the field or any operation has an invalid shape.
+    """
+    if not isinstance(value, list):
+        raise ContextEditError("operations must be an array")
+    operations: list[ContextEditOperation] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ContextEditError("each operation must be an object")
+        operations.append(ContextEditOperation(
+            kind=str(item.get("kind", "")),
+            target_record_id=(str(item["target_record_id"]) if item.get("target_record_id") is not None else None),
+            content=str(item.get("content", "")),
+            role=str(item.get("role", "user")),
+        ))
+    return operations
+
+
+@router.post("/api/sessions/{session_id}/agents/{agent_name}/context/edit")
+def edit_agent_context(
+    session_id: str,
+    agent_name: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply a version-checked browser edit to an inactive Agent context.
+
+    Args:
+        session_id: Browser-visible owner session.
+        agent_name: Concrete Agent whose checkpoint is edited.
+        payload: ``expected_revision_id``, ordered ``operations``, and optional
+            human-readable ``reason``.
+
+    Returns:
+        New immutable revision and the refreshed editable context projection.
+
+    Raises:
+        HTTPException: With 409 for stale revisions and 422 for invalid edits.
+    """
+    store = _editable_context_store(session_id, agent_name)
+    try:
+        return store.apply(
+            payload.get("expected_revision_id"),
+            _parse_context_edit_operations(payload.get("operations")),
+            actor="browser_api",
+            reason=str(payload.get("reason", "")),
+        )
+    except ContextEditError as exc:
+        status = 409 if "stale" in str(exc) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@router.post("/api/sessions/{session_id}/agents/{agent_name}/context/restore")
+def restore_agent_context(
+    session_id: str,
+    agent_name: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Restore one saved revision as a new audit-preserving active revision.
+
+    Args:
+        session_id: Browser-visible owner session.
+        agent_name: Concrete Agent whose checkpoint is recovered.
+        payload: Current ``expected_revision_id``, source ``revision_id``, and
+            an optional recovery reason.
+
+    Returns:
+        New forward revision and the restored editable-record projection.
+    """
+    store = _editable_context_store(session_id, agent_name)
+    try:
+        return store.restore(
+            payload.get("expected_revision_id"),
+            str(payload.get("revision_id", "")),
+            actor="browser_api",
+            reason=str(payload.get("reason", "")),
+        )
+    except ContextEditError as exc:
+        status = 409 if "stale" in str(exc) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/graph")
 def get_session_graph(workspace_id: str, session_id: str) -> dict[str, Any]:
@@ -322,7 +482,7 @@ def _reconcile_graph_view(
         if event_kind == "error" and (not agent or agent == "coordinator"):
             agent = "coordinator"
             state = "failed"
-        elif event_type == "task:dispatched":
+        elif event_type in {"task:dispatched", "task:redispatched"}:
             state = "queued"
             if agent and data.get("reply_to"):
                 task_parents[agent] = str(data["reply_to"])
@@ -352,7 +512,7 @@ def _reconcile_graph_view(
                 "updated_at": event_timestamp,
                 **({"task_id": task_id} if task_id else {}),
             }
-        if state and task_id and event_type == "task:dispatched":
+        if state and task_id and event_type in {"task:dispatched", "task:redispatched"}:
             task_states.setdefault(task_id, state)
         elif state and task_id and event_type.startswith("task:"):
             task_states[task_id] = state
@@ -642,4 +802,4 @@ def delete_session(session_id: str, request: WorkspaceDeleteRequest) -> dict[str
     """Delete one session after confirmation and cooperative run shutdown."""
     return delete_workspace(session_id, request)
 
-__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "open_session_folder", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]
+__all__ = ["list_workspaces", "list_sessions", "delete_workspace", "get_task_plan", "get_session_plan", "get_session_history", "get_session_archive", "get_session_archive_by_id", "get_session_messages", "get_session_agents", "get_agent_context_graph", "get_agent_context_preview", "_editable_context_store", "inspect_editable_agent_context", "edit_agent_context", "restore_agent_context", "get_session_graph", "_reconcile_graph_view", "get_session_graph_by_id", "get_session_events", "get_session_steers", "get_session_usage", "replace_task_plan", "update_task_plan_status", "update_session_plan_status", "create_workspace", "create_session", "open_session_folder", "get_session_memory_capabilities", "register_session_artifact", "list_session_artifacts", "list_session_handoffs", "get_session_handoff", "create_browser_session_handoff", "delete_session", "router"]

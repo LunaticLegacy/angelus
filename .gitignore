@@ -53,6 +53,7 @@ docs/_build/
 # Local browser sessions, connectors, and migration backups.
 workspace/
 .llmfetcher/
+.dsh-ref/
 
 # Local RAG datasets and generated indexes are not part of the superproject.
 benchmark/

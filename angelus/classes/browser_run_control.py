@@ -35,6 +35,26 @@ class BrowserRunControl(AgentRunControl):
         self._force_stopped.set()
         self._stopped.set()
 
+    def reset(self) -> None:
+        """Clear terminal controls before the same session begins another run.
+
+        This method is valid only after the prior run reached its terminal
+        boundary. Keeping the control object itself stable lets persistent
+        Swarm tool handlers retain their force-stop event reference across
+        browser turns.
+
+        Side Effects:
+            Clears cooperative/force-stop flags and discards unapplied steer
+            messages from the completed run.
+        """
+        self._stopped.clear()
+        self._force_stopped.clear()
+        while True:
+            try:
+                self._steers.get_nowait()
+            except queue.Empty:
+                return
+
     @property
     def force_stopped(self) -> threading.Event:
         return self._force_stopped

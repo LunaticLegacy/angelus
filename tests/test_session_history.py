@@ -27,6 +27,36 @@ def test_session_history_returns_display_turns_and_bounded_tool_results() -> Non
             storage.WORKSPACE_ROOT = original_root
 
 
+def test_session_history_recovers_legacy_structured_tool_result() -> None:
+    """Legacy ``str(dict)`` tool results must hydrate as structured browser data."""
+    with tempfile.TemporaryDirectory() as directory:
+        original_root = storage.WORKSPACE_ROOT
+        storage.WORKSPACE_ROOT = Path(directory)
+        try:
+            path = webapp._context_path("default", "session")
+            path.write_text(json.dumps({"messages": [{
+                "role": "assistant", "content": "Done", "tool_calls": [{
+                    "call": {"name": "report", "arguments": {}},
+                    "result": "{'ok': True, 'items': ['a', 'b']}",
+                }],
+            }]}), encoding="utf-8")
+
+            history = webapp._read_session_history("default", "session")
+            assert history[0]["tools"][0]["result"] == {
+                "ok": True, "items": ["a", "b"],
+            }
+        finally:
+            storage.WORKSPACE_ROOT = original_root
+
+
+def test_event_history_keeps_raw_stdout_as_text() -> None:
+    """A bracketed stdout line must not be misclassified as structured JSON."""
+    tools = webapp._display_tools_from_event({"tool_calls": [{
+        "name": "shell", "args": {}, "result": "[stdout] written: /tmp/file",
+    }]})
+    assert tools[0]["result"] == "[stdout] written: /tmp/file"
+
+
 def test_context_path_creates_agent_context_directory() -> None:
     """Provision the parent directory required for Agent context persistence."""
     with tempfile.TemporaryDirectory() as directory:

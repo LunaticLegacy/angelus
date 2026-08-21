@@ -72,17 +72,19 @@ fn backend_command(app: &tauri::AppHandle, port: u16) -> Result<Command, String>
     // Keep the backend loopback-only; the desktop webview is its only client.
     command.args(["--host", "127.0.0.1", "--port", &port.to_string()]);
 
-    // Pin backend state to a stable directory.  Packaged PyInstaller
+    // Pin backend state to a stable directory. Packaged PyInstaller
     // ``--onefile`` sidecars run from a temporary extraction directory, so
     // the backend's default project-local ``workspace`` would otherwise be
-    // wiped on every exit.  Source/debug runs keep the project-local
-    // workspace unless ANGELUS_STATE_DIR is explicitly provided.
+    // wiped on every exit. Set the canonical Angelus name and its legacy
+    // LLMFetcher alias together, matching `angelus --state-dir`.
     if cfg!(debug_assertions) {
         if let Ok(dir) = env::var("ANGELUS_STATE_DIR") {
+            command.env("ANGELUS_STATE_DIR", &dir);
             command.env("LLMFETCHER_STATE_DIR", dir);
         }
     } else {
         let dir = backend_state_dir(app)?;
+        command.env("ANGELUS_STATE_DIR", &dir);
         command.env("LLMFETCHER_STATE_DIR", &dir);
     }
 

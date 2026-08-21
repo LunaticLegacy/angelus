@@ -14,6 +14,7 @@ def test_event_listeners_target_existing_template_elements() -> None:
     """Keep direct Workbench event listeners aligned with static HTML IDs."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
     element_ids = set(re.findall(r'\\bid="([^"]+)"', template))
     listener_ids = set(re.findall(r'\\$\\("([^"]+)"\\)\\.addEventListener', script))
 
@@ -39,12 +40,82 @@ def test_active_workbench_uses_component_views_through_an_es_module_entrypoint()
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
     assert 'type="module" src="/static/app.js?v=workbench-' in template
-    assert 'from "./components/chat-view.js"' in script
+    assert 'from "./components/chat-view.js?v=tool-payload-2"' in script
     assert 'from "./components/trace-view.js"' in script
     assert 'from "./components/task-plan-view.js"' in script
     assert (COMPONENTS_DIR / "chat-view.js").is_file()
     assert (COMPONENTS_DIR / "trace-view.js").is_file()
     assert (COMPONENTS_DIR / "task-plan-view.js").is_file()
+
+
+def test_tool_payloads_use_structured_json_and_verbatim_stdout_views() -> None:
+    """Tool call cards must decode JSON escapes without altering raw stdout."""
+    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "function decodeJson(value)" in chat_component
+    assert "function decodeDisplayString(value)" in chat_component
+    assert "JSON.parse(text)" in chat_component
+    assert "function legacyPythonContainerToJson(source)" in chat_component
+    assert "legacyPythonContainerToJson(text)" in chat_component
+    assert "escapeHtml(decodeDisplayString(value))" in chat_component
+    assert 'class="tool-json"' in chat_component
+    assert 'class="tool-stdout"' in chat_component
+    assert 'return `<pre class="tool-stdout">${escapeHtml(String(value))}</pre>`' in chat_component
+    assert ".tool-json { max-height:280px; overflow:auto;" in stylesheet
+
+
+def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
+    """SSE, aggregate replay, and selected-Agent replay must render one card type."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools},agentName)" in script
+    assert "chatView.render(messages, assistantLabel)" in script
+    assert "chatView.buildMessage(message, selectedAgent)" in script
+
+
+def test_reasoning_is_visible_transcript_content_not_a_disclosure() -> None:
+    """Reasoning must be visible for both live and restored message cards."""
+    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert '<section class="reasoning" aria-label="思考过程">' in chat_component
+    assert '<details class="reasoning">' not in chat_component
+    assert '${reasoning ? `<section class="reasoning"' in chat_component
+    assert '${thought}</div></section>` : ""}${content ? `<div class="bubble' in chat_component
+    assert ".message .reasoning { max-height:180px;" in stylesheet
+    assert ".message .reasoning > div { max-height:145px; padding:0; overflow:auto;" in stylesheet
+
+
+def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
+    """Keep the context inspector's full prompt preview wired to its API route."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert 'data-context-dialog-tab="graph"' in template
+    assert 'data-context-dialog-tab="prompt"' in template
+    assert 'id="context-prompt-preview"' in template
+    assert 'id="context-metadata-list"' in template
+    assert 'id="context-request-stats"' in template
+    assert 'id="context-prompt-cards"' not in template
+    assert "function selectContextDialogTab(tab)" in script
+    assert "function loadContextPrompt(agentId)" in script
+    assert "function decodePromptText(value)" in script
+    assert "Actual line feeds remain line feeds." in script
+    assert "item.source" in script
+    assert "/context`" in script
+    assert "不能替代真实请求" in script
+    assert "messages.length?formatPromptPreview(messages)" not in script
+    assert "let contextDialogAgent = \"\";" in script
+    assert 'event.type === "agent:remote_request"' in script
+    assert "loadContextPrompt(contextDialogAgent)" in script
+    assert "stats.tool_schema_characters" in script
+    assert "width:min(1440px,calc(100vw - 32px))" in stylesheet
+    assert "height:min(920px,calc(100vh - 32px))" in stylesheet
+    assert ".context-prompt-preview { display:block; flex:1 1 auto; min-height:0; max-height:none;" in stylesheet
+    assert "#context-panel-graph { display:grid; grid-template-rows:auto 270px minmax(190px,1fr);" in stylesheet
+    assert "#context-panel-graph .context-graph-details { min-height:0; height:100%;" in stylesheet
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:
@@ -132,6 +203,7 @@ def test_agents_panel_renders_only_the_single_topology_tree() -> None:
 
     assert 'id="inspector-agents-list"' in template
     assert 'id="execution-graph"' not in template
+    assert "点击下方 Agent 卡片可查看该 Agent 的上下文。" in template
 
 
 def test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height() -> None:

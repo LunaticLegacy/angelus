@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,183 @@ from .storage import (
     _session_path,
     _write_workspaces,
 )
+
+
+@dataclass(frozen=True)
+class AgentContextMetadata:
+    """Schema for one provider message represented in an Agent context preview.
+
+    Attributes:
+        index: One-based chronological position in this preview response's
+            ``messages`` list. It is the snapshot-scoped selection key
+            reserved for a future explicit context-editing tool; a later
+            checkpoint may assign different indices.
+        source: Agent checkpoint/identity or the tool that produced the entry.
+        type: Provider message kind, such as ``user``, ``assistant``,
+            ``tool``, or ``abstract``.
+        length: Character count of the exact rendered message content.
+        timeline: Persisted source timeline or compacted timeline range.
+    """
+
+    index: int
+    source: str
+    type: str
+    length: int
+    timeline: str
+
+
+@dataclass(frozen=True)
+class RemoteRequestStats:
+    """Live size summary for one captured remote-request snapshot."""
+
+    messages: int
+    characters: int
+    tool_schemas: int
+    tool_schema_characters: int
+    estimated_tokens: int
+
+
+@dataclass(frozen=True)
+class AgentContextPreview:
+    """Schema returned to the workbench for one Agent context inspection.
+
+    The model-facing message and tool payload fields deliberately remain JSON
+    objects: they are provider- and plugin-extensible.  This envelope fixes
+    the stable application contract around those payloads so callers no
+    longer infer response keys from an untyped mapping.
+
+    Attributes:
+        messages: Chronological provider-neutral messages reconstructed from
+            the saved Agent checkpoint.
+        metadata: One provenance record for each item in ``messages``.
+        request: Latest captured :class:`RemoteRequestSnapshot` serialized at
+            the Angelus/llmfetcher boundary, or ``None`` for older sessions.
+        total: Number of messages in the saved checkpoint.
+    """
+
+    messages: list[dict[str, Any]]
+    metadata: list[AgentContextMetadata]
+    request: dict[str, Any] | None
+    total: int
+    stats: RemoteRequestStats | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the stable response envelope for FastAPI and JSON.
+
+        Returns:
+            A JSON-compatible mapping with metadata converted from its
+            dataclass schema while leaving provider-extensible payloads intact.
+        """
+        return {
+            "messages": self.messages,
+            "metadata": [asdict(item) for item in self.metadata],
+            "request": self.request,
+            "total": self.total,
+            "stats": asdict(self.stats) if self.stats is not None else None,
+        }
+
+
+@dataclass(frozen=True)
+class ContextGraphNode:
+    """Browser-safe schema for one persisted long-term-memory entity."""
+
+    id: str
+    name: str
+    entity_type: str
+    summary: str
+    aliases: list[str]
+    first_seen: int
+    last_seen: int
+    freq: int
+
+
+@dataclass(frozen=True)
+class ContextGraphEdge:
+    """Browser-safe schema for one relation between visible graph entities."""
+
+    source_id: str
+    target_id: str
+    relation: str
+    weight: float
+    first_seen: int
+    last_seen: int
+    valid: bool
+    evidence: list[int]
+
+
+@dataclass(frozen=True)
+class ContextGraphCommunity:
+    """Browser-safe schema for one bounded persisted graph community."""
+
+    level: int
+    community_id: str
+    summary: str
+    member_entity_ids: list[str]
+
+
+@dataclass(frozen=True)
+class ContextGraphSnapshot:
+    """Bounded API schema for an Agent's persisted long-term memory graph.
+
+    Attributes:
+        available: Whether an inspectable graph snapshot is currently usable.
+        node_count: Total persisted entities before UI bounding.
+        edge_count: Total persisted relations before UI filtering.
+        community_count: Total persisted graph communities.
+        truncated: Whether visible nodes were bounded by the API limit.
+        nodes: Display-safe entity records.
+        edges: Display-safe relations whose endpoints are both visible.
+        communities: Bounded graph-community summaries.
+        stale: Whether a context edit invalidated this graph until the next
+            Agent checkpoint rebuilds it.
+    """
+
+    available: bool
+    node_count: int
+    edge_count: int
+    community_count: int
+    truncated: bool
+    nodes: list[ContextGraphNode]
+    edges: list[ContextGraphEdge]
+    communities: list[ContextGraphCommunity]
+    stale: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the graph snapshot for FastAPI without leaking storage data."""
+        return asdict(self)
+
+
+def _display_tool_result(value: Any) -> Any:
+    """Recover structured tool data for every browser transcript path.
+
+    Args:
+        value: Raw event value, JSON text, legacy Python ``str(dict)`` text,
+            or ordinary stdout captured in a persisted Agent context.
+
+    Returns:
+        JSON-compatible structured data when ``value`` is an object/array or
+        safely decodes to one. Other values are returned unchanged so stdout
+        reaches the shared frontend renderer verbatim.
+
+    Notes:
+        Earlier contexts stored tool results with ``str(value)``. Parsing is
+        deliberately limited to JSON and :func:`ast.literal_eval`, never
+        runtime evaluation, so historical dict/list results regain hierarchy
+        without executing persisted content.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or len(text) > 2_000_000 or text[0] not in "[{":
+        return value
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            decoded = ast.literal_eval(text)
+        except (SyntaxError, ValueError, MemoryError, RecursionError):
+            return value
+    return decoded if isinstance(decoded, (dict, list)) else value
 
 
 
@@ -91,7 +270,7 @@ def _read_session_history(workspace_id: str, session_id: str) -> list[dict[str, 
             tool_calls.append({
                 "name": str(call.get("name", "unknown")),
                 "arguments": call.get("arguments", {}),
-                "result": str(item.get("result", "")),
+                "result": _display_tool_result(item.get("result", "")),
             })
         turn: dict[str, Any] = {"role": message["role"], "content": content, "reasoning": reasoning, "tools": tool_calls}
         if message["role"] == "assistant":
@@ -119,7 +298,7 @@ def _turns_from_legacy_context(path: Path) -> list[dict[str, Any]]:
         if not isinstance(message, dict) or message.get("role") not in {"user", "assistant", "steer"}:
             continue
         tools = [
-            {"name": str(item.get("call", {}).get("name", "unknown")), "arguments": item.get("call", {}).get("arguments", {}), "result": str(item.get("result", ""))}
+            {"name": str(item.get("call", {}).get("name", "unknown")), "arguments": item.get("call", {}).get("arguments", {}), "result": _display_tool_result(item.get("result", ""))}
             for item in message.get("tool_calls", [])
             if isinstance(item, dict) and isinstance(item.get("call"), dict)
         ]
@@ -336,6 +515,137 @@ def _archived_context_page(
         "next_before": start if start else None,
     }
 
+
+def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPreview:
+    """Return context metadata and the latest exact remote request snapshot.
+
+    Args:
+        session_id: Browser-visible session that owns the context file.
+        agent_name: Agent identity used in ``contexts/<agent>.json``.
+
+    Returns:
+        Chronological provider-neutral checkpoint messages, the latest
+        captured remote-request snapshot when available, the number of
+        checkpoint messages, and one metadata record per checkpoint message.
+        Checkpoint messages are inspection evidence only: callers must render
+        ``request`` alone as an exact remote request, because a checkpoint
+        cannot include transient system prompts, a future user draft, graph
+        retrieval, or the provider-prepared ``tools`` array.
+
+    Side Effects:
+        Reads one context JSON file only. The handler is constructed solely to
+        deserialize and render the checkpoint; it never compacts, saves, or
+        calls a model.
+    """
+    safe_session = _safe_id(session_id, "session")
+    safe_agent = _safe_id(agent_name, "agent")
+    path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+    if not path.is_file():
+        return AgentContextPreview(messages=[], metadata=[], request=None, total=0)
+
+    # Reuse the runtime's linear serializer so the preview keeps compacted
+    # abstracts, tool-call shapes, and request-side tool-output limits.
+    from llmfetcher.context_handlers.linear import ContextHandlerLinear
+
+    handler = ContextHandlerLinear(compacting_llmfetcher_handler=object())
+    if not handler.load(path):
+        return AgentContextPreview(messages=[], metadata=[], request=None, total=0)
+    messages = handler.build_messages()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+
+    def timeline_label(value: Any) -> str:
+        """Format one persisted timeline or compacted range for display."""
+        if isinstance(value, list):
+            values = [item for item in value if isinstance(item, int) and not isinstance(item, bool)]
+            if values:
+                return str(values[0]) if len(values) == 1 else f"{values[0]}–{values[-1]}"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return "—"
+
+    metadata: list[AgentContextMetadata] = []
+    message_index = 0
+    abstract = raw.get("abstract") if isinstance(raw, dict) else None
+    if isinstance(abstract, dict) and message_index < len(messages):
+        rendered = messages[message_index]
+        metadata.append(AgentContextMetadata(
+            index=message_index + 1,
+            source=f"{safe_agent} · checkpoint",
+            type="abstract",
+            length=len(str(rendered.get("content", ""))),
+            timeline=timeline_label(abstract.get("source_timeline", [])),
+        ))
+        message_index += 1
+
+    # Mirror ContextHandlerLinear's assistant/tool expansion so each visible
+    # provider message gets provenance without changing the persisted context.
+    source_messages = raw.get("messages", []) if isinstance(raw, dict) else []
+    for item in source_messages if isinstance(source_messages, list) else []:
+        if not isinstance(item, dict) or message_index >= len(messages):
+            continue
+        role = str(item.get("role", "assistant"))
+        timeline = timeline_label(item.get("timeline"))
+        rendered = messages[message_index]
+        metadata.append(AgentContextMetadata(
+            index=message_index + 1,
+            source=safe_agent,
+            type=role,
+            length=len(str(rendered.get("content", ""))),
+            timeline=timeline,
+        ))
+        message_index += 1
+        if role != "assistant" or not isinstance(item.get("tool_calls"), list):
+            continue
+        for tool in item["tool_calls"]:
+            if not isinstance(tool, dict) or message_index >= len(messages):
+                continue
+            call = tool.get("call", {})
+            tool_name = str(call.get("name", "tool")) if isinstance(call, dict) else "tool"
+            rendered = messages[message_index]
+            metadata.append(AgentContextMetadata(
+                index=message_index + 1,
+                source=f"tool · {tool_name}",
+                type="tool",
+                length=len(str(rendered.get("content", ""))),
+                timeline=timeline,
+            ))
+            message_index += 1
+    request: dict[str, Any] | None = None
+    request_round: int | None = None
+    for event in reversed(_read_session_event_log(safe_session, safe_session)):
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if event.get("event") == "lifecycle" and event.get("type") == "agent:remote_request" and event.get("agent") == safe_agent and isinstance(data.get("request"), dict):
+            request = data["request"]
+            request_round = data.get("round") if isinstance(data.get("round"), int) else None
+            break
+    stats: RemoteRequestStats | None = None
+    if request is not None:
+        # The visible request body and its metadata must describe the same
+        # snapshot. Checkpoint provenance is intentionally not reused here.
+        messages = [item for item in request.get("messages", []) if isinstance(item, dict)]
+        request_timeline = f"round {request_round}" if request_round is not None else "request"
+        metadata = [AgentContextMetadata(
+            index=index,
+            source=f"{safe_agent} · remote request",
+            type=str(message.get("role", "unknown")),
+            length=len(json.dumps(message, ensure_ascii=False, default=str)),
+            timeline=request_timeline,
+        ) for index, message in enumerate(messages, start=1)]
+        tool_schemas = [item for item in request.get("tools", []) if isinstance(item, dict)]
+        message_characters = sum(len(json.dumps(item, ensure_ascii=False, default=str)) for item in messages)
+        tool_characters = sum(len(json.dumps(item, ensure_ascii=False, default=str)) for item in tool_schemas)
+        stats = RemoteRequestStats(len(messages), message_characters, len(tool_schemas), tool_characters, (message_characters + tool_characters + 3) // 4)
+    return AgentContextPreview(
+        messages=messages,
+        metadata=metadata,
+        request=request,
+        total=len(messages),
+        stats=stats,
+    )
+
 def _agent_turns_from_events(
     workspace_id: str,
     session_id: str,
@@ -468,7 +778,7 @@ def _display_tools_from_event(data: dict[str, Any]) -> list[dict[str, Any]]:
         tools.append({
             "name": str(item.get("name", "unknown")),
             "arguments": item.get("args", {}),
-            "result": str(item.get("result", "")),
+            "result": _display_tool_result(item.get("result", "")),
         })
     return tools
 
@@ -580,7 +890,7 @@ def _agent_context_graph(
     agent_name: str,
     *,
     limit: int = 60,
-) -> dict[str, Any]:
+) -> ContextGraphSnapshot:
     """Return a bounded, browser-safe snapshot of one Agent's memory graph.
 
     Args:
@@ -612,25 +922,25 @@ def _agent_context_graph(
         except (TypeError, ValueError):
             return 0.0
 
-    result: dict[str, Any] = {
-        "available": False,
-        "node_count": 0,
-        "edge_count": 0,
-        "community_count": 0,
-        "truncated": False,
-        "nodes": [],
-        "edges": [],
-        "communities": [],
-    }
+    empty = ContextGraphSnapshot(False, 0, 0, 0, False, [], [], [])
     try:
         safe_session = _safe_id(session_id, "session")
         safe_agent = _safe_id(agent_name, "agent")
-        path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json.graph.json"
+        context_path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+        try:
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            context = {}
+        if isinstance(context, dict) and bool(
+            (context.get("context_editing") or {}).get("graph_stale")
+        ):
+            return ContextGraphSnapshot(False, 0, 0, 0, False, [], [], [], stale=True)
+        path = context_path.with_name(f"{context_path.name}.graph.json")
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
-        return result
+        return empty
     if not isinstance(raw, dict):
-        return result
+        return empty
 
     # Normalize persisted data before filtering it, keeping the browser API
     # independent from GraphStore's in-memory dataclasses.
@@ -646,12 +956,6 @@ def _agent_context_graph(
         for item in items
         if isinstance(item, dict)
     ] if isinstance(raw_communities, dict) else []
-    result.update({
-        "available": True,
-        "node_count": len(node_items),
-        "edge_count": len(edge_items),
-        "community_count": len(community_items),
-    })
     bounded_limit = max(1, min(_integer(limit, 60), 120))
     node_items.sort(key=lambda item: (
         -_integer(item.get("last_seen", 0)),
@@ -660,37 +964,23 @@ def _agent_context_graph(
     ))
     visible = node_items[:bounded_limit]
     visible_ids = {str(item.get("id", "")) for item in visible}
-    result["truncated"] = len(node_items) > len(visible)
-    result["nodes"] = [{
-        "id": str(item.get("id", "")),
-        "name": str(item.get("name", item.get("id", ""))),
-        "entity_type": str(item.get("entity_type", "concept")),
-        "summary": str(item.get("summary", ""))[:1_000],
-        "aliases": [str(alias)[:200] for alias in item.get("aliases", []) if isinstance(alias, str)][:12],
-        "first_seen": _integer(item.get("first_seen", 0)),
-        "last_seen": _integer(item.get("last_seen", 0)),
-        "freq": _integer(item.get("freq", 0)),
-    } for item in visible]
-    result["edges"] = [{
-        "source_id": str(item.get("source_id", "")),
-        "target_id": str(item.get("target_id", "")),
-        "relation": str(item.get("relation", "related_to")),
-        "weight": _number(item.get("weight", 0)),
-        "first_seen": _integer(item.get("first_seen", 0)),
-        "last_seen": _integer(item.get("last_seen", 0)),
-        "valid": bool(item.get("valid", True)),
-        "evidence": [int(value) for value in item.get("evidence", []) if isinstance(value, int) and not isinstance(value, bool)][:20],
-    } for item in edge_items if str(item.get("source_id", "")) in visible_ids and str(item.get("target_id", "")) in visible_ids]
-    result["communities"] = [{
-        "level": _integer(item.get("level", 0)),
-        "community_id": str(item.get("community_id", "")),
-        "summary": str(item.get("summary", ""))[:1_000],
-        "member_entity_ids": [str(value) for value in item.get("member_entity_ids", []) if isinstance(value, str)][:30],
-    } for item in community_items[:12]]
-    return result
+    return ContextGraphSnapshot(
+        available=True, node_count=len(node_items), edge_count=len(edge_items),
+        community_count=len(community_items), truncated=len(node_items) > len(visible),
+        nodes=[ContextGraphNode(str(item.get("id", "")), str(item.get("name", item.get("id", ""))), str(item.get("entity_type", "concept")), str(item.get("summary", ""))[:1_000], [str(alias)[:200] for alias in item.get("aliases", []) if isinstance(alias, str)][:12], _integer(item.get("first_seen", 0)), _integer(item.get("last_seen", 0)), _integer(item.get("freq", 0))) for item in visible],
+        edges=[ContextGraphEdge(str(item.get("source_id", "")), str(item.get("target_id", "")), str(item.get("relation", "related_to")), _number(item.get("weight", 0)), _integer(item.get("first_seen", 0)), _integer(item.get("last_seen", 0)), bool(item.get("valid", True)), [int(value) for value in item.get("evidence", []) if isinstance(value, int) and not isinstance(value, bool)][:20]) for item in edge_items if str(item.get("source_id", "")) in visible_ids and str(item.get("target_id", "")) in visible_ids],
+        communities=[ContextGraphCommunity(_integer(item.get("level", 0)), str(item.get("community_id", "")), str(item.get("summary", ""))[:1_000], [str(value) for value in item.get("member_entity_ids", []) if isinstance(value, str)][:30]) for item in community_items[:12]],
+    )
 
 __all__ = [
     "_history_context_paths",
+    "AgentContextMetadata",
+    "RemoteRequestStats",
+    "AgentContextPreview",
+    "ContextGraphNode",
+    "ContextGraphEdge",
+    "ContextGraphCommunity",
+    "ContextGraphSnapshot",
     "_read_session_history",
     "_turns_from_legacy_context",
     "_turns_from_event_log",
@@ -698,6 +988,7 @@ __all__ = [
     "_empty_usage",
     "_session_usage_summary",
     "_archived_context_page",
+    "_agent_context_preview",
     "_agent_turns_from_events",
     "_display_tools_from_event",
     "_read_agent_history",
