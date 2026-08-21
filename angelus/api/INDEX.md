@@ -9,7 +9,7 @@ FastAPI 路由层。路由只负责 HTTP/SSE 边界、请求验证与响应编�
 | `__init__.py` | `include_api_routes(app)`：注册所有路由并提供 SPA 根页面。 |
 | `connectors.py` | 供应商列表与连接器 CRUD；桥接已启用插件的连接器类型。 |
 | `runs.py` | 运行启动、状态、SSE、协作式停止、强制停止和运行中 steer 指令。 |
-| `sessions.py` | 工作区、会话历史、按 Agent 查询的计划、归档、图、用量、产物与跨会话记忆授权 API。 |
+| `sessions.py` | 工作区、会话历史、按 Agent 查询的计划、归档、图、用量、产物与跨会话记忆授权 API；并提供停止运行后的上下文检查、版本化编辑和恢复。 |
 | `compact.py` | 手动上下文压缩，以及面向浏览器的阶段性进度流。 |
 
 Kimi Code is exposed as a first-party provider preset and resolved to the existing OpenAI-compatible backend before a model request is made.

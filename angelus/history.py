@@ -137,7 +137,20 @@ class ContextGraphCommunity:
 
 @dataclass(frozen=True)
 class ContextGraphSnapshot:
-    """Bounded API schema for an Agent's persisted long-term memory graph."""
+    """Bounded API schema for an Agent's persisted long-term memory graph.
+
+    Attributes:
+        available: Whether an inspectable graph snapshot is currently usable.
+        node_count: Total persisted entities before UI bounding.
+        edge_count: Total persisted relations before UI filtering.
+        community_count: Total persisted graph communities.
+        truncated: Whether visible nodes were bounded by the API limit.
+        nodes: Display-safe entity records.
+        edges: Display-safe relations whose endpoints are both visible.
+        communities: Bounded graph-community summaries.
+        stale: Whether a context edit invalidated this graph until the next
+            Agent checkpoint rebuilds it.
+    """
 
     available: bool
     node_count: int
@@ -147,6 +160,7 @@ class ContextGraphSnapshot:
     nodes: list[ContextGraphNode]
     edges: list[ContextGraphEdge]
     communities: list[ContextGraphCommunity]
+    stale: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the graph snapshot for FastAPI without leaking storage data."""
@@ -912,7 +926,16 @@ def _agent_context_graph(
     try:
         safe_session = _safe_id(session_id, "session")
         safe_agent = _safe_id(agent_name, "agent")
-        path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json.graph.json"
+        context_path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+        try:
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            context = {}
+        if isinstance(context, dict) and bool(
+            (context.get("context_editing") or {}).get("graph_stale")
+        ):
+            return ContextGraphSnapshot(False, 0, 0, 0, False, [], [], [], stale=True)
+        path = context_path.with_name(f"{context_path.name}.graph.json")
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return empty

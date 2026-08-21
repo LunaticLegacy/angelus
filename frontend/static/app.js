@@ -209,9 +209,9 @@ function renderContextGraphDetail(graph, nodeId) {
 function renderContextGraph(payload) {
   const graph=payload.graph||{}; const nodes=graph.nodes||[]; const edges=graph.edges||[];
   $("context-graph-title").textContent=`${payload.agent} · 上下文图`;
-  $("context-graph-subtitle").textContent=graph.available?"这是 Agent 最近一次持久化 checkpoint 的长期记忆索引。":"该 Agent 尚未生成可查看的上下文图。";
+  $("context-graph-subtitle").textContent=graph.stale?"上下文已被版本化编辑；实体图等待下一次 Agent checkpoint 重建。":graph.available?"这是 Agent 最近一次持久化 checkpoint 的长期记忆索引。":"该 Agent 尚未生成可查看的上下文图。";
   const ctx=payload.context||{};
-  $("context-graph-summary").innerHTML=`<span>实体 <b>${Number(graph.node_count||0)}</b></span><span>关系 <b>${Number(graph.edge_count||0)}</b></span><span>社区 <b>${Number(graph.community_count||0)}</b></span><span>上下文 <b>${Number(ctx.messages||0)}</b> 条</span>${graph.truncated?'<small>仅显示最近的 60 个实体</small>':""}`;
+  $("context-graph-summary").innerHTML=`<span>实体 <b>${Number(graph.node_count||0)}</b></span><span>关系 <b>${Number(graph.edge_count||0)}</b></span><span>社区 <b>${Number(graph.community_count||0)}</b></span><span>上下文 <b>${Number(ctx.messages||0)}</b> 条</span>${graph.stale?'<small>图等待重建</small>':graph.truncated?'<small>仅显示最近的 60 个实体</small>':""}`;
   const canvas=$("context-graph-canvas"), list=$("context-graph-nodes");
   if(!graph.available || !nodes.length){canvas.innerHTML='<p class="empty">尚无实体。图会在 Agent 处理消息并完成 checkpoint 后出现。</p>';list.innerHTML="";$("context-graph-detail").innerHTML='<p class="empty">没有可检查的实体。</p>';return;}
   // Spread dense graphs across the full landscape canvas while leaving space
