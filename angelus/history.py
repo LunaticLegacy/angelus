@@ -417,7 +417,9 @@ def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
             ``agent:round.round_usage`` compatibility path.
 
     Returns:
-        A mapping with session-wide ``usage`` and per-agent usage records.
+        A mapping with session-wide ``usage``, per-agent usage records, and a
+        ``round`` mapping carrying the most recently completed model round's
+        per-call usage (the "本轮" line shown in the usage tile).
 
     Ledger records are deltas, one for each provider call.  This means hidden
     compaction and graph calls are visible, while the summary does not sum the
@@ -454,7 +456,24 @@ def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
         {"id": agent, "usage": usage}
         for agent, usage in sorted(by_agent.items(), key=lambda item: (-item[1]["total"], item[0]))
     ]
-    return {"usage": total, "agents": agents}
+    # Per-round usage for the "本轮" line: the most recently completed model
+    # round.  Scanned newest-first so the latest ``agent:round`` wins; the
+    # ``round_usage`` payload is the same one that backs chat-message token
+    # stats, so the usage tile stays consistent with the transcript.
+    round_usage = _empty_usage()
+    for event in reversed(events):
+        if event.get("event") != "lifecycle" or event.get("type") != "agent:round":
+            continue
+        data = event.get("data")
+        usage = data.get("round_usage") if isinstance(data, dict) else None
+        if not isinstance(usage, dict):
+            continue
+        for key in round_usage:
+            value = usage.get(key, 0)
+            if isinstance(value, (int, float)):
+                round_usage[key] = max(0, int(value))
+        break
+    return {"usage": total, "agents": agents, "round": round_usage}
 
 def _archived_context_page(
     workspace_id: str,

@@ -65,6 +65,7 @@ class SessionObservabilityTests(unittest.TestCase):
                 summary = webapp._session_usage_summary(webapp._read_session_event_log("demo", "demo"))
                 self.assertEqual(summary["usage"], {"input": 10, "output": 3, "total": 13, "cached": 1, "reasoning": 1})
                 self.assertEqual([agent["id"] for agent in summary["agents"]], ["worker", "coordinator"])
+                self.assertEqual(summary["round"], {"input": 7, "output": 1, "total": 8, "cached": 0, "reasoning": 0})
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
@@ -83,6 +84,7 @@ class SessionObservabilityTests(unittest.TestCase):
 
         self.assertEqual(summary["usage"], {"input": 7, "output": 3, "total": 10, "cached": 1, "reasoning": 1})
         self.assertEqual(summary["agents"], [{"id": "coordinator", "usage": summary["usage"]}])
+        self.assertEqual(summary["round"], {"input": 99, "output": 99, "total": 198, "cached": 0, "reasoning": 0})
 
     def test_orphaned_running_state_becomes_persisted_interruption(self) -> None:
         """Expose a restart-lost worker as a durable, explainable terminal state."""
