@@ -179,14 +179,15 @@ def test_usage_cards_reuse_reconciled_agent_status_lights() -> None:
     assert re.search(r'/static/app\.js\?v=workbench-\d+', INDEX_TEMPLATE.read_text(encoding="utf-8"))
 
 
-def test_usage_tiles_show_this_rounds_tokens_in_green() -> None:
-    """Each session usage tile shows the latest round's tokens above the total."""
+def test_usage_tiles_show_current_lifecycle_tokens_in_green() -> None:
+    """Each session usage tile and per-Agent card shows the latest run's tokens as a green +X line."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
 
-    assert "function usageCells(usage, round=null)" in script
-    assert '<i class="usage-round">本轮 ${Number(round[key] || 0).toLocaleString()}</i>' in script
-    assert "usageCells(usage, payload.round)" in script
+    assert "function usageCells(usage, run=null)" in script
+    assert '<i class="usage-round">+${Number(run[key] || 0).toLocaleString()}</i>' in script
+    assert "usageCells(usage, payload.run)" in script
+    assert "usageCells(agent.usage, agent.run)" in script
     assert '<small>${label}</small><b>${Number(usage[key] || 0).toLocaleString()}</b>' in script
     assert ".usage-round { display:block; color:var(--green);" in stylesheet
 
