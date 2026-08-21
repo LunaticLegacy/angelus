@@ -54,11 +54,14 @@ def test_tool_payloads_use_structured_json_and_verbatim_stdout_views() -> None:
     stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
 
     assert "function decodeJson(value)" in chat_component
+    assert "function decodeDisplayString(value)" in chat_component
     assert "JSON.parse(text)" in chat_component
     assert "function legacyPythonContainerToJson(source)" in chat_component
     assert "legacyPythonContainerToJson(text)" in chat_component
+    assert "escapeHtml(decodeDisplayString(value))" in chat_component
     assert 'class="tool-json"' in chat_component
     assert 'class="tool-stdout"' in chat_component
+    assert 'return `<pre class="tool-stdout">${escapeHtml(String(value))}</pre>`' in chat_component
     assert ".tool-json { max-height:280px; overflow:auto;" in stylesheet
 
 
@@ -94,6 +97,7 @@ def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     assert "function selectContextDialogTab(tab)" in script
     assert "function loadContextPrompt(agentId)" in script
     assert "function decodePromptText(value)" in script
+    assert "Actual line feeds remain line feeds." in script
     assert "item.source" in script
     assert "/context`" in script
     assert "不能替代真实请求" in script

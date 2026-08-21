@@ -112,6 +112,33 @@ export function createChatView({ getAgentLabel }) {
   }
 
   /**
+   * Unwrap only complete JSON-string layers for display.
+   *
+   * JSON payloads occasionally preserve a nested string such as
+   * ``\"line one\\nline two\"``. Parsing that complete string restores its
+   * actual newline. This deliberately does not replace arbitrary ``\\n`` text:
+   * raw stdout and code snippets may need those two literal characters.
+   *
+   * @param {*} value JSON scalar value to display.
+   * @returns {string} Human-readable scalar text with verified JSON escapes decoded.
+   */
+  function decodeDisplayString(value) {
+    let text = String(value ?? "");
+    for (let depth = 0; depth < 3; depth += 1) {
+      const candidate = text.trim();
+      if (!(candidate.startsWith('"') && candidate.endsWith('"'))) break;
+      try {
+        const decoded = JSON.parse(candidate);
+        if (typeof decoded !== "string") break;
+        text = decoded;
+      } catch {
+        break;
+      }
+    }
+    return text;
+  }
+
+  /**
    * Render JSON as a bounded hierarchy instead of a single escaped blob.
    *
    * @param {*} value Parsed JSON value to render.
@@ -129,7 +156,7 @@ export function createChatView({ getAgentLabel }) {
     }
     if (value === null) return '<span class="json-value json-null">null</span>';
     if (typeof value === "boolean" || typeof value === "number") return `<span class="json-value">${escapeHtml(String(value))}</span>`;
-    return `<span class="json-value json-string">${escapeHtml(String(value))}</span>`;
+    return `<span class="json-value json-string">${escapeHtml(decodeDisplayString(value))}</span>`;
   }
 
   /**

@@ -233,7 +233,16 @@ function renderContextGraph(payload) {
 }
 /** Switch the context dialog between its graph and raw-context top-level tabs. */
 function selectContextDialogTab(tab) { const selected=tab==="prompt"?"prompt":"graph"; document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>{const active=button.dataset.contextDialogTab===selected;button.setAttribute("aria-selected",String(active));button.classList.toggle("active",active);}); $("context-panel-graph").hidden=selected!=="graph"; $("context-panel-prompt").hidden=selected!=="prompt"; }
-/** Decode JSON-quoted text layers so copied prompt text remains human-readable. */
+/**
+ * Decode complete JSON-string layers for the context preview without touching raw text.
+ *
+ * Actual line feeds remain line feeds. A literal ``\\n`` is converted only after a
+ * complete JSON string has been verified and parsed, so copied stdout and code keep
+ * their byte-level meaning.
+ *
+ * @param {*} value Provider-neutral scalar prompt value.
+ * @returns {string} Human-readable text with verified JSON escapes decoded.
+ */
 function decodePromptText(value) { let text=String(value??""); for(let depth=0;depth<3;depth+=1){const trimmed=text.trim();if(!(trimmed.startsWith('"')&&trimmed.endsWith('"')))break;try{const parsed=JSON.parse(trimmed);if(typeof parsed!=="string")break;text=parsed;}catch(_error){break;}} return text; }
 /** Render one provider-neutral value without JSON escaping its human-readable strings. */
 function readablePromptValue(value,indent="") { if(value===null)return "null"; if(Array.isArray(value))return value.map((item,index)=>`${indent}- [${index}] ${readablePromptValue(item,`${indent}  `)}`).join("\n"); if(typeof value==="object")return Object.entries(value).map(([key,item])=>`${indent}${key}: ${typeof item==="object"&&item!==null?`\n${readablePromptValue(item,`${indent}  `)}`:decodePromptText(item)}`).join("\n"); return decodePromptText(value); }

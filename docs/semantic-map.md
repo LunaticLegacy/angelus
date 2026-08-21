@@ -37,8 +37,8 @@
 | --- | --- | --- |
 | `createChatView({ getAgentLabel })` | Builds transcript cards without persisting state. | Called by `frontend/static/app.js`; returns the rendering operations below. |
 | `legacyPythonContainerToJson(source)` | Converts only quoted dict/list-like Python literals to JSON text without evaluation, handling quoted escapes and `True`/`False`/`None`. | Called by `decodeJson` for persisted legacy results that strict `JSON.parse` rejects. |
-| `decodeJson(value)` | Safely unwraps up to three JSON-encoded string layers and then safely accepts legacy dict/list strings, decoding escaped quotes/newlines/Unicode. | Called by `renderToolPayload`; ordinary stdout remains raw when neither parser accepts it. |
-| `renderJson(value)` | Produces escaped, nested object/array markup for structured tool payloads. | Called recursively and by `renderToolPayload`; CSS bounds the rendered tree with scrolling. |
+| `decodeJson(value)` / `decodeDisplayString(value)` | Safely unwrap up to three complete JSON-encoded string layers, including verified escaped newlines, and then accept legacy dict/list strings without evaluation. `decodeDisplayString` is scalar-only and never rewrites arbitrary backslash sequences. | `decodeJson` is called by `renderToolPayload`; `decodeDisplayString` is called by `renderJson`; ordinary stdout remains raw when neither parser accepts it. |
+| `renderJson(value)` | Produces escaped, nested object/array markup for structured tool payloads, displaying verified JSON line feeds as actual lines. | Called recursively and by `renderToolPayload`; CSS bounds the rendered tree with scrolling. |
 | `renderToolPayload(value, emptyText)` | Selects the structured JSON tree or a literal stdout `<pre>` block for tool inputs and outputs. | Called by `renderTools`, which is called by `buildMessage`. |
 | `buildMessage(message, agentName)` | Builds the common live/history transcript card. Non-empty reasoning is rendered as an always-visible semantic section rather than a disclosure control. | Called by `app.js` SSE append and history render paths. |
 
@@ -67,7 +67,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` | Switches the dialog's top-level entity-graph/context panels. The raw preview renders only a captured remote-request snapshot; when present, its metadata table has the same message source. The near-viewport dialog keeps its chrome fixed and gives graph, metadata, and request body independent scroll regions. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `handleEvent` refreshes an open matching dialog on `agent:remote_request`. |
+| `decodePromptText(value)` / `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` | `decodePromptText` unwraps only verified complete JSON-string layers, retaining literal backslash sequences in unstructured text while preserving real line feeds. The context functions switch the dialog's top-level entity-graph/context panels and render only a captured remote-request snapshot; when present, its metadata table has the same message source. The near-viewport dialog keeps its chrome fixed and gives graph, metadata, and request body independent scroll regions. | `readablePromptValue` calls `decodePromptText`; tab buttons call `selectContextDialogTab`; `handleEvent` refreshes an open matching dialog on `agent:remote_request`. |
 | `loadContextPrompt(agentId)` | Requests the complete persisted model-context shape once, without cursors or pagination. | Called by `openContextGraph`; fetches `api.sessions.get_agent_context_preview`. |
 
 ## `frontend/templates/index.html` — Agents inspector
