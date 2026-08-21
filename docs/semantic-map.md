@@ -40,7 +40,7 @@
 | `decodeJson(value)` / `decodeDisplayString(value)` | Safely unwrap up to three complete JSON-encoded string layers, including verified escaped newlines, and then accept legacy dict/list strings without evaluation. `decodeDisplayString` is scalar-only and never rewrites arbitrary backslash sequences. | `decodeJson` is called by `renderToolPayload`; `decodeDisplayString` is called by `renderJson`; ordinary stdout remains raw when neither parser accepts it. |
 | `renderJson(value)` | Produces escaped, nested object/array markup for structured tool payloads, displaying verified JSON line feeds as actual lines. | Called recursively and by `renderToolPayload`; CSS bounds the rendered tree with scrolling. |
 | `renderToolPayload(value, emptyText)` | Selects the structured JSON tree or a literal stdout `<pre>` block for tool inputs and outputs. | Called by `renderTools`, which is called by `buildMessage`. |
-| `buildMessage(message, agentName)` | Builds the common live/history transcript card. Non-empty reasoning is rendered as an always-visible semantic section rather than a disclosure control. | Called by `app.js` SSE append and history render paths. |
+| `buildMessage(message, agentName)` | Builds the common live/history transcript card. Non-empty reasoning is rendered before the formal answer in an always-visible, bounded scroll region rather than a disclosure control. | Called by `app.js` SSE append and history render paths. |
 
 ## `frontend/static/app.js`
 

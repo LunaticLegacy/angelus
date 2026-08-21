@@ -77,11 +77,14 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
 def test_reasoning_is_visible_transcript_content_not_a_disclosure() -> None:
     """Reasoning must be visible for both live and restored message cards."""
     chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
 
     assert '<section class="reasoning" aria-label="思考过程">' in chat_component
     assert '<details class="reasoning">' not in chat_component
     assert '${reasoning ? `<section class="reasoning"' in chat_component
     assert '${thought}</div></section>` : ""}${content ? `<div class="bubble' in chat_component
+    assert ".message .reasoning { max-height:180px;" in stylesheet
+    assert ".message .reasoning > div { max-height:145px; padding:0; overflow:auto;" in stylesheet
 
 
 def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
