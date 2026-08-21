@@ -84,6 +84,62 @@ class AgentContextPreview:
         }
 
 
+@dataclass(frozen=True)
+class ContextGraphNode:
+    """Browser-safe schema for one persisted long-term-memory entity."""
+
+    id: str
+    name: str
+    entity_type: str
+    summary: str
+    aliases: list[str]
+    first_seen: int
+    last_seen: int
+    freq: int
+
+
+@dataclass(frozen=True)
+class ContextGraphEdge:
+    """Browser-safe schema for one relation between visible graph entities."""
+
+    source_id: str
+    target_id: str
+    relation: str
+    weight: float
+    first_seen: int
+    last_seen: int
+    valid: bool
+    evidence: list[int]
+
+
+@dataclass(frozen=True)
+class ContextGraphCommunity:
+    """Browser-safe schema for one bounded persisted graph community."""
+
+    level: int
+    community_id: str
+    summary: str
+    member_entity_ids: list[str]
+
+
+@dataclass(frozen=True)
+class ContextGraphSnapshot:
+    """Bounded API schema for an Agent's persisted long-term memory graph."""
+
+    available: bool
+    node_count: int
+    edge_count: int
+    community_count: int
+    truncated: bool
+    nodes: list[ContextGraphNode]
+    edges: list[ContextGraphEdge]
+    communities: list[ContextGraphCommunity]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the graph snapshot for FastAPI without leaking storage data."""
+        return asdict(self)
+
+
 def _display_tool_result(value: Any) -> Any:
     """Recover structured tool data for every browser transcript path.
 
@@ -531,11 +587,25 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
             ))
             message_index += 1
     request: dict[str, Any] | None = None
+    request_round: int | None = None
     for event in reversed(_read_session_event_log(safe_session, safe_session)):
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         if event.get("event") == "lifecycle" and event.get("type") == "agent:remote_request" and event.get("agent") == safe_agent and isinstance(data.get("request"), dict):
             request = data["request"]
+            request_round = data.get("round") if isinstance(data.get("round"), int) else None
             break
+    if request is not None:
+        # The visible request body and its metadata must describe the same
+        # snapshot. Checkpoint provenance is intentionally not reused here.
+        messages = [item for item in request.get("messages", []) if isinstance(item, dict)]
+        request_timeline = f"round {request_round}" if request_round is not None else "request"
+        metadata = [AgentContextMetadata(
+            index=index,
+            source=f"{safe_agent} · remote request",
+            type=str(message.get("role", "unknown")),
+            length=len(json.dumps(message, ensure_ascii=False, default=str)),
+            timeline=request_timeline,
+        ) for index, message in enumerate(messages, start=1)]
     return AgentContextPreview(
         messages=messages,
         metadata=metadata,
@@ -787,7 +857,7 @@ def _agent_context_graph(
     agent_name: str,
     *,
     limit: int = 60,
-) -> dict[str, Any]:
+) -> ContextGraphSnapshot:
     """Return a bounded, browser-safe snapshot of one Agent's memory graph.
 
     Args:
@@ -819,25 +889,16 @@ def _agent_context_graph(
         except (TypeError, ValueError):
             return 0.0
 
-    result: dict[str, Any] = {
-        "available": False,
-        "node_count": 0,
-        "edge_count": 0,
-        "community_count": 0,
-        "truncated": False,
-        "nodes": [],
-        "edges": [],
-        "communities": [],
-    }
+    empty = ContextGraphSnapshot(False, 0, 0, 0, False, [], [], [])
     try:
         safe_session = _safe_id(session_id, "session")
         safe_agent = _safe_id(agent_name, "agent")
         path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json.graph.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
-        return result
+        return empty
     if not isinstance(raw, dict):
-        return result
+        return empty
 
     # Normalize persisted data before filtering it, keeping the browser API
     # independent from GraphStore's in-memory dataclasses.
@@ -853,12 +914,6 @@ def _agent_context_graph(
         for item in items
         if isinstance(item, dict)
     ] if isinstance(raw_communities, dict) else []
-    result.update({
-        "available": True,
-        "node_count": len(node_items),
-        "edge_count": len(edge_items),
-        "community_count": len(community_items),
-    })
     bounded_limit = max(1, min(_integer(limit, 60), 120))
     node_items.sort(key=lambda item: (
         -_integer(item.get("last_seen", 0)),
@@ -867,39 +922,22 @@ def _agent_context_graph(
     ))
     visible = node_items[:bounded_limit]
     visible_ids = {str(item.get("id", "")) for item in visible}
-    result["truncated"] = len(node_items) > len(visible)
-    result["nodes"] = [{
-        "id": str(item.get("id", "")),
-        "name": str(item.get("name", item.get("id", ""))),
-        "entity_type": str(item.get("entity_type", "concept")),
-        "summary": str(item.get("summary", ""))[:1_000],
-        "aliases": [str(alias)[:200] for alias in item.get("aliases", []) if isinstance(alias, str)][:12],
-        "first_seen": _integer(item.get("first_seen", 0)),
-        "last_seen": _integer(item.get("last_seen", 0)),
-        "freq": _integer(item.get("freq", 0)),
-    } for item in visible]
-    result["edges"] = [{
-        "source_id": str(item.get("source_id", "")),
-        "target_id": str(item.get("target_id", "")),
-        "relation": str(item.get("relation", "related_to")),
-        "weight": _number(item.get("weight", 0)),
-        "first_seen": _integer(item.get("first_seen", 0)),
-        "last_seen": _integer(item.get("last_seen", 0)),
-        "valid": bool(item.get("valid", True)),
-        "evidence": [int(value) for value in item.get("evidence", []) if isinstance(value, int) and not isinstance(value, bool)][:20],
-    } for item in edge_items if str(item.get("source_id", "")) in visible_ids and str(item.get("target_id", "")) in visible_ids]
-    result["communities"] = [{
-        "level": _integer(item.get("level", 0)),
-        "community_id": str(item.get("community_id", "")),
-        "summary": str(item.get("summary", ""))[:1_000],
-        "member_entity_ids": [str(value) for value in item.get("member_entity_ids", []) if isinstance(value, str)][:30],
-    } for item in community_items[:12]]
-    return result
+    return ContextGraphSnapshot(
+        available=True, node_count=len(node_items), edge_count=len(edge_items),
+        community_count=len(community_items), truncated=len(node_items) > len(visible),
+        nodes=[ContextGraphNode(str(item.get("id", "")), str(item.get("name", item.get("id", ""))), str(item.get("entity_type", "concept")), str(item.get("summary", ""))[:1_000], [str(alias)[:200] for alias in item.get("aliases", []) if isinstance(alias, str)][:12], _integer(item.get("first_seen", 0)), _integer(item.get("last_seen", 0)), _integer(item.get("freq", 0))) for item in visible],
+        edges=[ContextGraphEdge(str(item.get("source_id", "")), str(item.get("target_id", "")), str(item.get("relation", "related_to")), _number(item.get("weight", 0)), _integer(item.get("first_seen", 0)), _integer(item.get("last_seen", 0)), bool(item.get("valid", True)), [int(value) for value in item.get("evidence", []) if isinstance(value, int) and not isinstance(value, bool)][:20]) for item in edge_items if str(item.get("source_id", "")) in visible_ids and str(item.get("target_id", "")) in visible_ids],
+        communities=[ContextGraphCommunity(_integer(item.get("level", 0)), str(item.get("community_id", "")), str(item.get("summary", ""))[:1_000], [str(value) for value in item.get("member_entity_ids", []) if isinstance(value, str)][:30]) for item in community_items[:12]],
+    )
 
 __all__ = [
     "_history_context_paths",
     "AgentContextMetadata",
     "AgentContextPreview",
+    "ContextGraphNode",
+    "ContextGraphEdge",
+    "ContextGraphCommunity",
+    "ContextGraphSnapshot",
     "_read_session_history",
     "_turns_from_legacy_context",
     "_turns_from_event_log",

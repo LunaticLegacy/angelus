@@ -50,6 +50,7 @@ let runActive = false;
 let pendingRoundTools = new Map();
 let pluginStatuses = [];
 let selectedPluginKey = "";
+let contextDialogAgent = "";
 
 const KIMI_CODE_PROVIDER = "kimi-code";
 const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
@@ -243,6 +244,7 @@ async function loadContextPrompt(agentId) { const payload=await apiJson(`/api/se
 /** Fetch a single Agent's persisted graph and open it in the theme-aware dialog. */
 async function openContextGraph(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
+  contextDialogAgent=agentId;
   $("context-graph-title").textContent=`${agentId} · 上下文图`; $("context-graph-subtitle").textContent="正在读取最近一次持久化 checkpoint…";
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
   selectContextDialogTab("graph");$("context-prompt-preview").textContent="正在读取当前上下文…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";
@@ -347,6 +349,9 @@ async function start(message) {
 }
 function handleEvent(event) {
   durableEventCount+=1;
+  // A captured preflight snapshot is durable before its SSE event arrives,
+  // so an open inspector can safely refresh to the exact newest request.
+  if(event.event === "lifecycle" && event.type === "agent:remote_request" && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) loadContextPrompt(contextDialogAgent).catch(error=>trace("上下文请求预览刷新失败",error.message));
   if(event.event === "lifecycle") { traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents); if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundContentHtml=String(roundData.assistant_content_html||""); const roundReasoningHtml=String(roundData.reasoning_content_html||""); const roundKey=roundData.round||""; const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundContentHtml, roundReasoningHtml, roundTools, roundAgent); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
   if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); traceEvents.unshift(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); traceEvents.unshift({...event,type:"agent:error",agent:event.agent || "coordinator"}); tracePayload(event); renderAgentSelector(currentAgents); appendRunErrorBlock("运行失败",event.message); setStatus("运行失败", "error"); return; }
@@ -442,7 +447,7 @@ $("message").addEventListener("input", resizeComposer);
 $("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",()=>{applyProviderPreset(); updateModelSummary();});
 $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
-$("close-context-graph").addEventListener("click", ()=>$("context-graph-dialog").close());
+$("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
 document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 $("open-workspace").addEventListener("click",async()=>{try{const response=await fetch(`/api/sessions/${encodeURIComponent(workspaceId)}/open-folder`,{method:"POST"});const payload=await response.json();if(!response.ok)throw new Error(payload.detail||"无法打开工作空间目录");trace("已打开工作空间目录",payload.path||workspaceId);}catch(error){trace("打开工作空间目录失败",error.message);alert(`无法打开工作空间目录：${error.message}`);}});

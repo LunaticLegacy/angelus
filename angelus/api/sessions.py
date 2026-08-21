@@ -235,7 +235,7 @@ def get_agent_context_graph(session_id: str, agent_name: str) -> dict[str, Any]:
     return {
         "agent": safe_agent,
         "context": _agent_context_stats(safe_session, safe_agent),
-        "graph": _agent_context_graph(safe_session, safe_agent),
+        "graph": _agent_context_graph(safe_session, safe_agent).to_dict(),
     }
 
 

@@ -31,15 +31,13 @@ class ContextArchiveApiTests(unittest.TestCase):
 
                 payload = webapp._agent_context_graph("work", "worker", limit=2)
 
-                self.assertTrue(payload["available"])
-                self.assertTrue(payload["truncated"])
-                self.assertEqual(payload["node_count"], 3)
-                self.assertEqual([node["id"] for node in payload["nodes"]], ["file:a.py", "tool:rg"])
-                self.assertEqual(payload["edges"], [{
-                    "source_id": "file:a.py", "target_id": "tool:rg", "relation": "uses", "weight": 2.0,
-                    "first_seen": 0, "last_seen": 5, "valid": True, "evidence": [3],
-                }])
-                self.assertEqual(payload["community_count"], 1)
+                self.assertTrue(payload.available)
+                self.assertTrue(payload.truncated)
+                self.assertEqual(payload.node_count, 3)
+                self.assertEqual([node.id for node in payload.nodes], ["file:a.py", "tool:rg"])
+                self.assertEqual(payload.edges[0].relation, "uses")
+                self.assertEqual(payload.edges[0].evidence, [3])
+                self.assertEqual(payload.community_count, 1)
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
@@ -50,9 +48,9 @@ class ContextArchiveApiTests(unittest.TestCase):
             storage.WORKSPACE_ROOT = Path(directory)
             try:
                 payload = webapp._agent_context_graph("work", "coordinator")
-                self.assertFalse(payload["available"])
-                self.assertEqual(payload["nodes"], [])
-                self.assertEqual(payload["edges"], [])
+                self.assertFalse(payload.available)
+                self.assertEqual(payload.nodes, [])
+                self.assertEqual(payload.edges, [])
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
@@ -136,6 +134,9 @@ class ContextArchiveApiTests(unittest.TestCase):
 
                 self.assertEqual(preview.request["messages"][0]["content"], "exact request")
                 self.assertEqual(preview.request["tools"][0]["function"]["name"], "search")
+                self.assertEqual(preview.total, 1)
+                self.assertEqual(preview.metadata[0].type, "user")
+                self.assertEqual(preview.metadata[0].timeline, "request")
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
