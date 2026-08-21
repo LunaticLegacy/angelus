@@ -170,7 +170,9 @@ export function createChatView({ getAgentLabel }) {
     const copy = role === "assistant" && content
       ? '<button class="copy-result" type="button">复制结果</button>' : "";
 
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${reasoning ? `<details class="reasoning"><summary>思考过程</summary><div class="markdown">${thought}</div></details>` : ""}${renderTools(tools)}`;
+    // Reasoning is part of the visible transcript, not an optional drawer:
+    // both SSE and restored history use this one card builder.
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${renderTools(tools)}`;
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));
     return element;

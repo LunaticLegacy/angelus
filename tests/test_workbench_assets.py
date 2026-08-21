@@ -14,6 +14,7 @@ def test_event_listeners_target_existing_template_elements() -> None:
     """Keep direct Workbench event listeners aligned with static HTML IDs."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
     element_ids = set(re.findall(r'\\bid="([^"]+)"', template))
     listener_ids = set(re.findall(r'\\$\\("([^"]+)"\\)\\.addEventListener', script))
 
@@ -70,10 +71,19 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
     assert "chatView.buildMessage(message, selectedAgent)" in script
 
 
+def test_reasoning_is_visible_transcript_content_not_a_disclosure() -> None:
+    """Reasoning must be visible for both live and restored message cards."""
+    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
+
+    assert '<section class="reasoning" aria-label="思考过程">' in chat_component
+    assert '<details class="reasoning">' not in chat_component
+
+
 def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     """Keep the context inspector's full prompt preview wired to its API route."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
 
     assert 'data-context-dialog-tab="graph"' in template
     assert 'data-context-dialog-tab="prompt"' in template
