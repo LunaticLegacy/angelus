@@ -82,10 +82,11 @@ def test_context_graph_dialog_contains_selectable_raw_context_preview() -> None:
     assert 'id="context-prompt-cards"' not in template
     assert "function selectContextDialogTab(tab)" in script
     assert "function loadContextPrompt(agentId)" in script
-    assert "function formatPromptPreview(messages)" in script
     assert "function decodePromptText(value)" in script
     assert "item.source" in script
     assert "/context`" in script
+    assert "不能替代真实请求" in script
+    assert "messages.length?formatPromptPreview(messages)" not in script
 
 
 def test_workbench_uses_the_current_settings_persistence_api() -> None:

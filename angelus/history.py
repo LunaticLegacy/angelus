@@ -434,21 +434,20 @@ def _archived_context_page(
 
 
 def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPreview:
-    """Return the complete model-ready form of an Agent's persisted context.
+    """Return context metadata and the latest exact remote request snapshot.
 
     Args:
         session_id: Browser-visible session that owns the context file.
         agent_name: Agent identity used in ``contexts/<agent>.json``.
 
     Returns:
-        Chronological provider-neutral messages generated from the durable
-        linear portion of context, the latest captured remote-request snapshot
-        when available, the number of returned messages, and one
-        metadata record per rendered message. Metadata identifies its source,
-        role/type, character length, and originating timeline. This
-        does not include the transient system prompt, a future user draft, or
-        graph retrieval that can only be computed after that future draft is
-        known.
+        Chronological provider-neutral checkpoint messages, the latest
+        captured remote-request snapshot when available, the number of
+        checkpoint messages, and one metadata record per checkpoint message.
+        Checkpoint messages are inspection evidence only: callers must render
+        ``request`` alone as an exact remote request, because a checkpoint
+        cannot include transient system prompts, a future user draft, graph
+        retrieval, or the provider-prepared ``tools`` array.
 
     Side Effects:
         Reads one context JSON file only. The handler is constructed solely to
@@ -467,7 +466,7 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
 
     handler = ContextHandlerLinear(compacting_llmfetcher_handler=object())
     if not handler.load(path):
-        return {"messages": [], "metadata": [], "request": None, "total": 0}
+        return AgentContextPreview(messages=[], metadata=[], request=None, total=0)
     messages = handler.build_messages()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))

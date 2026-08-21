@@ -53,7 +53,7 @@
 | --- | --- | --- |
 | `_display_tool_result(value)` | Normalizes new typed events and safely restores JSON or legacy `str(dict)`/`str(list)` results while leaving stdout text intact. | Called by `_read_session_history`, `_turns_from_legacy_context`, and `_display_tools_from_event`; every historical transcript path therefore feeds the shared frontend tool renderer with the same data shape as live SSE. |
 | `AgentContextMetadata` / `AgentContextPreview` | Immutable API schemas for message provenance and the complete context-inspector response. The envelope fixes response keys while provider/plugin-extensible message and tool payloads remain JSON objects. | Constructed by `_agent_context_preview`; `AgentContextPreview.to_dict` is consumed by `api.sessions.get_agent_context_preview`. |
-| `_agent_context_preview(session_id, agent_name)` | Builds an `AgentContextPreview` and retrieves the latest credential-free `agent:remote_request` snapshot. It falls back to durable linear context only for sessions with no captured request. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
+| `_agent_context_preview(session_id, agent_name)` | Builds checkpoint metadata and retrieves the latest credential-free `agent:remote_request` snapshot. Checkpoint messages remain inspection evidence only and are never an exact-request fallback. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
 
 ## `angelus.api.sessions`
 
@@ -65,7 +65,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` / `formatPromptPreview(messages)` | Switches the dialog's top-level entity-graph/context panels and renders the context tab as one metadata table plus one scrollable raw-text preview. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `loadContextPrompt` calls the renderer. |
+| `selectContextDialogTab(tab)` / `renderContextPrompt(payload)` | Switches the dialog's top-level entity-graph/context panels. The raw preview renders only a captured remote-request snapshot; when absent it states that no exact request is available, while the table remains checkpoint metadata. Text is safely unwrapped from JSON-quoted layers before insertion through `textContent`. | Tab buttons call `selectContextDialogTab`; `loadContextPrompt` calls the renderer. |
 | `loadContextPrompt(agentId)` | Requests the complete persisted model-context shape once, without cursors or pagination. | Called by `openContextGraph`; fetches `api.sessions.get_agent_context_preview`. |
 
 ## `llmfetcher.agent`
