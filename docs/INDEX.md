@@ -13,6 +13,9 @@
 | `plugin-api.md` | 插件 manifest、运行时注册、权限与 REST 契约。 |
 | `plugin-guide.md` | 插件开发、安装、启用与示例使用指南。 |
 | `plugin-swarm-execution.md` | 插件系统分阶段执行规格与验收标准。 |
+| `v0.5.0-adr.md` | v0.5.0 架构决策记录（Q1 外部产品接入、Q2 前端性能修复范围）。 |
+| `product-adapter.md` | 插件 v2 扩展点 `register_external_product(adapter)` 契约（Spike 已验证）。 |
+| `v0.5.0-spec.md` | v0.5.0 分阶段规格（Phase 0 观察 / Phase 1 控制 / Phase 2 上下文历史 + 性能修复）。 |
 | `mnavrag-arxiv-draft.md` | MNavRAG：层级知识检索方法的学术论文草稿。 |
 | `assets/angelus-hero.png` | README 使用的多 Agent 执行图横幅；标题图标复用 `src-tauri/icons/icon.png`。 |
 
