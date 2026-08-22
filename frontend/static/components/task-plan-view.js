@@ -10,6 +10,21 @@ import { escapeHtml } from "./dom.js";
  * Returns:
  *   Escaped HTML for the task and all of its descendants. The caller owns DOM insertion.
  */
+
+const TASK_STATES = [
+  ["not_started", "未开始"],
+  ["in_progress", "进行中"],
+  ["completed", "已完成"],
+  ["blocked", "受阻"],
+  ["failed", "失败"],
+];
+
+function stateButtons(task) {
+  return TASK_STATES.map(([value, label]) =>
+    `<button type="button" data-task-id="${escapeHtml(task.id)}" data-status="${value}" class="task-state-btn ${task.status === value ? "active" : ""}" title="标记为${label}">${label}</button>`
+  ).join("");
+}
+
 export function renderTaskPlanItem(task, depth = 0) {
   const hasChildren = Array.isArray(task.subtasks) && task.subtasks.length > 0;
   const children = (task.subtasks || []).map((item) =>
@@ -17,6 +32,6 @@ export function renderTaskPlanItem(task, depth = 0) {
   const estimate = task.estimated_minutes ? ` · ${task.estimated_minutes} 分钟` : "";
   const stateControl = hasChildren
     ? `<span class="task-state-derived" title="父任务状态由子任务派生">子项派生</span>`
-    : `<select data-task-id="${escapeHtml(task.id)}" class="task-state"><option value="not_started" ${task.status === "not_started" ? "selected" : ""}>未开始</option><option value="in_progress" ${task.status === "in_progress" ? "selected" : ""}>进行中</option><option value="completed" ${task.status === "completed" ? "selected" : ""}>已完成</option><option value="blocked" ${task.status === "blocked" ? "selected" : ""}>受阻</option></select>`;
+    : `<span class="task-state-buttons" role="group" aria-label="任务状态">${stateButtons(task)}</span>`;
   return `<article class="task-block depth-${depth}"><div class="task-block-head"><span class="task-status ${escapeHtml(task.status)}"></span><div><strong>${escapeHtml(task.title)}</strong><p>${escapeHtml(task.priority)}${estimate}</p></div>${stateControl}</div>${task.description ? `<p class="task-description">${escapeHtml(task.description)}</p>` : ""}${children ? `<div class="task-children">${children}</div>` : ""}</article>`;
 }

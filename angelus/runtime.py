@@ -480,10 +480,10 @@ def _synchronize_plan_with_swarm_event(
             }
             plan = store.update_execution_status(
                 plan_task_id, assignment_id,
-                "completed" if completed else "blocked",
+                "completed" if completed else "failed",
             )
         elif event.event_type in {"task:finalized", "task:report_missing", "agent:error", "agent:failed", "agent:stopped"}:
-            plan = store.update_execution_status(plan_task_id, assignment_id, "blocked")
+            plan = store.update_execution_status(plan_task_id, assignment_id, "failed")
         else:
             return
     except ValueError:

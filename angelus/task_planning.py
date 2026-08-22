@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from llmfetcher.llm_types import Tool, ToolParameter, ToolSchema
 
-_STATUSES = {"not_started", "in_progress", "completed", "blocked"}
+_STATUSES = {"not_started", "in_progress", "completed", "blocked", "failed"}
 _PRIORITIES = {"low", "medium", "high", "critical"}
 _PLAN_LOCKS: dict[Path, threading.RLock] = {}
 _PLAN_LOCKS_GUARD = threading.Lock()
@@ -87,7 +87,7 @@ class TaskPlanStore:
 
         Args:
             task_id: Stable task identifier in the nested plan.
-            status: One of not_started, in_progress, completed or blocked.
+            status: One of not_started, in_progress, completed, blocked or failed.
 
         Returns:
             Updated full plan.
@@ -251,7 +251,9 @@ class TaskPlanStore:
                 continue
             TaskPlanStore._reconcile_parent_statuses(children)
             states = {str(child.get("status", "not_started")) for child in children}
-            if "blocked" in states:
+            if "failed" in states:
+                task["status"] = "failed"
+            elif "blocked" in states:
                 task["status"] = "blocked"
             elif "in_progress" in states:
                 task["status"] = "in_progress"
@@ -300,5 +302,5 @@ def create_task_planning_tools(
 
     return [
         Tool(name="set_task_plan", description="Create or replace the user's nested task plan. Use it for multi-step goals before executing work.", schemas=ToolSchema(properties=[ToolParameter(name="goal", description="User goal", required=True), ToolParameter(name="summary", description="Planning summary", required=True), ToolParameter(name="tasks", type="array", description="Nested tasks with title, optional stable id (or task_id), description, priority, estimated_minutes and subtasks", required=True)]), handler=set_task_plan),
-        Tool(name="update_task_status", description="Update a planned task as work progresses.", schemas=ToolSchema(properties=[ToolParameter(name="task_id", description="Task ID from the current plan", required=True), ToolParameter(name="status", description="not_started, in_progress, completed or blocked", enum=sorted(_STATUSES), required=True)]), handler=update_task_status),
+        Tool(name="update_task_status", description="Update a planned task as work progresses.", schemas=ToolSchema(properties=[ToolParameter(name="task_id", description="Task ID from the current plan", required=True), ToolParameter(name="status", description="not_started, in_progress, completed, blocked or failed", enum=sorted(_STATUSES), required=True)]), handler=update_task_status),
     ]

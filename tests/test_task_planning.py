@@ -88,3 +88,46 @@ def test_agent_plan_stores_are_isolated_and_keep_legacy_coordinator_path(
     assert worker.path.parent.name == "plans"
     assert coordinator.read()["goal"] == "主计划"
     assert worker.read()["goal"] == "子任务"
+
+
+def test_failed_status_is_accepted_and_derives_parent_state() -> None:
+    """A leaf can be marked failed and its parent derives the failed state."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        store.replace(goal="Ship", summary="", tasks=[{
+            "id": "parent", "title": "Release", "subtasks": [
+                {"id": "leaf-a", "title": "Build"},
+                {"id": "leaf-b", "title": "Verify"},
+            ],
+        }])
+        updated = store.update_status("leaf-a", "failed")
+        assert updated["tasks"][0]["status"] == "failed"
+        assert updated["tasks"][0]["subtasks"][0]["status"] == "failed"
+
+
+def test_failed_outranks_blocked_in_parent_derivation() -> None:
+    """A failed child marks the parent failed even when another child is blocked."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        store.replace(goal="Ship", summary="", tasks=[{
+            "id": "parent", "title": "Release", "subtasks": [
+                {"id": "leaf-a", "title": "Build"},
+                {"id": "leaf-b", "title": "Verify"},
+            ],
+        }])
+        store.update_status("leaf-a", "blocked")
+        store.update_status("leaf-b", "failed")
+        assert store.read()["tasks"][0]["status"] == "failed"
+
+
+def test_invalid_status_still_rejected() -> None:
+    """Unknown statuses remain rejected after adding failed."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        store.replace(goal="Ship", summary="", tasks=[{"id": "leaf", "title": "Build"}])
+        try:
+            store.update_status("leaf", "exploded")
+        except ValueError as error:
+            assert "Unknown task status" in str(error)
+        else:
+            raise AssertionError("unknown status must be rejected")

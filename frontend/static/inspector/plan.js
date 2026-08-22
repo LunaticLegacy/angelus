@@ -38,12 +38,9 @@ function renderTask(task, depth = 0) {
           <strong>${escapeHtml(task.title)}</strong>
           <p>${escapeHtml(task.priority)}${estimate}</p>
         </div>
-        <select data-task-id="${escapeHtml(task.id)}" class="task-state">
-          <option value="not_started" ${task.status === "not_started" ? "selected" : ""}>未开始</option>
-          <option value="in_progress" ${task.status === "in_progress" ? "selected" : ""}>进行中</option>
-          <option value="completed" ${task.status === "completed" ? "selected" : ""}>已完成</option>
-          <option value="blocked" ${task.status === "blocked" ? "selected" : ""}>受阻</option>
-        </select>
+        <span class="task-state-buttons" role="group" aria-label="任务状态">
+          ${["not_started","in_progress","completed","blocked","failed"].map((value)=>`<button type="button" data-task-id="${escapeHtml(task.id)}" data-status="${value}" class="task-state-btn ${task.status === value ? "active" : ""}" title="标记为${({not_started:"未开始",in_progress:"进行中",completed:"已完成",blocked:"受阻",failed:"失败"})[value]}">${({not_started:"未开始",in_progress:"进行中",completed:"已完成",blocked:"受阻",failed:"失败"})[value]}</button>`).join("")}
+        </span>
       </div>
       ${task.description ? `<p class="task-description">${escapeHtml(task.description)}</p>` : ""}
       ${children ? `<div class="task-children">${children}</div>` : ""}
@@ -59,11 +56,12 @@ async function updateStatus(taskId, status) {
 }
 
 export function bindStatusUpdates() {
-  $("task-plan").addEventListener("change", (event) => {
-    if (event.target.matches(".task-state"))
+  $("task-plan").addEventListener("click", (event) => {
+    const button = event.target.closest(".task-state-btn");
+    if (button)
       updateStatus(
-        event.target.dataset.taskId,
-        event.target.value
+        button.dataset.taskId,
+        button.dataset.status
       ).catch((error) => console.error("任务更新失败", error));
   });
 }

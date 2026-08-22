@@ -535,7 +535,7 @@ $("refresh-graph").addEventListener("click",()=>loadInspectorAgents().catch(erro
 $("refresh-trace").addEventListener("click",()=>loadTrace(true).catch(error=>trace("Trace 加载失败",error.message)));
 $("load-more-trace").addEventListener("click",()=>loadTrace(false).catch(error=>trace("Trace 加载失败",error.message)));
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
-$("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
+$("task-plan").addEventListener("click",event=>{const btn=event.target.closest(".task-state-btn"); if(btn) updatePlanStatus(btn.dataset.taskId,btn.dataset.status).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
 async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await initPlugins(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); applyProviderPreset(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
