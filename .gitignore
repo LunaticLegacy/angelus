@@ -65,3 +65,7 @@ src-tauri/gen/
 src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
 /*-backend.spec
+
+# Angelus-based plugin
+plugins/
+
