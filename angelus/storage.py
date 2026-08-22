@@ -331,6 +331,92 @@ def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str
             events.append(payload)
     return events
 
+def _read_session_event_log_from(
+    workspace_id: str,
+    session_id: str,
+    offset_bytes: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """Read durable events appended at or after a byte offset.
+
+    Args:
+        workspace_id: Session storage partition that owns ``events.ndjson``.
+        session_id: Browser-visible session identity within that partition.
+        offset_bytes: Byte position in ``events.ndjson`` where the previous
+            read stopped. Pass the second element of the previous return value
+            to tail only newly appended records without rescanning history.
+
+    Returns:
+        A ``(events, next_offset)`` pair: JSON object records in write order
+        that begin at or after ``offset_bytes``, and the byte offset at which
+        the next incremental read should resume. A trailing partial line (a
+        concurrent append in progress) is not consumed, so the next poll
+        retries it once the writer finishes.
+    """
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    try:
+        with event_path.open("rb") as handle:
+            handle.seek(max(0, offset_bytes))
+            raw = handle.read()
+    except OSError:
+        return [], max(0, offset_bytes)
+
+    events: list[dict[str, Any]] = []
+    consumed = max(0, offset_bytes)
+    lines = raw.split(b"\n")
+    # A trailing line without a newline is an in-progress append; leave its
+    # bytes unconsumed so the next poll retries it after the writer flushes.
+    if raw and not raw.endswith(b"\n"):
+        lines = lines[:-1]
+    for line in lines:
+        if not line:
+            continue
+        consumed += len(line) + 1
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            # Malformed lines still advance the offset so a tail loop can
+            # never spin forever on the same bytes.
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events, consumed
+
+
+def _session_event_offset_after(workspace_id: str, session_id: str, after: int) -> int:
+    """Return the byte offset just past ``after`` valid durable events.
+
+    Args:
+        workspace_id: Session storage partition that owns ``events.ndjson``.
+        session_id: Browser-visible session identity.
+        after: Number of already-rendered records to skip; ``<= 0`` starts at
+            the beginning of the log.
+
+    Returns:
+        A byte offset suitable for ``_read_session_event_log_from``. Malformed
+        lines are skipped without counting toward ``after``.
+    """
+    if after <= 0:
+        return 0
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    offset = 0
+    seen = 0
+    try:
+        with event_path.open("rb") as handle:
+            for line in handle:
+                offset += len(line)
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    seen += 1
+                    if seen >= after:
+                        break
+    except OSError:
+        return 0
+    return offset
+
+
 def _session_event_page(
     workspace_id: str,
     session_id: str,

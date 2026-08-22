@@ -39,6 +39,9 @@ let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
 let traceEvents = [];
+// Newest lifecycle/error event per Agent id, kept in sync with traceEvents so
+// agentStateView resolves a state in O(1) instead of scanning the whole trace.
+let traceEventIndex = new Map();
 let durableEventCount = 0;
 let renderedSteerEvents = new Set();
 let renderedRoundEvents = new Set();
@@ -164,7 +167,7 @@ function agentStateView(agentId, agents=currentAgents) {
 
   // The live/persisted trace is newer than a graph response already in the
   // browser, so it wins until the refreshed graph snapshot arrives.
-  const event=traceEvents.find(item=>(item.event==="lifecycle"&&item.agent===agentId)||(item.event==="error"&&agentId==="coordinator"));
+  const event=traceEventIndex.get(agentId);
   const persisted=currentGraph.node_states?.[agentId];
   if(event&&(!persisted?.state||Number(event.timestamp||0)>=Number(persisted.updated_at||0))){
     const type=String(event.type||"");
@@ -274,7 +277,12 @@ async function loadGraph() { const response=await fetch(graphUrl()); if(response
 function traceUrl(before=null) { const params=new URLSearchParams({limit:"200"}); if(before !== null) params.set("before",String(before)); return `/api/sessions/${sessionId}/events?${params}`; }
 /** Streaming deltas are transport-only; the completed round remains the trace record. */
 function isTraceVisible(event) { return !(event?.event === "lifecycle" && event?.type === "agent:stream_delta"); }
-async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); if(reset){ traceEvents=events; traceBefore=page.next_before; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_before; } if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=traceBefore === null; }
+/** Debounced graph+plan reload so a burst of SSE events coalesces into one. */
+const scheduleGraphPlanReload = debounce(() => {
+  loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message));
+  loadPlan().catch(error=>trace("任务规划加载失败",error.message));
+}, 150);
+async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); if(reset){ traceEvents=events; traceBefore=page.next_before; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_before; } rebuildTraceEventIndex(); if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=traceBefore === null; }
 function agentContextStats(agent) {
   const ctx = agent.context || {};
   const messages = Number(ctx.messages || 0);
@@ -373,12 +381,38 @@ function showCompactStatus(text, state="running", dismissMs=0) {
   if(dismissMs>0) compactStatusTimer=setTimeout(()=>{ el.hidden=true; el.className="compact-status"; }, dismissMs);
 }
 function clearCompactStatus() { clearTimeout(compactStatusTimer); const el=$("compact-status"); if(el){ el.hidden=true; el.className="compact-status"; } }
+/** Coalesce a burst of SSE-driven refreshes into one trailing call. */
+function debounce(fn, wait=150) {
+  let timer = null;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+/** Record the newest matching event for an Agent in the O(1) state index. */
+function indexTraceEvent(event) {
+  if(!event) return;
+  if(event.event === "lifecycle") traceEventIndex.set(event.agent || "coordinator", event);
+  else if(event.event === "error") traceEventIndex.set("coordinator", event);
+}
+/** Rebuild the index from traceEvents (newest-first); first match wins. */
+function rebuildTraceEventIndex() {
+  traceEventIndex = new Map();
+  for(const event of traceEvents) {
+    if(event.event === "lifecycle") {
+      const agent = event.agent || "coordinator";
+      if(!traceEventIndex.has(agent)) traceEventIndex.set(agent, event);
+    } else if(event.event === "error" && !traceEventIndex.has("coordinator")) {
+      traceEventIndex.set("coordinator", event);
+    }
+  }
+}
 function handleEvent(event) {
   if(!event.ephemeral) durableEventCount+=1;
   // A captured preflight snapshot is durable before its SSE event arrives,
   // so an open inspector can safely refresh to the exact newest request.
   if(event.event === "lifecycle" && event.type === "agent:remote_request" && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) loadContextPrompt(contextDialogAgent).catch(error=>trace("上下文请求预览刷新失败",error.message));
-  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents);
+  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } traceEvents.unshift(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
   if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator";
     if(event.type==="context:compact_started"){ const ratio=typeof cd.ratio==="number"?` ${cd.ratio}%`:"";
       const csize=cd.context_size?` · ${cd.context_size} 字符`:"";
@@ -386,11 +420,11 @@ function handleEvent(event) {
     else if(event.type==="context:compact_success"){ showCompactStatus(`上下文压缩完成（${cagent}）：${cd.archived_messages??"N"} 条消息 → 1 条摘要`,"success",4000); }
     else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
     else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
-  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundContentHtml=String(roundData.assistant_content_html||""); const roundReasoningHtml=String(roundData.reasoning_content_html||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundContentHtml, roundReasoningHtml, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
-  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); traceEvents.unshift(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
-  if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); traceEvents.unshift({...event,type:"agent:error",agent:event.agent || "coordinator"}); tracePayload(event); renderAgentSelector(currentAgents); appendRunErrorBlock("运行失败",event.message); setStatus("运行失败", "error"); return; }
-  if(event.event === "stopped") { setWorkspaceIndicator(workspaceId,"done"); traceEvents.unshift(event); tracePayload(event); }
-  if(event.event === "done") { setWorkspaceIndicator(workspaceId,"done"); finish(); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); }
+  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundContentHtml=String(roundData.assistant_content_html||""); const roundReasoningHtml=String(roundData.reasoning_content_html||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundContentHtml, roundReasoningHtml, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
+  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); traceEvents.unshift(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
+  if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; traceEvents.unshift(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); appendRunErrorBlock("运行失败",event.message); setStatus("运行失败", "error"); return; }
+  if(event.event === "stopped") { setWorkspaceIndicator(workspaceId,"done"); traceEvents.unshift(event); indexTraceEvent(event); tracePayload(event); }
+  if(event.event === "done") { setWorkspaceIndicator(workspaceId,"done"); finish(); scheduleGraphPlanReload(); }
 }
 function finish() { clearCompactStatus(); source?.close(); source=null; sourceWorkspaceId=""; setRunning(false); if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
 /* ---- Slash commands -------------------------------------------------- */

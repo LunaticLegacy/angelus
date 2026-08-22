@@ -207,7 +207,10 @@ def test_completed_swarm_is_blue_even_when_a_worker_failed() -> None:
 
     assert 'currentGraph.run_status?.status==="completed"' in script
     assert 'return stateView("completed","当前会话：运行完毕",agentId);' in script
-    assert 'finish(); loadGraph().then(loadAgents)' in script
+    # The done handler now schedules a debounced graph+plan reload instead of
+    # firing an immediate fetch; the reload must still be wired up.
+    assert 'scheduleGraphPlanReload();' in script
+    assert 'loadGraph().then(loadAgents)' in script
 
 
 def test_agents_panel_renders_only_the_single_topology_tree() -> None:

@@ -27,8 +27,10 @@ from ..storage import (
     _get_session,
     _persist_json,
     _read_session_event_log,
+    _read_session_event_log_from,
     _run_state_path,
     _safe_id,
+    _session_event_offset_after,
     _session_path,
     _sessions_lock,
 )
@@ -344,10 +346,10 @@ def stream_events(workspace_id: str, session_id: str, after: int = 0) -> Streami
         # SSE reconnect): replay the durable tail once and close instead of
         # letting the browser retry a 404 connection forever.
         def replay_historical():
-            events = _read_session_event_log(workspace_id, session_id)
-            for index, payload in enumerate(events):
-                if index >= max(0, after):
-                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            start_offset = _session_event_offset_after(workspace_id, session_id, after)
+            events, _ = _read_session_event_log_from(workspace_id, session_id, start_offset)
+            for payload in events:
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
         return StreamingResponse(
             replay_historical(),
             media_type="text/event-stream",
@@ -366,12 +368,12 @@ def stream_events(workspace_id: str, session_id: str, after: int = 0) -> Streami
                 if payload.get("ephemeral"):
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-        next_index = max(0, after)
+        next_offset = _session_event_offset_after(workspace_id, session_id, after)
         while True:
-            events = _read_session_event_log(workspace_id, session_id)
-            while next_index < len(events):
-                payload = events[next_index]
-                next_index += 1
+            events, next_offset = _read_session_event_log_from(
+                workspace_id, session_id, next_offset
+            )
+            for payload in events:
                 yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             if active.done.is_set():
                 yield from ephemeral_events()
