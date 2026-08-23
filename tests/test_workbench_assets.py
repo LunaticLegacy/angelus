@@ -288,3 +288,27 @@ def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     assert 'className = "message steer"' in chat_component
     assert ".message.user,.message.steer { margin-left:auto; }" in stylesheet
     assert re.search(r'/static/app\.js\?v=workbench-\d+', template)
+
+
+def test_context_dialog_exposes_compaction_input_preview_tab() -> None:
+    """Keep the third context-dialog tab wired to its read-only API route."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'data-context-dialog-tab="compaction"' in template
+    assert 'id="context-tab-compaction"' in template
+    assert 'id="context-panel-compaction"' in template
+    assert 'id="context-compaction-title"' in template
+    assert 'id="context-compaction-note"' in template
+    assert 'id="context-compaction-status"' in template
+    assert 'id="context-compaction-stats"' in template
+    assert 'id="context-compaction-preview"' in template
+    assert "function renderCompactionInput(payload)" in script
+    assert "function loadCompactionInput(agentId)" in script
+    assert "/context/compaction-input`" in script
+    assert 'tab==="compaction"?"compaction":"graph"' in script
+    assert "$(\"context-panel-compaction\").hidden=selected!==\"compaction\"" in script
+    assert "loadCompactionInput(agentId)" in script
+    assert "payload.estimated_tokens" in script
+    assert "payload.omitted" in script
+    assert "压缩器没有可发送的输入" in script

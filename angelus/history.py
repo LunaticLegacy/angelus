@@ -968,6 +968,87 @@ def _agent_context_stats(session_id: str, agent_name: str) -> dict[str, Any]:
     return stats
 
 
+def _agent_compaction_input_preview(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Return the exact text the context compactor would send for one Agent.
+
+    Reads the Agent's persisted linear-context JSON
+    (``contexts/<agent>.json``) and rebuilds the newest-first,
+    budget-bounded transcript that ``ContextHandlerLinear``
+    ``_build_compaction_input()`` produces for a summary request. This is a
+    live input preview: it reflects the current checkpoint exactly as the
+    compactor would serialize it, without invoking any model or mutating
+    persisted state.
+
+    Args:
+        session_id: Browser-stable session identity.
+        agent_name: Graph Agent whose context file is read.
+
+    Returns:
+        Dict with ``text`` (the bounded transcript), ``characters``,
+        ``threshold``, ``round``, ``messages`` (total serialized entries),
+        ``omitted`` (entries dropped by the compaction budget), and
+        ``estimated_tokens``. Missing or malformed context files yield an
+        empty ``text`` with zeroed metadata so the UI can render an empty
+        state instead of failing.
+    """
+    empty = {
+        "text": "",
+        "characters": 0,
+        "threshold": 0,
+        "round": 0,
+        "messages": 0,
+        "omitted": 0,
+        "estimated_tokens": 0,
+    }
+    try:
+        safe_session = _safe_id(session_id, "session")
+        safe_agent = _safe_id(agent_name, "agent")
+        path = _session_path(safe_session, safe_session) / "contexts" / f"{safe_agent}.json"
+        if not path.is_file():
+            return empty
+
+        # Reuse the runtime's linear serializer so the preview matches the
+        # exact compaction input, including compacted abstracts and
+        # request-side tool-output limits.
+        from llmfetcher.context_handlers.linear import ContextHandlerLinear
+
+        handler = ContextHandlerLinear(compacting_llmfetcher_handler=object())
+        if not handler.load(path):
+            return empty
+
+        serialized_entries = [
+            json.dumps(entry, ensure_ascii=False, default=str)
+            for entry in handler.build_messages()
+        ]
+        # Mirror _build_compaction_input's newest-first retention so the
+        # omitted count matches the rendered text exactly.
+        retained = 0
+        used = 0
+        limit = handler.compaction_input_char_limit
+        for entry in reversed(serialized_entries):
+            addition = len(entry) + 2
+            if retained and used + addition > limit:
+                break
+            if not retained and len(entry) > limit:
+                retained = 1
+                used = limit
+                break
+            retained += 1
+            used += addition
+        text = handler._build_compaction_input()
+        return {
+            "text": text,
+            "characters": len(text),
+            "threshold": handler.compress_threshold,
+            "round": handler._round,
+            "messages": len(serialized_entries),
+            "omitted": len(serialized_entries) - retained,
+            "estimated_tokens": (len(text) + 3) // 4,
+        }
+    except (OSError, ValueError, json.JSONDecodeError):
+        return empty
+
+
 def _agent_context_graph(
     session_id: str,
     agent_name: str,

@@ -20,6 +20,7 @@ from ..classes import (
     WorkspaceRequest,
 )
 from ..history import (
+    _agent_compaction_input_preview,
     _agent_context_preview,
     _agent_context_graph,
     _agent_context_stats,
@@ -262,6 +263,30 @@ def get_agent_context_preview(session_id: str, agent_name: str) -> dict[str, Any
         raise HTTPException(status_code=422, detail="Select one Agent to inspect its context")
     safe_agent = _safe_id(agent_name, "agent")
     return {"agent": safe_agent, **_agent_context_preview(safe_session, safe_agent).to_dict()}
+
+
+@router.get("/api/sessions/{session_id}/agents/{agent_name}/context/compaction-input")
+def get_agent_compaction_input_preview(session_id: str, agent_name: str) -> dict[str, Any]:
+    """Expose the exact text the context compactor would send for one Agent.
+
+    Args:
+        session_id: Browser-visible session that owns the selected Agent.
+        agent_name: One concrete Agent identity; aggregate ``all`` is invalid.
+
+    Returns:
+        Agent ID plus the budget-bounded, newest-first compaction input
+        rebuilt live from the persisted checkpoint, with character, threshold,
+        round, message, omitted-entry, and estimated-token metadata. This is
+        read-only: it never compacts, saves, or calls a model.
+
+    Raises:
+        HTTPException: If the aggregate Agent filter is requested.
+    """
+    safe_session = _safe_id(session_id, "session")
+    if agent_name == "all":
+        raise HTTPException(status_code=422, detail="Select one Agent to inspect its compaction input")
+    safe_agent = _safe_id(agent_name, "agent")
+    return {"agent": safe_agent, **_agent_compaction_input_preview(safe_session, safe_agent)}
 
 
 def _editable_context_store(session_id: str, agent_name: str) -> ContextEditStore:
