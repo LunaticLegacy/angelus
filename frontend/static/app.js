@@ -1,6 +1,6 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=tool-payload-2";
+import { createChatView } from "./components/chat-view.js?v=tool-payload-3";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { initPlugins, loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-controls-1";
@@ -94,7 +94,7 @@ function renderMemorySessionPicker() { const options=$("session-memory-options")
 const chatView = createChatView({ getAgentLabel: () => selectedAgent });
 const traceView = createTraceView();
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
-function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??""})); }
+function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??"", duration_ms:Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null})); }
 /** Append a single transcript turn live (real-time path). */
 function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="", usage=null, modelDurationMs=null, timestamp=null) { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs,timestamp},agentName); }
 function streamKey(agent, round) { return `${agent || "coordinator"}:${round || ""}`; }

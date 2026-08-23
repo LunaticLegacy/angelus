@@ -40,7 +40,7 @@ def test_active_workbench_uses_component_views_through_an_es_module_entrypoint()
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
     assert 'type="module" src="/static/app.js?v=workbench-' in template
-    assert 'from "./components/chat-view.js?v=tool-payload-2"' in script
+    assert 'from "./components/chat-view.js?v=tool-payload-3"' in script
     assert 'from "./components/trace-view.js"' in script
     assert 'from "./components/task-plan-view.js"' in script
     assert (COMPONENTS_DIR / "chat-view.js").is_file()

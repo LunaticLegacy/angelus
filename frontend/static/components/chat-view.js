@@ -173,12 +173,24 @@ export function createChatView({ getAgentLabel }) {
     return `<pre class="tool-stdout">${escapeHtml(String(value))}</pre>`;
   }
 
+  /** Format a wall-clock duration in milliseconds as a compact human label. */
+  function formatDuration(durationMs) {
+    const ms = Number(durationMs);
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)}s`;
+  }
+
   function renderTools(tools = []) {
     if (!tools.length) return "";
-    const calls = tools.map((tool) => `
-      <article class="tool-call"><strong>${escapeHtml(tool.name)}</strong><p>参数</p>
+    const calls = tools.map((tool) => {
+      const duration = formatDuration(tool.duration_ms);
+      const badge = duration ? `<span class="tool-duration">${escapeHtml(duration)}</span>` : "";
+      return `
+      <article class="tool-call"><strong>${escapeHtml(tool.name)}</strong>${badge}<p>参数</p>
       ${renderToolPayload(tool.arguments, "无参数")}<p>结果</p>
-      ${renderToolPayload(tool.result, "无返回内容")}</article>`).join("");
+      ${renderToolPayload(tool.result, "无返回内容")}</article>`;
+    }).join("");
     return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
   }
 
