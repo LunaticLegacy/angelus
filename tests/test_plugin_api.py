@@ -464,3 +464,78 @@ def test_disabled_plugin_routes_not_mounted(
     assert response.status_code == 404
     # the enabled plugin's route still works
     assert client.get("/plugins/alpha/api/info").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /api/plugins/rescan — hot discovery from the workbench refresh button
+# ---------------------------------------------------------------------------
+
+
+def test_rescan_discovers_and_loads_newly_added_plugin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, manager, _ = _build_app(monkeypatch, tmp_path, "alpha")
+
+    # A new plugin directory is dropped in while the backend is running.
+    _write_plugin(tmp_path / "workspace-plugins", "bravo")
+    _add_registry_record(plugin_registry, "bravo", enabled=True)
+
+    response = client.post("/api/plugins/rescan")
+
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["added"] == ["bravo"]
+    assert summary["loaded"] == ["bravo"]
+    assert summary["removed"] == []
+    # the newly loaded plugin's route is mounted immediately
+    assert client.get("/plugins/bravo/api/info").status_code == 200
+    assert client.get("/plugins/bravo/api/info").json() == {
+        "ok": True,
+        "plugin": "bravo",
+    }
+
+
+def test_rescan_removes_plugin_whose_dir_was_deleted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, manager, _ = _build_app(monkeypatch, tmp_path, "alpha")
+    assert client.get("/plugins/alpha/api/info").status_code == 200
+
+    shutil.rmtree(tmp_path / "workspace-plugins" / "alpha")
+
+    response = client.post("/api/plugins/rescan")
+
+    assert response.status_code == 200
+    summary = response.json()
+    assert summary["removed"] == ["alpha"]
+    assert summary["added"] == []
+    # teardown unmounted the plugin's routes
+    assert client.get("/plugins/alpha/api/info").status_code == 404
+    assert manager.plugin("alpha") is None
+
+
+def test_rescan_noop_returns_empty_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, _, _ = _build_app(monkeypatch, tmp_path, "alpha")
+
+    response = client.post("/api/plugins/rescan")
+
+    assert response.status_code == 200
+    assert response.json() == {"added": [], "removed": [], "loaded": []}
+
+
+def test_rescan_never_imports_unregistered_plugin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, manager, _ = _build_app(monkeypatch, tmp_path, "alpha")
+
+    # A directory appears but has no registry record: discovered, not loaded.
+    _write_plugin(tmp_path / "workspace-plugins", "bravo")
+
+    response = client.post("/api/plugins/rescan")
+
+    assert response.status_code == 200
+    assert response.json()["added"] == []
+    assert manager.plugin("bravo").state.value == "discovered"
+    assert client.get("/plugins/bravo/api/info").status_code == 404
