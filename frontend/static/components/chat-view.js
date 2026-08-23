@@ -182,8 +182,16 @@ export function createChatView({ getAgentLabel }) {
     return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
   }
 
+  /** Format an epoch-seconds value as local HH:MM:SS. */
+  function formatClock(epochSeconds) {
+    if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return "";
+    const date = new Date(epochSeconds * 1000);
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
   /** One-line token accounting footer for one model round. */
-  function buildTokenStats(usage, modelDurationMs = null) {
+  function buildTokenStats(usage, modelDurationMs = null, timestamp = null, durationMs = null) {
     if (!usage || typeof usage !== "object") return "";
     const n = (value) => Math.max(0, Number(value || 0));
     const fmt = (value) => n(value).toLocaleString();
@@ -196,6 +204,19 @@ export function createChatView({ getAgentLabel }) {
     if (seconds > 0 && output > 0) {
       text += ` · ${(output / seconds).toFixed(1)} tok/s`;
     }
+    // The block's end time is the durable round timestamp; the start is end
+    // minus the full round duration (fall back to the model duration).
+    const end = Number(timestamp);
+    const spanMs = Number.isFinite(Number(durationMs)) && Number(durationMs) > 0
+      ? Number(durationMs)
+      : (Number.isFinite(Number(modelDurationMs)) && Number(modelDurationMs) > 0 ? Number(modelDurationMs) : 0);
+    if (Number.isFinite(end) && end > 0) {
+      const startText = formatClock(end - spanMs / 1000);
+      const endText = formatClock(end);
+      if (startText && endText) {
+        text += ` · 起始 ${startText} · 结束 ${endText}`;
+      }
+    }
     return `<footer class="message-tokens">${escapeHtml(text)}</footer>`;
   }
 
@@ -203,7 +224,7 @@ export function createChatView({ getAgentLabel }) {
   function buildMessage(message, agentName = "") {
     const { role, content, reasoning = "", content_html: contentHtml = "",
       reasoning_html: reasoningHtml = "", tools = [], usage = null,
-      model_duration_ms = null } = message;
+      model_duration_ms = null, timestamp = null, duration_ms = null } = message;
     if (role === "steer") return buildSteer(content);
 
     const element = document.createElement("article");
@@ -217,7 +238,7 @@ export function createChatView({ getAgentLabel }) {
 
     // Reasoning is visible before the formal answer in both live and restored
     // transcript cards, so readers see the model's working context first.
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms) : ""}`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, timestamp, duration_ms) : ""}`;
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));
     return element;

@@ -819,6 +819,13 @@ def _agent_turns_from_events(
                 turn["usage"] = round_usage
             if isinstance(data.get("model_duration_ms"), (int, float)):
                 turn["model_duration_ms"] = data["model_duration_ms"]
+            # The round's end time is the durable event timestamp; the start is
+            # end minus the full round duration, so the token footer can show
+            # the block's time span without a separate start event.
+            if isinstance(event.get("timestamp"), (int, float)):
+                turn["timestamp"] = float(event["timestamp"])
+            if isinstance(data.get("duration_ms"), (int, float)):
+                turn["duration_ms"] = data["duration_ms"]
             turns.append(turn)
             last_assistant = (content, reasoning)
             if isinstance(round_number, int):

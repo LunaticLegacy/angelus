@@ -69,7 +69,7 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
     """SSE, aggregate replay, and selected-Agent replay must render one card type."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
 
-    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs},agentName)" in script
+    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs,timestamp},agentName)" in script
     assert "chatView.render(messages, assistantLabel)" in script
     assert "chatView.buildMessage(message, selectedAgent)" in script
 
