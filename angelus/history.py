@@ -862,11 +862,16 @@ def _display_tools_from_event(data: dict[str, Any]) -> list[dict[str, Any]]:
     for item in data.get("tool_calls", []):
         if not isinstance(item, dict):
             continue
-        tools.append({
+        tool = {
             "name": str(item.get("name", "unknown")),
             "arguments": item.get("args", {}),
             "result": _display_tool_result(item.get("result", "")),
-        })
+        }
+        # Per-tool wall-clock timing is optional so older durable logs (and
+        # synthetic events) still render without a duration badge.
+        if isinstance(item.get("duration_ms"), (int, float)):
+            tool["duration_ms"] = item["duration_ms"]
+        tools.append(tool)
     return tools
 
 def _read_agent_history(workspace_id: str, session_id: str, agent_name: str) -> list[dict[str, Any]]:
