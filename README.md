@@ -192,3 +192,17 @@ Angelus 采用 AGPL-3.0-or-later，同时保留商业授权路径。LLMFetcher �
 - [LICENSE](LICENSE)
 - [LICENSING.md](LICENSING.md)
 - [commercial-licensing.md](commercial-licensing.md)
+
+---
+
+## 加入社区
+
+<div align="center">
+
+<img src="docs/assets/qq-group.png" alt="Angelus QQ 群" width="280" />
+
+**QQ 群：1061368718 · 月天使 - Angelus**
+
+扫码加入群聊，交流使用问题、插件开发与项目动态。
+
+</div>

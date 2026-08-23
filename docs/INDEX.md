@@ -17,7 +17,7 @@
 | `product-adapter.md` | 插件 v2 扩展点 `register_external_product(adapter)` 契约（Spike 已验证）。 |
 | `v0.5.0-spec.md` | v0.5.0 分阶段规格（Phase 0 观察 / Phase 1 控制 / Phase 2 上下文历史 + 性能修复）。 |
 | `mnavrag-arxiv-draft.md` | MNavRAG：层级知识检索方法的学术论文草稿。 |
-| `assets/angelus-hero.png` | README 使用的多 Agent 执行图横幅；标题图标复用 `src-tauri/icons/icon.png`。 |
+|  `assets/angelus-hero.png` · `assets/qq-group.png` | README 使用的多 Agent 执行图横幅；`qq-group.png` 为 README 底部社区 QQ 群二维码；标题图标复用 `src-tauri/icons/icon.png`。 |
 
 ## Intent Routing
 
