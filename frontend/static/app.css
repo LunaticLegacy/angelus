@@ -351,6 +351,17 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 /* Parent plan rows are summaries; only leaves are editable execution states. */
 .task-state-derived { align-self:flex-start; padding:4px 6px; border:1px solid #405270; border-radius:5px; color:var(--muted); font-size:9px; white-space:nowrap; }
 
+/* Plan state is lifecycle evidence, not a manual form control. Preserve real
+   line feeds from JSON while leaving literal backslash escapes untouched. */
+.plan-summary,.task-description { white-space:pre-wrap; overflow-wrap:anywhere; }
+.task-state { width:auto; min-width:58px; margin:0; padding:4px 7px; border:1px solid var(--line2); border-radius:999px; color:var(--muted); font-size:9px; line-height:1.35; text-align:center; white-space:nowrap; }
+.task-state.in_progress { border-color:rgba(155,140,255,.58); background:rgba(155,140,255,.09); color:#cfc7ff; }
+.task-state.completed { border-color:rgba(84,220,155,.42); background:rgba(84,220,155,.07); color:#83e7b4; }
+.task-state.blocked { border-color:rgba(255,107,122,.45); background:rgba(255,107,122,.07); color:#ff9ba5; }
+:root[data-theme="light"] .task-state.in_progress { color:#5a49bd; }
+:root[data-theme="light"] .task-state.completed { color:#167348; }
+:root[data-theme="light"] .task-state.blocked { color:#b43a49; }
+
 /* ========================================================================
    Workbench 2026 — calm mission-control visual system.
    This final layer deliberately overrides the legacy skin while preserving

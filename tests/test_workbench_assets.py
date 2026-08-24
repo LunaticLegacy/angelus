@@ -55,13 +55,26 @@ def test_workbench_uses_the_angelus_mission_control_visual_system() -> None:
 
     assert "<title>Angelus · Agent Workbench</title>" in template
     assert 'class="brand-mark">A</span>' in template
-    assert 'src="/static/app.js?v=workbench-78"' in template
+    assert 'src="/static/app.js?v=workbench-79"' in template
     assert 'href="/static/app.css?v=workbench-80"' in template
     assert "本地优先" not in template
     assert "Workbench 2026 — calm mission-control visual system." in stylesheet
     assert "grid-template-columns:248px minmax(560px,1fr) 368px" in stylesheet
     assert "@media (max-width:1020px)" in stylesheet
     assert "@media (prefers-reduced-motion:reduce)" in stylesheet
+
+
+def test_task_plan_statuses_are_read_only_and_preserve_real_line_breaks() -> None:
+    """Render lifecycle-owned states as labels and retain JSON newline layout."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    component = (COMPONENTS_DIR / "task-plan-view.js").read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert '<span class="task-state ${escapeHtml(status)}"' in component
+    assert '<select data-task-id=' not in component
+    assert "updatePlanStatus" not in script
+    assert '$("task-plan").addEventListener("change"' not in script
+    assert ".plan-summary,.task-description { white-space:pre-wrap;" in stylesheet
 
 
 def test_tool_payloads_use_structured_json_and_verbatim_stdout_views() -> None:
