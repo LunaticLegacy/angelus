@@ -11,6 +11,25 @@ if TYPE_CHECKING:
     from ..classes.active_run import ActiveRun
 
 
+def _sse_json_fallback(value: Any) -> str:
+    """Render unexpected live-only values without terminating an SSE stream.
+
+    Args:
+        value: Object rejected by the standard JSON encoder, commonly an
+            exception captured by a provider or MCP lifecycle callback.
+
+    Returns:
+        A bounded type-prefixed text representation safe for the browser's
+        trace view. Normal JSON values never reach this fallback.
+
+    Side Effects:
+        None. This function deliberately does not mutate the original payload
+        because the event broker can have multiple simultaneous subscribers.
+    """
+    text = str(value)
+    return f"{type(value).__name__}: {text}"[:4_000]
+
+
 def encode_sse_event(
     payload: dict[str, Any], durable_offset: int | None = None,
 ) -> str:
@@ -24,7 +43,10 @@ def encode_sse_event(
     Returns:
         One complete Server-Sent Events record.
     """
-    data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    # Live callbacks can carry provider exceptions before their producer has
+    # normalized an error field. Keep that one bad value from closing every
+    # subscriber's stream while preserving ordinary nested JSON unchanged.
+    data = f"data: {json.dumps(payload, ensure_ascii=False, default=_sse_json_fallback)}\n\n"
     return f"id: {durable_offset}\n{data}" if durable_offset is not None else data
 
 
