@@ -217,3 +217,46 @@ class TestProvidersApi:
                 assert all("key" not in str(p).lower() for p in r.json()["providers"])
             finally:
                 storage.WORKSPACE_ROOT = orig
+
+
+class TestStorageIsolation:
+    """anime 领域存储必须跟随 WORKSPACE_ROOT 隔离，且不与会话目录撞名。"""
+
+    def test_anime_root_follows_workspace_root(self) -> None:
+        import angelus.anime.storage as astore
+        from angelus.anime.models import DramaProject
+
+        with tempfile.TemporaryDirectory() as d:
+            orig = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(d)
+            try:
+                root = astore.anime_root()
+                assert str(Path(d)) in str(root), "anime_root must follow WORKSPACE_ROOT"
+                assert root.name == "anime-studio", "must not collide with 'anime' session dir"
+                p = DramaProject.create(name="隔离验证", series_brief="iso")
+                astore.upsert_project(p.to_dict())
+                assert (root / "projects.json").exists()
+                assert (Path(d) / "anime-studio" / "projects.json").exists()
+                # 旧名目录不应出现
+                assert not (Path(d) / "anime" / "projects.json").exists()
+                projs = astore.list_projects()
+                assert len(projs) == 1 and projs[0]["name"] == "隔离验证"
+            finally:
+                storage.WORKSPACE_ROOT = orig
+
+    def test_events_isolated_per_workspace(self) -> None:
+        import angelus.anime.storage as astore
+
+        with tempfile.TemporaryDirectory() as d:
+            orig = storage.WORKSPACE_ROOT
+            storage.WORKSPACE_ROOT = Path(d)
+            try:
+                ev = astore.append_event("proj_iso001", {"type": "anime.project.created"})
+                assert ev["seq"] == 1
+                assert astore.current_event_seq("proj_iso001") == 1
+                events = list(astore.iter_events("proj_iso001", after=0))
+                assert len(events) == 1
+                # 事件落在隔离目录
+                assert (Path(d) / "anime-studio" / "proj_iso001" / "events.ndjson").exists()
+            finally:
+                storage.WORKSPACE_ROOT = orig

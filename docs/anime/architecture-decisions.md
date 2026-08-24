@@ -20,7 +20,7 @@ angelus/anime/
   __init__.py          # 公开 API 面
   models.py            # DramaProject/Episode/Scene/Shot/Asset/GenerationJob/QAReport/CostRecord
   states.py            # Shot 状态机 + 统一任务状态枚举
-  storage.py           # workspace/<project>/anime/ 目录，atomic write，复用 storage._persist_json 模式
+  storage.py           # workspace/anime-studio/ 目录（动态跟随 WORKSPACE_ROOT），atomic write，复用 storage._persist_json 模式
   events.py            # 事件模型 anime.*，写 audit log + SSE
   providers/
     __init__.py        # VideoGenerationProvider Protocol
@@ -51,9 +51,9 @@ angelus/anime/
 
 ## 决策点 C — 持久化方案
 
-**决策：local-first，`workspace/<project>/anime/` 目录；复用 Angelus `storage.py` 的原子写模式（`.tmp` + `os.replace`）与 `_safe_id` 校验。**
+**决策：local-first，`workspace/anime-studio/` 目录（动态跟随 `WORKSPACE_ROOT`，支持测试隔离；命名避开 `anime` 会话目录）；复用 Angelus `storage.py` 的原子写模式（`.tmp` + `os.replace`）与 `_safe_id` 校验。**
 
-- 每个项目一个目录：`workspace/<project_id>/anime/{project.json, episodes/, scenes/, shots/, assets/, jobs/, qa/, costs/, events.ndjson, audit.ndjson}`
+- 每个项目一个目录：`workspace/anime-studio/<project_id>/{episodes.json, scenes.json, shots.json, assets.json, jobs.json, qa.json, costs.json, events.ndjson}`
 - 事件模型 `anime.*` 追加进 `events.ndjson`（与 Angelus `_append_session_event` 同构），SSE 通过 `?after=N` 回放 + 尾随。
 - 不引入新数据库；JSON + ndjson 足够本地单机场景。
 

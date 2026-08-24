@@ -1,4 +1,4 @@
-"""anime 领域持久化：local-first，workspace/<project>/anime/ 目录，atomic write。
+"""anime 领域持久化：local-first，workspace/anime-studio/ 目录，atomic write。
 
 复用 Angelus storage 的原子写模式（.tmp + replace）与 _safe_id 校验。
 事件模型 anime.* 追加进 events.ndjson，SSE 通过 ?after=N 回放 + 尾随。
@@ -13,14 +13,28 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-from ..storage import STATE_ROOT, _safe_id, _persist_json
+from .. import storage as _angelus_storage
+from ..storage import _safe_id, _persist_json
 
-#: anime 领域根目录：workspace/anime/
-ANIME_ROOT = STATE_ROOT / "anime"
-ANIME_ROOT.mkdir(parents=True, exist_ok=True)
+#: anime 领域根目录名（与会话目录名错开，避免 workspace/anime 会话目录冲突）
+ANIME_ROOT_NAME = "anime-studio"
 
-#: 项目注册表
-PROJECTS_INDEX = ANIME_ROOT / "projects.json"
+
+def anime_root() -> Path:
+    """anime 领域根目录：动态跟随 WORKSPACE_ROOT，支持测试隔离。"""
+    root = _angelus_storage.WORKSPACE_ROOT / ANIME_ROOT_NAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def projects_index() -> Path:
+    """项目注册表路径（动态解析）。"""
+    return anime_root() / "projects.json"
+
+
+# 向后兼容别名（模块导入时解析一次；新代码请用 anime_root()/projects_index()）
+ANIME_ROOT = anime_root()
+PROJECTS_INDEX = projects_index()
 
 _lock = threading.Lock()
 _event_log_locks: dict[Path, threading.Lock] = {}
@@ -29,7 +43,7 @@ _event_log_locks_guard = threading.Lock()
 
 def _project_dir(project_id: str) -> Path:
     project_id = _safe_id(project_id, "anime project")
-    return ANIME_ROOT / project_id
+    return anime_root() / project_id
 
 
 def _project_file(project_id: str, name: str) -> Path:
@@ -37,10 +51,10 @@ def _project_file(project_id: str, name: str) -> Path:
 
 
 def _read_projects() -> list[dict[str, Any]]:
-    if not PROJECTS_INDEX.exists():
+    if not projects_index().exists():
         return []
     try:
-        data = json.loads(PROJECTS_INDEX.read_text(encoding="utf-8"))
+        data = json.loads(projects_index().read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
     if isinstance(data, dict):
@@ -51,7 +65,7 @@ def _read_projects() -> list[dict[str, Any]]:
 
 
 def _write_projects(projects: list[dict[str, Any]]) -> None:
-    _persist_json(PROJECTS_INDEX, {"projects": projects})
+    _persist_json(projects_index(), {"projects": projects})
 
 
 def list_projects() -> list[dict[str, Any]]:
