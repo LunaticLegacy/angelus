@@ -50,7 +50,12 @@
 | `liveTools(data)` | Normalizes tool lifecycle fields but preserves object/array results instead of coercing them to strings. | Called by `handleEvent`; its output feeds `createChatView` tool-card rendering. |
 | `renderStreamDelta(agent, data)` / `discardStream(agent, round)` / `isTraceVisible(event)` | Keeps one pending streamed card per Agent/round, appending SSE deltas in arrival order and removing it before the authoritative final `agent:round` transcript card is rendered. Deltas are live-only (`ephemeral`) transport messages, excluded from durable Trace records and from the event-log offset counter. | Called by `handleEvent` for `agent:stream_delta` and `agent:round`; `loadTrace` filters historical deltas; cleared by `loadHistory`. |
 
-## `angelus.history`
+## `angelus.history` package
+
+The former `angelus/history.py` monolith is now a compatibility facade over
+`history/models.py`, `history/transcripts.py`, `history/usage.py`, and
+`history/context.py`. Existing imports remain stable; each leaf owns one
+projection concern and is indexed by `angelus/history/INDEX.md`.
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
@@ -59,6 +64,13 @@
 | `ContextGraphNode` / `ContextGraphEdge` / `ContextGraphCommunity` / `ContextGraphSnapshot` | Immutable, bounded browser schemas for persisted entity, relation, community, and aggregate graph data. | Constructed by `_agent_context_graph`; `ContextGraphSnapshot.to_dict` is consumed by `api.sessions.get_agent_context_graph`. |
 | `ContextGraphSnapshot.stale` / `_agent_context_graph(session_id, agent_name, limit)` | Marks the graph unavailable when the active linear context was version-edited, preventing entity relations derived from pre-edit text from being shown as current. | Reads `contexts/<agent>.json` before its graph companion; consumed by `api.sessions.get_agent_context_graph` and `frontend/static/app.js::renderContextGraph`. |
 | `_agent_context_preview(session_id, agent_name)` | Builds checkpoint metadata and retrieves the latest credential-free `agent:remote_request` snapshot. When a snapshot exists, its visible messages and metadata are derived from that same request; checkpoint data is never an exact-request fallback. | Called by `api.sessions.get_agent_context_preview`; reads context and event-log files only. |
+| `angelus.history._agent_turns_page(...)` | Compatibility facade for the transcript pager; forwards the historic facade-level `_session_path` patch hook into `history.transcripts` for the call. | Existing API/tests call the package facade; delegates to `history.transcripts._agent_turns_page`. |
+
+## `scripts.sync_indexes`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `sync_indexes(root, check)` | Regenerates nearest-index Function/Class maps from Python AST and JavaScript/Rust declarations, or reports drift without writes. | Invoked by `scripts/sync_indexes.py`; updates every repository `INDEX.md` generated block. |
 
 ## `angelus.context_editing`
 
@@ -82,7 +94,13 @@
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `BrowserRunControl.reset()` | Clears terminal stop/force-stop state and stale steering messages without replacing the control object. | Called by `ActiveRun.reset_for_next_turn`; preserves event references captured by shell/tool handlers. |
-| `ActiveRun.reset_for_next_turn()` | Reopens a completed in-process Swarm holder in place, preserving its graph, Agent instances, and closure identity while replacing only per-turn queue/process state. | Called by `api.runs.start_run` before a subsequent Swarm turn in the same session. |
+| `ActiveRun.reset_for_next_turn()` | Reopens a completed in-process Swarm holder in place, preserving graph, Agent instances, and closure identity while replacing the per-turn broadcast broker and process state. | Called by `api.runs.start_run` with the current durable-log byte watermark before a subsequent Swarm turn. |
+| `EventBroker` / `EventEnvelope` / `BrokerSnapshot` / `BrokerBatch` | Maintains a bounded, condition-backed broadcast ring with independent subscriber sequences, a durable byte watermark, explicit overflow detection, and terminal wake-up. | Owned by `ActiveRun`; producers call `publish` after durable commit or for ephemeral deltas, while `live_event_stream` calls `snapshot` and `wait_after`. |
+| `publish_durable_event(active, workspace_id, session_id, payload)` | Appends and fsyncs one NDJSON record, obtains its end byte offset, then broadcasts the committed payload. | Called by run terminals, single-Agent hooks, Swarm hooks, and plan-change publication; delegates to `storage._append_session_event` and `EventBroker.publish`. |
+| `historical_event_stream` / `live_event_stream` / `encode_sse_event` | Replays durable records with byte-offset SSE IDs, atomically hands off to the live ring, waits without disk polling, and falls back to a bounded disk range after ring overflow. Ephemeral records never advance the durable SSE ID. | Called by `api.runs.stream_events`; live clients resume through `Last-Event-ID`, `cursor`, or the legacy `after` count conversion. |
+| `ContextHandlerLinear.save/load` | Atomically commits schema-v2 checkpoints with generation and editing metadata; load validates into temporary values before replacing live memory. | Called by `Agent` and composed handlers; corrupt input returns failure without clearing retained state. |
+| `GraphContextHandler.save/load` | Writes an immutable generation graph before atomically committing its reference from the primary context; legacy fixed companions remain readable and committed companion failures fail closed. | Called through the `ContextHandler` interface by `Agent`; delegates graph serialization to `GraphStore` and linear state to `ContextHandlerLinear`. |
+| `ContextLoadError` / `ContextSaveError` | Make existing-checkpoint corruption and failed safe-boundary commits explicit run failures instead of silently continuing with empty or non-durable state. | Raised by `Agent.run` / `Agent._save_context`; caught by Angelus run execution's normal terminal error path. |
 
 ## `angelus.api.sessions`
 
@@ -114,7 +132,7 @@
 | `AgentRunTermination` / `AgentRunOutcome` | Typed terminal contract for one Agent invocation: formal final response, reserved `stop_turn`, workflow completion, user stop, invalid empty response, or exhausted tool-loop budget. `AgentRunOutcome.to_dict()` emits credential-free lifecycle data. | Produced by `Agent._set_outcome`; observed by host lifecycle consumers and tests. |
 | `Agent.add_stop_turn_tool()` / `Agent.request_turn_stop()` / `Agent._create_stop_turn_tool()` | Opt-in registration for the reserved native `stop_turn` tool; it records a request without interrupting sibling calls, and `Agent.run` applies it only after the full tool batch is persisted. Angelus enables it for coordinators and dynamic workers. | Called by the `stop_turn` handler and Angelus runtime; `Agent.run` emits `agent:stop_turn` and terminal outcome. |
 | `Agent.run` terminal branch | Uses tool-call presence—not tool-result text—to continue. Formal text without calls completes; blank content without calls becomes `empty_response`; a last-round tool call raises `AgentRunLimitReached` rather than leaking an unfinished response. | Calls `_set_outcome`, persistence, controls, and tool execution; covered by `llmfetcher/tests/test_agent_termination.py`. |
-| `LLMFetcher.fetch_stream(..., on_request=None)` / `Agent._stream_model_response` | Captures a credential-free streaming request snapshot, normalizes provider text/thinking/tool-call chunks into a final `LLMOutput`, and emits `agent:stream_delta` text or reasoning events before normal tool/context handling. | Angelus runtime enables streaming when the loaded Agent exposes that capability; its SSE relay sends deltas from an in-memory ephemeral queue rather than appending them to `events.ndjson`; `agent:round` remains the single durable final record. |
+| `LLMFetcher.fetch_stream(..., on_request=None)` / `Agent._stream_model_response` | Captures a credential-free streaming request snapshot, normalizes provider text/thinking/tool-call chunks into a final `LLMOutput`, and emits `agent:stream_delta` text or reasoning events before normal tool/context handling. | Angelus sends deltas through the multi-subscriber `EventBroker` without appending them to `events.ndjson`; `agent:round` remains the durable final record. |
 | `Agent.run` tool-completion event | Keeps each raw tool result in `agent:tools_completed`; JSON-compatible values therefore cross the FastAPI/SSE boundary as objects rather than Python `str()` output. | Consumed by Angelus runtime event persistence and `frontend/static/app.js::liveTools`. |
 | `Agent.run` remote-request event | Serializes `RemoteRequestSnapshot` into an `agent:remote_request` lifecycle event before each provider attempt. | `LLMFetcher.fetch` calls the typed observer; Angelus history reads the durable event for context preview. |
 

@@ -7,6 +7,8 @@
 | File | Purpose |
 |---|---|
 | `semantic-map.md` | 架构、模块 API、类层级与函数职责的代码语义参考。 |
+| `context-stats-unification-spec.md` | 上下文长度统计统一口径、字段契约与迁移验收规格。 |
+| `context-stats-change-notes.md` | 上下文统计统一工作的实现变更与验证记录。 |
 | `graph_context_design.md` | 线性上下文、压缩归档、图检索与持久化设计。 |
 | `decisions.md` | 架构与插件系统的设计决策记录。 |
 | `security.md` | 连接器、Shell、运行控制、插件与数据边界的安全设计。 |
@@ -27,3 +29,19 @@
 - **安全边界** → `security.md`
 - **开发或审核插件** → `plugin-guide.md`、`plugin-api.md`、`plugin-swarm-execution.md`
 - **RAG 研究材料** → `mnavrag-arxiv-draft.md`
+
+<!-- BEGIN GENERATED SYMBOL MAP -->
+
+## Function Map
+
+| Source | Function / method | Input types | Output type | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
+
+## Class Map
+
+| Source | Class | Constructor / field input types | Base(s) | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
+
+<!-- END GENERATED SYMBOL MAP -->

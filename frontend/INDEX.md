@@ -26,3 +26,19 @@ Browser-based workbench for Angelus. Single-page app with vanilla JS, no framewo
 - **Plugin UI bridge, asset loader and runtime lifecycle controls** → `static/plugins.js` + `static/app.js`
 - **Static/legacy module inventory** → `static/INDEX.md`
 - **Inspector panels** → `static/inspector/INDEX.md`
+
+<!-- BEGIN GENERATED SYMBOL MAP -->
+
+## Function Map
+
+| Source | Function / method | Input types | Output type | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
+
+## Class Map
+
+| Source | Class | Constructor / field input types | Base(s) | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
+
+<!-- END GENERATED SYMBOL MAP -->
