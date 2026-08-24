@@ -653,6 +653,8 @@ $("connector").addEventListener("change", event=>{connectorId=event.target.value
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
+$("open-external-agent-hub").addEventListener("click", () => { const dialog=$("external-agent-hub-dialog"); if (!dialog.open) dialog.showModal(); });
+$("close-external-agent-hub").addEventListener("click", () => $("external-agent-hub-dialog").close());
 document.querySelectorAll("[data-settings-section]").forEach(button=>button.addEventListener("click",()=>showSettingsSection(button.dataset.settingsSection)));
 $("refresh-plugins").addEventListener("click",async()=>{const button=$("refresh-plugins");if(button)button.disabled=true;try{const summary=await apiPost("/api/plugins/rescan");await loadPlugins();await loadPluginStatuses();const parts=[];if(summary?.added?.length)parts.push(`新发现 ${summary.added.length} 个`);if(summary?.loaded?.length)parts.push(`新加载 ${summary.loaded.length} 个`);if(summary?.removed?.length)parts.push(`移除 ${summary.removed.length} 个`);setPluginFeedback(parts.length?`已重新扫描：${parts.join("，")}。`:"已重新扫描，无变化。","success");}catch(error){setPluginFeedback(`重新扫描失败：${error.message}`,"error");}finally{if(button)button.disabled=false;}});
 $("mcp-transport").addEventListener("change",updateMcpTransportFields);

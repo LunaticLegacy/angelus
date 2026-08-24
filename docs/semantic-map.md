@@ -69,6 +69,7 @@
 | --- | --- | --- |
 | `loadProviders` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, lets the user save only non-secret loopback settings, and probes optional runtimes without starting vendor sessions. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/config/probe APIs. |
 | `discoverSessions` / `linkSession` / `renewLease` / `activateLink` / `renderLink` / `runAction` | Discovers read-only vendor sessions, creates safe Angelus links, maintains a tab-scoped control lease every 20 seconds, and exposes only provider-advertised fixed actions with idempotency keys. | Called by Hub controls; calls discovery, link, lease, and action APIs. |
+| `frontend/static/app.js` external-hub listeners | Opens and closes the modal iframe from the Workbench sidebar without navigating away from the current Angelus session. | Called by `#open-external-agent-hub` and `#close-external-agent-hub`; loads `/external-agents` inside `#external-agent-hub-frame`. |
 
 ## `angelus.cli`
 
