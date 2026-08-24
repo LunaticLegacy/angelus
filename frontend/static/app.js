@@ -39,6 +39,8 @@ let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
 let messagesBefore = null;
+let messageLoadPending = false;
+let historyGeneration = 0;
 let traceEvents = [];
 // Newest lifecycle/error event per Agent id, kept in sync with traceEvents so
 // agentStateView resolves a state in O(1) instead of scanning the whole trace.
@@ -110,7 +112,7 @@ function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEve
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
 function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.render(messages, assistantLabel); }
-async function loadAllAgentBehavior() { const [{total=0},page]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(messagesUrl())]); durableEventCount=total; messagesBefore=page.next_before ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); $("load-more-messages").hidden = messagesBefore === null; }
+async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); $("load-more-messages").hidden=!page.has_more; }
 function trace(title, message="", data=null, kind="") { traceView.append(title, message, data, kind); }
 function tracePayload(event, position="prepend") { traceView.appendEvent(event, position); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
@@ -151,7 +153,7 @@ async function selectPluginSettings(key) { selectedPluginKey=key; const plugin=p
 async function savePluginSettings(event, plugin) { event.preventDefault(); let settings; try { settings=JSON.parse($("plugin-settings-json").value); if(!settings || Array.isArray(settings) || typeof settings!=="object") throw new Error("设置必须是 JSON 对象"); } catch(error) { setPluginFeedback(`无法保存：${error.message}`,"error"); return; } const response=await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(settings)}); const payload=await response.json().catch(()=>({})); if(!response.ok) { setPluginFeedback(`无法保存：${payload.detail||response.statusText}`,"error"); return; } plugin.has_saved_settings=Object.keys(settings).length>0; setPluginFeedback(`${plugin.name} 的设置已保存；下次插件加载时生效。`,"success"); }
 async function changePluginLifecycle(plugin, action) { if(!plugin)return; const registering=action==="register"; const loading=action==="load"; if(!registering && !plugin.id)return; const requested=Array.isArray(plugin.permissions_requested)?plugin.permissions_requested:[]; const granted=Array.isArray(plugin.permissions_granted)?plugin.permissions_granted:[]; const missing=requested.filter(item=>!granted.includes(item)); const message=registering ? `将“${plugin.name}”加入本机工作台注册表不会执行插件代码。之后仍需确认权限才能加载。\n\n继续吗？` : loading ? `加载“${plugin.name}”会执行其插件代码。${missing.length?`\n\n同时授予其声明的权限：\n${missing.map(item=>`• ${item}`).join("\n")}`:""}\n\n继续吗？` : `卸载“${plugin.name}”会停止插件并移除其前端面板。插件文件和设置会保留。\n\n继续吗？`; if(!window.confirm(message))return; const button=document.querySelector("[data-plugin-action]"); if(button)button.disabled=true; try { const url=registering ? `/api/plugins/discovered/${encodeURIComponent(plugin.name)}/register` : `/api/plugins/${encodeURIComponent(plugin.id)}/${loading?"load":"unload"}`; const response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true,grant_permissions:loading&&missing.length>0})}); const payload=await response.json().catch(()=>({})); if(!response.ok)throw new Error(payload.detail||response.statusText); if(registering)selectedPluginKey=payload.plugin?.id||plugin.name; if(loading)await loadPlugins(); else if(!registering)unloadPlugin(plugin.name); await loadPluginStatuses(); setPluginFeedback(registering ? `${plugin.name} 已加入工作台，可继续加载。` : loading ? `${plugin.name} 已加载。` : `${plugin.name} 已卸载；插件文件和设置已保留。`,"success"); } catch(error) { const verb=registering?"加入":loading?"加载":"卸载"; setPluginFeedback(`${verb}失败：${error.message}`,"error"); if(button)button.disabled=false; } }
 function planUrl() { return `/api/sessions/${sessionId}/plan?agent=${encodeURIComponent(selectedPlanAgent)}`; }
-function messagesUrl(before=null) { const params=new URLSearchParams({agent:selectedAgent,limit:"100"}); if(before!=null) params.set("before",String(before)); return `/api/sessions/${sessionId}/messages?${params.toString()}`; }
+function messagesUrl(cursor=null, selectedSession=sessionId, agent=selectedAgent) { const params=new URLSearchParams({agent,limit:"200"}); if(cursor!=null) params.set("cursor",String(cursor)); return `/api/sessions/${selectedSession}/messages?${params.toString()}`; }
 function graphUrl() { return `/api/sessions/${sessionId}/graph`; }
 function agentIcon(agent) { if(agent.id === "all") return ["purple", "✦"]; if(agent.id === "coordinator") return ["purple", "♛"]; if(agent.dynamic) return ["amber", "↳"]; return ["blue", "&lt;/&gt;"]; }
 function acknowledgementKey() { return `llmfetcherAcknowledgedAgents:${sessionId}`; }
@@ -289,7 +291,7 @@ function renderGraph(graph) { const target=$("execution-graph"); const nodes=gra
 /** Refresh the graph data used by the selector, topology, and usage views. */
 async function loadGraph() { const response=await fetch(graphUrl()); if(response.status===404){currentGraph={nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};renderAgentSelector(currentAgents);return;} if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${graphUrl()})`); currentGraph=await response.json();renderAgentSelector(currentAgents); }
 /** Build the cursor-paginated durable Trace request for the selected session. */
-function traceUrl(before=null) { const params=new URLSearchParams({limit:"200"}); if(before !== null) params.set("before",String(before)); return `/api/sessions/${sessionId}/events?${params}`; }
+function traceUrl(cursor=null) { const params=new URLSearchParams({limit:"200"}); if(cursor !== null) params.set("cursor",String(cursor)); return `/api/sessions/${sessionId}/events?${params}`; }
 /** Streaming deltas are transport-only; the completed round remains the trace record. */
 function isTraceVisible(event) { return !(event?.event === "lifecycle" && event?.type === "agent:stream_delta"); }
 /** Debounced graph+plan reload so a burst of SSE events coalesces into one. */
@@ -297,7 +299,7 @@ const scheduleGraphPlanReload = debounce(() => {
   loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message));
   loadPlan().catch(error=>trace("任务规划加载失败",error.message));
 }, 150);
-async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); if(reset){ traceEvents=events; traceBefore=page.next_before; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_before; } rebuildTraceEventIndex(); if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=traceBefore === null; }
+async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); durableEventOffset=Number(page.durable_offset||0); if(reset){ traceEvents=events; traceBefore=page.next_cursor??null; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_cursor??null; } rebuildTraceEventIndex(); if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=!page.has_more; }
 function agentContextStats(agent) {
   const ctx = agent.context || {};
   const messages = Number(ctx.messages || 0);
@@ -350,53 +352,62 @@ async function updatePlanStatus(taskId,status) { const response=await fetch(`${p
 /** Rehydrate the aggregate view or one Agent's durable trajectory and transcript. */
 async function loadHistory() {
   streamingMessages.clear();
-  if (selectedAgent === "all") return loadAllAgentBehavior();
-  const [page, {total = 0}] = await Promise.all([
-    apiJson(messagesUrl()),
-    apiJson(`/api/sessions/${sessionId}/events?limit=1`),
-  ]);
+  const snapshot={session:sessionId,agent:selectedAgent,generation:++historyGeneration};
+  messageLoadPending=false;
+  if (selectedAgent === "all") return loadAllAgentBehavior(snapshot);
+  const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent));
+  if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
   const messages = page.messages || [];
-  durableEventCount = total;
-  messagesBefore = page.next_before ?? null;
+  messagesBefore = page.next_cursor ?? null;
   renderedSteerEvents.clear();
   renderedRoundEvents.clear();
   pendingRoundTools.clear();
   const chat = $("chat");
-  chat.innerHTML = "";
+  const loadMore=$("load-more-messages");
+  chat.replaceChildren(loadMore);
   if (!messages.length) {
-    chat.innerHTML = `<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`;
-    $("load-more-messages").hidden = true;
+    loadMore.insertAdjacentHTML("afterend",`<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`);
+    loadMore.hidden = true;
     return;
   }
   const fragment = document.createDocumentFragment();
   for (const message of messages) {
     fragment.append(chatView.buildMessage(message, selectedAgent));
   }
-  chat.append(fragment);
+  loadMore.after(fragment);
   chat.scrollTop = chat.scrollHeight;
-  $("load-more-messages").hidden = messagesBefore === null;
+  loadMore.hidden = !page.has_more;
 }
 
 /** Prepend one older page of messages above the current transcript. */
 async function loadOlderMessages() {
-  if (messagesBefore === null) return;
+  if (messagesBefore === null || messageLoadPending) return;
   const chat = $("chat");
+  const button=$("load-more-messages");
+  const snapshot={session:sessionId,agent:selectedAgent,cursor:messagesBefore,generation:historyGeneration};
   const previousHeight = chat.scrollHeight;
-  const page = await apiJson(messagesUrl(messagesBefore));
-  const older = page.messages || [];
-  messagesBefore = page.next_before ?? null;
-  if (!older.length) { $("load-more-messages").hidden = true; return; }
-  const fragment = document.createDocumentFragment();
-  for (const message of older) {
-    fragment.append(chatView.buildMessage(message, selectedAgent === "all" ? "coordinator" : selectedAgent));
+  const previousTop=chat.scrollTop;
+  messageLoadPending=true;
+  button.disabled=true;
+  try {
+    const page = await apiJson(messagesUrl(snapshot.cursor,snapshot.session,snapshot.agent));
+    if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
+    const older = page.messages || [];
+    messagesBefore = page.next_cursor ?? null;
+    if (!older.length) { button.hidden = true; return; }
+    const fragment = document.createDocumentFragment();
+    for (const message of older) fragment.append(chatView.buildMessage(message, snapshot.agent === "all" ? "coordinator" : snapshot.agent));
+    button.after(fragment);
+    chat.scrollTop = chat.scrollHeight - previousHeight + previousTop;
+    button.hidden = !page.has_more;
+  } finally {
+    messageLoadPending=false;
+    button.disabled=false;
   }
-  chat.prepend(fragment);
-  chat.scrollTop = chat.scrollHeight - previousHeight;
-  $("load-more-messages").hidden = messagesBefore === null;
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { clearCompactStatus(); persistSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function switchSession(selected) { clearCompactStatus(); persistSettings(); historyGeneration+=1; if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 
 async function start(message) {
   let runConfig;
@@ -607,6 +618,7 @@ $("refresh-graph").addEventListener("click",()=>loadInspectorAgents().catch(erro
 $("refresh-trace").addEventListener("click",()=>loadTrace(true).catch(error=>trace("Trace 加载失败",error.message)));
 $("load-more-trace").addEventListener("click",()=>loadTrace(false).catch(error=>trace("Trace 加载失败",error.message)));
 $("load-more-messages").addEventListener("click",()=>loadOlderMessages().catch(error=>trace("消息加载失败",error.message)));
+$("chat").addEventListener("scroll",()=>{if($("chat").scrollTop<=24&&messagesBefore!==null&&!messageLoadPending)loadOlderMessages().catch(error=>trace("消息加载失败",error.message));});
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
 $("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");

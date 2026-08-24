@@ -305,16 +305,17 @@ export function createChatView({ getAgentLabel }) {
 
   function render(messages, assistantLabel = "coordinator") {
     const chat = $("chat");
-    chat.innerHTML = "";
+    const loadMore = $("load-more-messages");
+    chat.replaceChildren(loadMore);
     if (!messages.length) {
-      chat.innerHTML = '<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>';
+      loadMore.insertAdjacentHTML("afterend", '<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>');
       return;
     }
     const fragment = document.createDocumentFragment();
     for (const message of messages) {
       fragment.append(buildMessage(message, message.role === "assistant" ? assistantLabel : ""));
     }
-    chat.append(fragment);
+    loadMore.after(fragment);
     chat.scrollTop = chat.scrollHeight;
   }
 
