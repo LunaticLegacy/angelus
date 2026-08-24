@@ -72,12 +72,18 @@ def _redacted_api_url(value: str) -> str:
     except ValueError:
         return ""
 
-def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
+def _runtime_profile_snapshot(
+    config: RunConfig, mcp_servers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build a credential-free, stable description of one run's semantics.
 
-    The browser configuration is otherwise ephemeral.  Keeping this snapshot
+    The browser configuration is otherwise ephemeral. Keeping this snapshot
     next to the run terminal makes a restored context auditable without ever
-    serializing the API key or the full (potentially private) system prompt.
+    serializing the API key, MCP credentials, or private system prompt.
+
+    Args:
+        config: Validated browser run configuration without raw MCP fields.
+        mcp_servers: Server-side resolved, session-authorized MCP records.
     """
     system_prompt_digest = hashlib.sha256(config.system_prompt.encode("utf-8")).hexdigest()
     _, effective_api_url = resolve_provider(config.provider, config.api_url)
@@ -93,13 +99,9 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
         "max_retries": config.max_retries,
         "max_context_threshold": config.max_context_threshold,
         "enable_shell": config.enable_shell,
-        "enable_mcp": config.enable_mcp,
         "mcp_servers": sorted(
-            (
-                {"name": str(server.get("name", "")), "transport": str(server.get("transport", "stdio"))}
-                for server in config.mcp_servers
-                if isinstance(server, dict)
-            ),
+            ({"name": str(server.get("name", "")), "transport": str(server.get("transport", "stdio"))}
+             for server in (mcp_servers or [])),
             key=lambda server: (server["name"], server["transport"]),
         ),
         "enable_swarm": config.enable_swarm,
@@ -155,6 +157,37 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         max_retries=config.max_retries,
     )
     fetcher = create_fetcher(backend, config.provider)
+    if active is not None and active.mcp_sampling_handler is None:
+        def sample_mcp(params: Any) -> Any:
+            """Run approved MCP sampling through this session connector only.
+
+            Args:
+                params: SDK ``CreateMessageRequestParams`` request.
+
+            Returns:
+                SDK ``CreateMessageResult`` without any recursive tool call.
+            """
+            from mcp_types import CreateMessageResult, TextContent
+
+            lines: list[str] = []
+            for message in getattr(params, "messages", []):
+                content = getattr(message, "content", None)
+                text_value = getattr(content, "text", str(content or ""))
+                lines.append(f"{getattr(message, 'role', 'user')}: {text_value}")
+            requested = int(getattr(params, "max_tokens", config.max_tokens) or config.max_tokens)
+            result = fetcher.fetch(
+                "\n".join(lines),
+                system_prompt=str(getattr(params, "system_prompt", "") or config.system_prompt),
+                temperature=float(getattr(params, "temperature", config.temperature) or config.temperature),
+                max_tokens=min(requested, config.max_tokens, 4096),
+                tools=None,
+            )
+            return CreateMessageResult(
+                role="assistant", content=TextContent(text=result.content),
+                model=result.model or config.model, stopReason="endTurn",
+            )
+
+        active.mcp_sampling_handler = sample_mcp
     semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
@@ -180,11 +213,11 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
     if config.enable_shell:
         agent.add_tools(create_shell_tools(
             sandbox_cwd=str(project_path),
-            register_process=active.register_process if active else None,
+            register_process=(lambda process: active.register_process(process, agent_name)) if active else None,
             unregister_process=active.unregister_process if active else None,
-            force_stop_event=active.control.force_stopped if active else None,
+            force_stop_event=active.control.for_agent(agent_name).force_stopped if active else None,
         ))
-    agent.add_tools(_mcp_tools(config, active))
+    agent.add_tools(_mcp_tools(active, agent_name))
     def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
         _publish_plan_change(
             active, workspace_id, session_id, agent_name, event_type, plan
@@ -206,17 +239,42 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
     return agent
 
 
-def _mcp_tools(config: RunConfig, active: ActiveRun | None) -> list[Any]:
-    """Open one SDK-backed MCP bridge and share it across every run Agent."""
-    if not config.enable_mcp:
+def _mcp_tools(active: ActiveRun | None, agent_name: str) -> list[Any]:
+    """Return registry-authorized MCP tools for one run Agent.
+
+    Args:
+        active: Run lifecycle holder containing resolved session bindings.
+        agent_name: Concrete graph identity; dynamic names use worker policy.
+    """
+    if active is None or not active.mcp_servers:
         return []
-    if active is None:
-        raise RuntimeError("MCP tools require an active browser run for lifecycle cleanup")
     if active.mcp_bridge is None:
-        bridge, tools = create_mcp_tools(config.mcp_servers)
+        bridge, tools = create_mcp_tools(
+            active.mcp_servers,
+            approval_handler=active.request_mcp_approval,
+            sampling_handler=active.mcp_sampling_handler,
+            event_handler=active.publish_ephemeral_event,
+        )
         active.mcp_bridge = bridge
         active.mcp_tools = tools
-    return list(active.mcp_tools)
+    role = "coordinator" if agent_name == "coordinator" else "worker"
+    policies = {str(server.get("name")): server for server in active.mcp_servers if role in server.get("roles", [])}
+    allowed: set[str] = set()
+    permit_all = False
+    for server_name, policy in policies.items():
+        allowlist = policy.get("tool_allowlist", [])
+        if not allowlist:
+            permit_all = True
+        allowed.update(str(item) for item in allowlist)
+        allowed.update(f"mcp.{server_name}.{item}" for item in allowlist)
+    authorized: list[Any] = []
+    source_tools = active.mcp_bridge.tools_for(agent_name, None if permit_all else allowed)
+    for tool in source_tools:
+        parts = str(tool.name).split(".", 2)
+        if len(parts) != 3 or parts[1] not in policies:
+            continue
+        authorized.append(tool)
+    return authorized
 
 def _memory_capabilities(config: RunConfig, current_session: str) -> dict[str, set[str]]:
     """Freeze the four explicit session grants for one Agent run."""
@@ -330,11 +388,11 @@ def _worker_tools_for(
     if config.enable_shell:
         tools.extend(create_shell_tools(
             sandbox_cwd=str(_project_path(workspace_id, session_id)),
-            register_process=active.register_process,
+            register_process=lambda process: active.register_process(process, agent_name),
             unregister_process=active.unregister_process,
-            force_stop_event=active.control.force_stopped,
+            force_stop_event=active.control.for_agent(agent_name).force_stopped,
         ))
-    tools.extend(_mcp_tools(config, active))
+    tools.extend(_mcp_tools(active, agent_name))
     return tools
 
 

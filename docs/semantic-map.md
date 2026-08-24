@@ -24,6 +24,51 @@
 | `FRONTEND_ROOT` | Selects the source-checkout frontend directory or the PyInstaller extraction directory advertised by `ANGELUS_FRONTEND_ROOT`. | `angelus.webapp.app` and API route assembly. |
 | `STATE_ROOT_ENV` / `LEGACY_STATE_ROOT_ENV` | Canonical `ANGELUS_STATE_DIR` plus backwards-compatible `LLMFETCHER_STATE_DIR`; the former wins when both are set. | Read while initializing `STATE_ROOT`; set together by `angelus.cli._configure_state_root` and the Tauri launcher. |
 
+## `angelus.external_agents`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `ConversionReport` | Versioned import/transfer fidelity record listing preserved, degraded, omitted, and summarized content. | Created by `canonicalize_events`; serialized by archive/import/transfer APIs. |
+| `provider_catalog` / `save_provider` | Exposes the built-in Codex, Claude Code, OpenCode and reserved-provider capability catalog; persists only non-secret connection metadata. | Called by `api.external_agents` provider routes. |
+| `canonicalize_events` | Converts supported vendor transcript objects into canonical non-executing `external_agent.*` messages/raw events, preserving unknown records. | Called by import preview and commit routes. |
+| `build_archive` / `parse_archive` | Writes and securely validates Angelus Session Archive v1 ZIPs; validates paths, symlinks, member/expanded limits, format and event checksums. | Called by archive export, import preview, and import commit routes. |
+| `import_events` | Always creates a new project-bound Angelus session, appends canonical events, projects display messages, and persists provenance/loss metadata. | Called by `api.external_agents.commit_import`; calls `storage` event and conversation writers. |
+| `lease_link` | Grants or renews a tab-scoped exclusive 60-second external-control lease and returns read-only status to competing tabs. | Called by `api.external_agents.heartbeat_external_lease`. |
+
+## `angelus.external_providers.codex`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `CodexAppServerClient` | Owns an App Server stdio JSON-RPC child, allocates request IDs/Futures, drains JSON stdout, captures bounded stderr, routes notifications/server requests, fails pending calls on disconnect, and only restarts explicitly. | Owned by `CodexAppServerRuntime`; calls `asyncio.create_subprocess_exec`. |
+| `CodexAppServerRuntime` | Bridges the persistent async client into the synchronous provider contract on a private event-loop thread and queues canonicalized notifications. | Owned by `CodexAppServerProvider`; calls `CodexAppServerClient.request` / `stop`. |
+| `CodexAppServerProvider` | Implements fixed, capability-gated Codex discovery, thread/turn control, diff, approval, and subscription operations without generic RPC passthrough. | Registered by the external-provider bootstrap; calls `CodexAppServerRuntime.call`. |
+
+## `angelus.external_providers`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `ExternalAgentProvider` | Private fixed-action adapter contract for discovery, reads, owned session lifecycle, subscriptions, diff, and approval; it deliberately rejects generic vendor-protocol pass-through. | Implemented by Codex, OpenCode, and Claude Code adapters; stored in `ExternalProviderRegistry`. |
+| `ExternalSession` / `ExternalEvent` | Credential-free provider-neutral descriptors and canonical event envelopes; raw vendor events remain private to synchronization callers. | Returned by provider discovery/read/subscription methods. |
+| `ExternalProviderRegistry` / `provider_registry` | Owns registered built-in runtime adapters and exposes their available capability catalog. | Populated during adapter bootstrap; consumed by the External Agent Hub. |
+| `bootstrap_builtin_providers` | Lazily instantiates Codex, OpenCode, and Claude Code adapters without spawning their optional runtimes; repeated calls retain the same process-scoped instances. | Called by `external_agents.provider_catalog` and API discovery/action routes. |
+| `CodexAppServerClient` / `CodexAppServerRuntime` / `CodexAppServerProvider` | Runs the Codex App Server over stdio JSON-RPC with request futures, notifications/server requests, stderr monitoring, restart and no-write-replay semantics; the provider maps only fixed thread/turn actions. | Registered by `bootstrap_builtin_providers`; invoked by External Agent API actions. |
+| `OpenCodeProvider` | Enforces loopback-or-explicit-auth endpoint policy and maps fixed OpenCode HTTP operations plus cursor-resuming, de-duplicated SSE into canonical events. | Registered by `bootstrap_builtin_providers`; invoked by discovery/action routes. |
+| `ClaudeCodeProvider` | Inspects Claude transcript JSONL read-only and runs CLI `stream-json` only for Angelus-owned processes; discovered external sessions are never attached or controlled. | Registered by `bootstrap_builtin_providers`; invoked by discovery/action routes. |
+
+## `angelus.api.external_agents`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| provider/import/archive/transfer routes | Provides capability discovery, credential-free archive export, import preview/commit, and no-side-effect handoff preview. | Mounted by `api.include_api_routes`; calls `angelus.external_agents`. |
+| link/lease/action routes | Stores safe Angelus UUID links, enforces exclusive leases, and capability-gates fixed actions without arbitrary vendor protocol pass-through. | Mounted by `api.include_api_routes`; action route intentionally does not execute absent a provider runtime. |
+| `external_agent_hub_page` | Serves the isolated External Agent Hub at `/external-agents`, preserving the existing main workbench layout and asset contract. | Calls FastAPI `FileResponse`; its page loads `frontend/static/external-agents.js`. |
+
+## `frontend/static/external-agents.js`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `loadProviders` | Fetches only the public Provider catalog and builds standalone Hub cards via DOM APIs, so provider labels/capabilities cannot inject markup. | Called on module load by `templates/external_agents.html`; calls `/api/external-agents/providers`. |
+
 ## `angelus.cli`
 
 | Symbol | Responsibility | Calls / called by |
@@ -93,6 +138,9 @@ projection concern and is indexed by `angelus/history/INDEX.md`.
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
+| `BrowserRunControl.for_agent(agent)` / `AgentScopedRunControl` | Projects stable global-plus-local cooperative and terminal events for one graph Agent while retaining the original run-wide control ABI. | `ExecutionGraph.run` feature-detects `for_agent`; Agent model I/O and name-bound Shell tools consume the view. |
+| `BrowserRunControl.stop(agent)` / `BrowserRunControl.force_stop(agent)` | Targets `all` or one Agent; global flags also affect future views, while local flags leave independent Workers untouched. | Called by `api.runs.stop_run` / `force_stop_run`; `ActiveRun.force_stop` also cancels matching Shell and MCP work. |
+| `ActiveRun.register_process(process, agent)` / `ActiveRun.force_stop(agent)` | Tracks Shell ownership and kills only matching process groups for a targeted terminal stop; `all` additionally closes the MCP manager. | Name-bound closures in `runtime._build_agent` and `_worker_tools_for` register processes; run control routes call `force_stop`. |
 | `BrowserRunControl.reset()` | Clears terminal stop/force-stop state and stale steering messages without replacing the control object. | Called by `ActiveRun.reset_for_next_turn`; preserves event references captured by shell/tool handlers. |
 | `ActiveRun.reset_for_next_turn()` | Reopens a completed in-process Swarm holder in place, preserving graph, Agent instances, and closure identity while replacing the per-turn broadcast broker and process state. | Called by `api.runs.start_run` with the current durable-log byte watermark before a subsequent Swarm turn. |
 | `EventBroker` / `EventEnvelope` / `BrokerSnapshot` / `BrokerBatch` | Maintains a bounded, condition-backed broadcast ring with independent subscriber sequences, a durable byte watermark, explicit overflow detection, and terminal wake-up. | Owned by `ActiveRun`; producers call `publish` after durable commit or for ephemeral deltas, while `live_event_stream` calls `snapshot` and `wait_after`. |
@@ -109,6 +157,36 @@ projection concern and is indexed by `angelus/history/INDEX.md`.
 | `get_agent_context_preview(session_id, agent_name)` | Serves the selected Agent's complete persisted model-context preview; rejects aggregate `all`. | Browser context viewer calls it from `frontend/static/app.js::loadContextPrompt`; delegates to `_agent_context_preview`. |
 | `_editable_context_store` / `inspect_editable_agent_context` / `edit_agent_context` / `restore_agent_context` | Refuse aggregate selections and live browser runs, then expose record inspection, version-checked checkpoint edits, and forward-only recovery through the session API. | HTTP clients call the three `/context/editable`, `/context/edit`, and `/context/restore` routes; delegates to `ContextEditStore`. |
 | `start_run(request)` — retained Swarm path | Reuses an in-memory completed `ActiveRun`/`AgentSwarm`; after a server restart it attempts `runtime._restore_swarm` before building a new graph. The execution thread calls `AgentSwarm.run` on the retained or rebuilt object. | Calls `ActiveRun.reset_for_next_turn`, conditionally calls `_restore_swarm`/`_build_swarm`, then calls `AgentSwarm.run`; terminal cleanup persists the recovery snapshot. |
+
+## `angelus.mcp_registry` / `angelus.mcp_tools` / `angelus.api.mcp`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `_normalize_server(payload, existing_id)` / `read_servers()` / `write_servers(records)` | Validates stdio or Streamable HTTP definitions, rejects legacy SSE and unsafe templates, and encrypts headers, environment values, Bearer/OAuth credentials before global persistence. | MCP CRUD routes call these under the application state lock; `resolve_session_servers` receives decrypted internal records only. |
+| `read_bindings(session_id)` / `write_bindings(session_id, bindings)` / `resolve_session_servers(session_id, project_root)` | Stores session-local server, role, and tool grants; resolves `${project_root}` only in stdio args/cwd at the run boundary and ignores unprobed servers. | `api.mcp` manages grants; `api.runs.start_run` resolves them into `ActiveRun.mcp_servers`. |
+| `MCPToolBridge.start()` / `tools_for(agent, allowed)` / `cancel_agent(agent)` / `close()` | Owns a dedicated asyncio loop and one persistent client per server, creates role-filtered synchronous wrappers, attributes in-flight calls for targeted cancellation, and closes all transports at run shutdown. Failed side-effecting calls are not replayed. | `runtime._mcp_tools` creates/reuses the bridge; `ActiveRun.force_stop` cancels calls; run cleanup closes it. |
+| `MCPToolBridge.capability_snapshot()` / `read_resource()` / `subscribe_resource()` / `get_prompt()` / `complete()` | Discovers and accesses tools, resources/templates, subscriptions, prompts, and completion through run-persistent clients; roots expose only the bound project. Logging, progress/resource notifications, and connection changes are emitted as MCP Trace events. | Probe uses discovery; run integrations may use the explicit capability methods without rebuilding transports. |
+| `ActiveRun.request_mcp_approval()` / `resolve_mcp_approval()` | Rejects sampling/elicitation immediately without a live SSE browser, otherwise emits a display-safe request and waits at most five minutes. Session-remembered sampling approval is supported; elicited values are returned only to the waiting server callback and never retained. | MCP client callbacks call `request_mcp_approval`; the run approval API calls `resolve_mcp_approval` and audits only server, Agent, capability, field names, and decision. |
+| `runtime._build_agent::sample_mcp` | Executes an approved sampling request through the current session connector with no tools and caps tokens to the minimum of request, session setting, and 4096. | Installed once on `ActiveRun`; invoked by `MCPToolBridge` only after browser approval. |
+| `create_mcp_server` / `update_mcp_server` / `delete_mcp_server` / `probe_mcp_server` | Implements global managed server CRUD, secret-preserving masked updates, temporary capability probing, and public redaction. | Called by `frontend/static/app.js` MCP console. |
+| `connect_mcp_oauth` / `callback_mcp_oauth` / `refresh_mcp_oauth` / `disconnect_mcp_oauth` | Applies OAuth state, five-minute expiry, PKCE S256, token exchange/refresh, encrypted token storage, and explicit disconnect. | Called by MCP settings OAuth controls and the configured authorization server callback. |
+| `get_mcp_bindings` / `put_mcp_bindings` | Reads or atomically replaces one session's Coordinator/Worker and tool allowlist policy. | Called by `loadMcpConsole`, `saveMcpBinding`, and indirectly consumed at the next run boundary. |
+
+## `llmfetcher.swarm_module.execution_graph` / `task_bus`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `ExecutionGraph.run(..., control)` scoped-control path | Resolves `control.for_agent(name)` when available, closes targeted queued tasks before submission, isolates `AgentRunStopped` from unrelated nodes, and skips only dependency downstream. Legacy single controls retain graph-wide behavior. | Called by `AgentSwarm.run`; delegates structured interruption delivery to `TaskBus.interrupt_task`. |
+| `TaskBus.interrupt_task(task_id, reporter, reason)` | Submits an `interrupted` report to `reply_to` and wakes waiters so a coordinator never waits for timeout after a targeted stop. | Called by `ExecutionGraph.run` for queued and running dynamic Workers. |
+
+## `frontend/static/app.js` — control and MCP projection
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `agentStateView(agentId)` / `updateStopAvailability()` | Gives aggregate state the priority running → queued → durable run terminal, preserving a failed Worker's own red indicator, and enables stop only for actionable selected scope. | Agent cards, usage views, graph refresh, and `setRunning` share this projection. |
+| `runStop()` / `runForceStop()` | Sends `{agent: selectedAgent}` and presents scope-specific confirmation/status text. | Stop buttons and slash commands call these; backend control routes validate targets. |
+| `loadMcpConsole()` / `selectMcpServer()` / `saveMcpServer()` / `saveMcpBinding()` | Renders structured global server forms, masked credentials, OAuth/probe state, capabilities, and current-session role/tool grants without localStorage JSON migration. | Settings navigation loads the console; MCP form and server cards invoke the managed APIs. |
+| `openMcpApproval(event)` / `answerMcpApproval(decision)` | Displays server, Agent, sampling token exposure or elicitation field names, and offers one-shot, session-remembered, or reject decisions. Submitted elicitation values are sent only in the approval response. | `handleEvent` opens the dialog for ephemeral `mcp_approval_requested`; the backend emits redacted `mcp_approval_resolved` audit events into Trace. |
 
 ## `frontend/static/app.js` — context viewer
 

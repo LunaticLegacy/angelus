@@ -6,7 +6,8 @@ Single-page application shell for the Angelus workbench, including the Angelus p
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Full Angelus SPA shell: a project/session navigation zone, central Agent roster/transcript/composer workspace, and focused session Inspector; native project-directory selection/rebinding controls; and durable steering displayed beside original user messages. It also contains modal settings with left navigation (global connectors; session-local Agent settings, MCP enablement/server definitions, and searchable memory-session grants; plugin lifecycle status and persisted plugin settings), new-session and connector dialogs, stop/force-stop controls, and inspector tabs (plan/Agents/trace/usage). It loads cache-versioned `static/app.css`, the active global `static/slash.js` parser, and the ES-module composition root `static/app.js`; it does **not** import the legacy modules in `static/`. |
+| `index.html` | Full Angelus SPA shell with project/session navigation, Agent roster/transcript/composer, Inspector, scoped stop controls, and settings pages for global connectors, session Agent options, managed global MCP servers with session grants, and plugins. |
+| `external_agents.html` | Standalone `/external-agents` hub that displays capability-gated external Provider status without changing the main Workbench shell. |
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
