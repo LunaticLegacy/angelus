@@ -30,12 +30,14 @@ from ..storage import (
     _deleting_workspaces,
     _get_session,
     _persist_json,
+    _project_path,
     _run_state_path,
     _safe_id,
     _session_event_offset_after,
     _session_event_log_size,
     _session_path,
     _sessions_lock,
+    _validate_project_path,
 )
 
 router = APIRouter()
@@ -100,6 +102,10 @@ def start_run(request: RunRequest) -> dict[str, str]:
     workspace_id = _safe_id(request.workspace_id, "workspace")
     if not storage._workspace_exists(workspace_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
+    try:
+        _validate_project_path(str(_project_path(workspace_id, session_id)))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="The selected project directory is unavailable") from exc
     with _sessions_lock:
         if workspace_id in _deleting_workspaces:
             raise HTTPException(status_code=409, detail="Workspace is being deleted")

@@ -91,8 +91,13 @@ def _safe_id(value: str, label: str) -> str:
     return value
 
 def _read_workspaces() -> list[dict[str, str]]:
-    """Return the session registry, repairing a missing default session."""
+    """Return the session registry, repairing a missing default session.
+
+    Side Effects:
+        Creates the configured state root and default registry when absent.
+    """
     if not WORKSPACE_INDEX.exists():
+        WORKSPACE_INDEX.parent.mkdir(parents=True, exist_ok=True)
         default = [{"id": "default", "name": "default"}]
         WORKSPACE_INDEX.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
         return default
@@ -105,7 +110,15 @@ def _read_workspaces() -> list[dict[str, str]]:
     return [{"id": "default", "name": "default"}]
 
 def _write_workspaces(workspaces: list[dict[str, str]]) -> None:
-    """Atomically replace the small local workspace registry."""
+    """Atomically replace the small local workspace registry.
+
+    Args:
+        workspaces: Complete JSON-compatible session record list.
+
+    Side Effects:
+        Creates the configured state root before replacing ``sessions.json``.
+    """
+    WORKSPACE_INDEX.parent.mkdir(parents=True, exist_ok=True)
     temporary = WORKSPACE_INDEX.with_suffix(".tmp")
     temporary.write_text(json.dumps(workspaces, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(WORKSPACE_INDEX)
@@ -162,6 +175,60 @@ def _append_conversation_turn(workspace_id: str, session_id: str, turn: dict[str
 def _workspace_exists(workspace_id: str) -> bool:
     """Return whether a workspace is registered locally."""
     return any(item["id"] == workspace_id for item in _read_workspaces())
+
+
+def _validate_project_path(value: str) -> Path:
+    """Validate and canonicalize one user-selected project directory.
+
+    Args:
+        value: Absolute directory path returned by the host folder picker.
+
+    Returns:
+        Resolved existing directory with read, write, and traversal access.
+
+    Raises:
+        ValueError: If the path is relative, missing, not a directory, or not
+            usable as an Agent working directory.
+    """
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("Project path must be absolute")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Project directory does not exist") from exc
+    if not resolved.is_dir():
+        raise ValueError("Project path must be a directory")
+    if not os.access(resolved, os.R_OK | os.W_OK | os.X_OK):
+        raise ValueError("Project directory must be readable and writable")
+    return resolved
+
+
+def _project_path(workspace_id: str, session_id: str) -> Path:
+    """Return the user-project root bound to one browser session.
+
+    Args:
+        workspace_id: Validated registry/session directory identity.
+        session_id: Browser-stable chat identity retained for compatibility.
+
+    Returns:
+        Registered canonical project directory. Legacy records without a
+        ``project_path`` fall back to their internal state directory.
+
+    Side Effects:
+        The legacy fallback may create the internal session directory through
+        :func:`_session_path`, matching pre-project-path behavior.
+    """
+    safe_workspace = _safe_id(workspace_id, "workspace")
+    safe_session = _safe_id(session_id, "session")
+    record = next(
+        (item for item in _read_workspaces() if item.get("id") == safe_workspace),
+        None,
+    )
+    configured = record.get("project_path") if isinstance(record, dict) else None
+    if isinstance(configured, str) and configured:
+        return Path(configured).expanduser().resolve(strict=False)
+    return _session_path(safe_workspace, safe_session)
 
 def _session_id_from_name(name: str, existing: set[str]) -> str:
     """Build a stable directory-safe session ID from a user display name.
@@ -626,6 +693,8 @@ __all__ = [
     "_write_conversation",
     "_append_conversation_turn",
     "_workspace_exists",
+    "_validate_project_path",
+    "_project_path",
     "_session_id_from_name",
     "_remove_workspace",
     "_stop_then_remove_workspace",

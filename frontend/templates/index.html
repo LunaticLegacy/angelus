@@ -7,8 +7,8 @@
     </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-72" />
+    <title>Angelus · Agent Workbench</title>
+    <link rel="stylesheet" href="/static/app.css?v=workbench-79" />
   </head>
   <body>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
@@ -16,6 +16,9 @@
         <h2 id="new-session-title">新建会话</h2>
         <label for="new-session-name">会话名称</label>
         <input id="new-session-name" name="name" maxlength="80" required autocomplete="off" placeholder="例如：资料检索" />
+        <label for="new-session-path">已有项目目录</label>
+        <div class="session-path-picker"><input id="new-session-path" name="project_path" readonly required placeholder="请选择项目目录" /><button id="choose-session-directory" type="button">选择目录</button></div>
+        <p id="new-session-feedback" class="session-dialog-feedback" aria-live="polite"></p>
         <div class="session-dialog-actions"><button id="cancel-new-session" type="button">取消</button><button type="submit">创建并进入</button></div>
       </form>
     </dialog>
@@ -70,22 +73,22 @@
       </div>
     </dialog>
     <aside class="sidebar">
-      <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
+      <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark">A</span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
 
       <section class="side-block">
         <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button" type="button" title="删除当前会话" aria-label="删除当前会话">⌫</button></div></div>
-        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div><button id="open-workspace" class="open-workspace-button" type="button" title="在文件资源管理器中打开当前工作空间" aria-label="在文件资源管理器中打开当前工作空间">打开</button></div>
+        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div><button id="change-workspace-directory" class="open-workspace-button" type="button" title="重新选择当前项目目录" aria-label="重新选择当前项目目录">更改</button><button id="open-workspace" class="open-workspace-button" type="button" title="在文件资源管理器中打开当前项目" aria-label="在文件资源管理器中打开当前项目">打开</button></div>
         <p id="workspace-open-hint" class="workspace-open-hint" aria-live="polite"></p>
         <div id="recent-sessions" class="recent-sessions"></div>
       </section>
 
-      <p class="privacy">连接器与 Agent 参数集中在设置中管理。</p>
+      <p class="privacy"><i></i><span>本地优先<br /><small>项目与运行状态安全分离</small></span></p>
       <div class="side-footer"><button id="open-settings" type="button" title="打开设置" onclick="document.getElementById('settings-dialog').showModal()">⚙</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
     </aside>
 
     <main class="main-panel">
       <header class="topbar">
-        <div class="title"><h1>与你的 Agent 一起工作</h1><p>LOCAL AGENT WORKBENCH</p></div>
+        <div class="title"><p>ACTIVE WORKSPACE</p><h1>与你的 Agent 一起工作</h1></div>
         <div class="run-overview"><span class="status-dot"></span><strong id="status" class="status idle">准备就绪</strong><span class="overview-divider"></span><div><small>Tokens</small><b id="header-tokens">—</b></div><div><small>时长</small><b id="header-duration">—</b></div><button id="stop" class="stop-button" type="button" disabled><span>■</span> 停止</button><button id="force-stop" class="force-button" type="button" disabled>强行停止</button></div>
       </header>
 
@@ -99,7 +102,7 @@
     </main>
 
     <aside class="activity" aria-label="会话执行信息">
-      <div class="activity-heading"><div><p class="eyebrow">SESSION INSPECTOR</p><h2>执行动态</h2></div><span class="activity-live"><i></i>LIVE</span></div>
+      <div class="activity-heading"><div><p class="eyebrow">SESSION INSPECTOR</p><h2>任务控制台</h2></div><span class="activity-live"><i></i>LIVE</span></div>
       <nav class="inspector-tabs" aria-label="执行信息模块">
         <button class="active" type="button" data-inspector-panel="inspector-plan">任务计划</button>
         <button type="button" data-inspector-panel="inspector-agents">Agents</button>
@@ -114,6 +117,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-77"></script>
+    <script type="module" src="/static/app.js?v=workbench-78"></script>
   </body>
 </html>

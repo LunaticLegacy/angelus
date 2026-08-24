@@ -305,7 +305,14 @@ export function createChatView({ getAgentLabel }) {
 
   function render(messages, assistantLabel = "coordinator") {
     const chat = $("chat");
-    const loadMore = $("load-more-messages");
+    let loadMore = $("load-more-messages");
+    if (!loadMore) {
+      loadMore = document.createElement("button");
+      loadMore.id = "load-more-messages";
+      loadMore.className = "load-more-messages";
+      loadMore.type = "button";
+      loadMore.textContent = "加载更早消息";
+    }
     chat.replaceChildren(loadMore);
     if (!messages.length) {
       loadMore.insertAdjacentHTML("afterend", '<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>');

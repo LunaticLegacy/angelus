@@ -22,6 +22,7 @@ from .classes import (
     BrowserRunControl,
     BrowserSession,
     ConnectorRequest,
+    ProjectPathRequest,
     RunConfig,
     RunRequest,
     SteerRequest,

@@ -75,6 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
     session_sub.add_parser("list", help="List sessions")
     create_p = session_sub.add_parser("create", help="Create a session")
     create_p.add_argument("name", help="Display name for the new session")
+    create_p.add_argument("project_path", help="Existing project directory bound to the session")
 
     # plugin — install and manage plugins (registry branch integration).
     plugin_p = sub.add_parser("plugin", help="Install and manage plugins")
@@ -142,8 +143,17 @@ def _cmd_web(args: argparse.Namespace) -> None:
 
 
 def _cmd_session(args: argparse.Namespace) -> None:
-    """Create or list browser-visible sessions and their private directories."""
-    from angelus.webapp import WORKSPACE_ROOT, _read_workspaces, _session_id_from_name, _write_workspaces
+    """Create or list sessions with separated project and state directories.
+
+    Args:
+        args: Parsed ``session list`` or ``session create NAME PROJECT_PATH``
+            namespace. The project path is never created or deleted by Angelus.
+
+    Side Effects:
+        A create command adds one registry record and creates only its internal
+        state directory beneath ``WORKSPACE_ROOT``.
+    """
+    from angelus.webapp import WORKSPACE_ROOT, _read_workspaces, _session_id_from_name, _validate_project_path, _write_workspaces
 
     if args.session_command == "list":
         for workspace in _read_workspaces():
@@ -154,8 +164,13 @@ def _cmd_session(args: argparse.Namespace) -> None:
     if not name:
         print("error: session name is required", file=sys.stderr)
         sys.exit(2)
+    try:
+        project_path = _validate_project_path(args.project_path)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     records = _read_workspaces()
-    session = {"id": _session_id_from_name(name, {item["id"] for item in records}), "name": name}
+    session = {"id": _session_id_from_name(name, {item["id"] for item in records}), "name": name, "project_path": str(project_path)}
     records.append(session)
     _write_workspaces(records)
     (WORKSPACE_ROOT / session["id"]).mkdir(parents=True, exist_ok=True)

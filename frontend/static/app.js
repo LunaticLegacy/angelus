@@ -1,6 +1,6 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=tool-payload-3";
+import { createChatView } from "./components/chat-view.js?v=history-pagination-2";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { initPlugins, loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-controls-1";
@@ -112,7 +112,10 @@ function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEve
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
 function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.render(messages, assistantLabel); }
-async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); $("load-more-messages").hidden=!page.has_more; }
+/** Restore the accessible history control if an older cached view removed it. */
+function ensureLoadMoreMessagesButton() { let button=$("load-more-messages"); if(button)return button; button=document.createElement("button"); button.id="load-more-messages"; button.className="load-more-messages"; button.type="button"; button.textContent="加载更早消息"; $("chat").prepend(button); return button; }
+function setMessageHistoryButton(hasMore, text="加载更早消息") { const button=ensureLoadMoreMessagesButton(); button.hidden=!hasMore; button.textContent=text; return button; }
+async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); setMessageHistoryButton(Boolean(page.has_more)); }
 function trace(title, message="", data=null, kind="") { traceView.append(title, message, data, kind); }
 function tracePayload(event, position="prepend") { traceView.appendEvent(event, position); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
@@ -125,7 +128,7 @@ async function apiJson(path) { const response=await fetch(path); if(!response.ok
 async function apiPost(path, body={}) { const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
-async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); if(!sessions.length) throw new Error("会话列表为空"); availableSessions=sessions; const select=$("workspace"); select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===workspaceId); $("workspace-open-hint").textContent=opened?(opened.path?`当前工作空间：${opened.path}`:`当前工作空间：${opened.name}`):""; const recent=$("recent-sessions"); recent.innerHTML=sessions.map(item=>`<button class="recent-session ${item.id===workspaceId?"active":""}" type="button" data-workspace-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status||"idle")}" title="会话状态：${escapeHtml(({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[item.status]||"待机")}">${escapeHtml(item.name)}</button>`).join(""); recent.querySelectorAll("[data-workspace-id]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.workspaceId).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); if(!sessions.length) throw new Error("会话列表为空"); availableSessions=sessions; const select=$("workspace"); select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===workspaceId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; const recent=$("recent-sessions"); recent.innerHTML=sessions.map(item=>`<button class="recent-session ${item.id===workspaceId?"active":""}" type="button" data-workspace-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status||"idle")}" title="会话状态：${escapeHtml(({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[item.status]||"待机")}">${escapeHtml(item.name)}</button>`).join(""); recent.querySelectorAll("[data-workspace-id]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.workspaceId).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
 function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
 async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; localStorage.llmfetcherConnector=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
@@ -363,7 +366,7 @@ async function loadHistory() {
   renderedRoundEvents.clear();
   pendingRoundTools.clear();
   const chat = $("chat");
-  const loadMore=$("load-more-messages");
+  const loadMore=ensureLoadMoreMessagesButton();
   chat.replaceChildren(loadMore);
   if (!messages.length) {
     loadMore.insertAdjacentHTML("afterend",`<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`);
@@ -383,12 +386,14 @@ async function loadHistory() {
 async function loadOlderMessages() {
   if (messagesBefore === null || messageLoadPending) return;
   const chat = $("chat");
-  const button=$("load-more-messages");
+  const button=ensureLoadMoreMessagesButton();
   const snapshot={session:sessionId,agent:selectedAgent,cursor:messagesBefore,generation:historyGeneration};
   const previousHeight = chat.scrollHeight;
   const previousTop=chat.scrollTop;
   messageLoadPending=true;
   button.disabled=true;
+  button.textContent="正在加载…";
+  let failed=false;
   try {
     const page = await apiJson(messagesUrl(snapshot.cursor,snapshot.session,snapshot.agent));
     if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
@@ -400,9 +405,15 @@ async function loadOlderMessages() {
     button.after(fragment);
     chat.scrollTop = chat.scrollHeight - previousHeight + previousTop;
     button.hidden = !page.has_more;
+  } catch(error) {
+    failed=true;
+    button.hidden=false;
+    button.textContent="加载失败，点击重试";
+    throw error;
   } finally {
     messageLoadPending=false;
     button.disabled=false;
+    if(!failed) button.textContent="加载更早消息";
   }
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
@@ -567,11 +578,16 @@ $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace(
 $("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
 document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
+$("change-workspace-directory").addEventListener("click",async()=>{try{const projectPath=await pickWorkspaceDirectory();if(!projectPath)return;const response=await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/project-path`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_path:projectPath})});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.detail||"无法更改项目目录");await loadWorkspaces(sessionId);trace("已更改项目目录",payload.project_path);}catch(error){trace("更改项目目录失败",error.message);alert(`无法更改项目目录：${error.message}`);}});
 $("open-workspace").addEventListener("click",async()=>{try{const response=await fetch(`/api/sessions/${encodeURIComponent(workspaceId)}/open-folder`,{method:"POST"});const payload=await response.json();if(!response.ok)throw new Error(payload.detail||"无法打开工作空间目录");trace("已打开工作空间目录",payload.path||workspaceId);}catch(error){trace("打开工作空间目录失败",error.message);alert(`无法打开工作空间目录：${error.message}`);}});
-async function createAndSwitchSession(name) {
+/** Ask the loopback backend to show the host operating system's folder picker. */
+async function pickWorkspaceDirectory() { const payload=await apiPost("/api/workspace-directory/pick"); return payload.cancelled ? null : String(payload.path||""); }
+async function createAndSwitchSession(name, projectPath=null) {
   if(!name?.trim()) return;
   try {
-    const response=await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    const selectedPath=projectPath || await pickWorkspaceDirectory();
+    if(!selectedPath) return;
+    const response=await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,project_path:selectedPath})});
     const session=await response.json();
     if(!response.ok) throw new Error(session.detail || "无法创建会话");
     await switchSession(session.id);
@@ -587,18 +603,24 @@ async function createAndSwitchSession(name) {
 $("new-workspace").addEventListener("click", ()=>{
   const dialog=$("new-session-dialog");
   const input=$("new-session-name");
+  const path=$("new-session-path");
   input.value="";
+  path.value="";
+  $("new-session-feedback").textContent="";
   dialog.showModal();
   input.focus();
 });
 $("cancel-new-session").addEventListener("click", ()=>$("new-session-dialog").close());
+$("choose-session-directory").addEventListener("click",async()=>{const button=$("choose-session-directory"),feedback=$("new-session-feedback");button.disabled=true;feedback.textContent="正在打开目录选择器…";try{const path=await pickWorkspaceDirectory();if(!path){$("new-session-dialog").close();return;}$("new-session-path").value=path;feedback.textContent="已选择项目目录。";}catch(error){feedback.textContent=`无法选择目录：${error.message}`;}finally{button.disabled=false;}});
 $("new-session-form").addEventListener("submit", async event=>{
   event.preventDefault();
   const input=$("new-session-name");
   const name=input.value.trim();
   if(!name) { input.focus(); return; }
+  const projectPath=$("new-session-path").value.trim();
+  if(!projectPath){$("new-session-feedback").textContent="请先选择一个已有项目目录。";return;}
   $("new-session-dialog").close();
-  await createAndSwitchSession(name);
+  await createAndSwitchSession(name,projectPath);
 });
 $("delete-workspace").addEventListener("click",async()=>{const selected=$("workspace").selectedOptions[0];if(!selected)return;const targetId=selected.value;const name=selected.text;if(!confirm(`删除会话“${name}”及其所有数据？此操作不可恢复。`))return;const confirmation=prompt(`请输入会话名称“${name}”以确认删除：`);if(confirmation !== name)return;const response=await fetch(`/api/sessions/${encodeURIComponent(targetId)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation})});const payload=await response.json();if(response.status===404){await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已不存在",`${name} 已被移除，已切换到有效会话。`);return;}if(!response.ok){alert(payload.detail||"无法删除会话");return;}if(payload.status==="stopping"){trace("正在停止并删除会话",payload.message);return;}await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已删除",name);});
 $("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(()=>{ persistSettings(); updateModelSummary(); });});
@@ -617,7 +639,7 @@ $("plan-agent").addEventListener("change",event=>{selectedPlanAgent=event.target
 $("refresh-graph").addEventListener("click",()=>loadInspectorAgents().catch(error=>trace("执行图加载失败",error.message)));
 $("refresh-trace").addEventListener("click",()=>loadTrace(true).catch(error=>trace("Trace 加载失败",error.message)));
 $("load-more-trace").addEventListener("click",()=>loadTrace(false).catch(error=>trace("Trace 加载失败",error.message)));
-$("load-more-messages").addEventListener("click",()=>loadOlderMessages().catch(error=>trace("消息加载失败",error.message)));
+$("chat").addEventListener("click",event=>{if(event.target.closest("#load-more-messages"))loadOlderMessages().catch(error=>trace("消息加载失败",error.message));});
 $("chat").addEventListener("scroll",()=>{if($("chat").scrollTop<=24&&messagesBefore!==null&&!messageLoadPending)loadOlderMessages().catch(error=>trace("消息加载失败",error.message));});
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
 $("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});

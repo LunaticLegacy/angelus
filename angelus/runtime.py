@@ -30,6 +30,7 @@ from .storage import (
     _append_session_event,
     _context_path,
     _persist_json,
+    _project_path,
     _safe_id,
     _session_path,
 )
@@ -142,6 +143,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         shell tools. Credentials remain in memory and are never written to
         the session directory.
     """
+    project_path = _project_path(workspace_id, session_id)
     provider, api_url = resolve_provider(config.provider, config.api_url)
     backend = LLMBackendConfig(
         name="browser",
@@ -156,7 +158,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
     semantic_worker = SemanticGraphWorker(fetcher)
     agent = Agent(
         llm_fetcher=fetcher,
-        system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses. In a Swarm, every dispatched or revived work package must use a leaf plan task ID as plan_task_id; plans do not dispatch work by themselves."),
+        system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses. In a Swarm, every dispatched or revived work package must use a leaf plan task ID as plan_task_id; plans do not dispatch work by themselves." + f"\n\nThe current project root is {json.dumps(str(project_path), ensure_ascii=False)}. Treat it as the authoritative working directory for project files; Angelus runtime state is stored separately."),
         # Keep browser-selected compaction behavior consistent for the
         # coordinator and every subsequently created session Agent.
         max_context_threshold=config.max_context_threshold,
@@ -177,7 +179,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
     _enable_optional_agent_controls(agent)
     if config.enable_shell:
         agent.add_tools(create_shell_tools(
-            sandbox_cwd=str(_session_path(workspace_id, session_id)),
+            sandbox_cwd=str(project_path),
             register_process=active.register_process if active else None,
             unregister_process=active.unregister_process if active else None,
             force_stop_event=active.control.force_stopped if active else None,
@@ -327,7 +329,7 @@ def _worker_tools_for(
     ))
     if config.enable_shell:
         tools.extend(create_shell_tools(
-            sandbox_cwd=str(_session_path(workspace_id, session_id)),
+            sandbox_cwd=str(_project_path(workspace_id, session_id)),
             register_process=active.register_process,
             unregister_process=active.unregister_process,
             force_stop_event=active.control.force_stopped,
