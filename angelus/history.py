@@ -5,9 +5,10 @@ from __future__ import annotations
 import ast
 import json
 import shutil
+from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .markdown import render_markdown
 from .context_stats import estimate_context_length
@@ -15,6 +16,7 @@ from . import storage
 from .storage import (
     _conversation_path,
     _context_path,
+    _iter_session_event_log,
     _persist_json,
     _read_session_event_log,
     _safe_id,
@@ -718,24 +720,23 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
         stats=stats,
     )
 
-def _agent_turns_from_events(
+def _iter_agent_turns_from_events(
     workspace_id: str,
     session_id: str,
     agent_name: str,
-) -> list[dict[str, Any]]:
-    """Reconstruct an Agent transcript from the append-only lifecycle log.
+) -> Iterator[dict[str, Any]]:
+    """Stream an Agent transcript from the append-only lifecycle log.
 
     Args:
         workspace_id: Internal storage partition owning ``events.ndjson``.
         session_id: Browser-stable identifier for the current chat.
         agent_name: Graph Agent whose model rounds should be included.
 
-    Returns:
+    Yields:
         Chronological user prompts and assistant rounds with rendered Markdown
         and completed tool evidence. A coordinator result identical to its
         final model round is emitted only once.
     """
-    turns: list[dict[str, Any]] = []
     completed_tools: dict[tuple[str, int], list[dict[str, Any]]] = {}
     last_assistant: tuple[str, str] | None = None
     last_user: str | None = None
@@ -746,7 +747,7 @@ def _agent_turns_from_events(
     # that duplicate, not a real new model step.
     last_round: dict[str, tuple[int, str, str]] = {}
 
-    for event in _read_session_event_log(workspace_id, session_id):
+    for event in _iter_session_event_log(workspace_id, session_id):
         event_kind = str(event.get("event", ""))
         event_type = str(event.get("type", ""))
         event_agent = str(event.get("agent") or "coordinator")
@@ -757,7 +758,7 @@ def _agent_turns_from_events(
         if event_kind == "run_started":
             content = str(event.get("message", ""))
             if content:
-                turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+                yield {"role": "user", "content": content, "reasoning": "", "tools": []}
                 last_user = content
             continue
 
@@ -771,7 +772,7 @@ def _agent_turns_from_events(
             content = str(event.get("message", ""))
             # Old logs have only agent:start; new logs also have run_started.
             if content and content != last_user:
-                turns.append({"role": "user", "content": content, "reasoning": "", "tools": []})
+                yield {"role": "user", "content": content, "reasoning": "", "tools": []}
                 last_user = content
             last_assistant = None
             continue
@@ -786,7 +787,7 @@ def _agent_turns_from_events(
             if isinstance(messages, list):
                 for message in messages:
                     if isinstance(message, str) and message:
-                        turns.append({"role": "steer", "content": message, "reasoning": "", "tools": []})
+                        yield {"role": "steer", "content": message, "reasoning": "", "tools": []}
             continue
 
         # Tool completion precedes its matching model-round event, allowing
@@ -826,7 +827,7 @@ def _agent_turns_from_events(
                 turn["timestamp"] = float(event["timestamp"])
             if isinstance(data.get("duration_ms"), (int, float)):
                 turn["duration_ms"] = data["duration_ms"]
-            turns.append(turn)
+            yield turn
             last_assistant = (content, reasoning)
             if isinstance(round_number, int):
                 last_round[event_agent] = (round_number, content, reasoning)
@@ -845,9 +846,132 @@ def _agent_turns_from_events(
             usage = event.get("usage")
             if isinstance(usage, dict):
                 turn["usage"] = usage
-            turns.append(turn)
+            yield turn
             last_assistant = (content, reasoning)
-    return turns
+
+
+def _agent_turns_from_events(
+    workspace_id: str,
+    session_id: str,
+    agent_name: str,
+) -> list[dict[str, Any]]:
+    """Reconstruct an Agent transcript from the append-only lifecycle log.
+
+    Args:
+        workspace_id: Internal storage partition owning ``events.ndjson``.
+        session_id: Browser-stable identifier for the current chat.
+        agent_name: Graph Agent whose model rounds should be included.
+
+    Returns:
+        Chronological user prompts and assistant rounds with rendered Markdown
+        and completed tool evidence. A coordinator result identical to its
+        final model round is emitted only once.
+    """
+    return list(_iter_agent_turns_from_events(workspace_id, session_id, agent_name))
+
+
+def _paginate_turns(
+    turns: list[dict[str, Any]],
+    *,
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Slice a fully materialized turn list into a newest-first page.
+
+    Args:
+        turns: Chronological display turns (oldest first).
+        before: Exclusive chronological turn index to page before. ``None``
+            starts from the newest turn.
+        limit: Maximum number of turns to return, clamped to ``1..500``.
+
+    Returns:
+        ``{messages, total, next_before}`` where ``messages`` is the newest
+        ``limit`` turns strictly before ``before`` (oldest-first order
+        preserved), ``total`` is the full turn count, and ``next_before`` is
+        the exclusive index of the next older page or ``None`` when the
+        beginning has been reached.
+    """
+    page_limit = max(1, min(int(limit), 500))
+    total = len(turns)
+    end = total if before is None else max(0, min(int(before), total))
+    start = max(0, end - page_limit)
+    return {
+        "messages": turns[start:end],
+        "total": total,
+        "next_before": start if start else None,
+    }
+
+
+def _agent_turns_page(
+    workspace_id: str,
+    session_id: str,
+    agent_name: str,
+    *,
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return a bounded page of one Agent's display transcript.
+
+    Streams the durable event log and keeps only the newest ``limit`` turns
+    strictly before the ``before`` cursor, so a long session never needs to be
+    fully materialized just to render the latest page.  The cursor is an
+    exclusive chronological turn index matching ``_archived_context_page``.
+
+    Args:
+        workspace_id: Internal storage partition owning ``events.ndjson``.
+        session_id: Browser-stable identifier for the current chat.
+        agent_name: Selected graph Agent, or ``all`` for the canonical chat.
+        before: Exclusive chronological turn index to page before.
+        limit: Maximum number of turns to return, clamped to ``1..500``.
+
+    Returns:
+        ``{messages, total, next_before}`` with ``messages`` in chronological
+        order (oldest first within the page).
+    """
+    page_limit = max(1, min(int(limit), 500))
+    is_all = agent_name in {"", "all"}
+    if is_all:
+        source = _iter_agent_turns_from_events(workspace_id, session_id, "coordinator")
+    else:
+        safe_agent = _safe_id(agent_name, "agent")
+        source = _iter_agent_turns_from_events(workspace_id, session_id, safe_agent)
+
+    page: list[dict[str, Any]] = []
+    total = 0
+    saw_user = False
+    end = None if before is None else max(0, int(before))
+    for turn in source:
+        total += 1
+        if turn.get("role") == "user":
+            saw_user = True
+        if end is not None and total > end:
+            continue
+        page.append(turn)
+        if len(page) > page_limit:
+            page.pop(0)
+
+    # Legacy fallbacks for incomplete or empty event logs.
+    if is_all:
+        if not saw_user:
+            return _paginate_turns(
+                _read_session_history(workspace_id, session_id),
+                before=before, limit=page_limit,
+            )
+    elif total == 0:
+        context_path = _session_path(workspace_id, session_id) / "contexts" / f"{safe_agent}.json"
+        legacy = _turns_from_legacy_context(context_path)
+        for turn in legacy:
+            if turn.get("role") == "assistant":
+                turn["content_html"] = render_markdown(str(turn.get("content", "")))
+                turn["reasoning_html"] = render_markdown(str(turn.get("reasoning", "")))
+        return _paginate_turns(legacy, before=before, limit=page_limit)
+
+    if end is None:
+        next_before = max(0, total - page_limit) if total > page_limit else None
+    else:
+        next_before = max(0, end - page_limit) if end > page_limit else None
+    return {"messages": page, "total": total, "next_before": next_before}
+
 
 def _display_tools_from_event(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize completed lifecycle tool calls for browser display.
@@ -1165,7 +1289,10 @@ __all__ = [
     "_session_usage_summary",
     "_archived_context_page",
     "_agent_context_preview",
+    "_iter_agent_turns_from_events",
     "_agent_turns_from_events",
+    "_paginate_turns",
+    "_agent_turns_page",
     "_display_tools_from_event",
     "_read_agent_history",
     "_agent_context_stats",

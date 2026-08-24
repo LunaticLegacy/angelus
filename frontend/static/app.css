@@ -112,6 +112,8 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .inspector-agent small.agent-context { margin-top:3px; padding-top:3px; border-top:1px dashed #2a3b57; color:#8fa3c4; font-size:8px; white-space:normal; overflow-wrap:anywhere; line-height:1.45; }
 .inspector-agent small.agent-context::before { content:"⛶ "; color:var(--purple); }
 .load-more-trace { flex:0 0 auto; padding:7px; border:1px solid var(--line); border-radius:6px; background:#111e31; color:var(--soft); font-size:10px; }
+.load-more-messages { display:block; margin:0 auto 14px; padding:7px 12px; border:1px solid var(--line); border-radius:6px; background:#111e31; color:var(--soft); font-size:10px; }
+.load-more-messages:hover { border-color:#52688f; }
 .load-more-trace:hover { border-color:#52688f; }
 .usage-total { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
 .usage-total div,.usage-agent { padding:8px; border:1px solid var(--line); border-radius:6px; background:#101a2b; }
@@ -236,8 +238,8 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 /* Activity / inspector */
 :root[data-theme="light"] .activity { background:linear-gradient(180deg,#ffffff,#f7f9fd); }
 :root[data-theme="light"] .metrics div,:root[data-theme="light"] .task-block,:root[data-theme="light"] .graph-node,:root[data-theme="light"] .trace-toggle,:root[data-theme="light"] .inspector-agent,:root[data-theme="light"] .usage-total div,:root[data-theme="light"] .usage-agent,:root[data-theme="light"] .agent-behavior,:root[data-theme="light"] .agent-behavior-block { background:#f7f9fd; }
-:root[data-theme="light"] .refresh-button,:root[data-theme="light"] .load-more-trace { background:#e9edf6; }
-:root[data-theme="light"] .load-more-trace:hover { border-color:#9fb2d8; }
+:root[data-theme="light"] .refresh-button,:root[data-theme="light"] .load-more-trace,:root[data-theme="light"] .load-more-messages { background:#e9edf6; }
+:root[data-theme="light"] .load-more-trace:hover,:root[data-theme="light"] .load-more-messages:hover { border-color:#9fb2d8; }
 :root[data-theme="light"] .empty { color:#8b96ab; }
 :root[data-theme="light"] .task-block { border-left-color:#c6d2e6; }
 :root[data-theme="light"] .task-block::before { border-color:#9aa7c0; background:#ffffff; }

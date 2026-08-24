@@ -304,6 +304,38 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
             handle.flush()
             os.fsync(handle.fileno())
 
+def _iter_session_event_log(workspace_id: str, session_id: str):
+    """Yield valid durable events for one browser session in write order.
+
+    Args:
+        workspace_id: Session storage partition that owns ``events.ndjson``.
+        session_id: Browser-visible session identity within that partition.
+
+    Yields:
+        JSON object records in chronological order. Malformed or partial lines
+        are ignored so a concurrent append never breaks historical inspection.
+
+    The log is streamed line by line instead of being materialized with
+    ``read_text().splitlines()``.  Hot endpoints (graph reconcile, usage,
+    steers, transcript rebuild) call this repeatedly while a run appends to
+    logs that can reach hundreds of megabytes; materializing the whole parsed
+    list per request creates multi-hundred-MB transients that CPython/glibc
+    arenas never return to the OS, ratcheting process RSS upward.
+    """
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    try:
+        with event_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    yield payload
+    except OSError:
+        return
+
+
 def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str, Any]]:
     """Read valid durable events for one browser session in write order.
 
@@ -314,22 +346,13 @@ def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str
     Returns:
         JSON object records in chronological order. Malformed or partial lines
         are ignored so a concurrent append never breaks historical inspection.
-    """
-    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
-    try:
-        lines = event_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
 
-    events: list[dict[str, Any]] = []
-    for line in lines:
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            events.append(payload)
-    return events
+    This materializes the full parsed log and should only be used by callers
+    that genuinely need every record at once.  Hot, read-mostly endpoints
+    should prefer :func:`_iter_session_event_log` so a large log is never
+    fully resident in memory.
+    """
+    return list(_iter_session_event_log(workspace_id, session_id))
 
 def _read_session_event_log_from(
     workspace_id: str,
@@ -438,15 +461,38 @@ def _session_event_page(
         A mapping containing newest-first ``events``, the total event count,
         and ``next_before`` for the next older page or ``None`` at the start.
     """
-    events = _read_session_event_log(workspace_id, session_id)
     page_limit = max(1, min(limit, 500))
-    end = len(events) if before is None else max(0, min(before, len(events)))
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    try:
+        total = sum(1 for _ in event_path.open("r", encoding="utf-8"))
+    except OSError:
+        total = 0
+    # Newest-first pagination only ever needs the tail of the log.  Reading
+    # the whole file to slice a page would materialize a multi-hundred-MB
+    # parsed list per request on large sessions; instead walk the file once
+    # and retain only the newest ``page_limit`` records.
+    newest: list[dict[str, Any]] = []
+    try:
+        with event_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                newest.append(payload)
+                if len(newest) > page_limit:
+                    newest.pop(0)
+    except OSError:
+        newest = []
+    end = total if before is None else max(0, min(before, total))
     start = max(0, end - page_limit)
     # Reverse only the selected slice so the UI can prepend live events while
     # appending older history without reordering either group.
     return {
-        "events": list(reversed(events[start:end])),
-        "total": len(events),
+        "events": list(reversed(newest)),
+        "total": total,
         "next_before": start if start else None,
     }
 
@@ -469,6 +515,7 @@ __all__ = [
     "_persist_json",
     "_append_session_event",
     "_read_session_event_log",
+    "_iter_session_event_log",
     "_session_event_page",
     "PACKAGE_ROOT",
     "PROJECT_ROOT",

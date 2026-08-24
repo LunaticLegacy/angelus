@@ -25,6 +25,7 @@ from ..history import (
     _agent_context_graph,
     _agent_context_stats,
     _archived_context_page,
+    _agent_turns_page,
     _read_agent_history,
     _session_usage_summary,
 )
@@ -75,8 +76,19 @@ def list_sessions() -> dict[str, list[dict[str, str]]]:
             "completed": "done",
             "stopped": "done",
         }.get(str(persisted), "idle")
-        sessions.append({**workspace, "status": indicator})
+        sessions.append({**workspace, "status": indicator, "path": str(_session_path(session_id, session_id))})
     return {"sessions": sessions}
+
+@router.get("/api/workspace-root")
+def workspace_root() -> dict[str, str]:
+    """Return the on-disk state root that owns every browser session.
+
+    The value is the ``.angelus`` state directory (or the legacy workspace
+    root) that contains ``sessions.json`` and one private directory per
+    session. It is exposed for display only and never used as a UI label.
+    """
+    return {"path": str(storage.WORKSPACE_ROOT)}
+
 
 @router.delete("/api/workspaces/{workspace_id}")
 def delete_workspace(workspace_id: str, request: WorkspaceDeleteRequest) -> dict[str, Any]:
@@ -138,17 +150,29 @@ def get_session_plan(session_id: str, agent: str = "coordinator") -> dict[str, A
     return _plan_store(session_id, session_id, agent).read()
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/messages")
-def get_session_history(workspace_id: str, session_id: str, agent: str = "all") -> dict[str, list[dict[str, Any]]]:
-    """Return persisted display turns so a browser refresh restores the chat.
+def get_session_history(
+    workspace_id: str,
+    session_id: str,
+    agent: str = "all",
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return a bounded page of persisted display turns for a browser refresh.
 
     Args:
         workspace_id: Internal workspace identifier owning the session context.
         session_id: Browser-stable identifier for the current chat.
+        agent: Selected graph Agent, or ``all`` for the canonical chat.
+        before: Exclusive chronological turn index to page before.
+        limit: Maximum number of turns to return, clamped to ``1..500``.
 
     Returns:
-        Ordered user/assistant display turns, excluding tool result payloads.
+        ``{messages, total, next_before}`` with ``messages`` in chronological
+        order (oldest first within the page).
     """
-    return {"messages": _read_agent_history(workspace_id, session_id, agent)}
+    return _agent_turns_page(
+        workspace_id, session_id, agent, before=before, limit=limit,
+    )
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/archive")
 def get_session_archive(
@@ -176,9 +200,27 @@ def get_session_archive_by_id(
     )
 
 @router.get("/api/sessions/{session_id}/messages")
-def get_session_messages(session_id: str, agent: str = "all") -> dict[str, list[dict[str, Any]]]:
-    """Return the aggregate or selected Agent transcript for one session."""
-    return {"messages": _read_agent_history(session_id, session_id, agent)}
+def get_session_messages(
+    session_id: str,
+    agent: str = "all",
+    before: int | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return a bounded page of the aggregate or selected Agent transcript.
+
+    Args:
+        session_id: Browser-stable identifier for the current chat.
+        agent: Selected graph Agent, or ``all`` for the canonical chat.
+        before: Exclusive chronological turn index to page before.
+        limit: Maximum number of turns to return, clamped to ``1..500``.
+
+    Returns:
+        ``{messages, total, next_before}`` with ``messages`` in chronological
+        order (oldest first within the page).
+    """
+    return _agent_turns_page(
+        session_id, session_id, agent, before=before, limit=limit,
+    )
 
 @router.get("/api/sessions/{session_id}/agents")
 def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:

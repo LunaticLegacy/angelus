@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Angelus AI 短剧 Production Studio — UI 预览</title>
+<style>
+  :root {
+    --blue-600: #2563eb;
+    --blue-700: #1d4ed8;
+    --blue-50: #eff6ff;
+    --gray-50: #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-400: #9ca3af;
+    --gray-500: #6b7280;
+    --gray-600: #4b5563;
+    --gray-700: #374151;
+    --gray-900: #111827;
+    --amber-100: #fef3c7; --amber-700: #b45309;
+    --teal-100: #ccfbf1; --teal-700: #0f766e;
+    --violet-100: #ede9fe; --violet-700: #6d28d9;
+    --green-100: #dcfce7; --green-700: #15803d;
+    --red-100: #fee2e2; --red-700: #b91c1c;
+    --orange-100: #ffedd5; --orange-700: #c2410c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+      'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    background: var(--gray-50);
+    color: var(--gray-900);
+  }
+  .app { display: flex; height: 100vh; }
+  /* ---- Sidebar ---- */
+  .sidebar {
+    width: 224px; flex-shrink: 0; border-right: 1px solid var(--gray-200);
+    background: #fff; padding: 16px;
+  }
+  .sidebar h1 { font-size: 13px; font-weight: 700; letter-spacing: .05em; color: var(--gray-700); margin-bottom: 16px; }
+  .nav-item {
+    display: block; padding: 8px 12px; border-radius: 6px; font-size: 14px;
+    color: var(--gray-600); cursor: pointer; text-decoration: none; margin-bottom: 4px;
+  }
+  .nav-item:hover { background: var(--gray-100); }
+  .nav-item.active { background: var(--blue-50); color: var(--blue-700); font-weight: 500; }
+  .nav-section { font-size: 11px; color: var(--gray-400); text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 6px; padding-left: 4px; }
+  /* ---- Main ---- */
+  .main { flex: 1; overflow: auto; padding: 24px; }
+  .page { max-width: 960px; margin: 0 auto; display: none; }
+  .page.active { display: block; }
+  h2 { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+  .back { font-size: 13px; color: var(--blue-600); text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+  .muted { color: var(--gray-500); }
+  .small { font-size: 12px; }
+  .xs { font-size: 11px; }
+  /* ---- Card ---- */
+  .card { background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; }
+  .card + .card { margin-top: 8px; }
+  /* ---- Badges ---- */
+  .badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 11px; font-weight: 500; white-space: nowrap;
+  }
+  .b-gray  { background: var(--gray-100); color: var(--gray-700); }
+  .b-blue  { background: var(--blue-50);  color: var(--blue-700); }
+  .b-amber { background: var(--amber-100); color: var(--amber-700); }
+  .b-teal  { background: var(--teal-100);  color: var(--teal-700); }
+  .b-violet{ background: var(--violet-100); color: var(--violet-700); }
+  .b-green { background: var(--green-100); color: var(--green-700); }
+  .b-red   { background: var(--red-100);   color: var(--red-700); }
+  .b-orange{ background: var(--orange-100); color: var(--orange-700); }
+  /* ---- Buttons ---- */
+  .btn {
+    border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px;
+    font-weight: 500; color: #fff; cursor: pointer;
+  }
+  .btn-blue { background: var(--blue-600); }
+  .btn-blue:hover { background: var(--blue-700); }
+  .btn-gray { background: var(--gray-700); }
+  .btn-gray:hover { background: var(--gray-900); }
+  .btn-sm { padding: 4px 8px; font-size: 11px; border-radius: 4px; }
+  .btn-green { background: #16a34a; } .btn-green:hover { background: #15803d; }
+  .btn-violet { background: #7c3aed; } .btn-violet:hover { background: #6d28d9; }
+  .btn-red { background: #dc2626; } .btn-red:hover { background: #b91c1c; }
+  .btn-orange { background: #ea580c; } .btn-orange:hover { background: #c2410c; }
+  .btn-outline { background: #fff; color: var(--gray-600); border: 1px solid var(--gray-300); }
+  .btn-outline:hover { background: var(--gray-100); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  /* ---- Forms ---- */
+  input[type=text] {
+    border: 1px solid var(--gray-300); border-radius: 6px; padding: 8px 12px;
+    font-size: 13px; width: 100%; font-family: inherit;
+  }
+  input[type=text]:focus { outline: 2px solid var(--blue-50); border-color: var(--blue-600); }
+  .row { display: flex; gap: 8px; }
+  /* ---- Lists ---- */
+  .list { border: 1px solid var(--gray-200); border-radius: 8px; background: #fff; }
+  .list-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; }
+  .list-item + .list-item { border-top: 1px solid var(--gray-100); }
+  .empty { padding: 24px; text-align: center; color: var(--gray-400); font-size: 13px; }
+  /* ---- Tree ---- */
+  .ep { border: 1px solid var(--gray-200); border-radius: 8px; background: #fff; }
+  .ep + .ep { margin-top: 8px; }
+  .ep-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; }
+  .ep-head:hover { background: var(--gray-50); }
+  .ep-body { border-top: 1px solid var(--gray-100); padding: 12px 16px; }
+  .scene { border: 1px solid var(--gray-100); border-radius: 8px; background: var(--gray-50); }
+  .scene + .scene { margin-top: 8px; }
+  .scene-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; cursor: pointer; font-size: 13px; }
+  .scene-body { border-top: 1px solid var(--gray-100); padding: 8px 12px; }
+  .shot {
+    display: flex; align-items: center; gap: 8px; background: #fff;
+    border: 1px solid var(--gray-200); border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  }
+  .shot + .shot { margin-top: 6px; }
+  .shot .no { width: 40px; color: var(--gray-400); flex-shrink: 0; }
+  .shot .prompt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chev { color: var(--gray-400); font-size: 11px; transition: transform .15s; }
+  .chev.open { transform: rotate(90deg); }
+  /* ---- Table ---- */
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 13px; }
+  th { text-align: left; font-size: 11px; color: var(--gray-500); font-weight: 500; padding: 8px 12px; border-bottom: 1px solid var(--gray-200); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--gray-100); }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  /* ---- Events ---- */
+  .ev { border: 1px solid var(--gray-200); border-radius: 8px; background: #fff; padding: 8px 12px; font-size: 13px; }
+  .ev + .ev { margin-top: 6px; }
+  .ev-head { display: flex; align-items: center; gap: 8px; }
+  .ev pre { margin-top: 4px; font-size: 11px; color: var(--gray-600); overflow-x: auto; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  /* ---- Banner ---- */
+  .banner {
+    background: linear-gradient(135deg, #1e3a8a, #2563eb); color: #fff;
+    border-radius: 10px; padding: 20px 24px; margin-bottom: 20px;
+  }
+  .banner h3 { font-size: 17px; margin-bottom: 4px; }
+  .banner p { font-size: 12px; opacity: .85; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ================= Sidebar ================= -->
+  <aside class="sidebar">
+    <h1>ANGELUS STUDIO</h1>
+    <a class="nav-item active" data-page="projects" href="javascript:void(0)">项目</a>
+    <div class="nav-section">Production</div>
+    <a class="nav-item" data-page="detail" href="javascript:void(0)">项目详情</a>
+    <a class="nav-item" data-page="jobs" href="javascript:void(0)">生成任务</a>
+    <a class="nav-item" data-page="events" href="javascript:void(0)">事件流</a>
+    <div class="nav-section">旧控制面</div>
+    <a class="nav-item" href="javascript:void(0)">会话 / Runs</a>
+    <a class="nav-item" href="javascript:void(0)">连接器</a>
+    <a class="nav-item" href="javascript:void(0)">插件</a>
+  </aside>
+
+  <!-- ================= Main ================= -->
+  <main class="main">
+
+    <!-- ============ Page: Projects ============ -->
+    <section class="page active" id="page-projects">
+      <div class="banner">
+        <h3>AI 短剧 Production Studio</h3>
+        <p>剧情规划 → 剧集拆分 → 场景拆分 → 分镜 → 生成 → QA → 成片 · 全流程 Trace / Cost / Artifact</p>
+      </div>
+      <h2>短剧项目</h2>
+      <div class="card" style="padding:16px; margin-bottom:24px;">
+        <div class="row" style="margin-bottom:8px;">
+          <input type="text" placeholder="项目名称（必填）" value="逆袭之都市传说" />
+        </div>
+        <div class="row" style="margin-bottom:12px;">
+          <input type="text" placeholder="一句话简介（可选）" value="草根逆袭都市爽剧，竖屏短剧，18-35 岁" />
+        </div>
+        <button class="btn btn-blue">创建项目</button>
+      </div>
+      <div class="list">
+        <div class="list-item">
+          <div>
+            <a href="javascript:void(0)" style="font-weight:500;color:var(--blue-600);text-decoration:none;" onclick="showPage('detail')">逆袭之都市传说</a>
+            <div class="xs muted">草根逆袭都市爽剧，竖屏短剧，18-35 岁</div>
+          </div>
+          <span class="badge b-blue">ACTIVE</span>
+        </div>
+        <div class="list-item">
+          <div>
+            <a href="javascript:void(0)" style="font-weight:500;color:var(--blue-600);text-decoration:none;" onclick="showPage('detail')">重生之商战风云</a>
+            <div class="xs muted">重生复仇商战，男频</div>
+          </div>
+          <span class="badge b-gray">DRAFT</span>
+        </div>
+        <div class="list-item">
+          <div>
+            <a href="javascript:void(0)" style="font-weight:500;color:var(--blue-600);text-decoration:none;" onclick="showPage('detail')">甜宠日常</a>
+            <div class="xs muted">都市甜宠，女频</div>
+          </div>
+          <span class="badge b-gray">DRAFT</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Page: Project Detail ============ -->
+    <section class="page" id="page-detail">
+      <a class="back" href="javascript:void(0)" onclick="showPage('projects')">← 返回项目列表</a>
+      <h2 style="margin-top:8px;margin-bottom:4px;">逆袭之都市传说</h2>
+      <p class="small muted" style="margin-bottom:12px;">草根逆袭都市爽剧，竖屏短剧，18-35 岁 · <span class="badge b-blue">ACTIVE</span></p>
+      <div class="small" style="margin-bottom:16px;">
+        <a class="back" href="javascript:void(0)" onclick="showPage('jobs')">生成任务</a>
+        <span style="color:var(--gray-300)"> | </span>
+        <a class="back" href="javascript:void(0)" onclick="showPage('events')">事件流</a>
+      </div>
+
+      <div class="row" style="margin-bottom:16px;">
+        <input type="text" placeholder="新剧集标题" value="第一集：天台对峙" />
+        <button class="btn btn-blue" style="flex-shrink:0;">添加剧集</button>
+      </div>
+
+      <!-- Episode 1 -->
+      <div class="ep">
+        <div class="ep-head" onclick="toggle(this,'ep1')">
+          <span style="font-weight:500;">EP1 · 第一集：天台对峙</span>
+          <span class="xs muted">DRAFT <span class="chev open">▶</span></span>
+        </div>
+        <div class="ep-body" id="ep1">
+          <div class="row" style="margin-bottom:12px;">
+            <input type="text" placeholder="新场景标题" value="场景1：天台" />
+            <button class="btn btn-gray btn-sm" style="flex-shrink:0;padding:8px 12px;">添加场景</button>
+          </div>
+
+          <!-- Scene 1 -->
+          <div class="scene">
+            <div class="scene-head" onclick="toggle(this,'sc1')">
+              <span style="font-weight:500;">场景1 · 天台对峙</span>
+              <span class="xs muted">天台 <span class="chev open">▶</span></span>
+            </div>
+            <div class="scene-body" id="sc1">
+              <div class="row" style="margin-bottom:8px;">
+                <input type="text" placeholder="镜头 prompt" value="主角站在天台边缘，逆光，风吹起衣角" />
+                <button class="btn btn-gray btn-sm" style="flex-shrink:0;padding:8px 12px;">添加镜头</button>
+              </div>
+              <div class="shot">
+                <span class="no">#1</span>
+                <span class="prompt">主角站在天台边缘，逆光，风吹起衣角</span>
+                <span class="badge b-green">APPROVED</span>
+                <button class="btn btn-blue btn-sm">生成</button>
+                <button class="btn btn-violet btn-sm">QA</button>
+                <button class="btn btn-green btn-sm">通过</button>
+              </div>
+              <div class="shot" style="margin-top:6px;">
+                <span class="no">#2</span>
+                <span class="prompt">反派从阴影中走出，冷笑，镜头缓慢推近</span>
+                <span class="badge b-teal">GENERATED</span>
+                <button class="btn btn-blue btn-sm">生成</button>
+                <button class="btn btn-violet btn-sm">QA</button>
+                <button class="btn btn-green btn-sm">通过</button>
+              </div>
+              <div class="shot" style="margin-top:6px;">
+                <span class="no">#3</span>
+                <span class="prompt">两人对视，画面分割，背景音渐强</span>
+                <span class="badge b-amber">GENERATING</span>
+                <button class="btn btn-blue btn-sm">生成</button>
+                <button class="btn btn-violet btn-sm">QA</button>
+                <button class="btn btn-green btn-sm">通过</button>
+              </div>
+              <div class="shot" style="margin-top:6px;">
+                <span class="no">#4</span>
+                <span class="prompt">主角掏出玉佩，特写，闪回画面</span>
+                <span class="badge b-red">FAILED</span>
+                <button class="btn btn-blue btn-sm">生成</button>
+                <button class="btn btn-violet btn-sm">QA</button>
+                <button class="btn btn-green btn-sm">通过</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scene 2 -->
+          <div class="scene" style="margin-top:8px;">
+            <div class="scene-head" onclick="toggle(this,'sc2')">
+              <span style="font-weight:500;">场景2 · 回忆闪回</span>
+              <span class="xs muted">旧宅 <span class="chev">▶</span></span>
+            </div>
+            <div class="scene-body" id="sc2" style="display:none;">
+              <div class="row" style="margin-bottom:8px;">
+                <input type="text" placeholder="镜头 prompt" />
+                <button class="btn btn-gray btn-sm" style="flex-shrink:0;padding:8px 12px;">添加镜头</button>
+              </div>
+              <div class="empty">暂无镜头</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Episode 2 -->
+      <div class="ep">
+        <div class="ep-head" onclick="toggle(this,'ep2')">
+          <span style="font-weight:500;">EP2 · 第二集：玉佩之谜</span>
+          <span class="xs muted">DRAFT <span class="chev">▶</span></span>
+        </div>
+        <div class="ep-body" id="ep2" style="display:none;">
+          <div class="empty">暂无场景</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Page: Jobs ============ -->
+    <section class="page" id="page-jobs">
+      <a class="back" href="javascript:void(0)" onclick="showPage('detail')">← 返回项目</a>
+      <h2 style="margin-top:8px;">生成任务</h2>
+      <table>
+        <thead>
+          <tr><th>任务</th><th>Provider</th><th>状态</th><th>重试</th><th>创建时间</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">job_9f2c1a</td><td>mock</td>
+            <td><span class="badge b-green">SUCCEEDED</span></td><td>0/3</td>
+            <td class="xs muted">2025-08-24 16:02:11</td><td>—</td>
+          </tr>
+          <tr>
+            <td class="mono">job_7b3d88</td><td>mock</td>
+            <td><span class="badge b-amber">RUNNING</span></td><td>0/3</td>
+            <td class="xs muted">2025-08-24 16:04:37</td><td><button class="btn btn-red btn-sm">取消</button></td>
+          </tr>
+          <tr>
+            <td class="mono">job_5a1e02</td><td>mock</td>
+            <td><span class="badge b-red">FAILED</span></td><td>2/3</td>
+            <td class="xs muted">2025-08-24 16:05:02</td><td><button class="btn btn-orange btn-sm">重试</button></td>
+          </tr>
+          <tr>
+            <td class="mono">job_3c9f77</td><td>mock</td>
+            <td><span class="badge b-blue">QUEUED</span></td><td>0/3</td>
+            <td class="xs muted">2025-08-24 16:06:20</td><td><button class="btn btn-red btn-sm">取消</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============ Page: Events ============ -->
+    <section class="page" id="page-events">
+      <div class="row" style="justify-content:space-between;align-items:center;">
+        <a class="back" href="javascript:void(0)" onclick="showPage('detail')">← 返回项目</a>
+        <button class="btn btn-outline btn-sm">清空</button>
+      </div>
+      <h2 style="margin-top:8px;">事件流 <span class="live-dot" style="vertical-align:middle;"></span></h2>
+      <div class="ev">
+        <div class="ev-head">
+          <span class="mono xs muted">#1042</span>
+          <span style="font-weight:500;color:var(--blue-700);">anime.job.succeeded</span>
+          <span class="xs muted" style="margin-left:auto;">2025-08-24 16:06:21</span>
+        </div>
+        <pre>{ "project_id": "proj_a1b2", "job_id": "job_9f2c1a", "shot_id": "shot_001", "status": "succeeded" }</pre>
+      </div>
+      <div class="ev">
+        <div class="ev-head">
+          <span class="mono xs muted">#1041</span>
+          <span style="font-weight:500;color:var(--blue-700);">anime.shot.state_changed</span>
+          <span class="xs muted" style="margin-left:auto;">2025-08-24 16:06:20</span>
+        </div>
+        <pre>{ "project_id": "proj_a1b2", "shot_id": "shot_003", "old": "GENERATING", "new": "GENERATED" }</pre>
+      </div>
+      <div class="ev">
+        <div class="ev-head">
+          <span class="mono xs muted">#1040</span>
+          <span style="font-weight:500;color:var(--blue-700);">anime.qa.passed</span>
+          <span class="xs muted" style="margin-left:auto;">2025-08-24 16:05:58</span>
+        </div>
+        <pre>{ "project_id": "proj_a1b2", "shot_id": "shot_001", "verdict": "PASS", "report_id": "qa_88" }</pre>
+      </div>
+      <div class="ev">
+        <div class="ev-head">
+          <span class="mono xs muted">#1039</span>
+          <span style="font-weight:500;color:var(--blue-700);">anime.cost.recorded</span>
+          <span class="xs muted" style="margin-left:auto;">2025-08-24 16:05:57</span>
+        </div>
+        <pre>{ "project_id": "proj_a1b2", "amount": 0.012, "job_id": "job_9f2c1a" }</pre>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  function showPage(name) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    const nav = document.querySelector('.nav-item[data-page="' + name + '"]');
+    if (nav) nav.classList.add('active');
+  }
+  function toggle(head, bodyId) {
+    const body = document.getElementById(bodyId);
+    const chev = head.querySelector('.chev');
+    if (body.style.display === 'none') { body.style.display = 'block'; chev.classList.add('open'); }
+    else { body.style.display = 'none'; chev.classList.remove('open'); }
+  }
+</script>
+</body>
+</html>

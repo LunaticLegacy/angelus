@@ -1,0 +1,80 @@
+{
+  "generated_at": "checkpoint-continue",
+  "branch": "feat/v0.5.0-adapter-and-perf",
+  "purpose": "AI Drama Production Studio refactor baseline contract",
+  "routes": {
+    "root": [
+      {"method": "GET", "path": "/", "source": "angelus/api/__init__.py", "status": 200, "note": "serves frontend/templates/index.html"}
+    ],
+    "connectors": [
+      {"method": "GET", "path": "/api/providers", "source": "angelus/api/connectors.py", "status": 200, "note": "provider kinds incl plugin aggregation"},
+      {"method": "GET", "path": "/api/connectors", "source": "angelus/api/connectors.py", "status": 200, "note": "never returns api_key"},
+      {"method": "POST", "path": "/api/connectors", "source": "angelus/api/connectors.py", "status": 201, "note": "RSA-OAEP encrypted storage"},
+      {"method": "PUT", "path": "/api/connectors/{connector_id}", "source": "angelus/api/connectors.py", "status": 200},
+      {"method": "DELETE", "path": "/api/connectors/{connector_id}", "source": "angelus/api/connectors.py", "status": 204}
+    ],
+    "runs": [
+      {"method": "POST", "path": "/api/runs", "source": "angelus/api/runs.py", "status": 200, "note": "daemon thread"},
+      {"method": "GET", "path": "/api/workspaces/{workspace_id}/runs/{session_id}/status", "source": "angelus/api/runs.py", "status": 200},
+      {"method": "GET", "path": "/api/workspaces/{workspace_id}/runs/{session_id}/events", "source": "angelus/api/runs.py", "status": 200, "note": "SSE ?after=N replay+tail"},
+      {"method": "POST", "path": "/api/workspaces/{workspace_id}/runs/{session_id}/stop", "source": "angelus/api/runs.py", "status": 200},
+      {"method": "POST", "path": "/api/workspaces/{workspace_id}/runs/{session_id}/force-stop", "source": "angelus/api/runs.py", "status": 200},
+      {"method": "POST", "path": "/api/workspaces/{workspace_id}/runs/{session_id}/steer", "source": "angelus/api/runs.py", "status": 200}
+    ],
+    "sessions": [
+      {"method": "GET", "path": "/api/workspaces", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/workspaces", "source": "angelus/api/sessions.py", "status": 201},
+      {"method": "DELETE", "path": "/api/workspaces/{workspace_id}", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/sessions", "source": "angelus/api/sessions.py", "status": 201},
+      {"method": "DELETE", "path": "/api/sessions/{session_id}", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/workspace-root", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/workspaces/{workspace_id}/sessions/{session_id}/plan", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/plan", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "PUT", "path": "/api/workspaces/{workspace_id}/sessions/{session_id}/plan", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "PATCH", "path": "/api/workspaces/{workspace_id}/sessions/{session_id}/plan/tasks/{task_id}", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "PATCH", "path": "/api/sessions/{session_id}/plan/tasks/{task_id}", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/workspaces/{workspace_id}/sessions/{session_id}/messages", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/messages", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/workspaces/{workspace_id}/sessions/{session_id}/archive", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/archive", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/events", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/steers", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/usage", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/agents", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/agents/{agent_name}/context-graph", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/agents/{agent_name}/context", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/agents/{agent_name}/context/compaction-input", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/agents/{agent_name}/context/editable", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/sessions/{session_id}/agents/{agent_name}/context/edit", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/sessions/{session_id}/agents/{agent_name}/context/restore", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/workspaces/{workspace_id}/sessions/{session_id}/graph", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/graph", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/sessions/{session_id}/open-folder", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/memory/capabilities", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/sessions/{session_id}/artifacts", "source": "angelus/api/sessions.py", "status": 201},
+      {"method": "GET", "path": "/api/sessions/{session_id}/artifacts", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/handoffs", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "GET", "path": "/api/sessions/{session_id}/handoffs/{handoff_id}", "source": "angelus/api/sessions.py", "status": 200},
+      {"method": "POST", "path": "/api/sessions/{session_id}/handoffs", "source": "angelus/api/sessions.py", "status": 201}
+    ],
+    "compact": [
+      {"method": "POST", "path": "/api/sessions/{session_id}/compact", "source": "angelus/api/compact.py", "status": 200, "note": "SSE streaming"}
+    ],
+    "plugins_dynamic": [
+      {"method": "GET", "path": "/api/plugins", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "GET", "path": "/api/plugins/status", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "POST", "path": "/api/plugins/rescan", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "POST", "path": "/api/plugins/discovered/{name}/register", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "POST", "path": "/api/plugins/{plugin_id}/load", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "POST", "path": "/api/plugins/{plugin_id}/unload", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "GET", "path": "/api/plugins/{plugin_id}/settings", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "PUT", "path": "/api/plugins/{plugin_id}/settings", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "GET", "path": "/api/plugins/{plugin_id}", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "GET", "path": "/plugins/{name}/static/{asset:path}", "source": "angelus/plugins/bridge_routes.py", "status": 200},
+      {"method": "GET", "path": "/plugins/{name}/api/*", "source": "angelus/plugins/bridge_routes.py", "status": 200, "note": "per-plugin dynamic APIRouter"}
+    ]
+  },
+  "counts": {"root": 1, "connectors": 5, "runs": 6, "sessions": 34, "compact": 1, "plugins_dynamic": 11},
+  "new_namespace": "/api/anime/*"
+}

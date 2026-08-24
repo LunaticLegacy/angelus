@@ -39,6 +39,11 @@ from .api import include_api_routes
 from .api.connectors import *  # noqa: F401,F403
 from .api.runs import *  # noqa: F401,F403
 from .api.sessions import *  # noqa: F401,F403
+from .anime.api import include_anime_routes
+from .anime.api import jobs as _anime_jobs_api
+from .anime.api import providers as _anime_providers_api
+from .anime.api import shots as _anime_shots_api
+from .anime.queue import GenerationQueue
 
 # Preserve the historical behaviour of migrating legacy state at import time.
 migrate_legacy_state()
@@ -46,6 +51,16 @@ migrate_legacy_state()
 app = FastAPI(title="llmfetcher Console", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=FRONTEND_ROOT / "static"), name="static")
 include_api_routes(app)
+
+# ---- AI Drama Production Studio (anime) ----
+# 共享 GenerationQueue：后台线程消费，mock provider 默认，真实 API 需 opt-in。
+_anime_queue = GenerationQueue()
+_anime_queue.start()
+_anime_shots_api.set_queue(_anime_queue)
+_anime_jobs_api.set_queue(_anime_queue)
+_anime_providers_api.set_router(_anime_queue.router)
+include_anime_routes(app)
+app.state.anime_queue = _anime_queue
 
 
 def _assemble_plugins(app: FastAPI) -> Any:
