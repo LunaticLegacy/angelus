@@ -486,10 +486,68 @@ def _session_event_offset_after(workspace_id: str, session_id: str, after: int) 
     return offset
 
 
+def _read_previous_line(
+    handle: Any, position: int, chunk_size: int = 64 * 1024,
+) -> tuple[int, bytes] | None:
+    """Read the complete binary line immediately before a byte boundary.
+
+    Args:
+        handle: Seekable binary file object owned by the caller.
+        position: Exclusive boundary, normally a prior line start or EOF.
+        chunk_size: Maximum reverse-search block size in bytes.
+
+    Returns:
+        ``(line_start, line_without_newline)`` or ``None`` at file start.
+    """
+    if position <= 0:
+        return None
+    end = position
+    handle.seek(end - 1)
+    if handle.read(1) == b"\n":
+        end -= 1
+    search = end
+    suffix = b""
+    while search > 0:
+        start = max(0, search - chunk_size)
+        handle.seek(start)
+        block = handle.read(search - start)
+        newline = block.rfind(b"\n")
+        if newline >= 0:
+            return start + newline + 1, block[newline + 1:] + suffix
+        suffix = block + suffix
+        search = start
+    return 0, suffix
+
+
+def _last_complete_line_offset(path: Path) -> int:
+    """Return the byte boundary after the last newline-terminated record.
+
+    Args:
+        path: Append-only binary/NDJSON file that may have an in-progress tail.
+
+    Returns:
+        File size when the tail is complete, otherwise the boundary after the
+        preceding newline. Missing or empty files return zero.
+    """
+    try:
+        size = path.stat().st_size
+        if size <= 0:
+            return 0
+        with path.open("rb") as handle:
+            handle.seek(size - 1)
+            if handle.read(1) == b"\n":
+                return size
+            record = _read_previous_line(handle, size)
+            return record[0] if record is not None else 0
+    except OSError:
+        return 0
+
+
 def _session_event_page(
     workspace_id: str,
     session_id: str,
     *,
+    cursor: str | None = None,
     before: int | None,
     limit: int,
 ) -> dict[str, Any]:
@@ -498,48 +556,64 @@ def _session_event_page(
     Args:
         workspace_id: Session storage partition that owns the event log.
         session_id: Browser-visible session identity.
-        before: Exclusive chronological offset for older-event pagination;
+        cursor: Opaque event-log byte cursor for the next older page.
+        before: Deprecated exclusive event index used by old clients;
             ``None`` starts from the newest stored event.
         limit: Requested maximum number of records. Values are clamped to
             ``1..500`` to keep the inspector responsive.
 
     Returns:
-        A mapping containing newest-first ``events``, the total event count,
-        and ``next_before`` for the next older page or ``None`` at the start.
+        Newest-first events, an opaque older cursor, ``has_more``, and the
+        current durable byte offset used to resume SSE replay.
+
+    Raises:
+        ValueError: If ``cursor`` is outside the current durable log.
     """
     page_limit = max(1, min(limit, 500))
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    durable_offset = _last_complete_line_offset(event_path)
+    if cursor is not None:
+        try:
+            position = int(cursor)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid trace cursor") from exc
+        if not 0 <= position <= durable_offset:
+            raise ValueError("Invalid trace cursor")
+    elif before is not None:
+        position = _session_event_offset_after(workspace_id, session_id, max(0, int(before)))
+    else:
+        position = durable_offset
+
+    selected: list[tuple[int, dict[str, Any]]] = []
+    has_more = False
     try:
-        total = sum(1 for _ in event_path.open("r", encoding="utf-8"))
-    except OSError:
-        total = 0
-    # Newest-first pagination only ever needs the tail of the log.  Reading
-    # the whole file to slice a page would materialize a multi-hundred-MB
-    # parsed list per request on large sessions; instead walk the file once
-    # and retain only the newest ``page_limit`` records.
-    newest: list[dict[str, Any]] = []
-    try:
-        with event_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
+        with event_path.open("rb") as handle:
+            scan = position
+            while scan > 0:
+                record = _read_previous_line(handle, scan)
+                if record is None:
+                    break
+                line_start, raw = record
+                scan = line_start
                 try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
+                    payload = json.loads(raw)
+                except (UnicodeDecodeError, json.JSONDecodeError):
                     continue
                 if not isinstance(payload, dict):
                     continue
-                newest.append(payload)
-                if len(newest) > page_limit:
-                    newest.pop(0)
+                if len(selected) == page_limit:
+                    has_more = True
+                    break
+                selected.append((line_start, payload))
     except OSError:
-        newest = []
-    end = total if before is None else max(0, min(before, total))
-    start = max(0, end - page_limit)
-    # Reverse only the selected slice so the UI can prepend live events while
-    # appending older history without reordering either group.
+        selected = []
+    next_cursor = str(selected[-1][0]) if selected and has_more else None
     return {
-        "events": list(reversed(newest)),
-        "total": total,
-        "next_before": start if start else None,
+        "events": [payload for _, payload in selected],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "durable_offset": durable_offset,
+        "next_before": 1 if has_more else None,
     }
 
 __all__ = [

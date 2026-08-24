@@ -154,8 +154,9 @@ def get_session_history(
     workspace_id: str,
     session_id: str,
     agent: str = "all",
+    cursor: str | None = None,
     before: int | None = None,
-    limit: int = 100,
+    limit: int = 200,
 ) -> dict[str, Any]:
     """Return a bounded page of persisted display turns for a browser refresh.
 
@@ -163,16 +164,20 @@ def get_session_history(
         workspace_id: Internal workspace identifier owning the session context.
         session_id: Browser-stable identifier for the current chat.
         agent: Selected graph Agent, or ``all`` for the canonical chat.
-        before: Exclusive chronological turn index to page before.
+        cursor: Opaque cursor from the preceding newer page.
+        before: Deprecated exclusive chronological turn index.
         limit: Maximum number of turns to return, clamped to ``1..500``.
 
     Returns:
-        ``{messages, total, next_before}`` with ``messages`` in chronological
-        order (oldest first within the page).
+        ``{messages, total, next_cursor, has_more, next_before}`` with messages
+        in chronological order and ``next_before`` retained for compatibility.
     """
-    return _agent_turns_page(
-        workspace_id, session_id, agent, before=before, limit=limit,
-    )
+    try:
+        return _agent_turns_page(
+            workspace_id, session_id, agent, cursor=cursor, before=before, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/archive")
 def get_session_archive(
@@ -203,24 +208,29 @@ def get_session_archive_by_id(
 def get_session_messages(
     session_id: str,
     agent: str = "all",
+    cursor: str | None = None,
     before: int | None = None,
-    limit: int = 100,
+    limit: int = 200,
 ) -> dict[str, Any]:
     """Return a bounded page of the aggregate or selected Agent transcript.
 
     Args:
         session_id: Browser-stable identifier for the current chat.
         agent: Selected graph Agent, or ``all`` for the canonical chat.
-        before: Exclusive chronological turn index to page before.
+        cursor: Opaque cursor from the preceding newer page.
+        before: Deprecated exclusive chronological turn index.
         limit: Maximum number of turns to return, clamped to ``1..500``.
 
     Returns:
-        ``{messages, total, next_before}`` with ``messages`` in chronological
-        order (oldest first within the page).
+        ``{messages, total, next_cursor, has_more, next_before}`` with messages
+        in chronological order and ``next_before`` retained for compatibility.
     """
-    return _agent_turns_page(
-        session_id, session_id, agent, before=before, limit=limit,
-    )
+    try:
+        return _agent_turns_page(
+            session_id, session_id, agent, cursor=cursor, before=before, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/api/sessions/{session_id}/agents")
 def get_session_agents(session_id: str) -> dict[str, list[dict[str, Any]]]:
@@ -674,6 +684,7 @@ def get_session_graph_by_id(session_id: str) -> dict[str, Any]:
 @router.get("/api/sessions/{session_id}/events")
 def get_session_events(
     session_id: str,
+    cursor: str | None = None,
     before: int | None = None,
     limit: int = 200,
 ) -> dict[str, Any]:
@@ -681,20 +692,24 @@ def get_session_events(
 
     Args:
         session_id: Browser-visible session identity.
-        before: Exclusive chronological event offset from an earlier response;
-            omit it to load the newest page.
+        cursor: Opaque byte cursor from an earlier response.
+        before: Deprecated exclusive chronological event index.
         limit: Maximum records to return. The server clamps it to ``1..500``.
 
     Returns:
-        Event records, their session-wide total, and a cursor for older events.
+        Event records, the next older cursor, and the durable SSE offset.
     """
     safe_session_id = _safe_id(session_id, "session")
-    return _session_event_page(
-        safe_session_id,
-        safe_session_id,
-        before=before,
-        limit=limit,
-    )
+    try:
+        return _session_event_page(
+            safe_session_id,
+            safe_session_id,
+            cursor=cursor,
+            before=before,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/api/sessions/{session_id}/steers")
 def get_session_steers(session_id: str) -> dict[str, Any]:

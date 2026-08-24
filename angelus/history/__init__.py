@@ -25,6 +25,7 @@ from .models import (
     RemoteRequestStats,
 )
 from . import transcripts as _transcripts
+from .projection import transcript_page as _transcript_projection_page
 from .transcripts import (
     _agent_turns_from_events,
     _display_tool_result,
@@ -52,8 +53,9 @@ def _agent_turns_page(
     session_id: str,
     agent_name: str,
     *,
+    cursor: str | None = None,
     before: int | None = None,
-    limit: int = 100,
+    limit: int = 200,
 ) -> dict[str, Any]:
     """Return a transcript page while preserving facade-level patchability.
 
@@ -61,7 +63,8 @@ def _agent_turns_page(
         workspace_id: Internal storage partition owning the event log.
         session_id: Browser-stable session identifier.
         agent_name: Selected graph Agent or ``all`` for the canonical chat.
-        before: Exclusive chronological cursor for the requested page.
+        cursor: Opaque projection cursor returned by the previous page.
+        before: Deprecated exclusive chronological turn index.
         limit: Maximum returned turns, clamped by the implementation.
 
     Returns:
@@ -73,13 +76,14 @@ def _agent_turns_page(
         The facade passes that hook explicitly into the focused transcript
         module so the package split remains compatible and thread-safe.
     """
-    return _transcripts._agent_turns_page(
+    return _transcript_projection_page(
         workspace_id,
         session_id,
         agent_name,
+        cursor=cursor,
         before=before,
         limit=limit,
-        _path_resolver=_session_path,
+        path_resolver=_session_path,
     )
 
 __all__ = [
