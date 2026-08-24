@@ -285,7 +285,7 @@ def _persist_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     temporary.replace(path)
 
-def _append_session_event(workspace_id: str, session_id: str, payload: dict[str, Any]) -> None:
+def _append_session_event(workspace_id: str, session_id: str, payload: dict[str, Any]) -> int:
     """Append one serialized runtime event to the session's durable trace.
 
     Args:
@@ -293,6 +293,9 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
         session_id: Browser-stable session identity.
         payload: SSE-compatible event payload. Non-JSON exception data is
             rendered with ``str`` so observability cannot break execution.
+
+    Returns:
+        Byte offset immediately after the flushed and fsynced record.
     """
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
     serialized = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
@@ -303,6 +306,24 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
             handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
+            return handle.tell()
+
+
+def _session_event_log_size(workspace_id: str, session_id: str) -> int:
+    """Return the current durable event-log byte length, or zero if absent.
+
+    Args:
+        workspace_id: Storage partition owning the event log.
+        session_id: Browser-stable session identity.
+
+    Returns:
+        Current file size in bytes, or zero when no readable log exists.
+    """
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    try:
+        return event_path.stat().st_size
+    except OSError:
+        return 0
 
 def _iter_session_event_log(workspace_id: str, session_id: str):
     """Yield valid durable events for one browser session in write order.
@@ -375,15 +396,40 @@ def _read_session_event_log_from(
         concurrent append in progress) is not consumed, so the next poll
         retries it once the writer finishes.
     """
+    records, consumed = _read_session_event_records_from(
+        workspace_id, session_id, offset_bytes,
+    )
+    return [payload for payload, _ in records], consumed
+
+
+def _read_session_event_records_from(
+    workspace_id: str,
+    session_id: str,
+    offset_bytes: int = 0,
+    until_offset: int | None = None,
+) -> tuple[list[tuple[dict[str, Any], int]], int]:
+    """Read durable payloads with their end offsets inside a byte range.
+
+    Args:
+        workspace_id: Storage partition owning the event log.
+        session_id: Browser-stable session identity.
+        offset_bytes: Inclusive byte position where reading begins.
+        until_offset: Optional exclusive snapshot boundary; bytes committed
+            later are left for the in-memory broker or a subsequent recovery.
+
+    Returns:
+        Parsed ``(payload, end_offset)`` records and the next byte position.
+    """
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
     try:
         with event_path.open("rb") as handle:
             handle.seek(max(0, offset_bytes))
-            raw = handle.read()
+            limit = None if until_offset is None else max(0, until_offset - handle.tell())
+            raw = handle.read() if limit is None else handle.read(limit)
     except OSError:
         return [], max(0, offset_bytes)
 
-    events: list[dict[str, Any]] = []
+    events: list[tuple[dict[str, Any], int]] = []
     consumed = max(0, offset_bytes)
     lines = raw.split(b"\n")
     # A trailing line without a newline is an in-progress append; leave its
@@ -391,9 +437,9 @@ def _read_session_event_log_from(
     if raw and not raw.endswith(b"\n"):
         lines = lines[:-1]
     for line in lines:
+        consumed += len(line) + 1
         if not line:
             continue
-        consumed += len(line) + 1
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
@@ -401,7 +447,7 @@ def _read_session_event_log_from(
             # never spin forever on the same bytes.
             continue
         if isinstance(payload, dict):
-            events.append(payload)
+            events.append((payload, consumed))
     return events, consumed
 
 

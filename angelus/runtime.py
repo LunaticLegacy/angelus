@@ -20,6 +20,7 @@ from llmfetcher.tools.spawn_tools import create_swarm_tools, create_task_report_
 
 from .classes import ActiveRun, RunConfig
 from .context_editing import ContextEditStore, create_context_editing_tools
+from .event_stream import publish_durable_event
 from .markdown import render_markdown
 from .mcp_tools import create_mcp_tools
 from .provider_adapters import create_fetcher, effective_temperature, resolve_provider
@@ -254,9 +255,7 @@ def _publish_plan_change(
             data={"plan": plan},
         )),
     }
-    _append_session_event(workspace_id, session_id, payload)
-    if active is not None:
-        active.events.put(payload)
+    publish_durable_event(active, workspace_id, session_id, payload)
 
 
 def _plan_store(
@@ -443,9 +442,8 @@ def _attach_swarm_observer(
         if event.event_type == "agent:stream_delta":
             active.publish_ephemeral_event(payload)
             return
-        _append_session_event(workspace_id, session_id, payload)
+        publish_durable_event(active, workspace_id, session_id, payload)
         _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
-        active.events.put(payload)
 
     swarm.add_hook(capture)
     _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
@@ -506,20 +504,20 @@ def _synchronize_context_threshold(
             authoritative for their active context files.
 
     Returns:
-        Agent names whose context handler accepted and persisted the value.
+        Agent names whose context handler accepted the in-memory value.
 
     Side Effects:
-        Updates each Agent and its persisted context before ``Agent.run``
-        reloads that context. This prevents a prior checkpoint's threshold
-        from silently overriding a newer setting on retained Swarm workers.
+        Updates each Agent in memory. ``Agent.run`` reapplies the value after
+        loading the prior checkpoint and persists it only at the next safe
+        model boundary.
     """
     synchronized: list[str] = []
     for agent in agents:
         setter = getattr(agent, "set_context_threshold", None)
         # Test doubles and third-party Agent-compatible wrappers may predate
         # this optional synchronization method; they remain runnable while
-        # first-party Agents always persist the selected threshold.
-        if callable(setter) and setter(max_context_threshold, persist=True):
+        # first-party Agents always accept the selected threshold.
+        if callable(setter) and setter(max_context_threshold, persist=False):
             synchronized.append(getattr(agent, "_agent_name_in_graph", "") or "coordinator")
     return tuple(synchronized)
 
