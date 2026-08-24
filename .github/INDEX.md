@@ -5,7 +5,7 @@
 | File | Trigger and responsibility |
 |---|---|
 | `workflows/ci.yml` | Pull Request 与主分支推送的基础测试、检查和 Python 包验证。 |
-| `workflows/desktop-release.yml` | `v*` 标签触发的 Linux / Windows 桌面包构建与 Draft Release 上传。 |
+| `workflows/desktop-release.yml` | `v0.5.0-preview` 标签触发的 Linux / Windows 预览版桌面包构建与 Draft Release 上传。 |
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 

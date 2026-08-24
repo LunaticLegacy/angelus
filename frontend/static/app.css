@@ -635,3 +635,5 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 .external-hub-dialog{width:min(1180px,calc(100vw - 64px));height:min(820px,calc(100vh - 64px));padding:0;border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--text);box-shadow:var(--shadow)}.external-hub-dialog::backdrop{background:rgba(3,4,7,.76);backdrop-filter:blur(6px)}.external-hub-dialog>header{height:64px;padding:0 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.external-hub-dialog h2{margin:0;font-size:17px}.external-hub-dialog iframe{display:block;width:100%;height:calc(100% - 65px);border:0;background:var(--bg);overflow:auto;overscroll-behavior:contain}
 /* The iframe owns Hub scrolling; the fixed Workbench shell remains stationary. */
 html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{min-height:100vh!important}
+/* Component display rules must not override the semantic hidden attribute. */
+.external-hub [hidden]{display:none!important}

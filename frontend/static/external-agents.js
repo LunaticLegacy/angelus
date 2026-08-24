@@ -35,10 +35,20 @@ async function autoDetectProviders() {
   const found = (result.providers || []).filter((item) => item.available); const first = found[0]; if (first) selectProvider(first.id);
   feedback(found.length ? `检测到：${found.map((item) => state.providers.find((provider) => provider.id === item.id)?.label || item.id).join("、")}。` : "未检测到运行时；可检查 CLI/SDK 或 OpenCode loopback 服务。", found.length ? "success" : "warning");
 }
+/** Render endpoint fields and save actions that are valid for one selected Provider. */
+function renderProviderSettings(provider) {
+  const usesOpenCodeEndpoint = provider.id === "opencode";
+  // OpenCode alone accepts a browser-configured endpoint; CLI providers use local discovery.
+  $("provider-endpoint-row").hidden = !usesOpenCodeEndpoint;
+  $("save-provider").hidden = !usesOpenCodeEndpoint;
+  $("provider-settings-note").hidden = usesOpenCodeEndpoint;
+  $("provider-settings-note").textContent = provider.id === "codex" ? "Codex 使用本机 App Server 自动发现，无需填写 URL。" : provider.id === "claude-code" ? "Claude Code 使用本机 CLI/SDK 与 transcript 自动发现，无需填写 URL。" : "该 Provider 当前仅预留接口，尚无可保存的连接设置。";
+}
 /** Show one Provider configuration form and its capability-specific safety guidance. */
 function selectProvider(providerId) {
   state.selectedProvider = state.providers.find((item) => item.id === providerId) || null; renderProviders(); const provider = state.selectedProvider; $("provider-detail").hidden = !provider; if (!provider) return;
-  $("provider-label").value = provider.label; $("provider-endpoint-row").hidden = provider.id !== "opencode"; $("provider-endpoint").value = provider.endpoint || ""; $("provider-runtime-state").textContent = provider.runtime_available ? "运行时可用" : "运行时不可用";
+  $("provider-label").value = provider.label; $("provider-endpoint").value = provider.endpoint || ""; $("provider-runtime-state").textContent = provider.runtime_available ? "运行时可用" : "运行时不可用";
+  renderProviderSettings(provider);
   $("provider-help").textContent = provider.id === "claude-code" ? "已发现的 Claude transcript 仅可读取；只有 Angelus 启动的 Claude 会话可控制。" : provider.id === "opencode" ? "仅接受 loopback URL；远程服务及凭据不通过此页面配置。" : "Codex 使用本机 App Server；不会从浏览器接收命令或凭据。";
   state.sessions = []; $("session-count").textContent = ""; $("external-session-list").textContent = "点击“发现会话”读取该 Provider。";
 }

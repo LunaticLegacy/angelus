@@ -137,6 +137,8 @@ def save_provider(provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if any(key.lower() in {"token", "secret", "password", "api_key", "authorization"} for key in payload):
         raise HTTPException(status_code=422, detail="Provider secrets must use Angelus encrypted credential storage")
     endpoint = str(payload.get("endpoint", "")).strip()
+    if endpoint and provider_id != "opencode":
+        raise HTTPException(status_code=422, detail=f"{provider_id} does not accept a browser-configured endpoint")
     if endpoint and not endpoint.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")):
         raise HTTPException(status_code=422, detail="External Agent Hub currently permits only loopback provider endpoints")
     records = [item for item in _private_read(EXTERNAL_PROVIDERS_PATH) if item.get("id") != provider_id]

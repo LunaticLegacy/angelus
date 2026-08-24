@@ -5,8 +5,8 @@ Angelus 的 Tauri 2 桌面壳。它为本地 FastAPI 服务选择 loopback 端�
 | Entry | Type | Responsibility |
 |---|---|---|
 | `src/main.rs` | 预留本地端口、启动/回收后端进程并创建 Tauri WebView 窗口。 |
-| `Cargo.toml` / `Cargo.lock` | Rust 包与锁定依赖。 |
-| `tauri.conf.json` | 窗口、bundle、sidecar 资源和 CSP 配置。 |
+| `Cargo.toml` / `Cargo.lock` | Rust 包与锁定依赖；桌面 prerelease 版本为 `0.5.0-preview`。 |
+| `tauri.conf.json` | 窗口、bundle、sidecar 资源和 CSP 配置；与发布标签 `v0.5.0-preview` 对应，WiX 使用数值版本 `0.5.0.0`。 |
 | `build.rs` | Tauri build-time 配置入口。 |
 | `binaries/` | `scripts/build-backend.mjs` / `build_backend.py` 生成的 Python sidecar 放置目录。 |
 | `icons/` | 桌面应用图标源文件。 |

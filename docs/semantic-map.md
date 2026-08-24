@@ -29,7 +29,7 @@
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `ConversionReport` | Versioned import/transfer fidelity record listing preserved, degraded, omitted, and summarized content. | Created by `canonicalize_events`; serialized by archive/import/transfer APIs. |
-| `provider_catalog` / `save_provider` / `runtime_provider` | Exposes the built-in Codex, Claude Code, OpenCode and reserved-provider capability catalog; persists only non-secret connection metadata; creates an OpenCode adapter for a saved loopback endpoint. | Called by `api.external_agents` provider routes. |
+| `provider_catalog` / `save_provider` / `runtime_provider` | Exposes the built-in Codex, Claude Code, OpenCode and reserved-provider capability catalog; persists only non-secret connection metadata; accepts browser endpoint configuration only for OpenCode and creates its adapter for a saved loopback endpoint. | Called by `api.external_agents` provider routes. |
 | `canonicalize_events` | Converts supported vendor transcript objects into canonical non-executing `external_agent.*` messages/raw events, preserving unknown records. | Called by import preview and commit routes. |
 | `build_archive` / `parse_archive` | Writes and securely validates Angelus Session Archive v1 ZIPs; validates paths, symlinks, member/expanded limits, format and event checksums. | Called by archive export, import preview, and import commit routes. |
 | `import_events` | Always creates a new project-bound Angelus session, appends canonical events, projects display messages, and persists provenance/loss metadata. | Called by `api.external_agents.commit_import`; calls `storage` event and conversation writers. |
@@ -67,7 +67,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `loadProviders` / `autoDetectProviders` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, safely detects local Codex/Claude/OpenCode availability, lets the user save only non-secret loopback settings, and probes optional runtimes without starting vendor sessions. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/auto-detect/config/probe APIs. |
+| `loadProviders` / `autoDetectProviders` / `renderProviderSettings` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, safely detects local Codex/Claude/OpenCode availability, renders only settings supported by the selected Provider, saves only OpenCode's non-secret loopback setting, and probes optional runtimes without starting vendor sessions. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/auto-detect/config/probe APIs. |
 | `discoverSessions` / `linkSession` / `renewLease` / `activateLink` / `renderLink` / `runAction` | Discovers read-only vendor sessions, creates safe Angelus links, maintains a tab-scoped control lease every 20 seconds, and exposes only provider-advertised fixed actions with idempotency keys. | Called by Hub controls; calls discovery, link, lease, and action APIs. |
 | `frontend/static/app.js` external-hub listeners | Opens and closes the modal iframe from the Workbench sidebar without navigating away from the current Angelus session. | Called by `#open-external-agent-hub` and `#close-external-agent-hub`; loads `/external-agents` inside `#external-agent-hub-frame`. |
 
