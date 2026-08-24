@@ -50,38 +50,38 @@ Kimi Code is exposed as a first-party provider preset and resolved to the existi
 | [sessions.py](sessions.py#L94) | `delete_workspace` | `workspace_id: str, request: WorkspaceDeleteRequest` | `dict[str, Any]` | Delete a workspace only after explicit confirmation and safe stopping. |
 | [sessions.py](sessions.py#L141) | `get_task_plan` | `workspace_id: str, session_id: str, agent: str` | `dict[str, Any]` | Return one selected Agent's persisted task plan for a browser session. |
 | [sessions.py](sessions.py#L148) | `get_session_plan` | `session_id: str, agent: str` | `dict[str, Any]` | Return one selected Agent's task plan for an independent session. |
-| [sessions.py](sessions.py#L153) | `get_session_history` | `workspace_id: str, session_id: str, agent: str, before: int \| None, limit: int` | `dict[str, Any]` | Return a bounded page of persisted display turns for a browser refresh. |
-| [sessions.py](sessions.py#L178) | `get_session_archive` | `workspace_id: str, session_id: str, agent: str, before: int \| None, limit: int` | `dict[str, Any]` | Expose archived raw context evidence without changing model context. |
-| [sessions.py](sessions.py#L191) | `get_session_archive_by_id` | `session_id: str, agent: str, before: int \| None, limit: int` | `dict[str, Any]` | Expose archived coordinator evidence for standalone browser sessions. |
-| [sessions.py](sessions.py#L203) | `get_session_messages` | `session_id: str, agent: str, before: int \| None, limit: int` | `dict[str, Any]` | Return a bounded page of the aggregate or selected Agent transcript. |
-| [sessions.py](sessions.py#L226) | `get_session_agents` | `session_id: str` | `dict[str, list[dict[str, Any]]]` | Return selectable Agent identities from the persisted graph snapshot. |
-| [sessions.py](sessions.py#L258) | `get_agent_context_graph` | `session_id: str, agent_name: str` | `dict[str, Any]` | Expose one Agent's persisted long-term memory graph for inspection. |
-| [sessions.py](sessions.py#L288) | `get_agent_context_preview` | `session_id: str, agent_name: str` | `dict[str, Any]` | Expose the full model-ready preview of an Agent's active context. |
-| [sessions.py](sessions.py#L311) | `get_agent_compaction_input_preview` | `session_id: str, agent_name: str` | `dict[str, Any]` | Expose the exact text the context compactor would send for one Agent. |
-| [sessions.py](sessions.py#L334) | `_editable_context_store` | `session_id: str, agent_name: str` | `ContextEditStore` | Bind browser context-edit requests to one inactive Agent checkpoint. |
-| [sessions.py](sessions.py#L364) | `inspect_editable_agent_context` | `session_id: str, agent_name: str` | `dict[str, Any]` | Return stable active-context records plus every recovery revision. |
-| [sessions.py](sessions.py#L378) | `_parse_context_edit_operations` | `value: Any` | `list[ContextEditOperation]` | Convert one browser JSON operation array into the typed edit schema. |
-| [sessions.py](sessions.py#L406) | `edit_agent_context` | `session_id: str, agent_name: str, payload: dict[str, Any]` | `dict[str, Any]` | Apply a version-checked browser edit to an inactive Agent context. |
-| [sessions.py](sessions.py#L439) | `restore_agent_context` | `session_id: str, agent_name: str, payload: dict[str, Any]` | `dict[str, Any]` | Restore one saved revision as a new audit-preserving active revision. |
-| [sessions.py](sessions.py#L468) | `get_session_graph` | `workspace_id: str, session_id: str` | `dict[str, Any]` | Return the reconciled execution-graph view for a browser session. |
-| [sessions.py](sessions.py#L488) | `_reconcile_graph_view` | `workspace_id: str, session_id: str, graph: dict[str, Any]` | `dict[str, Any]` | Merge a persisted graph snapshot with durable run and event terminals. |
-| [sessions.py](sessions.py#L670) | `get_session_graph_by_id` | `session_id: str` | `dict[str, Any]` | Return a session's safe persisted execution-graph view. |
-| [sessions.py](sessions.py#L675) | `get_session_events` | `session_id: str, before: int \| None, limit: int` | `dict[str, Any]` | Return a paginated, newest-first durable trace for one session. |
-| [sessions.py](sessions.py#L700) | `get_session_steers` | `session_id: str` | `dict[str, Any]` | Return every durable steering instruction applied to this session. |
-| [sessions.py](sessions.py#L729) | `get_session_usage` | `session_id: str` | `dict[str, Any]` | Return completed token usage for all Agents in one browser session. |
-| [sessions.py](sessions.py#L744) | `replace_task_plan` | `workspace_id: str, session_id: str, request: TaskPlanRequest, agent: str` | `dict[str, Any]` | Allow a user to replace one selected Agent's supervised task plan. |
-| [sessions.py](sessions.py#L755) | `update_task_plan_status` | `workspace_id: str, session_id: str, task_id: str, request: TaskStatusRequest, agent: str` | `dict[str, Any]` | Persist a status change in one selected Agent's task plan. |
-| [sessions.py](sessions.py#L766) | `update_session_plan_status` | `session_id: str, task_id: str, request: TaskStatusRequest, agent: str` | `dict[str, Any]` | Persist one task-status transition within one selected Agent plan. |
-| [sessions.py](sessions.py#L777) | `create_workspace` | `request: WorkspaceRequest` | `dict[str, str]` | Create a local workspace with an isolated context directory. |
-| [sessions.py](sessions.py#L793) | `create_session` | `request: WorkspaceRequest` | `dict[str, str]` | Create one browser-visible session and its private workspace path. |
-| [sessions.py](sessions.py#L799) | `open_session_folder` | `session_id: str` | `dict[str, str]` | Open one session's local workspace directory in the host file manager. |
-| [sessions.py](sessions.py#L816) | `get_session_memory_capabilities` | `session_id: str` | `dict[str, Any]` | Describe the explicit run-scoped grants accepted by the browser API. |
-| [sessions.py](sessions.py#L823) | `register_session_artifact` | `session_id: str, payload: dict[str, Any]` | `dict[str, Any]` | Register browser-uploaded base64 attachment bytes without a source path. |
-| [sessions.py](sessions.py#L838) | `list_session_artifacts` | `session_id: str` | `dict[str, Any]` | Implement `list_session_artifacts`. |
-| [sessions.py](sessions.py#L844) | `list_session_handoffs` | `session_id: str` | `dict[str, Any]` | Implement `list_session_handoffs`. |
-| [sessions.py](sessions.py#L854) | `get_session_handoff` | `session_id: str, handoff_id: str` | `dict[str, Any]` | Implement `get_session_handoff`. |
-| [sessions.py](sessions.py#L861) | `create_browser_session_handoff` | `session_id: str, handoff: dict[str, Any]` | `dict[str, Any]` | Implement `create_browser_session_handoff`. |
-| [sessions.py](sessions.py#L868) | `delete_session` | `session_id: str, request: WorkspaceDeleteRequest` | `dict[str, Any]` | Delete one session after confirmation and cooperative run shutdown. |
+| [sessions.py](sessions.py#L153) | `get_session_history` | `workspace_id: str, session_id: str, agent: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a bounded page of persisted display turns for a browser refresh. |
+| [sessions.py](sessions.py#L183) | `get_session_archive` | `workspace_id: str, session_id: str, agent: str, before: int \| None, limit: int` | `dict[str, Any]` | Expose archived raw context evidence without changing model context. |
+| [sessions.py](sessions.py#L196) | `get_session_archive_by_id` | `session_id: str, agent: str, before: int \| None, limit: int` | `dict[str, Any]` | Expose archived coordinator evidence for standalone browser sessions. |
+| [sessions.py](sessions.py#L208) | `get_session_messages` | `session_id: str, agent: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a bounded page of the aggregate or selected Agent transcript. |
+| [sessions.py](sessions.py#L236) | `get_session_agents` | `session_id: str` | `dict[str, list[dict[str, Any]]]` | Return selectable Agent identities from the persisted graph snapshot. |
+| [sessions.py](sessions.py#L268) | `get_agent_context_graph` | `session_id: str, agent_name: str` | `dict[str, Any]` | Expose one Agent's persisted long-term memory graph for inspection. |
+| [sessions.py](sessions.py#L298) | `get_agent_context_preview` | `session_id: str, agent_name: str` | `dict[str, Any]` | Expose the full model-ready preview of an Agent's active context. |
+| [sessions.py](sessions.py#L321) | `get_agent_compaction_input_preview` | `session_id: str, agent_name: str` | `dict[str, Any]` | Expose the exact text the context compactor would send for one Agent. |
+| [sessions.py](sessions.py#L344) | `_editable_context_store` | `session_id: str, agent_name: str` | `ContextEditStore` | Bind browser context-edit requests to one inactive Agent checkpoint. |
+| [sessions.py](sessions.py#L374) | `inspect_editable_agent_context` | `session_id: str, agent_name: str` | `dict[str, Any]` | Return stable active-context records plus every recovery revision. |
+| [sessions.py](sessions.py#L388) | `_parse_context_edit_operations` | `value: Any` | `list[ContextEditOperation]` | Convert one browser JSON operation array into the typed edit schema. |
+| [sessions.py](sessions.py#L416) | `edit_agent_context` | `session_id: str, agent_name: str, payload: dict[str, Any]` | `dict[str, Any]` | Apply a version-checked browser edit to an inactive Agent context. |
+| [sessions.py](sessions.py#L449) | `restore_agent_context` | `session_id: str, agent_name: str, payload: dict[str, Any]` | `dict[str, Any]` | Restore one saved revision as a new audit-preserving active revision. |
+| [sessions.py](sessions.py#L478) | `get_session_graph` | `workspace_id: str, session_id: str` | `dict[str, Any]` | Return the reconciled execution-graph view for a browser session. |
+| [sessions.py](sessions.py#L498) | `_reconcile_graph_view` | `workspace_id: str, session_id: str, graph: dict[str, Any]` | `dict[str, Any]` | Merge a persisted graph snapshot with durable run and event terminals. |
+| [sessions.py](sessions.py#L680) | `get_session_graph_by_id` | `session_id: str` | `dict[str, Any]` | Return a session's safe persisted execution-graph view. |
+| [sessions.py](sessions.py#L685) | `get_session_events` | `session_id: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a paginated, newest-first durable trace for one session. |
+| [sessions.py](sessions.py#L715) | `get_session_steers` | `session_id: str` | `dict[str, Any]` | Return every durable steering instruction applied to this session. |
+| [sessions.py](sessions.py#L744) | `get_session_usage` | `session_id: str` | `dict[str, Any]` | Return completed token usage for all Agents in one browser session. |
+| [sessions.py](sessions.py#L759) | `replace_task_plan` | `workspace_id: str, session_id: str, request: TaskPlanRequest, agent: str` | `dict[str, Any]` | Allow a user to replace one selected Agent's supervised task plan. |
+| [sessions.py](sessions.py#L770) | `update_task_plan_status` | `workspace_id: str, session_id: str, task_id: str, request: TaskStatusRequest, agent: str` | `dict[str, Any]` | Persist a status change in one selected Agent's task plan. |
+| [sessions.py](sessions.py#L781) | `update_session_plan_status` | `session_id: str, task_id: str, request: TaskStatusRequest, agent: str` | `dict[str, Any]` | Persist one task-status transition within one selected Agent plan. |
+| [sessions.py](sessions.py#L792) | `create_workspace` | `request: WorkspaceRequest` | `dict[str, str]` | Create a local workspace with an isolated context directory. |
+| [sessions.py](sessions.py#L808) | `create_session` | `request: WorkspaceRequest` | `dict[str, str]` | Create one browser-visible session and its private workspace path. |
+| [sessions.py](sessions.py#L814) | `open_session_folder` | `session_id: str` | `dict[str, str]` | Open one session's local workspace directory in the host file manager. |
+| [sessions.py](sessions.py#L831) | `get_session_memory_capabilities` | `session_id: str` | `dict[str, Any]` | Describe the explicit run-scoped grants accepted by the browser API. |
+| [sessions.py](sessions.py#L838) | `register_session_artifact` | `session_id: str, payload: dict[str, Any]` | `dict[str, Any]` | Register browser-uploaded base64 attachment bytes without a source path. |
+| [sessions.py](sessions.py#L853) | `list_session_artifacts` | `session_id: str` | `dict[str, Any]` | Implement `list_session_artifacts`. |
+| [sessions.py](sessions.py#L859) | `list_session_handoffs` | `session_id: str` | `dict[str, Any]` | Implement `list_session_handoffs`. |
+| [sessions.py](sessions.py#L869) | `get_session_handoff` | `session_id: str, handoff_id: str` | `dict[str, Any]` | Implement `get_session_handoff`. |
+| [sessions.py](sessions.py#L876) | `create_browser_session_handoff` | `session_id: str, handoff: dict[str, Any]` | `dict[str, Any]` | Implement `create_browser_session_handoff`. |
+| [sessions.py](sessions.py#L883) | `delete_session` | `session_id: str, request: WorkspaceDeleteRequest` | `dict[str, Any]` | Delete one session after confirmation and cooperative run shutdown. |
 
 ## Class Map
 

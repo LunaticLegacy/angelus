@@ -211,7 +211,9 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [storage.py](storage.py#L378) | `_read_session_event_log_from` | `workspace_id: str, session_id: str, offset_bytes: int` | `tuple[list[dict[str, Any]], int]` | Read durable events appended at or after a byte offset. |
 | [storage.py](storage.py#L405) | `_read_session_event_records_from` | `workspace_id: str, session_id: str, offset_bytes: int, until_offset: int \| None` | `tuple[list[tuple[dict[str, Any], int]], int]` | Read durable payloads with their end offsets inside a byte range. |
 | [storage.py](storage.py#L454) | `_session_event_offset_after` | `workspace_id: str, session_id: str, after: int` | `int` | Return the byte offset just past ``after`` valid durable events. |
-| [storage.py](storage.py#L489) | `_session_event_page` | `workspace_id: str, session_id: str, before: int \| None, limit: int` | `dict[str, Any]` | Return a reverse-chronological page from a session's durable trace. |
+| [storage.py](storage.py#L489) | `_read_previous_line` | `handle: Any, position: int, chunk_size: int` | `tuple[int, bytes] \| None` | Read the complete binary line immediately before a byte boundary. |
+| [storage.py](storage.py#L522) | `_last_complete_line_offset` | `path: Path` | `int` | Return the byte boundary after the last newline-terminated record. |
+| [storage.py](storage.py#L546) | `_session_event_page` | `workspace_id: str, session_id: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a reverse-chronological page from a session's durable trace. |
 | [task_planning.py](task_planning.py#L20) | `_lock_for_path` | `path: Path` | `threading.RLock` | Return the process-local lock shared by all stores for one plan path. |
 | [task_planning.py](task_planning.py#L47) | `TaskPlanStore.read` | `None` | `dict[str, Any]` | Load the plan or return an empty plan when no file exists. |
 | [task_planning.py](task_planning.py#L62) | `TaskPlanStore.replace` | `goal: str, summary: str, tasks: Iterable[Mapping[str, Any]]` | `dict[str, Any]` | Validate and atomically replace the complete task tree. |

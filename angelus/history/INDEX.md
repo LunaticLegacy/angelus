@@ -8,7 +8,8 @@
 |---|---|
 | `__init__.py` | 稳定兼容门面，重导出拆分前的历史、用量、上下文和图检查 API。 |
 | `models.py` | 上下文预览、远程请求统计和图快照的只读 dataclass 响应模型。 |
-| `transcripts.py` | 会话/Agent 转录重建、工具结果显示规范化、分页及旧状态迁移。 |
+| `transcripts.py` | 会话/Agent 事件归约规则、工具结果显示规范化及旧状态迁移。 |
+| `projection.py` | 惰性增量转录投影、崩溃恢复、Agent 过滤与反向字节游标分页。 |
 | `usage.py` | token 用量聚合、当前运行窗口和压缩归档分页。 |
 | `context.py` | Agent checkpoint、远程请求、压缩输入和持久图的只读检查。 |
 
@@ -16,7 +17,8 @@
 
 - `__init__.py` 是兼容导入边界；新增实现应放入职责对应的叶文件。
 - 所有读取投影都保持浏览器安全，不持久化模型凭据，也不修改上下文。
-- 旧状态迁移是唯一写路径，位于 `transcripts.py::migrate_legacy_state`。
+- `events.ndjson` 是权威历史；`projection.py` 写入的展示投影是可删除、可校验并自动重建的缓存。
+- 投影记录保留原始 Markdown，只有返回页在响应前渲染 HTML；checkpoint 始终在投影 fsync 后原子提交。
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
@@ -24,13 +26,23 @@
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [__init__.py](__init__.py#L50) | `_agent_turns_page` | `workspace_id: str, session_id: str, agent_name: str, before: int \| None, limit: int` | `dict[str, Any]` | Return a transcript page while preserving facade-level patchability. |
+| [__init__.py](__init__.py#L51) | `_agent_turns_page` | `workspace_id: str, session_id: str, agent_name: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a transcript page while preserving facade-level patchability. |
 | [context.py](context.py#L20) | `_agent_context_preview` | `session_id: str, agent_name: str` | `AgentContextPreview` | Return context metadata and the latest exact remote request snapshot. |
 | [context.py](context.py#L155) | `_agent_context_stats` | `session_id: str, agent_name: str` | `dict[str, Any]` | Return current context-length statistics for one Agent. |
 | [context.py](context.py#L229) | `_agent_compaction_input_preview` | `session_id: str, agent_name: str` | `dict[str, Any]` | Return the exact text the context compactor would send for one Agent. |
 | [context.py](context.py#L310) | `_agent_context_graph` | `session_id: str, agent_name: str, limit: int` | `ContextGraphSnapshot` | Return a bounded, browser-safe snapshot of one Agent's memory graph. |
 | [models.py](models.py#L66) | `AgentContextPreview.to_dict` | `None` | `dict[str, Any]` | Serialize the stable response envelope for FastAPI and JSON. |
 | [models.py](models.py#L147) | `ContextGraphSnapshot.to_dict` | `None` | `dict[str, Any]` | Serialize the graph snapshot for FastAPI without leaking storage data. |
+| [projection.py](projection.py#L23) | `_projection_lock` | `path: Path` | `threading.Lock` | Return the process-local serialization lock for one projection. |
+| [projection.py](projection.py#L36) | `_empty_checkpoint` | `None` | `dict[str, Any]` | Create the initial incremental event-reducer state. |
+| [projection.py](projection.py#L58) | `_atomic_checkpoint` | `path: Path, checkpoint: dict[str, Any]` | `None` | Atomically commit reducer state after projection bytes are durable. |
+| [projection.py](projection.py#L81) | `_load_checkpoint` | `session_path: Path, event_size: int` | `dict[str, Any] \| None` | Load and validate one committed projection checkpoint. |
+| [projection.py](projection.py#L128) | `_append_turn` | `checkpoint: dict[str, Any], turns: list[dict[str, Any]], turn: dict[str, Any]` | `None` | Stage one raw display turn and update checkpoint counters. |
+| [projection.py](projection.py#L148) | `_reduce_event` | `checkpoint: dict[str, Any], event: dict[str, Any]` | `list[dict[str, Any]]` | Reduce one durable lifecycle event into zero or more raw turns. |
+| [projection.py](projection.py#L229) | `_synchronize_projection` | `session_path: Path` | `dict[str, Any]` | Bring one projection checkpoint to the latest complete event record. |
+| [projection.py](projection.py#L302) | `_visible` | `turn: dict[str, Any], agent_name: str` | `bool` | Return whether one projection record belongs in an Agent filter. |
+| [projection.py](projection.py#L316) | `_render_turn` | `turn: dict[str, Any]` | `dict[str, Any]` | Strip projection metadata and render Markdown for one returned turn. |
+| [projection.py](projection.py#L332) | `transcript_page` | `workspace_id: str, session_id: str, agent_name: str, cursor: str \| None, before: int \| None, limit: int, path_resolver: Any` | `dict[str, Any]` | Return a cursor page from an incrementally maintained transcript. |
 | [transcripts.py](transcripts.py#L26) | `_display_tool_result` | `value: Any` | `Any` | Recover structured tool data for every browser transcript path. |
 | [transcripts.py](transcripts.py#L60) | `_history_context_paths` | `workspace_id: str, session_id: str` | `list[Path]` | Return current and legacy context locations in restoration priority. |
 | [transcripts.py](transcripts.py#L80) | `_read_session_history` | `workspace_id: str, session_id: str` | `list[dict[str, Any]]` | Read display-safe user and assistant turns from persisted context. |

@@ -74,6 +74,34 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
     assert "chatView.buildMessage(message, selectedAgent)" in script
 
 
+def test_transcript_uses_cursor_pages_and_one_top_scroll_loader() -> None:
+    """Keep 200-message cursor paging locked, retryable, and viewport-stable."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
+
+    assert 'new URLSearchParams({agent,limit:"200"})' in script
+    assert 'params.set("cursor",String(cursor))' in script
+    assert "events?limit=1" not in script
+    assert '$("chat").addEventListener("scroll"' in script
+    assert '$("chat").scrollTop<=24' in script
+    assert "messageLoadPending" in script
+    assert "snapshot.generation!==historyGeneration" in script
+    assert "chat.scrollHeight - previousHeight + previousTop" in script
+    assert "button.after(fragment)" in script
+    assert "button.disabled=false" in script
+    assert "chat.replaceChildren(loadMore)" in chat_component
+
+
+def test_trace_uses_reverse_cursor_and_durable_offset_for_sse() -> None:
+    """Initial Trace hydration must also establish the byte resume watermark."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'params.set("cursor",String(cursor))' in script
+    assert "traceBefore=page.next_cursor??null" in script
+    assert "durableEventOffset=Number(page.durable_offset||0)" in script
+    assert 'durableEventOffset > 0 ? `cursor=${durableEventOffset}`' in script
+
+
 def test_reasoning_is_visible_transcript_content_not_a_disclosure() -> None:
     """Reasoning must be visible for both live and restored message cards."""
     chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
