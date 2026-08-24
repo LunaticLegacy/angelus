@@ -11,8 +11,8 @@ Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、
 | [`event_stream/`](event_stream/INDEX.md) | SSE broadcast | 持久事件提交、有界多订阅者广播、历史交接与慢客户端磁盘补偿。 |
 | [`plugins/`](plugins/INDEX.md) | Plugin runtime | 插件发现、生命周期、权限、完整性与宿主桥接。 |
 | `webapp.py` | Application assembly | 创建 FastAPI app、挂载静态资源、初始化插件管理器并注册 API。 |
-| `runtime.py` | Runtime construction | 构建 Agent / Swarm、运行配置快照、按 Agent 隔离的计划与会话记忆存储；provider 增量通过内存广播，最终回复正常落盘；每轮的上下文阈值先更新内存，并在 Agent 加载旧 checkpoint 后重新应用，直到安全边界才随完整上下文保存；Swarm 在同一进程连续轮次中保留实例，并写入本地恢复快照。 |
-| `storage.py` | Durable state | 状态根目录、会话注册表、事件账本、JSON 持久化与并发保护。 |
+| `runtime.py` | Runtime construction | 构建 Agent / Swarm、运行配置快照、按 Agent 隔离的计划与会话记忆存储；所有 Shell 工具以会话绑定的外部项目目录为 `cwd`，而 checkpoint 与事件仍写入内部状态目录；provider 增量通过内存广播，最终回复正常落盘；每轮的上下文阈值先更新内存，并在 Agent 加载旧 checkpoint 后重新应用，直到安全边界才随完整上下文保存；Swarm 在同一进程连续轮次中保留实例，并写入本地恢复快照。 |
+| `storage.py` | Durable state | 状态根目录、会话注册表、外部项目目录绑定、事件账本、JSON 持久化与并发保护。 |
 | [`history/`](history/INDEX.md) | Read-model package | 从事件和上下文投影重建历史、归档、图和用量；包入口保持原导入 API。 |
 | `context_editing.py` | Context revisions | Agent 活动上下文的版本化编辑、原子快照、追加审计与前向恢复；归档、事件账本和远程请求快照不在其写入范围内。 |
 | `context_stats.py` | Context accounting | 以统一序列化口径估算消息、工具 schema、字符与 token 数量。 |
@@ -31,11 +31,11 @@ Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、
 
 ## Durable State Ownership
 
-`ANGELUS_STATE_DIR` 可指定状态根目录（兼容 `LLMFETCHER_STATE_DIR`）；否则使用本地工作区。连接器与插件注册表在全局范围共享，而会话目录彼此隔离。CLI 的 `--state-dir` 会同时设置两个名称，使插件目录和注册表保持同一应用根。
+`ANGELUS_STATE_DIR` 可指定状态根目录（兼容 `LLMFETCHER_STATE_DIR`）；否则使用本地工作区。每个新会话在 `sessions.json` 中绑定一个用户选择的既有项目目录：Agent 的文件和 Shell 操作发生在该项目中，Angelus 的事件、checkpoint、投影与清单仍保留在内部状态目录。旧会话没有绑定字段时兼容回退到其内部目录，并可在停止状态下重新绑定。连接器与插件注册表在全局范围共享，插件 manifest 保持应用级存放，不复制进用户项目。CLI 的 `--state-dir` 会同时设置两个名称，使插件目录和注册表保持同一应用根。
 
 | Scope | Records |
 |---|---|
-| Global state root | `sessions.json`、`connectors.json`、RSA 密钥对、`plugins.json` |
+| Global state root | `sessions.json`（含会话到外部项目目录的绑定）、`connectors.json`、RSA 密钥对、`plugins.json` |
 | Session directory | `conversation.json`、`events.ndjson`、`run-state.json`、`task-plan.json`、`graph-view.json`、`swarm-runtime.json` |
 | Agent context | `contexts/<agent>.json`、主文件引用的不可变 generation 图 checkpoint、旧版图伴随文件，以及 `contexts/revisions/<agent>/` 的不可变编辑快照与 `context-edits.ndjson` 审计账本 |
 
@@ -59,29 +59,29 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [cli.py](cli.py#L50) | `_build_parser` | `None` | `argparse.ArgumentParser` | Build the Angelus parser: library core commands plus web/session/plugin. |
-| [cli.py](cli.py#L112) | `_configure_state_root` | `state_dir: str \| None` | `None` | Apply one CLI state root before importing state-owning Angelus modules. |
-| [cli.py](cli.py#L132) | `_cmd_web` | `args: argparse.Namespace` | `None` | Run the optional FastAPI browser console. |
-| [cli.py](cli.py#L144) | `_cmd_session` | `args: argparse.Namespace` | `None` | Create or list browser-visible sessions and their private directories. |
-| [cli.py](cli.py#L169) | `_plugin_modules` | `None` | `Any` | Import the plugin-system support modules from the registry branch. |
-| [cli.py](cli.py#L179) | `_fail` | `message: str` | `None` | Print an error to stderr and exit non-zero. |
-| [cli.py](cli.py#L185) | `_is_skipped` | `path: Path, root: Path` | `bool` | True for VCS/cache/private paths that must never enter a plugin install. |
-| [cli.py](cli.py#L191) | `_copy_tree` | `src: Path, dst: Path` | `None` | Recursively copy ``src`` into ``dst``, skipping VCS/cache internals. |
-| [cli.py](cli.py#L204) | `_canonical_manifest_bytes` | `manifest: dict` | `bytes` | Canonical JSON bytes of the manifest with ``checksum`` excluded. |
-| [cli.py](cli.py#L219) | `_resolve_entry_path` | `plugin_dir: Path, manifest: dict` | `Path \| None` | Resolve ``manifest.entry`` to an existing file inside ``plugin_dir``. |
-| [cli.py](cli.py#L251) | `_compute_integrity_checksum` | `plugin_dir: Path, manifest: dict` | `str` | Install-time integrity checksum over manifest + entry (S10 contract). |
-| [cli.py](cli.py#L267) | `_find_manifest_root` | `base: Path` | `Path \| None` | Locate the directory holding ``manifest.json`` under ``base``. |
-| [cli.py](cli.py#L280) | `_extract_zip_safely` | `archive: zipfile.ZipFile, dest: Path` | `None` | Extract a zip archive, refusing members that escape ``dest``. |
-| [cli.py](cli.py#L290) | `_stage_git` | `source: str, staging: Path` | `tuple[Path, str, str]` | Clone a git source via ``subprocess git`` and locate its manifest root. |
-| [cli.py](cli.py#L306) | `_stage_source` | `source: str, staging: Path` | `tuple[Path, str, str]` | Fetch the plugin source into ``staging``. |
-| [cli.py](cli.py#L341) | `_confirm_permissions` | `name: str, permissions: list[str], yes: bool` | `bool` | Interactive permission confirmation; ``-y`` skips the prompt. |
-| [cli.py](cli.py#L355) | `_plugin_dir_on_disk` | `plugin_paths: Any, name: str` | `Path \| None` | Locate an installed plugin in the persistent application directory. |
-| [cli.py](cli.py#L361) | `_resolve_plugin` | `registry: Any, value: str` | `dict \| None` | Resolve a plugin record by id or name. |
-| [cli.py](cli.py#L369) | `_cmd_plugin` | `args: argparse.Namespace` | `None` | Dispatch the ``plugin`` subcommand. |
-| [cli.py](cli.py#L384) | `_cmd_plugin_list` | `None` | `None` | List installed plugins exactly as recorded in plugins.json. |
-| [cli.py](cli.py#L399) | `_cmd_plugin_install` | `args: argparse.Namespace` | `None` | Install a plugin from a local directory, a git repository or a zip. |
-| [cli.py](cli.py#L475) | `_cmd_plugin_uninstall` | `args: argparse.Namespace` | `None` | Remove the persistent plugin directory and its registry record. |
-| [cli.py](cli.py#L493) | `_cmd_plugin_set_enabled` | `args: argparse.Namespace, enabled: bool` | `None` | Flip and persist the enabled flag through the registry. |
-| [cli.py](cli.py#L504) | `main` | `argv: list[str] \| None` | `None` | Parse CLI arguments and dispatch the selected Angelus command. |
+| [cli.py](cli.py#L113) | `_configure_state_root` | `state_dir: str \| None` | `None` | Apply one CLI state root before importing state-owning Angelus modules. |
+| [cli.py](cli.py#L133) | `_cmd_web` | `args: argparse.Namespace` | `None` | Run the optional FastAPI browser console. |
+| [cli.py](cli.py#L145) | `_cmd_session` | `args: argparse.Namespace` | `None` | Create or list sessions with separated project and state directories. |
+| [cli.py](cli.py#L184) | `_plugin_modules` | `None` | `Any` | Import the plugin-system support modules from the registry branch. |
+| [cli.py](cli.py#L194) | `_fail` | `message: str` | `None` | Print an error to stderr and exit non-zero. |
+| [cli.py](cli.py#L200) | `_is_skipped` | `path: Path, root: Path` | `bool` | True for VCS/cache/private paths that must never enter a plugin install. |
+| [cli.py](cli.py#L206) | `_copy_tree` | `src: Path, dst: Path` | `None` | Recursively copy ``src`` into ``dst``, skipping VCS/cache internals. |
+| [cli.py](cli.py#L219) | `_canonical_manifest_bytes` | `manifest: dict` | `bytes` | Canonical JSON bytes of the manifest with ``checksum`` excluded. |
+| [cli.py](cli.py#L234) | `_resolve_entry_path` | `plugin_dir: Path, manifest: dict` | `Path \| None` | Resolve ``manifest.entry`` to an existing file inside ``plugin_dir``. |
+| [cli.py](cli.py#L266) | `_compute_integrity_checksum` | `plugin_dir: Path, manifest: dict` | `str` | Install-time integrity checksum over manifest + entry (S10 contract). |
+| [cli.py](cli.py#L282) | `_find_manifest_root` | `base: Path` | `Path \| None` | Locate the directory holding ``manifest.json`` under ``base``. |
+| [cli.py](cli.py#L295) | `_extract_zip_safely` | `archive: zipfile.ZipFile, dest: Path` | `None` | Extract a zip archive, refusing members that escape ``dest``. |
+| [cli.py](cli.py#L305) | `_stage_git` | `source: str, staging: Path` | `tuple[Path, str, str]` | Clone a git source via ``subprocess git`` and locate its manifest root. |
+| [cli.py](cli.py#L321) | `_stage_source` | `source: str, staging: Path` | `tuple[Path, str, str]` | Fetch the plugin source into ``staging``. |
+| [cli.py](cli.py#L356) | `_confirm_permissions` | `name: str, permissions: list[str], yes: bool` | `bool` | Interactive permission confirmation; ``-y`` skips the prompt. |
+| [cli.py](cli.py#L370) | `_plugin_dir_on_disk` | `plugin_paths: Any, name: str` | `Path \| None` | Locate an installed plugin in the persistent application directory. |
+| [cli.py](cli.py#L376) | `_resolve_plugin` | `registry: Any, value: str` | `dict \| None` | Resolve a plugin record by id or name. |
+| [cli.py](cli.py#L384) | `_cmd_plugin` | `args: argparse.Namespace` | `None` | Dispatch the ``plugin`` subcommand. |
+| [cli.py](cli.py#L399) | `_cmd_plugin_list` | `None` | `None` | List installed plugins exactly as recorded in plugins.json. |
+| [cli.py](cli.py#L414) | `_cmd_plugin_install` | `args: argparse.Namespace` | `None` | Install a plugin from a local directory, a git repository or a zip. |
+| [cli.py](cli.py#L490) | `_cmd_plugin_uninstall` | `args: argparse.Namespace` | `None` | Remove the persistent plugin directory and its registry record. |
+| [cli.py](cli.py#L508) | `_cmd_plugin_set_enabled` | `args: argparse.Namespace, enabled: bool` | `None` | Flip and persist the enabled flag through the registry. |
+| [cli.py](cli.py#L519) | `main` | `argv: list[str] \| None` | `None` | Parse CLI arguments and dispatch the selected Angelus command. |
 | [connectors.py](connectors.py#L19) | `_connector_key_paths` | `None` | `tuple[Path, Path]` | Return the per-store RSA private/public key paths. |
 | [connectors.py](connectors.py#L24) | `_ensure_connector_keypair` | `None` | `tuple[Path, Path]` | Create a local RSA-OAEP keypair with OS-user-only permissions. |
 | [connectors.py](connectors.py#L48) | `_encrypt_connector_key` | `secret: str` | `dict[str, str]` | Encrypt a normal-size API key with the local RSA public key. |
@@ -150,27 +150,27 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [provider_adapters.py](provider_adapters.py#L60) | `KimiCodeFetcher.fetch` | `*args: Any, **kwargs: Any` | `Any` | Implement `KimiCodeFetcher.fetch`. |
 | [provider_adapters.py](provider_adapters.py#L64) | `KimiCodeFetcher.fetch_stream` | `*args: Any, **kwargs: Any` | `Any` | Implement `KimiCodeFetcher.fetch_stream`. |
 | [provider_adapters.py](provider_adapters.py#L69) | `create_fetcher` | `backend: LLMBackendConfig, provider: str` | `LLMFetcher` | Build a fetcher that applies any provider-level request constraints. |
-| [runtime.py](runtime.py#L40) | `_event_payload` | `event: ExecutionEvent` | `dict[str, Any]` | Convert library events to JSON values suitable for Server-Sent Events. |
-| [runtime.py](runtime.py#L61) | `_redacted_api_url` | `value: str` | `str` | Return an endpoint identity without URL credentials or query secrets. |
-| [runtime.py](runtime.py#L74) | `_runtime_profile_snapshot` | `config: RunConfig` | `dict[str, Any]` | Build a credential-free, stable description of one run's semantics. |
-| [runtime.py](runtime.py#L117) | `_enable_optional_agent_controls` | `agent: Agent` | `None` | Enable first-party streaming controls without requiring a new Agent ABI. |
-| [runtime.py](runtime.py#L131) | `_build_agent` | `config: RunConfig, workspace_id: str, session_id: str, agent_name: str, active: ActiveRun \| None` | `Agent` | Create one session-owned Agent from current UI settings. |
-| [runtime.py](runtime.py#L207) | `_mcp_tools` | `config: RunConfig, active: ActiveRun \| None` | `list[Any]` | Open one SDK-backed MCP bridge and share it across every run Agent. |
-| [runtime.py](runtime.py#L219) | `_memory_capabilities` | `config: RunConfig, current_session: str` | `dict[str, set[str]]` | Freeze the four explicit session grants for one Agent run. |
-| [runtime.py](runtime.py#L235) | `_session_memory_store` | `None` | `SessionMemoryStore` | Create a store whose audit records use the normal durable event log. |
-| [runtime.py](runtime.py#L239) | `_publish_plan_change` | `active: ActiveRun \| None, workspace_id: str, session_id: str, agent_name: str, event_type: str, plan: dict[str, Any]` | `None` | Persist and relay one Agent-owned plan mutation to the workbench. |
-| [runtime.py](runtime.py#L261) | `_plan_store` | `workspace_id: str, session_id: str, agent_name: str` | `TaskPlanStore` | Return one Agent-owned plan store inside a browser session. |
-| [runtime.py](runtime.py#L282) | `_swarm_snapshot_path` | `workspace_id: str, session_id: str` | `Any` | Return the private restart-recovery snapshot path for one Swarm. |
-| [runtime.py](runtime.py#L296) | `_worker_tools_for` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun, agent_name: str` | `list[Any]` | Create isolated non-report tools for one dynamically created worker. |
-| [runtime.py](runtime.py#L339) | `_bind_worker_context_tools` | `workspace_id: str, session_id: str, agent_name: str, worker: Agent, tools: list[Any]` | `list[Any]` | Attach live-context edit tools after a dynamic worker is constructed. |
-| [runtime.py](runtime.py#L366) | `_attach_swarm_runtime_tools` | `swarm: AgentSwarm, coordinator: Agent, config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Install coordinator tools that create future worker Agents in ``swarm``. |
-| [runtime.py](runtime.py#L422) | `_attach_swarm_observer` | `swarm: AgentSwarm, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Persist and stream lifecycle events emitted by a live or restored Swarm. |
-| [runtime.py](runtime.py#L452) | `_synchronize_plan_with_swarm_event` | `event: ExecutionEvent, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Project an assignment-bound Swarm lifecycle event into the main plan. |
-| [runtime.py](runtime.py#L495) | `_synchronize_context_threshold` | `agents: list[Agent], max_context_threshold: int` | `tuple[str, ...]` | Apply the current browser compaction threshold before one run begins. |
-| [runtime.py](runtime.py#L525) | `_synchronize_swarm_context_threshold` | `swarm: AgentSwarm, config: RunConfig` | `tuple[str, ...]` | Synchronize every currently retained Swarm Agent with ``config``. |
-| [runtime.py](runtime.py#L546) | `_persist_swarm_snapshot` | `swarm: AgentSwarm, workspace_id: str, session_id: str` | `None` | Write a quiescent, credential-free Swarm recovery snapshot. |
-| [runtime.py](runtime.py#L578) | `_restore_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm \| None` | Rebuild a completed Swarm graph after a backend process restart. |
-| [runtime.py](runtime.py#L638) | `_build_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm` | Build a coordinator-led swarm bound to one private session directory. |
+| [runtime.py](runtime.py#L41) | `_event_payload` | `event: ExecutionEvent` | `dict[str, Any]` | Convert library events to JSON values suitable for Server-Sent Events. |
+| [runtime.py](runtime.py#L62) | `_redacted_api_url` | `value: str` | `str` | Return an endpoint identity without URL credentials or query secrets. |
+| [runtime.py](runtime.py#L75) | `_runtime_profile_snapshot` | `config: RunConfig` | `dict[str, Any]` | Build a credential-free, stable description of one run's semantics. |
+| [runtime.py](runtime.py#L118) | `_enable_optional_agent_controls` | `agent: Agent` | `None` | Enable first-party streaming controls without requiring a new Agent ABI. |
+| [runtime.py](runtime.py#L132) | `_build_agent` | `config: RunConfig, workspace_id: str, session_id: str, agent_name: str, active: ActiveRun \| None` | `Agent` | Create one session-owned Agent from current UI settings. |
+| [runtime.py](runtime.py#L209) | `_mcp_tools` | `config: RunConfig, active: ActiveRun \| None` | `list[Any]` | Open one SDK-backed MCP bridge and share it across every run Agent. |
+| [runtime.py](runtime.py#L221) | `_memory_capabilities` | `config: RunConfig, current_session: str` | `dict[str, set[str]]` | Freeze the four explicit session grants for one Agent run. |
+| [runtime.py](runtime.py#L237) | `_session_memory_store` | `None` | `SessionMemoryStore` | Create a store whose audit records use the normal durable event log. |
+| [runtime.py](runtime.py#L241) | `_publish_plan_change` | `active: ActiveRun \| None, workspace_id: str, session_id: str, agent_name: str, event_type: str, plan: dict[str, Any]` | `None` | Persist and relay one Agent-owned plan mutation to the workbench. |
+| [runtime.py](runtime.py#L263) | `_plan_store` | `workspace_id: str, session_id: str, agent_name: str` | `TaskPlanStore` | Return one Agent-owned plan store inside a browser session. |
+| [runtime.py](runtime.py#L284) | `_swarm_snapshot_path` | `workspace_id: str, session_id: str` | `Any` | Return the private restart-recovery snapshot path for one Swarm. |
+| [runtime.py](runtime.py#L298) | `_worker_tools_for` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun, agent_name: str` | `list[Any]` | Create isolated non-report tools for one dynamically created worker. |
+| [runtime.py](runtime.py#L341) | `_bind_worker_context_tools` | `workspace_id: str, session_id: str, agent_name: str, worker: Agent, tools: list[Any]` | `list[Any]` | Attach live-context edit tools after a dynamic worker is constructed. |
+| [runtime.py](runtime.py#L368) | `_attach_swarm_runtime_tools` | `swarm: AgentSwarm, coordinator: Agent, config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Install coordinator tools that create future worker Agents in ``swarm``. |
+| [runtime.py](runtime.py#L424) | `_attach_swarm_observer` | `swarm: AgentSwarm, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Persist and stream lifecycle events emitted by a live or restored Swarm. |
+| [runtime.py](runtime.py#L454) | `_synchronize_plan_with_swarm_event` | `event: ExecutionEvent, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Project an assignment-bound Swarm lifecycle event into the main plan. |
+| [runtime.py](runtime.py#L497) | `_synchronize_context_threshold` | `agents: list[Agent], max_context_threshold: int` | `tuple[str, ...]` | Apply the current browser compaction threshold before one run begins. |
+| [runtime.py](runtime.py#L527) | `_synchronize_swarm_context_threshold` | `swarm: AgentSwarm, config: RunConfig` | `tuple[str, ...]` | Synchronize every currently retained Swarm Agent with ``config``. |
+| [runtime.py](runtime.py#L548) | `_persist_swarm_snapshot` | `swarm: AgentSwarm, workspace_id: str, session_id: str` | `None` | Write a quiescent, credential-free Swarm recovery snapshot. |
+| [runtime.py](runtime.py#L580) | `_restore_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm \| None` | Rebuild a completed Swarm graph after a backend process restart. |
+| [runtime.py](runtime.py#L640) | `_build_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm` | Build a coordinator-led swarm bound to one private session directory. |
 | [session_memory.py](session_memory.py#L32) | `_atomic_json` | `path: Path, value: dict[str, Any]` | `None` | Implement `_atomic_json`. |
 | [session_memory.py](session_memory.py#L48) | `_read_json` | `path: Path, default: Any` | `Any` | Implement `_read_json`. |
 | [session_memory.py](session_memory.py#L55) | `_safe_text` | `value: Any, limit: int` | `str` | Implement `_safe_text`. |
@@ -191,29 +191,31 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [storage.py](storage.py#L37) | `_default_state_root` | `project_root: Path` | `Path` | Choose the local Workbench state directory for one source checkout. |
 | [storage.py](storage.py#L87) | `_safe_id` | `value: str, label: str` | `str` | Validate IDs before using them in a local storage path. |
 | [storage.py](storage.py#L93) | `_read_workspaces` | `None` | `list[dict[str, str]]` | Return the session registry, repairing a missing default session. |
-| [storage.py](storage.py#L107) | `_write_workspaces` | `workspaces: list[dict[str, str]]` | `None` | Atomically replace the small local workspace registry. |
-| [storage.py](storage.py#L113) | `_conversation_path` | `workspace_id: str, session_id: str` | `Path` | Return the authoritative display transcript for one session. |
-| [storage.py](storage.py#L126) | `_run_state_path` | `workspace_id: str, session_id: str` | `Path` | Return the durable browser-facing state file for one Agent run. |
-| [storage.py](storage.py#L130) | `_write_conversation` | `workspace_id: str, session_id: str, messages: list[dict[str, Any]]` | `None` | Atomically replace a session's canonical browser transcript. |
-| [storage.py](storage.py#L140) | `_append_conversation_turn` | `workspace_id: str, session_id: str, turn: dict[str, Any]` | `None` | Append one display turn so refresh never depends on Agent context. |
-| [storage.py](storage.py#L162) | `_workspace_exists` | `workspace_id: str` | `bool` | Return whether a workspace is registered locally. |
-| [storage.py](storage.py#L166) | `_session_id_from_name` | `name: str, existing: set[str]` | `str` | Build a stable directory-safe session ID from a user display name. |
-| [storage.py](storage.py#L188) | `_remove_workspace` | `workspace_id: str` | `None` | Remove a stopped workspace directory and its local registry entry. |
-| [storage.py](storage.py#L209) | `_stop_then_remove_workspace` | `workspace_id: str, active_runs: list[ActiveRun]` | `None` | Wait for active work to reach safe stop boundaries before deletion. |
-| [storage.py](storage.py#L226) | `_get_session` | `workspace_id: str, session_id: str` | `BrowserSession` | Get or create the in-memory holder for a validated browser session. |
-| [storage.py](storage.py#L231) | `_session_path` | `workspace_id: str, session_id: str` | `Path` | Return the private on-disk directory that owns one browser session. |
-| [storage.py](storage.py#L251) | `_context_path` | `workspace_id: str, session_id: str, agent_name: str` | `Path` | Return the validated JSON context path for one browser session. |
-| [storage.py](storage.py#L274) | `_persist_json` | `path: Path, payload: dict[str, Any]` | `None` | Atomically persist JSON runtime metadata for refresh and restart recovery. |
-| [storage.py](storage.py#L288) | `_append_session_event` | `workspace_id: str, session_id: str, payload: dict[str, Any]` | `int` | Append one serialized runtime event to the session's durable trace. |
-| [storage.py](storage.py#L312) | `_session_event_log_size` | `workspace_id: str, session_id: str` | `int` | Return the current durable event-log byte length, or zero if absent. |
-| [storage.py](storage.py#L328) | `_iter_session_event_log` | `workspace_id: str, session_id: str` | `Any` | Yield valid durable events for one browser session in write order. |
-| [storage.py](storage.py#L360) | `_read_session_event_log` | `workspace_id: str, session_id: str` | `list[dict[str, Any]]` | Read valid durable events for one browser session in write order. |
-| [storage.py](storage.py#L378) | `_read_session_event_log_from` | `workspace_id: str, session_id: str, offset_bytes: int` | `tuple[list[dict[str, Any]], int]` | Read durable events appended at or after a byte offset. |
-| [storage.py](storage.py#L405) | `_read_session_event_records_from` | `workspace_id: str, session_id: str, offset_bytes: int, until_offset: int \| None` | `tuple[list[tuple[dict[str, Any], int]], int]` | Read durable payloads with their end offsets inside a byte range. |
-| [storage.py](storage.py#L454) | `_session_event_offset_after` | `workspace_id: str, session_id: str, after: int` | `int` | Return the byte offset just past ``after`` valid durable events. |
-| [storage.py](storage.py#L489) | `_read_previous_line` | `handle: Any, position: int, chunk_size: int` | `tuple[int, bytes] \| None` | Read the complete binary line immediately before a byte boundary. |
-| [storage.py](storage.py#L522) | `_last_complete_line_offset` | `path: Path` | `int` | Return the byte boundary after the last newline-terminated record. |
-| [storage.py](storage.py#L546) | `_session_event_page` | `workspace_id: str, session_id: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a reverse-chronological page from a session's durable trace. |
+| [storage.py](storage.py#L112) | `_write_workspaces` | `workspaces: list[dict[str, str]]` | `None` | Atomically replace the small local workspace registry. |
+| [storage.py](storage.py#L126) | `_conversation_path` | `workspace_id: str, session_id: str` | `Path` | Return the authoritative display transcript for one session. |
+| [storage.py](storage.py#L139) | `_run_state_path` | `workspace_id: str, session_id: str` | `Path` | Return the durable browser-facing state file for one Agent run. |
+| [storage.py](storage.py#L143) | `_write_conversation` | `workspace_id: str, session_id: str, messages: list[dict[str, Any]]` | `None` | Atomically replace a session's canonical browser transcript. |
+| [storage.py](storage.py#L153) | `_append_conversation_turn` | `workspace_id: str, session_id: str, turn: dict[str, Any]` | `None` | Append one display turn so refresh never depends on Agent context. |
+| [storage.py](storage.py#L175) | `_workspace_exists` | `workspace_id: str` | `bool` | Return whether a workspace is registered locally. |
+| [storage.py](storage.py#L180) | `_validate_project_path` | `value: str` | `Path` | Validate and canonicalize one user-selected project directory. |
+| [storage.py](storage.py#L207) | `_project_path` | `workspace_id: str, session_id: str` | `Path` | Return the user-project root bound to one browser session. |
+| [storage.py](storage.py#L233) | `_session_id_from_name` | `name: str, existing: set[str]` | `str` | Build a stable directory-safe session ID from a user display name. |
+| [storage.py](storage.py#L255) | `_remove_workspace` | `workspace_id: str` | `None` | Remove a stopped workspace directory and its local registry entry. |
+| [storage.py](storage.py#L276) | `_stop_then_remove_workspace` | `workspace_id: str, active_runs: list[ActiveRun]` | `None` | Wait for active work to reach safe stop boundaries before deletion. |
+| [storage.py](storage.py#L293) | `_get_session` | `workspace_id: str, session_id: str` | `BrowserSession` | Get or create the in-memory holder for a validated browser session. |
+| [storage.py](storage.py#L298) | `_session_path` | `workspace_id: str, session_id: str` | `Path` | Return the private on-disk directory that owns one browser session. |
+| [storage.py](storage.py#L318) | `_context_path` | `workspace_id: str, session_id: str, agent_name: str` | `Path` | Return the validated JSON context path for one browser session. |
+| [storage.py](storage.py#L341) | `_persist_json` | `path: Path, payload: dict[str, Any]` | `None` | Atomically persist JSON runtime metadata for refresh and restart recovery. |
+| [storage.py](storage.py#L355) | `_append_session_event` | `workspace_id: str, session_id: str, payload: dict[str, Any]` | `int` | Append one serialized runtime event to the session's durable trace. |
+| [storage.py](storage.py#L379) | `_session_event_log_size` | `workspace_id: str, session_id: str` | `int` | Return the current durable event-log byte length, or zero if absent. |
+| [storage.py](storage.py#L395) | `_iter_session_event_log` | `workspace_id: str, session_id: str` | `Any` | Yield valid durable events for one browser session in write order. |
+| [storage.py](storage.py#L427) | `_read_session_event_log` | `workspace_id: str, session_id: str` | `list[dict[str, Any]]` | Read valid durable events for one browser session in write order. |
+| [storage.py](storage.py#L445) | `_read_session_event_log_from` | `workspace_id: str, session_id: str, offset_bytes: int` | `tuple[list[dict[str, Any]], int]` | Read durable events appended at or after a byte offset. |
+| [storage.py](storage.py#L472) | `_read_session_event_records_from` | `workspace_id: str, session_id: str, offset_bytes: int, until_offset: int \| None` | `tuple[list[tuple[dict[str, Any], int]], int]` | Read durable payloads with their end offsets inside a byte range. |
+| [storage.py](storage.py#L521) | `_session_event_offset_after` | `workspace_id: str, session_id: str, after: int` | `int` | Return the byte offset just past ``after`` valid durable events. |
+| [storage.py](storage.py#L556) | `_read_previous_line` | `handle: Any, position: int, chunk_size: int` | `tuple[int, bytes] \| None` | Read the complete binary line immediately before a byte boundary. |
+| [storage.py](storage.py#L589) | `_last_complete_line_offset` | `path: Path` | `int` | Return the byte boundary after the last newline-terminated record. |
+| [storage.py](storage.py#L613) | `_session_event_page` | `workspace_id: str, session_id: str, cursor: str \| None, before: int \| None, limit: int` | `dict[str, Any]` | Return a reverse-chronological page from a session's durable trace. |
 | [task_planning.py](task_planning.py#L20) | `_lock_for_path` | `path: Path` | `threading.RLock` | Return the process-local lock shared by all stores for one plan path. |
 | [task_planning.py](task_planning.py#L47) | `TaskPlanStore.read` | `None` | `dict[str, Any]` | Load the plan or return an empty plan when no file exists. |
 | [task_planning.py](task_planning.py#L62) | `TaskPlanStore.replace` | `goal: str, summary: str, tasks: Iterable[Mapping[str, Any]]` | `dict[str, Any]` | Validate and atomically replace the complete task tree. |
@@ -227,8 +229,8 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [task_planning.py](task_planning.py#L242) | `TaskPlanStore._reconcile_parent_statuses` | `tasks: list[dict[str, Any]]` | `None` | Derive every parent state from its direct child states. |
 | [task_planning.py](task_planning.py#L263) | `TaskPlanStore._write` | `plan: Mapping[str, Any]` | `None` | Atomically write a normalized task plan to the session path. |
 | [task_planning.py](task_planning.py#L271) | `create_task_planning_tools` | `store: TaskPlanStore, on_changed: Callable[[str, dict[str, Any]], None] \| None` | `list[Tool]` | Create Agent tools that let a model publish and supervise a task plan. |
-| [webapp.py](webapp.py#L50) | `_assemble_plugins` | `app: FastAPI` | `Any` | Wire the plugin system (swarm S2-S10) onto the console app. |
-| [webapp.py](webapp.py#L92) | `main` | `None` | `None` | Run the local console with ``llmfetcher-web``. |
+| [webapp.py](webapp.py#L51) | `_assemble_plugins` | `app: FastAPI` | `Any` | Wire the plugin system (swarm S2-S10) onto the console app. |
+| [webapp.py](webapp.py#L93) | `main` | `None` | `None` | Run the local console with ``llmfetcher-web``. |
 
 ## Class Map
 

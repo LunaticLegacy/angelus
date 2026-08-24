@@ -12,7 +12,8 @@ Each class has its own module and is re-exported by `__init__.py`.
 | `connector_request.py` | `ConnectorRequest` | `BaseModel` | Named persisted connector fields only: name, provider, model, API URL, and API key. It deliberately excludes Agent behavior settings; `connectors.py` encrypts the key before disk persistence. |
 | `steer_request.py` | `SteerRequest` | `BaseModel` | Mid-run instruction queued for the next safe Agent boundary |
 | `compact_request.py` | `CompactRequest` | `BaseModel` | Manual context compaction: target agent name plus the browser run config used to build the compactor |
-| `workspace_request.py` | `WorkspaceRequest` | `BaseModel` | Create or rename a user-visible local workspace/session name |
+| `workspace_request.py` | `WorkspaceRequest` | `BaseModel` | Create a user-visible session name bound to an existing project directory |
+| `project_path_request.py` | `ProjectPathRequest` | `BaseModel` | Rebind an inactive session to an existing project directory |
 | `workspace_delete_request.py` | `WorkspaceDeleteRequest` | `BaseModel` | Explicit confirmation required to delete a workspace/session directory |
 | `task_plan_request.py` | `TaskPlanRequest` | `BaseModel` | Complete task-plan replacement: goal, optional summary, and task records |
 | `task_status_request.py` | `TaskStatusRequest` | `BaseModel` | Single task status transition |
@@ -62,12 +63,13 @@ Each class has its own module and is re-exported by `__init__.py`.
 | [browser_session.py](browser_session.py#L10) | `BrowserSession` | `lock: threading.Lock, active: ActiveRun \| None` | `object` | In-memory state that prevents concurrent runs in the same chat. |
 | [compact_request.py](compact_request.py#L6) | `CompactRequest` | `agent: str, config: RunConfig` | `BaseModel` | Manual context-compaction request for one Agent. |
 | [connector_request.py](connector_request.py#L4) | `ConnectorRequest` | `name: str, provider: str, model: str, api_key: str, api_url: str` | `BaseModel` | A named, persisted backend connection configuration. |
+| [project_path_request.py](project_path_request.py#L6) | `ProjectPathRequest` | `project_path: str` | `BaseModel` | Absolute existing project directory selected by the local user. |
 | [run_config.py](run_config.py#L5) | `RunConfig` | `provider: str, model: str, api_key: str, connector_id: str, api_url: str, system_prompt: str, temperature: float, max_tokens: int, max_rounds: int, max_retries: int, max_context_threshold: int, enable_shell: bool, enable_mcp: bool, mcp_servers: list[dict[str, Any]], enable_swarm: bool, max_swarm_agents: int, session_memory_search_sessions: list[str], session_memory_read_sessions: list[str], session_artifact_search_sessions: list[str], session_artifact_open_sessions: list[str]` | `BaseModel` | Settings used to create the backend and Agent for a browser session. |
 | [run_request.py](run_request.py#L6) | `RunRequest` | `session_id: str, workspace_id: str, message: str, config: RunConfig` | `BaseModel` | A message and its non-persisted browser-side configuration. |
 | [steer_request.py](steer_request.py#L4) | `SteerRequest` | `message: str` | `BaseModel` | One instruction added at the next safe agent boundary. |
 | [task_plan_request.py](task_plan_request.py#L6) | `TaskPlanRequest` | `goal: str, summary: str, tasks: list[dict[str, Any]]` | `BaseModel` | Entire user task plan supplied by the browser or Agent planning tool. |
 | [task_status_request.py](task_status_request.py#L4) | `TaskStatusRequest` | `status: str` | `BaseModel` | One user-requested planning status transition. |
 | [workspace_delete_request.py](workspace_delete_request.py#L4) | `WorkspaceDeleteRequest` | `confirmation: str` | `BaseModel` | Explicit second confirmation required before deleting a workspace. |
-| [workspace_request.py](workspace_request.py#L4) | `WorkspaceRequest` | `name: str` | `BaseModel` | A user-visible workspace name, stored only on the local machine. |
+| [workspace_request.py](workspace_request.py#L4) | `WorkspaceRequest` | `name: str, project_path: str` | `BaseModel` | A local session name and its explicitly selected existing project. |
 
 <!-- END GENERATED SYMBOL MAP -->
