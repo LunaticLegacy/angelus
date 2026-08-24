@@ -137,12 +137,46 @@ def save_provider(provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if any(key.lower() in {"token", "secret", "password", "api_key", "authorization"} for key in payload):
         raise HTTPException(status_code=422, detail="Provider secrets must use Angelus encrypted credential storage")
     endpoint = str(payload.get("endpoint", "")).strip()
-    if endpoint and not endpoint.startswith(("http://127.0.0.1", "http://localhost", "https://")):
-        raise HTTPException(status_code=422, detail="Only loopback HTTP or HTTPS endpoints are allowed")
+    if endpoint and not endpoint.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")):
+        raise HTTPException(status_code=422, detail="External Agent Hub currently permits only loopback provider endpoints")
     records = [item for item in _private_read(EXTERNAL_PROVIDERS_PATH) if item.get("id") != provider_id]
     records.append({"id": provider_id, "configured": bool(payload.get("configured", True)), "endpoint": endpoint})
     _private_write(EXTERNAL_PROVIDERS_PATH, records)
     return next(item for item in provider_catalog() if item["id"] == provider_id)
+
+
+def runtime_provider(provider_id: str):
+    """Return a runtime adapter with saved, non-secret connection metadata.
+
+    Args:
+        provider_id: Stable built-in provider identifier selected by an API
+            route after its capability and lease checks have completed.
+
+    Returns:
+        The reusable Codex/Claude adapter or an OpenCode adapter initialized
+        with its saved loopback endpoint.
+
+    Raises:
+        HTTPException: If the provider ID is unknown.
+
+    Notes:
+        OpenCode instances are short-lived because their endpoint is editable
+        in the Hub. Codex and Claude own local process/history resources and
+        therefore remain registry singletons.
+    """
+    from .external_providers import bootstrap_builtin_providers
+    registry = bootstrap_builtin_providers()
+    provider = registry.get(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="External provider not found")
+    if provider_id != "opencode":
+        return provider
+    record = next((item for item in _private_read(EXTERNAL_PROVIDERS_PATH) if item.get("id") == provider_id), {})
+    endpoint = str(record.get("endpoint", "")).strip()
+    if not endpoint:
+        return provider
+    from .external_providers.opencode import OpenCodeProvider
+    return OpenCodeProvider(endpoint=endpoint)
 
 
 def canonicalize_events(provider: str, source: Any) -> tuple[list[dict[str, Any]], ConversionReport]:

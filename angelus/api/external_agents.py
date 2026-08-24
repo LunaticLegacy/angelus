@@ -71,9 +71,7 @@ def discover_external_sessions(provider_id: str, project_path: str | None = None
         Credential-free session descriptors. Discovery never attaches control
         to a vendor process or replays historical operations.
     """
-    provider = bootstrap_builtin_providers().get(provider_id)
-    if provider is None:
-        raise HTTPException(status_code=404, detail="External provider not found")
+    provider = external.runtime_provider(provider_id)
     try:
         return {"sessions": [item.to_dict() for item in provider.discover(project_path=project_path)]}
     except ProviderError as exc:
@@ -225,8 +223,8 @@ def external_link_action(link_id: str, payload: dict[str, Any] = Body(...)) -> d
     completed = link.get("completed_actions", {})
     if isinstance(completed, dict) and idempotency_id in completed:
         return {**completed[idempotency_id], "replayed": True}
-    adapter = bootstrap_builtin_providers().get(str(link["provider"]))
-    if adapter is None or not adapter.available():
+    adapter = external.runtime_provider(str(link["provider"]))
+    if not adapter.available():
         raise HTTPException(status_code=503, detail="External provider runtime is unavailable")
     external_session_id = str(link["external_session_id"])
     try:

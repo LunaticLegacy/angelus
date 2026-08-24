@@ -67,7 +67,8 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `loadProviders` | Fetches only the public Provider catalog and builds standalone Hub cards via DOM APIs, so provider labels/capabilities cannot inject markup. | Called on module load by `templates/external_agents.html`; calls `/api/external-agents/providers`. |
+| `loadProviders` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, lets the user save only non-secret loopback settings, and probes optional runtimes without starting vendor sessions. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/config/probe APIs. |
+| `discoverSessions` / `linkSession` / `renewLease` / `activateLink` / `renderLink` / `runAction` | Discovers read-only vendor sessions, creates safe Angelus links, maintains a tab-scoped control lease every 20 seconds, and exposes only provider-advertised fixed actions with idempotency keys. | Called by Hub controls; calls discovery, link, lease, and action APIs. |
 
 ## `angelus.cli`
 
