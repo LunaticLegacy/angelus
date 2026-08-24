@@ -774,7 +774,7 @@ CI 与 Release workflow 位于：
 .github/workflows/
 ```
 
-推送 `v0.5.0-preview` tag 会触发当前预览版的桌面发布构建，并通过 GitHub Actions 生成 Draft Release 产物。
+带 `v*` 的 tag 可以触发桌面发布构建，并通过 GitHub Actions 生成发布产物。
 
 ---
 
