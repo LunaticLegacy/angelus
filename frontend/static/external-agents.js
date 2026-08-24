@@ -29,6 +29,12 @@ function renderProviders() {
 }
 /** Load public Provider metadata without starting a vendor runtime. */
 async function loadProviders() { state.providers = (await request("/api/external-agents/providers")).providers || []; renderProviders(); }
+/** Probe every implemented local adapter and select the first detected provider. */
+async function autoDetectProviders() {
+  feedback("正在检测本机 Codex、Claude Code 与 OpenCode…"); const result = await request("/api/external-agents/providers/auto-detect", { method: "POST" }); await loadProviders();
+  const found = (result.providers || []).filter((item) => item.available); const first = found[0]; if (first) selectProvider(first.id);
+  feedback(found.length ? `检测到：${found.map((item) => state.providers.find((provider) => provider.id === item.id)?.label || item.id).join("、")}。` : "未检测到运行时；可检查 CLI/SDK 或 OpenCode loopback 服务。", found.length ? "success" : "warning");
+}
 /** Show one Provider configuration form and its capability-specific safety guidance. */
 function selectProvider(providerId) {
   state.selectedProvider = state.providers.find((item) => item.id === providerId) || null; renderProviders(); const provider = state.selectedProvider; $("provider-detail").hidden = !provider; if (!provider) return;
@@ -70,6 +76,7 @@ async function runAction(action) { const link = state.activeLink; if (!link || s
 /** Drop this page's local lease state without interrupting the vendor session. */
 function releaseLink() { clearInterval(leaseTimer); state.lease = null; state.activeLink = null; $("link-detail").hidden = true; feedback("已断开本页控制。", "success"); }
 $("refresh-providers").addEventListener("click", () => loadProviders().catch((error) => feedback(error.message, "error")));
+$("auto-detect-providers").addEventListener("click", () => autoDetectProviders().catch((error) => feedback(error.message, "error")));
 $("provider-form").addEventListener("submit", (event) => saveProvider(event).catch((error) => feedback(error.message, "error")));
 $("probe-provider").addEventListener("click", () => probeProvider().catch((error) => feedback(error.message, "error")));
 $("discover-sessions").addEventListener("click", () => discoverSessions().catch((error) => feedback(error.message, "error")));

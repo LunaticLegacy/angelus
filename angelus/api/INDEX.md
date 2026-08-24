@@ -12,7 +12,7 @@ FastAPI 路由层。路由只负责 HTTP/SSE 边界、请求验证与响应编�
 | `sessions.py` | 工作区、会话历史、按 Agent 查询的计划、归档、图、用量、产物与跨会话记忆授权 API；创建会话时绑定既有项目目录，允许停止状态下重新绑定，并为本机回环客户端提供原生目录选择器；同时提供停止运行后的上下文检查、版本化编辑和恢复。 |
 | `compact.py` | 手动上下文压缩，以及面向浏览器的阶段性进度流。 |
 | `mcp.py` | 全局 MCP server CRUD/探测/OAuth，以及会话角色与工具白名单授权。 |
-| `external_agents.py` | External Agent Hub：Provider 能力、session archive 导入导出、handoff preview、link 与独占控制租约。 |
+| `external_agents.py` | External Agent Hub：Provider 能力与安全本机自动检测、session archive 导入导出、handoff preview、link 与独占控制租约。 |
 
 Kimi Code is exposed as a first-party provider preset and resolved to the existing OpenAI-compatible backend before a model request is made.
 

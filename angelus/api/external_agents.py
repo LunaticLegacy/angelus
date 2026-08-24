@@ -54,8 +54,33 @@ def probe_external_provider(provider_id: str) -> dict[str, Any]:
     provider = next((item for item in external.provider_catalog() if item["id"] == provider_id), None)
     if provider is None:
         raise HTTPException(status_code=404, detail="External provider not found")
-    return {"provider": provider_id, "available": provider["runtime_available"], "capabilities": provider["capabilities"],
-            "message": "Provider runtime is connected on demand; no vendor command was executed during probe"}
+    try:
+        available = external.runtime_provider(provider_id).available()
+    except ProviderError:
+        available = False
+    return {"provider": provider_id, "available": available, "capabilities": provider["capabilities"],
+            "message": "Probe never creates a vendor session or executes a control action"}
+
+
+@router.post("/api/external-agents/providers/auto-detect")
+def auto_detect_external_providers() -> dict[str, Any]:
+    """Probe all implemented local providers without persisting configuration.
+
+    Returns:
+        A record for each currently implemented adapter with its runtime
+        availability. Codex and Claude checks inspect local executables/SDKs;
+        OpenCode checks its saved or default loopback health endpoint. Reserved
+        providers are omitted because Angelus has no safe runtime adapter yet.
+    """
+    detected: list[dict[str, Any]] = []
+    for provider_id in ("codex", "claude-code", "opencode"):
+        adapter = external.runtime_provider(provider_id)
+        try:
+            available = adapter.available()
+        except ProviderError:
+            available = False
+        detected.append({"id": provider_id, "available": available})
+    return {"providers": detected}
 
 
 @router.get("/api/external-agents/providers/{provider_id}/sessions")
