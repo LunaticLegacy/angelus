@@ -72,6 +72,3 @@ src-tauri/binaries/*
 
 # Spike generated ledger (real transcript data, not part of the repo).
 scripts/spike_product_adapters/out/
-
-# TypeScript incremental build info
-*.tsbuildinfo
