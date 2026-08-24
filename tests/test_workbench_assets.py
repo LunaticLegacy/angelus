@@ -56,7 +56,8 @@ def test_workbench_uses_the_angelus_mission_control_visual_system() -> None:
     assert "<title>Angelus · Agent Workbench</title>" in template
     assert 'class="brand-mark">A</span>' in template
     assert 'src="/static/app.js?v=workbench-78"' in template
-    assert 'href="/static/app.css?v=workbench-79"' in template
+    assert 'href="/static/app.css?v=workbench-80"' in template
+    assert "本地优先" not in template
     assert "Workbench 2026 — calm mission-control visual system." in stylesheet
     assert "grid-template-columns:248px minmax(560px,1fr) 368px" in stylesheet
     assert "@media (max-width:1020px)" in stylesheet

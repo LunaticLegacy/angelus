@@ -453,9 +453,6 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 .recent-session:hover { border-color:var(--line); background:rgba(255,255,255,.025); color:var(--text); }
 .recent-session.active { border-color:rgba(155,140,255,.3); background:var(--accent-wash); color:#eeeaff; box-shadow:none; }
 .recent-session::before { left:12px; }
-.privacy { display:flex; align-items:center; gap:8px; padding:11px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.018); color:var(--soft); font-size:9px; line-height:1.35; }
-.privacy i { width:7px; height:7px; flex:0 0 7px; border-radius:50%; background:var(--green); box-shadow:0 0 10px rgba(84,220,155,.5); }
-.privacy small { color:var(--muted); font-size:8px; }
 
 /* The header prioritizes run state over decoration and remains compact. */
 .main-panel { grid-template-rows:76px auto minmax(0,1fr) auto; background:rgba(11,12,17,.62); }
@@ -601,7 +598,6 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
   .sidebar { min-height:auto; max-height:none; padding:14px; border-right:0; border-bottom:1px solid var(--line); }
   .brand { margin-bottom:14px; }
   .sidebar > .side-block:first-of-type .recent-sessions { max-height:145px; }
-  .privacy { display:none; }
   .main-panel { min-height:calc(100vh - 220px); }
   .topbar { min-height:70px; padding:10px 14px; }
   .title p { display:none; }
