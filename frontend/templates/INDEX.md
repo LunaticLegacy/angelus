@@ -7,7 +7,7 @@ Single-page application shell for the Angelus workbench, including the Angelus p
 | File | Purpose |
 |------|---------|
 | `index.html` | Full Angelus SPA shell with project/session navigation, Agent roster/transcript/composer, Inspector, scoped stop controls, and settings pages for global connectors, session Agent options, managed global MCP servers with session grants, and plugins. |
-| `external_agents.html` | Standalone `/external-agents` hub with selected-Provider-specific setup/probe, session discovery/linking, lease status and capability-gated controls, without changing the main Workbench shell. |
+| `external_agents.html` | Standalone `/external-agents` hub with a quick-start tutorial, selected-Provider-specific setup/probe, session discovery/linking, lease status and capability-gated controls, without changing the main Workbench shell. |
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 

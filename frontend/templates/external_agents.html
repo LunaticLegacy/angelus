@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Angelus · External Agent Hub</title>
-    <link rel="stylesheet" href="/static/app.css?v=external-agent-hub-4" />
+    <link rel="stylesheet" href="/static/app.css?v=external-agent-hub-5" />
   </head>
   <body class="external-hub-page">
     <main class="external-hub">
-      <header class="external-hub-header"><div><p class="eyebrow">EXTERNAL AGENTS</p><h1>External Agent Hub</h1><p>连接、发现和控制 Codex、Claude Code 与 OpenCode 会话。</p></div><a class="external-hub-back" href="/">返回工作台</a></header>
+      <header class="external-hub-header"><div><p class="eyebrow">EXTERNAL AGENTS</p><h1>External Agent Hub</h1><p>连接、发现和控制 Codex、Claude Code 与 OpenCode 会话。</p></div><div class="external-actions"><button id="open-hub-tutorial" type="button">使用教程</button><a class="external-hub-back" href="/">返回工作台</a></div></header>
       <p id="hub-feedback" class="external-hub-feedback" aria-live="polite"></p>
       <section aria-labelledby="provider-heading"><div class="external-section-heading"><div><p class="eyebrow">PROVIDERS</p><h2 id="provider-heading">Provider 连接</h2></div><div class="external-actions"><button id="auto-detect-providers" type="button">自动检测</button><button id="refresh-providers" type="button">刷新</button></div></div><div id="provider-list" class="external-provider-grid"><p class="empty">正在读取 Provider…</p></div></section>
       <section id="provider-detail" class="external-detail" hidden aria-labelledby="provider-detail-title"><div class="external-section-heading"><div><p class="eyebrow">CONNECTION</p><h2 id="provider-detail-title">Provider 设置</h2></div><span id="provider-runtime-state" class="external-state"></span></div><form id="provider-form" class="external-form"><label>当前 Provider<input id="provider-label" readonly /></label><label id="provider-endpoint-row" hidden>OpenCode loopback URL<input id="provider-endpoint" inputmode="url" placeholder="http://127.0.0.1:4096" /></label><p id="provider-help" class="external-help"></p><p id="provider-settings-note" class="external-help" hidden></p><div class="external-actions"><button id="probe-provider" type="button">探测运行时</button><button id="save-provider" type="submit" hidden>保存设置</button><button id="discover-sessions" type="button">发现会话</button></div></form></section>
@@ -16,6 +16,7 @@
       <section id="link-detail" class="external-detail" hidden aria-labelledby="link-title"><div class="external-section-heading"><div><p class="eyebrow">CONTROL</p><h2 id="link-title">已连接会话</h2><p id="link-subtitle" class="external-muted"></p></div><div><span id="lease-state" class="external-state"></span><button id="release-link" type="button">断开控制</button></div></div><div id="link-capabilities" class="external-capabilities"></div><label>消息或 steer 指令<textarea id="link-message" rows="3" placeholder="输入消息；未取得控制 lease 时不会发送。"></textarea></label><div id="link-actions" class="external-actions"></div><pre id="link-result" class="external-result" hidden></pre></section>
       <p class="external-security-note">会话正文、工具参数或 archive 可能含敏感用户内容。浏览器不接收 Provider token、CLI 参数或厂商私有存储内容。</p>
     </main>
-    <script type="module" src="/static/external-agents.js?v=external-agent-hub-4"></script>
+    <dialog id="hub-tutorial" class="external-tutorial" aria-labelledby="hub-tutorial-title"><header><div><p class="eyebrow">QUICK START</p><h2 id="hub-tutorial-title">如何使用 External Agent Hub</h2></div><button id="close-hub-tutorial" type="button" aria-label="关闭教程">×</button></header><ol><li><strong>自动检测：</strong>检查本机 Codex、Claude Code 与本地 OpenCode 服务。卡片的“本机可用”仅代表可启动或可连接。</li><li><strong>选择 Provider：</strong>Codex 与 Claude Code 不需要 URL；OpenCode 才需要保存 loopback 地址。</li><li><strong>探测运行时：</strong>Codex 会启动 App Server 并完成握手；显示“已完成握手”后即可安全发现会话。</li><li><strong>发现会话：</strong>仅读取 Provider 暴露的会话列表，不会向 Agent 发送消息或执行工具。</li><li><strong>连接会话：</strong>当前浏览器标签会申请控制 lease；未取得 lease 时仅能观察。</li><li><strong>执行控制：</strong>取得 lease 后，只有 Provider 宣称支持的固定操作才会显示。Claude 已有的外部会话通常为只读。</li></ol><p class="external-help">若 Codex 探测失败，请确认本机的 <code>codex app-server</code> 可正常启动并已完成登录。</p></dialog>
+    <script type="module" src="/static/external-agents.js?v=external-agent-hub-5"></script>
   </body>
 </html>

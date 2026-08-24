@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 from angelus.external_providers.base import ProviderCapability, ProviderError
-from angelus.external_providers.codex import CodexAppServerProvider
+from angelus.external_providers.codex import CodexAppServerClient, CodexAppServerProvider
 
 
 class _FakeRuntime:
@@ -71,3 +72,28 @@ def test_codex_provider_rejects_steering_a_turn_it_does_not_own() -> None:
         assert exc.code == "no_active_turn"
     else:  # pragma: no cover - assertion provides a clear failure without pytest helpers.
         raise AssertionError("steer unexpectedly accepted an unobserved turn")
+
+
+def test_codex_client_initializes_once_before_thread_requests() -> None:
+    """Issue Codex's ordered handshake before a normal App Server request."""
+    calls: list[dict[str, Any]] = []
+    client = CodexAppServerClient()
+
+    async def run() -> None:
+        """Replace process I/O with deterministic JSON-RPC responses."""
+        async def start() -> None:
+            client._process = SimpleNamespace(returncode=None)  # type: ignore[assignment]
+
+        async def write(payload: dict[str, Any]) -> None:
+            calls.append(payload)
+            if "id" in payload:
+                await client._dispatch({"id": payload["id"], "result": {"ok": True}})
+
+        client.start = start  # type: ignore[method-assign]
+        client._write = write  # type: ignore[method-assign]
+        await client.request("thread/list", {"limit": 1})
+        await client.request("thread/list", {"limit": 1})
+
+    asyncio.run(run())
+
+    assert [call["method"] for call in calls] == ["initialize", "initialized", "thread/list", "thread/list"]

@@ -21,7 +21,7 @@ function renderProviders() {
   for (const provider of state.providers) {
     const card = document.createElement("button"); card.type = "button"; card.className = "external-provider-card"; card.classList.toggle("selected", state.selectedProvider?.id === provider.id);
     const title = document.createElement("strong"); title.textContent = provider.label;
-    const status = document.createElement("small"); status.textContent = `${provider.runtime_available ? "运行时可用" : "运行时不可用"} · ${provider.configured ? "已配置" : "未配置"}`;
+    const status = document.createElement("small"); status.textContent = `${provider.runtime_available ? "本机可用" : "运行时不可用"} · ${provider.configured ? "已配置" : "未配置"}`;
     const caps = document.createElement("span"); caps.textContent = (provider.capabilities || []).join(" · ") || "预留接口";
     card.append(title, status, caps); card.addEventListener("click", () => selectProvider(provider.id)); root.append(card);
   }
@@ -47,7 +47,7 @@ function renderProviderSettings(provider) {
 /** Show one Provider configuration form and its capability-specific safety guidance. */
 function selectProvider(providerId) {
   state.selectedProvider = state.providers.find((item) => item.id === providerId) || null; renderProviders(); const provider = state.selectedProvider; $("provider-detail").hidden = !provider; if (!provider) return;
-  $("provider-label").value = provider.label; $("provider-endpoint").value = provider.endpoint || ""; $("provider-runtime-state").textContent = provider.runtime_available ? "运行时可用" : "运行时不可用";
+  $("provider-label").value = provider.label; $("provider-endpoint").value = provider.endpoint || ""; $("provider-runtime-state").textContent = provider.runtime_available ? "本机可启动" : "运行时不可用";
   renderProviderSettings(provider);
   $("provider-help").textContent = provider.id === "claude-code" ? "已发现的 Claude transcript 仅可读取；只有 Angelus 启动的 Claude 会话可控制。" : provider.id === "opencode" ? "仅接受 loopback URL；远程服务及凭据不通过此页面配置。" : "Codex 使用本机 App Server；不会从浏览器接收命令或凭据。";
   state.sessions = []; $("session-count").textContent = ""; $("external-session-list").textContent = "点击“发现会话”读取该 Provider。";
@@ -59,7 +59,7 @@ async function saveProvider(event) {
   await loadProviders(); selectProvider(provider.id); feedback("Provider 设置已保存。", "success");
 }
 /** Probe installed runtime state without opening a vendor session. */
-async function probeProvider() { const provider = state.selectedProvider; if (!provider) return; const result = await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/probe`, { method: "POST" }); feedback(result.available ? "运行时可用。" : "运行时不可用；请检查本机 CLI、SDK 或 OpenCode 服务。", result.available ? "success" : "warning"); await loadProviders(); }
+async function probeProvider() { const provider = state.selectedProvider; if (!provider) return; const result = await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/probe`, { method: "POST" }); await loadProviders(); if (result.initialized) $("provider-runtime-state").textContent = "已完成握手"; feedback(result.available ? result.initialized ? "Codex App Server 已完成握手。" : "运行时可用。" : "运行时不可用；请检查本机 CLI、SDK 或 OpenCode 服务。", result.available ? "success" : "warning"); }
 /** Discover read-only session descriptors through the selected Provider adapter. */
 async function discoverSessions() { const provider = state.selectedProvider; if (!provider) return; feedback("正在发现外部会话…"); state.sessions = (await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/sessions`)).sessions || []; renderSessions(); feedback(`发现 ${state.sessions.length} 个会话。`, "success"); }
 /** Render safely text-projected external sessions with explicit Angelus-link actions. */
@@ -91,3 +91,5 @@ $("provider-form").addEventListener("submit", (event) => saveProvider(event).cat
 $("probe-provider").addEventListener("click", () => probeProvider().catch((error) => feedback(error.message, "error")));
 $("discover-sessions").addEventListener("click", () => discoverSessions().catch((error) => feedback(error.message, "error")));
 $("release-link").addEventListener("click", releaseLink); window.addEventListener("pagehide", () => clearInterval(leaseTimer)); loadProviders().catch((error) => feedback(`无法读取 Provider：${error.message}`, "error"));
+$("open-hub-tutorial").addEventListener("click", () => $("hub-tutorial").showModal());
+$("close-hub-tutorial").addEventListener("click", () => $("hub-tutorial").close());

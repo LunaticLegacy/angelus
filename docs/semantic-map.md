@@ -51,7 +51,7 @@
 | `ExternalSession` / `ExternalEvent` | Credential-free provider-neutral descriptors and canonical event envelopes; raw vendor events remain private to synchronization callers. | Returned by provider discovery/read/subscription methods. |
 | `ExternalProviderRegistry` / `provider_registry` | Owns registered built-in runtime adapters and exposes their available capability catalog. | Populated during adapter bootstrap; consumed by the External Agent Hub. |
 | `bootstrap_builtin_providers` | Lazily instantiates Codex, OpenCode, and Claude Code adapters without spawning their optional runtimes; repeated calls retain the same process-scoped instances. | Called by `external_agents.provider_catalog` and API discovery/action routes. |
-| `CodexAppServerClient` / `CodexAppServerRuntime` / `CodexAppServerProvider` | Runs the Codex App Server over stdio JSON-RPC with request futures, notifications/server requests, stderr monitoring, restart and no-write-replay semantics; the provider maps only fixed thread/turn actions. | Registered by `bootstrap_builtin_providers`; invoked by External Agent API actions. |
+| `CodexAppServerClient.initialize` / `CodexAppServerRuntime` / `CodexAppServerProvider.probe` | Runs the Codex App Server over stdio JSON-RPC with request futures, mandatory ordered `initialize`/`initialized` handshake, notifications/server requests, stderr monitoring, restart and no-write-replay semantics; the provider maps only fixed thread/turn actions. | `CodexAppServerClient.request` ensures initialization before each non-handshake RPC; `api.external_agents.probe_external_provider` invokes the fixed probe before discovery. |
 | `OpenCodeProvider` | Enforces loopback-or-explicit-auth endpoint policy and maps fixed OpenCode HTTP operations plus cursor-resuming, de-duplicated SSE into canonical events. | Registered by `bootstrap_builtin_providers`; invoked by discovery/action routes. |
 | `ClaudeCodeProvider` | Inspects Claude transcript JSONL read-only and runs CLI `stream-json` only for Angelus-owned processes; discovered external sessions are never attached or controlled. | Registered by `bootstrap_builtin_providers`; invoked by discovery/action routes. |
 
@@ -59,7 +59,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| provider/import/archive/transfer routes | Provides capability discovery, safe local runtime auto-detection, credential-free archive export, import preview/commit, and no-side-effect handoff preview. | Mounted by `api.include_api_routes`; calls `angelus.external_agents`. |
+| provider/import/archive/transfer routes | Provides capability discovery, Codex App Server handshake probing, safe local runtime auto-detection, credential-free archive export, import preview/commit, and no-side-effect handoff preview. | Mounted by `api.include_api_routes`; calls `angelus.external_agents`. |
 | link/lease/action routes | Stores safe Angelus UUID links, enforces exclusive leases, and capability-gates fixed actions without arbitrary vendor protocol pass-through. | Mounted by `api.include_api_routes`; action route intentionally does not execute absent a provider runtime. |
 | `external_agent_hub_page` | Serves the isolated External Agent Hub at `/external-agents`, preserving the existing main workbench layout and asset contract. | Calls FastAPI `FileResponse`; its page loads `frontend/static/external-agents.js`. |
 
@@ -67,7 +67,8 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `loadProviders` / `autoDetectProviders` / `renderProviderSettings` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, safely detects local Codex/Claude/OpenCode availability, renders only settings supported by the selected Provider, saves only OpenCode's non-secret loopback setting, and probes optional runtimes without starting vendor sessions. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/auto-detect/config/probe APIs. |
+| `loadProviders` / `autoDetectProviders` / `renderProviderSettings` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, safely detects local Codex/Claude/OpenCode availability, renders only settings supported by the selected Provider, saves only OpenCode's non-secret loopback setting, and makes the Codex probe complete its App Server handshake before discovery. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/auto-detect/config/probe APIs. |
+| Hub tutorial listeners | Opens an in-page quick-start dialog describing detection, provider configuration, Codex handshake probing, discovery, lease acquisition, and capability-gated controls. | Called by `#open-hub-tutorial` / `#close-hub-tutorial`; controls `#hub-tutorial`. |
 | `discoverSessions` / `linkSession` / `renewLease` / `activateLink` / `renderLink` / `runAction` | Discovers read-only vendor sessions, creates safe Angelus links, maintains a tab-scoped control lease every 20 seconds, and exposes only provider-advertised fixed actions with idempotency keys. | Called by Hub controls; calls discovery, link, lease, and action APIs. |
 | `frontend/static/app.js` external-hub listeners | Opens and closes the modal iframe from the Workbench sidebar without navigating away from the current Angelus session. | Called by `#open-external-agent-hub` and `#close-external-agent-hub`; loads `/external-agents` inside `#external-agent-hub-frame`. |
 

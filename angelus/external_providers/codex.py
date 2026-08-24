@@ -110,6 +110,8 @@ class CodexAppServerClient:
         self._write_lock = asyncio.Lock()
         self._next_request_id = 0
         self._closed = False
+        self._initialized = False
+        self._initialize_lock = asyncio.Lock()
         self._stderr: list[str] = []
         self._protocol_diagnostics: list[str] = []
         self._notifications: asyncio.Queue[JSON] = asyncio.Queue()
@@ -168,6 +170,7 @@ class CodexAppServerClient:
             raise CodexAppServerError(f"Unable to launch Codex App Server: {exc}") from exc
 
         # Keep stdout draining before callers issue RPCs; stderr is diagnostic-only.
+        self._initialized = False
         self._stdout_task = asyncio.create_task(self._read_stdout(), name="codex-app-server-stdout")
         self._stderr_task = asyncio.create_task(self._read_stderr(), name="codex-app-server-stderr")
 
@@ -184,6 +187,7 @@ class CodexAppServerClient:
         a separately running Codex CLI process.
         """
         self._closed = True
+        self._initialized = False
         process = self._process
         self._process = None
         self._fail_pending(CodexAppServerError("Codex App Server stopped"))
@@ -219,6 +223,8 @@ class CodexAppServerClient:
         """
         if not method or not isinstance(method, str):
             raise ValueError("JSON-RPC method must be a non-empty string")
+        if method != "initialize":
+            await self.initialize()
         await self.start()
         if not self.running:
             raise CodexAppServerError("Codex App Server is not running")
@@ -233,6 +239,34 @@ class CodexAppServerClient:
             raise CodexAppServerError(f"Codex App Server request timed out: {method}") from exc
         finally:
             self._pending.pop(request_id, None)
+
+    async def initialize(self) -> Any:
+        """Complete Codex's one-time startup handshake before normal RPCs.
+
+        Returns:
+            The public result returned by Codex's ``initialize`` request.
+
+        Raises:
+            CodexAppServerError: If the process cannot start, disconnects, or
+                rejects either required handshake message.
+            CodexProtocolError: If Codex rejects the ``initialize`` request.
+
+        Notes:
+            The App Server requires an ``initialize`` request followed by an
+            ``initialized`` notification. The lock lets concurrent route calls
+            share one handshake instead of racing a second initialization.
+        """
+        await self.start()
+        if self._initialized:
+            return {}
+        async with self._initialize_lock:
+            if self._initialized:
+                return {}
+            # Codex requires this ordered request/notification pair before thread operations.
+            result = await self.request("initialize", {"clientInfo": {"name": "angelus", "version": "0.5.0-preview"}, "capabilities": {}})
+            await self.notify("initialized", {})
+            self._initialized = True
+            return result
 
     async def notify(self, method: str, params: Mapping[str, Any] | None = None) -> None:
         """Send a notification without creating a retryable request Future.
@@ -374,13 +408,11 @@ class CodexAsyncAppServerProvider:
             pass
 
     async def probe(self) -> JSON:
-        """Start Codex and perform its non-mutating version/capability handshake."""
-        await self.client.start()
+        """Start Codex and complete its non-mutating initialization handshake."""
         try:
-            result = await self.client.request("initialize", {"clientInfo": {"name": "angelus", "version": "1"}, "capabilities": {}})
+            result = await self.client.initialize()
         except CodexProtocolError as exc:
-            # Older App Servers may not require initialize; expose the reason to the registry.
-            return {"available": self.client.running, "capabilities": sorted(self.capabilities), "negotiated": False, "detail": str(exc)}
+            return {"available": False, "capabilities": sorted(self.capabilities), "negotiated": False, "detail": str(exc)}
         return {"available": True, "capabilities": sorted(self.capabilities), "negotiated": True, "server": result}
 
     async def discover(self, *, cursor: str | None = None, limit: int = 100) -> Any:
@@ -482,6 +514,7 @@ class CodexAppServerRuntime:
         self._ready = threading.Event()
         self._client: CodexAppServerClient | None = None
         self._lock = threading.Lock()
+        self._bootstrap_error: BaseException | None = None
 
     def call(self, coroutine_factory: Callable[[CodexAppServerClient], Awaitable[Any]]) -> Any:
         """Run one client coroutine on the private event loop and return its result.
@@ -524,21 +557,37 @@ class CodexAppServerRuntime:
     def _ensure_loop(self) -> None:
         """Start the runtime thread exactly once before submitting a coroutine."""
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
+            if self._thread is not None and self._thread.is_alive() and self._ready.is_set():
+                self._raise_bootstrap_error()
                 return
-            self._ready.clear()
-            self._thread = threading.Thread(target=self._thread_main, name="codex-app-server", daemon=True)
-            self._thread.start()
-        if not self._ready.wait(timeout=5):
+            if self._thread is None or not self._thread.is_alive():
+                self._ready.clear()
+                self._bootstrap_error = None
+                self._thread = threading.Thread(target=self._thread_main, name="codex-app-server", daemon=True)
+                self._thread.start()
+        if not self._ready.wait(timeout=self.config.request_timeout + 5):
             raise ProviderError("Codex App Server runtime failed to start", retryable=True, code="codex_runtime")
+        self._raise_bootstrap_error()
+
+    def _raise_bootstrap_error(self) -> None:
+        """Re-raise a failed child launch/initialize as a provider-neutral error."""
+        error = self._bootstrap_error
+        if error is None:
+            return
+        raise ProviderError(str(error), retryable=True, code="codex_transport") from error
 
     def _thread_main(self) -> None:
-        """Own the event loop and construct the client in its correct thread."""
+        """Own the event loop, launch the child, and negotiate the handshake."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
         self._client = CodexAppServerClient(self.config, notification_handler=self._receive_notification)
-        self._ready.set()
+        try:
+            loop.run_until_complete(self._bootstrap())
+        except BaseException as exc:
+            self._bootstrap_error = exc
+        finally:
+            self._ready.set()
         try:
             loop.run_forever()
         finally:
@@ -548,6 +597,25 @@ class CodexAppServerRuntime:
             if pending:
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             loop.close()
+
+    async def _bootstrap(self) -> None:
+        """Launch the App Server child and perform the initialize handshake.
+
+        The handshake mirrors :meth:`CodexAsyncAppServerProvider.probe` so the
+        synchronous runtime is initialized before any thread RPC is issued.
+        """
+        client = self._client
+        assert client is not None
+        await client.start()
+        try:
+            await client.request(
+                "initialize",
+                {"clientInfo": {"name": "angelus", "version": "1"}, "capabilities": {}},
+            )
+        except CodexProtocolError:
+            # Older App Servers may not implement initialize; the child is still
+            # running and discovery will surface any real protocol requirement.
+            pass
 
     async def _receive_notification(self, method: str, params: JSON) -> None:
         """Translate a transport notification into a bounded provider-contract event."""
@@ -599,6 +667,18 @@ class CodexAppServerProvider(ExternalAgentProvider):
         """Return whether the configured local Codex executable can be launched."""
         executable = self._config.command[0] if self._config.command else ""
         return bool(executable and (os.path.isabs(executable) and os.access(executable, os.X_OK) or shutil.which(executable)))
+
+    def probe(self) -> dict[str, Any]:
+        """Launch Codex and verify the ordered App Server handshake.
+
+        Returns:
+            The public ``initialize`` response, normalized to an object.
+
+        Raises:
+            ProviderError: If Codex cannot launch or rejects either handshake
+                message. No thread or turn is created by this operation.
+        """
+        return _object(self._runtime.call(lambda client: client.initialize()))
 
     def discover(self, *, project_path: str | None = None) -> list[ExternalSession]:
         """Discover readable Codex threads, optionally filtering by public project path.

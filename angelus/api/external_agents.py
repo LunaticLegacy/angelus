@@ -50,15 +50,26 @@ def configure_external_provider(provider_id: str, payload: dict[str, Any] = Body
 
 @router.post("/api/external-agents/providers/{provider_id}/probe")
 def probe_external_provider(provider_id: str) -> dict[str, Any]:
-    """Return deterministic local capability status without starting a vendor client."""
+    """Probe a Provider without creating a vendor session or turn.
+
+    Codex completes its required App Server handshake here; the other adapters
+    use their documented non-mutating availability checks.
+    """
     provider = next((item for item in external.provider_catalog() if item["id"] == provider_id), None)
     if provider is None:
         raise HTTPException(status_code=404, detail="External provider not found")
     try:
-        available = external.runtime_provider(provider_id).available()
+        adapter = external.runtime_provider(provider_id)
+        # A found Codex executable is not enough: verify its protocol session before discovery.
+        initialized = provider_id == "codex"
+        if initialized:
+            adapter.probe()
+        available = True if initialized else adapter.available()
     except ProviderError:
         available = False
-    return {"provider": provider_id, "available": available, "capabilities": provider["capabilities"],
+        initialized = False
+    return {"provider": provider_id, "available": available, "initialized": initialized and available,
+            "capabilities": provider["capabilities"],
             "message": "Probe never creates a vendor session or executes a control action"}
 
 
