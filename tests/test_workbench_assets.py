@@ -40,12 +40,27 @@ def test_active_workbench_uses_component_views_through_an_es_module_entrypoint()
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
     assert 'type="module" src="/static/app.js?v=workbench-' in template
-    assert 'from "./components/chat-view.js?v=tool-payload-3"' in script
+    assert 'from "./components/chat-view.js?v=history-pagination-2"' in script
     assert 'from "./components/trace-view.js"' in script
     assert 'from "./components/task-plan-view.js"' in script
     assert (COMPONENTS_DIR / "chat-view.js").is_file()
     assert (COMPONENTS_DIR / "trace-view.js").is_file()
     assert (COMPONENTS_DIR / "task-plan-view.js").is_file()
+
+
+def test_workbench_uses_the_angelus_mission_control_visual_system() -> None:
+    """Keep the redesigned brand, responsive shell, and accessibility layer active."""
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert "<title>Angelus · Agent Workbench</title>" in template
+    assert 'class="brand-mark">A</span>' in template
+    assert 'src="/static/app.js?v=workbench-78"' in template
+    assert 'href="/static/app.css?v=workbench-79"' in template
+    assert "Workbench 2026 — calm mission-control visual system." in stylesheet
+    assert "grid-template-columns:248px minmax(560px,1fr) 368px" in stylesheet
+    assert "@media (max-width:1020px)" in stylesheet
+    assert "@media (prefers-reduced-motion:reduce)" in stylesheet
 
 
 def test_tool_payloads_use_structured_json_and_verbatim_stdout_views() -> None:
@@ -89,7 +104,25 @@ def test_transcript_uses_cursor_pages_and_one_top_scroll_loader() -> None:
     assert "chat.scrollHeight - previousHeight + previousTop" in script
     assert "button.after(fragment)" in script
     assert "button.disabled=false" in script
+    assert "function ensureLoadMoreMessagesButton()" in script
+    assert 'button.textContent="加载失败，点击重试"' in script
+    assert '$("chat").addEventListener("click"' in script
     assert "chat.replaceChildren(loadMore)" in chat_component
+
+
+def test_new_session_requires_a_native_selected_project_directory() -> None:
+    """Keep project files separate from internal session manifests and state."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="new-session-path"' in template
+    assert 'id="choose-session-directory"' in template
+    assert 'id="change-workspace-directory"' in template
+    assert 'id="new-session-feedback"' in template
+    assert 'apiPost("/api/workspace-directory/pick")' in script
+    assert "project_path:selectedPath" in script
+    assert "opened.project_path" in script
+    assert "/project-path`" in script
 
 
 def test_trace_uses_reverse_cursor_and_durable_offset_for_sse() -> None:
