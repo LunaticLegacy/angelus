@@ -44,6 +44,7 @@ let traceEvents = [];
 // agentStateView resolves a state in O(1) instead of scanning the whole trace.
 let traceEventIndex = new Map();
 let durableEventCount = 0;
+let durableEventOffset = 0;
 let renderedSteerEvents = new Set();
 let renderedRoundEvents = new Set();
 let currentAgents = [];
@@ -395,7 +396,7 @@ async function loadOlderMessages() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { clearCompactStatus(); persistSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function switchSession(selected) { clearCompactStatus(); persistSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 
 async function start(message) {
   let runConfig;
@@ -539,7 +540,7 @@ function dispatchSlashCommand(parsed) {
 
 /** Resize the composer to its content, restoring the compact size when empty. */
 function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,170)}px`; }
-function connectRunEvents(runId, after=durableEventCount) { source?.close(); const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?after=${after}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId) handleEvent(JSON.parse(event.data)); }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); else if(eventSource.readyState===EventSource.CONNECTING && source===eventSource) setStatus("连接中断，正在重连…", "running"); }; }
+function connectRunEvents(runId, after=durableEventCount) { source?.close(); const resume=durableEventOffset > 0 ? `cursor=${durableEventOffset}` : `after=${after}`; const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?${resume}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId){ const offset=Number(event.lastEventId); if(Number.isSafeInteger(offset) && offset >= 0) durableEventOffset=offset; handleEvent(JSON.parse(event.data)); } }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); else if(eventSource.readyState===EventSource.CONNECTING && source===eventSource) setStatus("连接中断，正在重连…", "running"); }; }
 async function restoreRunState() { try { const state=await apiJson(`/api/workspaces/${workspaceId}/runs/${sessionId}/status`); if(state.active && state.run_id){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(state.run_id, durableEventCount); return; } if(state.status === "error" || state.status === "interrupted"){ const title=state.status === "interrupted" ? "执行已中断" : "上次运行失败"; setStatus(title,"error"); appendRunErrorBlock(title,state.error); trace(title,state.error); return; } if(state.status === "completed") setStatus("已完成"); else if(state.status === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
 $("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; if(runActive){ sendSteer(message); return; } $("message").value=""; resizeComposer(); const parsed=parseSlashCommand(message); if(parsed){ dispatchSlashCommand(parsed); return; } start(message);});
 $("message").addEventListener("keydown", (event)=>{
