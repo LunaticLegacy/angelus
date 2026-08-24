@@ -584,7 +584,14 @@ def _reconcile_graph_view(
             state = "failed"
         elif event_type == "task:reported":
             status = str(data.get("status", "")).strip().lower()
-            state = "completed" if status in {"completed", "complete", "success", "succeeded", "done"} else "failed"
+            if status in {"completed", "complete", "success", "succeeded", "done"}:
+                state = "completed"
+            elif status in {"interrupted", "stopped"}:
+                state = "interrupted"
+            elif status in {"cancelled", "canceled"}:
+                state = "cancelled"
+            else:
+                state = "failed"
         elif event_type == "task:finalized":
             state = str(data.get("state", ""))
         elif event_type.startswith("agent:"):

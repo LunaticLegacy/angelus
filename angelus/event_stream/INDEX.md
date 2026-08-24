@@ -23,10 +23,13 @@
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [__init__.py](__init__.py#L17) | `__getattr__` | `name: str` | `Any` | Load storage-dependent helpers lazily to avoid class import cycles. |
-| [broker.py](broker.py#L79) | `EventBroker.publish` | `payload: dict[str, Any], durable_offset: int \| None` | `EventEnvelope` | Publish one event and wake every subscriber. |
-| [broker.py](broker.py#L107) | `EventBroker.snapshot` | `None` | `BrokerSnapshot` | Return the current sequence and durable handoff watermark. |
-| [broker.py](broker.py#L114) | `EventBroker.wait_after` | `sequence: int, timeout: float` | `BrokerBatch` | Wait for and return events newer than one subscriber sequence. |
-| [broker.py](broker.py#L144) | `EventBroker.close` | `None` | `None` | Close the broker and wake all waiting subscribers. |
+| [broker.py](broker.py#L80) | `EventBroker.attach_subscriber` | `None` | `None` | Record one live SSE consumer for approval availability checks. |
+| [broker.py](broker.py#L85) | `EventBroker.detach_subscriber` | `None` | `None` | Forget one live SSE consumer without allowing a negative count. |
+| [broker.py](broker.py#L90) | `EventBroker.has_subscribers` | `None` | `bool` | Return whether at least one browser SSE consumer is attached. |
+| [broker.py](broker.py#L95) | `EventBroker.publish` | `payload: dict[str, Any], durable_offset: int \| None` | `EventEnvelope` | Publish one event and wake every subscriber. |
+| [broker.py](broker.py#L123) | `EventBroker.snapshot` | `None` | `BrokerSnapshot` | Return the current sequence and durable handoff watermark. |
+| [broker.py](broker.py#L130) | `EventBroker.wait_after` | `sequence: int, timeout: float` | `BrokerBatch` | Wait for and return events newer than one subscriber sequence. |
+| [broker.py](broker.py#L160) | `EventBroker.close` | `None` | `None` | Close the broker and wake all waiting subscribers. |
 | [publisher.py](publisher.py#L11) | `publish_durable_event` | `active: ActiveRun \| None, workspace_id: str, session_id: str, payload: dict[str, Any]` | `int` | Append, fsync, then broadcast one durable browser event. |
 | [sse.py](sse.py#L14) | `encode_sse_event` | `payload: dict[str, Any], durable_offset: int \| None` | `str` | Serialize one payload without advancing SSE IDs for live-only data. |
 | [sse.py](sse.py#L31) | `historical_event_stream` | `workspace_id: str, session_id: str, start_offset: int` | `Iterator[str]` | Replay durable records once for a session without a live worker. |

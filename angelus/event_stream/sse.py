@@ -68,47 +68,41 @@ def live_event_stream(
     Yields:
         Encoded durable, ephemeral, and keepalive SSE records in order.
     """
-    durable_offset = start_offset
-    handoff = active.event_broker.snapshot()
-    records, durable_offset = _read_session_event_records_from(
-        workspace_id,
-        session_id,
-        durable_offset,
-        handoff.durable_offset,
-    )
-    for payload, record_offset in records:
-        yield encode_sse_event(payload, record_offset)
-    sequence = handoff.sequence
-    if handoff.closed:
-        return
-
-    while True:
-        batch = active.event_broker.wait_after(
-            sequence, timeout=keepalive_timeout,
+    active.event_broker.attach_subscriber()
+    try:
+        durable_offset = start_offset
+        handoff = active.event_broker.snapshot()
+        records, durable_offset = _read_session_event_records_from(
+            workspace_id, session_id, durable_offset, handoff.durable_offset,
         )
-        if batch.gap:
-            # Recover only durable records through the broker snapshot;
-            # overwritten ephemeral fragments are intentionally best effort.
-            records, durable_offset = _read_session_event_records_from(
-                workspace_id,
-                session_id,
-                durable_offset,
-                batch.durable_offset,
+        for payload, record_offset in records:
+            yield encode_sse_event(payload, record_offset)
+        sequence = handoff.sequence
+        if handoff.closed:
+            return
+
+        while True:
+            batch = active.event_broker.wait_after(
+                sequence, timeout=keepalive_timeout,
             )
-            for payload, record_offset in records:
-                yield encode_sse_event(payload, record_offset)
-            sequence = batch.latest_sequence
-        else:
-            for envelope in batch.events:
-                if envelope.durable_offset is None:
-                    yield encode_sse_event(envelope.payload)
-                elif envelope.durable_offset > durable_offset:
-                    yield encode_sse_event(
-                        envelope.payload, envelope.durable_offset,
-                    )
-                    durable_offset = envelope.durable_offset
-                sequence = envelope.sequence
-        if batch.closed and sequence >= batch.latest_sequence:
-            break
-        if batch.timed_out:
-            yield ": keepalive\n\n"
+            if batch.gap:
+                records, durable_offset = _read_session_event_records_from(
+                    workspace_id, session_id, durable_offset, batch.durable_offset,
+                )
+                for payload, record_offset in records:
+                    yield encode_sse_event(payload, record_offset)
+                sequence = batch.latest_sequence
+            else:
+                for envelope in batch.events:
+                    if envelope.durable_offset is None:
+                        yield encode_sse_event(envelope.payload)
+                    elif envelope.durable_offset > durable_offset:
+                        yield encode_sse_event(envelope.payload, envelope.durable_offset)
+                        durable_offset = envelope.durable_offset
+                    sequence = envelope.sequence
+            if batch.closed and sequence >= batch.latest_sequence:
+                break
+            if batch.timed_out:
+                yield ": keepalive\n\n"
+    finally:
+        active.event_broker.detach_subscriber()

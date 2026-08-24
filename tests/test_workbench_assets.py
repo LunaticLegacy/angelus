@@ -55,8 +55,8 @@ def test_workbench_uses_the_angelus_mission_control_visual_system() -> None:
 
     assert "<title>Angelus · Agent Workbench</title>" in template
     assert 'class="brand-mark">A</span>' in template
-    assert 'src="/static/app.js?v=workbench-79"' in template
-    assert 'href="/static/app.css?v=workbench-80"' in template
+    assert 'src="/static/app.js?v=workbench-81"' in template
+    assert 'href="/static/app.css?v=workbench-81"' in template
     assert "本地优先" not in template
     assert "Workbench 2026 — calm mission-control visual system." in stylesheet
     assert "grid-template-columns:248px minmax(560px,1fr) 368px" in stylesheet
@@ -212,7 +212,7 @@ def test_settings_categories_use_left_navigation_buttons() -> None:
     navigation_sections = set(re.findall(r'data-settings-section="([^"]+)"', template))
     panel_sections = set(re.findall(r'data-settings-panel="([^"]+)"', template))
 
-    assert navigation_sections == panel_sections == {"connection", "agent", "plugins", "future"}
+    assert navigation_sections == panel_sections == {"connection", "agent", "mcp", "plugins", "future"}
     assert 'id="settings-section"' not in template
     assert 'querySelectorAll("[data-settings-section]")' in script
 
@@ -280,7 +280,8 @@ def test_completed_swarm_is_blue_even_when_a_worker_failed() -> None:
     """Represent successful coordinator recovery as a completed aggregate run."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'currentGraph.run_status?.status==="completed"' in script
+    assert 'terminal==="completed"' in script
+    assert 'views.some(view=>view.canonical==="running")' in script
     assert 'return stateView("completed","当前会话：运行完毕",agentId);' in script
     # The done handler now schedules a debounced graph+plan reload instead of
     # firing an immediate fetch; the reload must still be wired up.
@@ -309,16 +310,19 @@ def test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height() -> N
     assert ".inspector-agents-list { flex:1 1 auto; min-height:0; max-height:none;" in stylesheet
 
 
-def test_agent_settings_expose_native_mcp_tool_configuration() -> None:
-    """Keep MCP discovery an explicit Agent-run setting with JSON validation."""
+def test_managed_mcp_console_replaces_browser_json_configuration() -> None:
+    """Keep MCP configuration in the managed global registry and session grants."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'id="enable-mcp"' in template
-    assert 'id="mcp-servers"' in template
-    assert "function mcpServers()" in script
-    assert "enable_mcp:" in script
-    assert "mcp_servers:" in script
+    assert 'data-settings-panel="mcp"' in template
+    assert 'id="mcp-server-form"' in template
+    assert 'id="mcp-role-coordinator"' in template
+    assert 'id="mcp-role-worker"' in template
+    assert "function loadMcpConsole()" in script
+    assert "function saveMcpBinding(serverId)" in script
+    assert "function mcpServers()" not in script
+    assert "enable_mcp:" not in script
 
 
 def test_light_plan_agent_picker_overrides_the_dark_surface() -> None:

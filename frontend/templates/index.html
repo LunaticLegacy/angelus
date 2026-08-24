@@ -8,9 +8,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Angelus · Agent Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-80" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-81" />
   </head>
   <body>
+    <dialog id="mcp-approval-dialog" class="session-dialog" aria-labelledby="mcp-approval-title">
+      <form id="mcp-approval-form" class="session-dialog-form"><input id="mcp-approval-id" type="hidden" /><h2 id="mcp-approval-title">MCP 请求授权</h2><p id="mcp-approval-summary"></p><div id="mcp-approval-fields" class="mcp-approval-fields"></div><label class="toggle-line"><span>允许并在当前会话记住</span><input id="mcp-approval-remember" type="checkbox" /><i></i></label><div class="session-dialog-actions"><button id="reject-mcp-approval" type="button">拒绝</button><button type="submit">仅本次允许</button></div></form>
+    </dialog>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
       <form id="new-session-form" class="session-dialog-form">
         <h2 id="new-session-title">新建会话</h2>
@@ -37,6 +40,7 @@
           <nav class="settings-navigation" aria-label="设置类别" role="tablist">
             <button class="settings-nav-item active" type="button" data-settings-section="connection" role="tab" aria-selected="true">连接器</button>
             <button class="settings-nav-item" type="button" data-settings-section="agent" role="tab" aria-selected="false">Agent 执行</button>
+            <button class="settings-nav-item" type="button" data-settings-section="mcp" role="tab" aria-selected="false">MCP</button>
             <button class="settings-nav-item" type="button" data-settings-section="plugins" role="tab" aria-selected="false">插件</button>
             <button class="settings-nav-item" type="button" data-settings-section="future" role="tab" aria-selected="false">更多设置</button>
           </nav>
@@ -51,7 +55,19 @@
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>Agent 执行</h3><p><b>当前会话独立</b> · 这些选项会保存在浏览器本地。</p></div></div>
           <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
-          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><section class="mcp-settings" aria-labelledby="mcp-settings-title"><label class="toggle-line"><span id="mcp-settings-title">启用 MCP 工具</span><input id="enable-mcp" type="checkbox" /><i></i></label><p>通过官方 MCP SDK 发现并调用工具；不通过 Shell 复刻协议。配置仅保存服务器与环境变量名称。</p><label>MCP 服务器（JSON）<textarea id="mcp-servers" rows="7" spellcheck="false" placeholder='[{"name":"filesystem","transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\Users\\you\\Documents"],"env":[]}]'></textarea></label></section><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+        </section>
+        <section data-settings-panel="mcp" class="settings-page mcp-console-page" role="tabpanel">
+          <div class="settings-page-heading"><div><h3>MCP 服务器</h3><p><b>全局注册表</b> · 凭据加密保存在应用状态目录。</p></div><button id="new-mcp-server" class="mini-button" type="button">＋</button></div>
+          <p id="mcp-feedback" class="plugin-settings-feedback" aria-live="polite"></p>
+          <div class="mcp-console-layout"><div id="mcp-server-list" class="plugin-status-list"></div><div class="plugin-settings-detail"><form id="mcp-server-form" class="mcp-server-form">
+            <input id="mcp-server-id" type="hidden" /><label>名称<input id="mcp-name" required pattern="[A-Za-z][A-Za-z0-9_-]{0,63}" /></label><label>Transport<select id="mcp-transport"><option value="stdio">stdio</option><option value="streamable-http">Streamable HTTP</option></select></label>
+            <label data-mcp-stdio>Command<input id="mcp-command" /></label><label data-mcp-stdio>Args <em>每行一个；支持 ${project_root}</em><textarea id="mcp-args" rows="4"></textarea></label><label data-mcp-stdio>工作目录<input id="mcp-cwd" placeholder="${project_root}" /></label><label data-mcp-http hidden>URL<input id="mcp-url" type="url" /></label>
+            <label>Headers <em>每行 NAME=VALUE</em><textarea id="mcp-headers" rows="3"></textarea></label><label data-mcp-stdio>环境变量 <em>每行 NAME=VALUE</em><textarea id="mcp-env" rows="3"></textarea></label><label>认证<select id="mcp-auth-type"><option value="none">无</option><option value="bearer">Bearer</option><option value="oauth">OAuth 2.0 + PKCE</option></select></label><label data-mcp-bearer hidden>Bearer token<input id="mcp-bearer" type="password" autocomplete="off" placeholder="留空保留已配置值" /></label>
+            <label data-mcp-oauth hidden>Authorize URL<input id="mcp-oauth-authorize-url" type="url" /></label><label data-mcp-oauth hidden>Token URL<input id="mcp-oauth-token-url" type="url" /></label><label data-mcp-oauth hidden>Client ID<input id="mcp-oauth-client-id" /></label><label data-mcp-oauth hidden>Client secret<input id="mcp-oauth-client-secret" type="password" autocomplete="off" /></label><label data-mcp-oauth hidden>Scopes<input id="mcp-oauth-scopes" /></label><div data-mcp-oauth hidden class="mcp-oauth-actions"><button id="connect-mcp-oauth" type="button">连接 OAuth</button><button id="disconnect-mcp-oauth" type="button">断开</button><span id="mcp-oauth-status"></span></div>
+            <fieldset class="mcp-role-scope"><legend>当前会话授权</legend><label><input id="mcp-role-coordinator" type="checkbox" /> Coordinator</label><label><input id="mcp-role-worker" type="checkbox" /> Worker</label></fieldset><div id="mcp-tool-preview" class="mcp-tool-preview"><p class="empty">测试连接后可选择工具。</p></div>
+            <div class="plugin-settings-actions"><button id="delete-mcp-server" class="danger" type="button" hidden>删除</button><button id="probe-mcp-server" type="button" hidden>测试连接</button><button type="submit">保存</button></div>
+          </form></div></div>
         </section>
         <section data-settings-panel="plugins" class="settings-page plugin-settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>插件</h3><p><b>全局状态</b> · 查看发现、启用和加载结果；插件配置保存在本机注册表中。</p></div><button id="refresh-plugins" class="mini-button" type="button" title="重新扫描插件目录（发现新插件并加载已启用项）">↻</button></div>
@@ -116,6 +132,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-79"></script>
+    <script type="module" src="/static/app.js?v=workbench-81"></script>
   </body>
 </html>

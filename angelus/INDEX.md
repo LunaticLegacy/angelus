@@ -24,6 +24,7 @@ Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、
 | `plugin_paths.py` | Plugin locations | 与 `workspace/` 并列的持久插件目录解析，以及环境变量覆盖。 |
 | `plugin_bootstrap.py` | Packaged examples | 首次启动时将发布包内的示例插件复制到持久插件目录，绝不自动执行或覆盖用户文件。 |
 | `mcp_tools.py` | MCP bridge | 用官方 Python `mcp` SDK 连接服务器、发现远端工具并桥接为原生 Agent 工具。 |
+| `mcp_registry.py` | MCP registry | 全局加密 server 注册表、会话角色/工具授权，以及受控 `${project_root}` 解析。 |
 | `plugin_registry.py` | Plugin registry | 原子读写 `plugins.json` 中的安装、启用与授权记录。 |
 | `provider_adapters.py` | Provider presets | 将 Kimi Code 等一方预设解析为 LLMFetcher 已支持的后端与默认端点。 |
 | `cli.py` | CLI | 本地 `web` / `session` / `plugin` 命令与 llmfetcher 命令委托。 |
@@ -35,8 +36,8 @@ Angelus 是覆盖 `llmfetcher` 的本地控制平面。它拥有浏览器 API、
 
 | Scope | Records |
 |---|---|
-| Global state root | `sessions.json`（含会话到外部项目目录的绑定）、`connectors.json`、RSA 密钥对、`plugins.json` |
-| Session directory | `conversation.json`、`events.ndjson`、`run-state.json`、`task-plan.json`、`graph-view.json`、`swarm-runtime.json` |
+| Global state root | `sessions.json`（含会话到外部项目目录的绑定）、`connectors.json`、`mcp-servers.json`、RSA 密钥对、`plugins.json` |
+| Session directory | `conversation.json`、`events.ndjson`、`run-state.json`、`task-plan.json`、`graph-view.json`、`swarm-runtime.json`、`mcp-bindings.json` |
 | Agent context | `contexts/<agent>.json`、主文件引用的不可变 generation 图 checkpoint、旧版图伴随文件，以及 `contexts/revisions/<agent>/` 的不可变编辑快照与 `context-edits.ndjson` 审计账本 |
 
 API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.json` 均不含密钥；直接输入的浏览器密钥只在当前请求中使用。为使动态 worker 能在服务重启后重建，`swarm-runtime.json` 会保留其本地 system prompt，因而与会话上下文同属本机私有状态。
@@ -105,17 +106,47 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [context_editing.py](context_editing.py#L326) | `create_context_editing_tools` | `store: ContextEditStore, persist_context: Callable[[], None] \| None, reload_context: Callable[[], None] \| None` | `list[Tool]` | Create tools for inspecting, editing, and restoring one Agent context. |
 | [context_stats.py](context_stats.py#L40) | `estimate_context_length` | `messages: list[dict[str, Any]], tool_schemas: list[dict[str, Any]] \| None` | `ContextLengthStats` | Estimate the serialized wire length of one provider message payload. |
 | [markdown.py](markdown.py#L14) | `render_markdown` | `text: str` | `str` | Convert trusted-to-render model Markdown into safe display HTML. |
-| [mcp_tools.py](mcp_tools.py#L28) | `_safe_name_part` | `value: str` | `str` | Implement `_safe_name_part`. |
-| [mcp_tools.py](mcp_tools.py#L33) | `_model_dump` | `value: Any` | `Any` | Return SDK Pydantic models as JSON-compatible values. |
-| [mcp_tools.py](mcp_tools.py#L54) | `MCPServer.from_config` | `item: dict[str, Any]` | `'MCPServer'` | Implement `MCPServer.from_config`. |
-| [mcp_tools.py](mcp_tools.py#L102) | `MCPToolBridge.start` | `None` | `list[Tool]` | Discover remote MCP tools and return native synchronous wrappers. |
-| [mcp_tools.py](mcp_tools.py#L117) | `MCPToolBridge.close` | `None` | `None` | Mark wrappers closed; SDK transports already close per operation. |
-| [mcp_tools.py](mcp_tools.py#L121) | `MCPToolBridge._handler` | `server_name: str, tool_name: str` | `Any` | Implement `MCPToolBridge._handler`. |
-| [mcp_tools.py](mcp_tools.py#L129) | `MCPToolBridge._client` | `server: MCPServer` | `Any` | Implement `MCPToolBridge._client`. |
-| [mcp_tools.py](mcp_tools.py#L152) | `MCPToolBridge._discover_all` | `None` | `None` | Implement `MCPToolBridge._discover_all`. |
-| [mcp_tools.py](mcp_tools.py#L158) | `MCPToolBridge._discover_tools` | `server: MCPServer, client: Any` | `None` | Implement `MCPToolBridge._discover_tools`. |
-| [mcp_tools.py](mcp_tools.py#L180) | `MCPToolBridge._call` | `server_name: str, tool_name: str, arguments: dict[str, Any]` | `dict[str, Any]` | Implement `MCPToolBridge._call`. |
-| [mcp_tools.py](mcp_tools.py#L190) | `create_mcp_tools` | `servers: list[dict[str, Any]]` | `tuple[MCPToolBridge, list[Tool]]` | Connect configured MCP servers and expose their remote tools natively. |
+| [mcp_registry.py](mcp_registry.py#L22) | `_encrypt_secret` | `value: str` | `dict[str, Any]` | Envelope long UTF-8 secrets into RSA-safe encrypted chunks. |
+| [mcp_registry.py](mcp_registry.py#L32) | `_decrypt_secret` | `payload: Any` | `str` | Decrypt a chunked secret while retaining old single-RSA compatibility. |
+| [mcp_registry.py](mcp_registry.py#L46) | `_read_json` | `path: Path, default: Any` | `Any` | Read JSON from ``path`` and return ``default`` on invalid input. |
+| [mcp_registry.py](mcp_registry.py#L59) | `_write_json` | `path: Path, payload: Any` | `None` | Atomically persist one private registry payload with mode 0600. |
+| [mcp_registry.py](mcp_registry.py#L76) | `_validate_template_boundaries` | `payload: dict[str, Any]` | `None` | Reject project-root expansion outside controlled stdio args/cwd. |
+| [mcp_registry.py](mcp_registry.py#L102) | `_normalize_server` | `payload: dict[str, Any], existing_id: str` | `dict[str, Any]` | Validate and normalize a global MCP server record. |
+| [mcp_registry.py](mcp_registry.py#L160) | `_stored_server` | `record: dict[str, Any]` | `dict[str, Any]` | Encrypt every configured credential in one registry record. |
+| [mcp_registry.py](mcp_registry.py#L174) | `_loaded_server` | `stored: dict[str, Any]` | `dict[str, Any]` | Decrypt one record for server-side connection use. |
+| [mcp_registry.py](mcp_registry.py#L190) | `read_servers` | `None` | `list[dict[str, Any]]` | Return all decrypted MCP records for internal server use. |
+| [mcp_registry.py](mcp_registry.py#L196) | `write_servers` | `records: list[dict[str, Any]]` | `None` | Replace the global MCP registry with encrypted records. |
+| [mcp_registry.py](mcp_registry.py#L205) | `public_server` | `record: dict[str, Any]` | `dict[str, Any]` | Return browser-safe metadata and credential-presence flags. |
+| [mcp_registry.py](mcp_registry.py#L219) | `binding_path` | `session_id: str` | `Path` | Return the app-state path for one session's MCP grants. |
+| [mcp_registry.py](mcp_registry.py#L224) | `read_bindings` | `session_id: str` | `list[dict[str, Any]]` | Return normalized MCP grants for ``session_id``. |
+| [mcp_registry.py](mcp_registry.py#L231) | `write_bindings` | `session_id: str, bindings: list[dict[str, Any]]` | `None` | Validate and persist server/role/tool grants for one session. |
+| [mcp_registry.py](mcp_registry.py#L250) | `resolve_session_servers` | `session_id: str, project_root: Path` | `list[dict[str, Any]]` | Resolve authorized registry records for one run and project root. |
+| [mcp_tools.py](mcp_tools.py#L32) | `_safe_name_part` | `value: str` | `str` | Implement `_safe_name_part`. |
+| [mcp_tools.py](mcp_tools.py#L37) | `_model_dump` | `value: Any` | `Any` | Return SDK Pydantic models as JSON-compatible values. |
+| [mcp_tools.py](mcp_tools.py#L59) | `MCPServer.from_config` | `item: dict[str, Any]` | `'MCPServer'` | Validate one decrypted registry or compatibility server mapping. |
+| [mcp_tools.py](mcp_tools.py#L162) | `MCPToolBridge._approval_agent` | `server: str` | `str` | Return the sole active caller for a server, or coordinator fallback. |
+| [mcp_tools.py](mcp_tools.py#L168) | `MCPToolBridge._emit` | `kind: str, server: str, data: Any` | `None` | Forward credential-free MCP runtime metadata to the host Trace. |
+| [mcp_tools.py](mcp_tools.py#L176) | `MCPToolBridge._run_loop` | `None` | `None` | Own the asyncio loop used by all run-scoped MCP transports. |
+| [mcp_tools.py](mcp_tools.py#L181) | `MCPToolBridge.start` | `None` | `list[Tool]` | Discover remote MCP tools and return native synchronous wrappers. |
+| [mcp_tools.py](mcp_tools.py#L194) | `MCPToolBridge.tools_for` | `agent: str, allowed: set[str] \| None` | `list[Tool]` | Create wrappers attributed to one Agent and optional allowlist. |
+| [mcp_tools.py](mcp_tools.py#L213) | `MCPToolBridge.close` | `None` | `None` | Close every persistent transport and stop the owning event loop. |
+| [mcp_tools.py](mcp_tools.py#L231) | `MCPToolBridge.cancel_agent` | `agent: str` | `int` | Cancel in-flight MCP calls attributed to one Agent. |
+| [mcp_tools.py](mcp_tools.py#L246) | `MCPToolBridge._handler` | `server_name: str, tool_name: str, agent: str` | `Any` | Build a synchronous tool handler attributed to ``agent``. |
+| [mcp_tools.py](mcp_tools.py#L264) | `MCPToolBridge._open_client` | `server: MCPServer` | `Any` | Open and retain one SDK client inside the run cleanup stack. |
+| [mcp_tools.py](mcp_tools.py#L350) | `MCPToolBridge._ensure_client` | `server: MCPServer` | `Any` | Return a live client, asking the stack-owning task to reconnect. |
+| [mcp_tools.py](mcp_tools.py#L363) | `MCPToolBridge._own_connections` | `None` | `None` | Open and close task-bound SDK transports in the same asyncio task. |
+| [mcp_tools.py](mcp_tools.py#L405) | `MCPToolBridge._discover_all` | `None` | `None` | Open each configured server once and replace the tool cache. |
+| [mcp_tools.py](mcp_tools.py#L412) | `MCPToolBridge._discover_tools` | `server: MCPServer, client: Any` | `None` | Page through one live client's tools into the public-name cache. |
+| [mcp_tools.py](mcp_tools.py#L446) | `MCPToolBridge.capability_snapshot` | `None` | `dict[str, Any]` | Discover tools, resources, templates, and prompts on live clients. |
+| [mcp_tools.py](mcp_tools.py#L454) | `MCPToolBridge.read_resource` | `server_name: str, uri: str` | `Any` | Read one MCP resource through the persistent server connection. |
+| [mcp_tools.py](mcp_tools.py#L458) | `MCPToolBridge.subscribe_resource` | `server_name: str, uri: str` | `Any` | Subscribe to one resource; later notifications enter Trace. |
+| [mcp_tools.py](mcp_tools.py#L462) | `MCPToolBridge.get_prompt` | `server_name: str, name: str, arguments: dict[str, str] \| None` | `Any` | Get one MCP prompt using the persistent server connection. |
+| [mcp_tools.py](mcp_tools.py#L466) | `MCPToolBridge.complete` | `server_name: str, reference: Any, argument: dict[str, str], context_arguments: dict[str, str] \| None` | `Any` | Request MCP completion for a prompt or resource template reference. |
+| [mcp_tools.py](mcp_tools.py#L473) | `MCPToolBridge._submit_client_method` | `server_name: str, method: str, *args: Any` | `Any` | Run one non-tool MCP capability call on the owning event loop. |
+| [mcp_tools.py](mcp_tools.py#L480) | `MCPToolBridge._client_method` | `server_name: str, method: str, *args: Any` | `Any` | Invoke a named SDK client method without automatic replay. |
+| [mcp_tools.py](mcp_tools.py#L489) | `MCPToolBridge._capability_snapshot_async` | `None` | `dict[str, Any]` | Collect JSON-safe full discovery data from every live server. |
+| [mcp_tools.py](mcp_tools.py#L511) | `MCPToolBridge._call` | `server_name: str, tool_name: str, arguments: dict[str, Any], agent: str` | `dict[str, Any]` | Invoke one tool once, discarding a stale client after failure. |
+| [mcp_tools.py](mcp_tools.py#L555) | `create_mcp_tools` | `servers: list[dict[str, Any]], approval_handler: Any \| None, sampling_handler: Any \| None, event_handler: Any \| None` | `tuple[MCPToolBridge, list[Tool]]` | Connect configured servers and expose remote tools natively. |
 | [plugin_bootstrap.py](plugin_bootstrap.py#L21) | `install_bundled_plugins` | `state_root: Path \| None` | `list[str]` | Copy valid bundled plugin folders on first run without overwriting users. |
 | [plugin_manifest.py](plugin_manifest.py#L71) | `_add` | `errors: list[dict[str, str]], field: str, message: str` | `None` | Implement `_add`. |
 | [plugin_manifest.py](plugin_manifest.py#L75) | `_check_string` | `errors: list[dict[str, str]], data: dict[str, Any], field: str, required: bool, min_len: int \| None, max_len: int \| None, pattern: re.Pattern[str] \| None, label: str \| None` | `Any` | Validate an optional/required string field, returning its value. |
@@ -152,25 +183,25 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [provider_adapters.py](provider_adapters.py#L69) | `create_fetcher` | `backend: LLMBackendConfig, provider: str` | `LLMFetcher` | Build a fetcher that applies any provider-level request constraints. |
 | [runtime.py](runtime.py#L41) | `_event_payload` | `event: ExecutionEvent` | `dict[str, Any]` | Convert library events to JSON values suitable for Server-Sent Events. |
 | [runtime.py](runtime.py#L62) | `_redacted_api_url` | `value: str` | `str` | Return an endpoint identity without URL credentials or query secrets. |
-| [runtime.py](runtime.py#L75) | `_runtime_profile_snapshot` | `config: RunConfig` | `dict[str, Any]` | Build a credential-free, stable description of one run's semantics. |
-| [runtime.py](runtime.py#L118) | `_enable_optional_agent_controls` | `agent: Agent` | `None` | Enable first-party streaming controls without requiring a new Agent ABI. |
-| [runtime.py](runtime.py#L132) | `_build_agent` | `config: RunConfig, workspace_id: str, session_id: str, agent_name: str, active: ActiveRun \| None` | `Agent` | Create one session-owned Agent from current UI settings. |
-| [runtime.py](runtime.py#L209) | `_mcp_tools` | `config: RunConfig, active: ActiveRun \| None` | `list[Any]` | Open one SDK-backed MCP bridge and share it across every run Agent. |
-| [runtime.py](runtime.py#L221) | `_memory_capabilities` | `config: RunConfig, current_session: str` | `dict[str, set[str]]` | Freeze the four explicit session grants for one Agent run. |
-| [runtime.py](runtime.py#L237) | `_session_memory_store` | `None` | `SessionMemoryStore` | Create a store whose audit records use the normal durable event log. |
-| [runtime.py](runtime.py#L241) | `_publish_plan_change` | `active: ActiveRun \| None, workspace_id: str, session_id: str, agent_name: str, event_type: str, plan: dict[str, Any]` | `None` | Persist and relay one Agent-owned plan mutation to the workbench. |
-| [runtime.py](runtime.py#L263) | `_plan_store` | `workspace_id: str, session_id: str, agent_name: str` | `TaskPlanStore` | Return one Agent-owned plan store inside a browser session. |
-| [runtime.py](runtime.py#L284) | `_swarm_snapshot_path` | `workspace_id: str, session_id: str` | `Any` | Return the private restart-recovery snapshot path for one Swarm. |
-| [runtime.py](runtime.py#L298) | `_worker_tools_for` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun, agent_name: str` | `list[Any]` | Create isolated non-report tools for one dynamically created worker. |
-| [runtime.py](runtime.py#L341) | `_bind_worker_context_tools` | `workspace_id: str, session_id: str, agent_name: str, worker: Agent, tools: list[Any]` | `list[Any]` | Attach live-context edit tools after a dynamic worker is constructed. |
-| [runtime.py](runtime.py#L368) | `_attach_swarm_runtime_tools` | `swarm: AgentSwarm, coordinator: Agent, config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Install coordinator tools that create future worker Agents in ``swarm``. |
-| [runtime.py](runtime.py#L424) | `_attach_swarm_observer` | `swarm: AgentSwarm, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Persist and stream lifecycle events emitted by a live or restored Swarm. |
-| [runtime.py](runtime.py#L454) | `_synchronize_plan_with_swarm_event` | `event: ExecutionEvent, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Project an assignment-bound Swarm lifecycle event into the main plan. |
-| [runtime.py](runtime.py#L497) | `_synchronize_context_threshold` | `agents: list[Agent], max_context_threshold: int` | `tuple[str, ...]` | Apply the current browser compaction threshold before one run begins. |
-| [runtime.py](runtime.py#L527) | `_synchronize_swarm_context_threshold` | `swarm: AgentSwarm, config: RunConfig` | `tuple[str, ...]` | Synchronize every currently retained Swarm Agent with ``config``. |
-| [runtime.py](runtime.py#L548) | `_persist_swarm_snapshot` | `swarm: AgentSwarm, workspace_id: str, session_id: str` | `None` | Write a quiescent, credential-free Swarm recovery snapshot. |
-| [runtime.py](runtime.py#L580) | `_restore_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm \| None` | Rebuild a completed Swarm graph after a backend process restart. |
-| [runtime.py](runtime.py#L640) | `_build_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm` | Build a coordinator-led swarm bound to one private session directory. |
+| [runtime.py](runtime.py#L75) | `_runtime_profile_snapshot` | `config: RunConfig, mcp_servers: list[dict[str, Any]] \| None` | `dict[str, Any]` | Build a credential-free, stable description of one run's semantics. |
+| [runtime.py](runtime.py#L120) | `_enable_optional_agent_controls` | `agent: Agent` | `None` | Enable first-party streaming controls without requiring a new Agent ABI. |
+| [runtime.py](runtime.py#L134) | `_build_agent` | `config: RunConfig, workspace_id: str, session_id: str, agent_name: str, active: ActiveRun \| None` | `Agent` | Create one session-owned Agent from current UI settings. |
+| [runtime.py](runtime.py#L242) | `_mcp_tools` | `active: ActiveRun \| None, agent_name: str` | `list[Any]` | Return registry-authorized MCP tools for one run Agent. |
+| [runtime.py](runtime.py#L279) | `_memory_capabilities` | `config: RunConfig, current_session: str` | `dict[str, set[str]]` | Freeze the four explicit session grants for one Agent run. |
+| [runtime.py](runtime.py#L295) | `_session_memory_store` | `None` | `SessionMemoryStore` | Create a store whose audit records use the normal durable event log. |
+| [runtime.py](runtime.py#L299) | `_publish_plan_change` | `active: ActiveRun \| None, workspace_id: str, session_id: str, agent_name: str, event_type: str, plan: dict[str, Any]` | `None` | Persist and relay one Agent-owned plan mutation to the workbench. |
+| [runtime.py](runtime.py#L321) | `_plan_store` | `workspace_id: str, session_id: str, agent_name: str` | `TaskPlanStore` | Return one Agent-owned plan store inside a browser session. |
+| [runtime.py](runtime.py#L342) | `_swarm_snapshot_path` | `workspace_id: str, session_id: str` | `Any` | Return the private restart-recovery snapshot path for one Swarm. |
+| [runtime.py](runtime.py#L356) | `_worker_tools_for` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun, agent_name: str` | `list[Any]` | Create isolated non-report tools for one dynamically created worker. |
+| [runtime.py](runtime.py#L399) | `_bind_worker_context_tools` | `workspace_id: str, session_id: str, agent_name: str, worker: Agent, tools: list[Any]` | `list[Any]` | Attach live-context edit tools after a dynamic worker is constructed. |
+| [runtime.py](runtime.py#L426) | `_attach_swarm_runtime_tools` | `swarm: AgentSwarm, coordinator: Agent, config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Install coordinator tools that create future worker Agents in ``swarm``. |
+| [runtime.py](runtime.py#L482) | `_attach_swarm_observer` | `swarm: AgentSwarm, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Persist and stream lifecycle events emitted by a live or restored Swarm. |
+| [runtime.py](runtime.py#L512) | `_synchronize_plan_with_swarm_event` | `event: ExecutionEvent, workspace_id: str, session_id: str, active: ActiveRun` | `None` | Project an assignment-bound Swarm lifecycle event into the main plan. |
+| [runtime.py](runtime.py#L555) | `_synchronize_context_threshold` | `agents: list[Agent], max_context_threshold: int` | `tuple[str, ...]` | Apply the current browser compaction threshold before one run begins. |
+| [runtime.py](runtime.py#L585) | `_synchronize_swarm_context_threshold` | `swarm: AgentSwarm, config: RunConfig` | `tuple[str, ...]` | Synchronize every currently retained Swarm Agent with ``config``. |
+| [runtime.py](runtime.py#L606) | `_persist_swarm_snapshot` | `swarm: AgentSwarm, workspace_id: str, session_id: str` | `None` | Write a quiescent, credential-free Swarm recovery snapshot. |
+| [runtime.py](runtime.py#L638) | `_restore_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm \| None` | Rebuild a completed Swarm graph after a backend process restart. |
+| [runtime.py](runtime.py#L698) | `_build_swarm` | `config: RunConfig, workspace_id: str, session_id: str, active: ActiveRun` | `AgentSwarm` | Build a coordinator-led swarm bound to one private session directory. |
 | [session_memory.py](session_memory.py#L32) | `_atomic_json` | `path: Path, value: dict[str, Any]` | `None` | Implement `_atomic_json`. |
 | [session_memory.py](session_memory.py#L48) | `_read_json` | `path: Path, default: Any` | `Any` | Implement `_read_json`. |
 | [session_memory.py](session_memory.py#L55) | `_safe_text` | `value: Any, limit: int` | `str` | Implement `_safe_text`. |
@@ -242,9 +273,9 @@ API 密钥不返回给浏览器。持久化的运行配置与 `swarm-runtime.jso
 | [context_editing.py](context_editing.py#L81) | `ContextEditError` | `None` | `ValueError` | Safe rejection for invalid edits, stale revisions, or unknown records. |
 | [context_editing.py](context_editing.py#L111) | `ContextEditStore` | `path: str \| Path, agent_name: str` | `object` | Own immutable revisions and the active JSON checkpoint for one Agent. |
 | [context_stats.py](context_stats.py#L20) | `ContextLengthStats` | `messages: int, characters: int, tool_schemas: int, tool_schema_characters: int, estimated_tokens: int` | `object` | Character and token estimate for one message/tool-schema payload. |
-| [mcp_tools.py](mcp_tools.py#L21) | `MCPToolError` | `None` | `RuntimeError` | Raised when MCP configuration, discovery, or invocation fails. |
-| [mcp_tools.py](mcp_tools.py#L42) | `MCPServer` | `name: str, transport: str, command: str, args: tuple[str, ...], url: str, env: tuple[str, ...], cwd: str` | `object` | One validated user-selected MCP server definition. |
-| [mcp_tools.py](mcp_tools.py#L80) | `MCPToolBridge` | `servers: list[dict[str, Any]]` | `object` | Use a fresh official SDK client context for each discovery or call. |
+| [mcp_tools.py](mcp_tools.py#L25) | `MCPToolError` | `None` | `RuntimeError` | Raised when MCP configuration, discovery, or invocation fails. |
+| [mcp_tools.py](mcp_tools.py#L46) | `MCPServer` | `name: str, transport: str, command: str, args: tuple[str, ...], url: str, env: tuple[tuple[str, str], ...], cwd: str, headers: tuple[tuple[str, str], ...]` | `object` | One validated user-selected MCP server definition. |
+| [mcp_tools.py](mcp_tools.py#L108) | `MCPToolBridge` | `servers: list[dict[str, Any]], approval_handler: Any \| None, sampling_handler: Any \| None, event_handler: Any \| None` | `object` | Keep one official SDK connection per server for the lifetime of a run. |
 | [provider_adapters.py](provider_adapters.py#L52) | `KimiCodeFetcher` | `None` | `LLMFetcher` | Force Kimi Code's required temperature across all internal requests. |
 | [session_memory.py](session_memory.py#L28) | `SessionMemoryError` | `None` | `ValueError` | A safe, user-facing rejection of a memory operation. |
 | [session_memory.py](session_memory.py#L59) | `SessionMemoryStore` | `state_root: Path, event_logger: Callable[[str, dict[str, Any]], None] \| None` | `object` | Own manifests, handoffs, and immutable artifact bytes below one state root. |

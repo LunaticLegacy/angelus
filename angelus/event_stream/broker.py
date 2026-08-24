@@ -75,6 +75,22 @@ class EventBroker:
         self._next_sequence = 1
         self._durable_offset = max(0, durable_offset)
         self._closed = False
+        self._subscribers = 0
+
+    def attach_subscriber(self) -> None:
+        """Record one live SSE consumer for approval availability checks."""
+        with self._condition:
+            self._subscribers += 1
+
+    def detach_subscriber(self) -> None:
+        """Forget one live SSE consumer without allowing a negative count."""
+        with self._condition:
+            self._subscribers = max(0, self._subscribers - 1)
+
+    def has_subscribers(self) -> bool:
+        """Return whether at least one browser SSE consumer is attached."""
+        with self._condition:
+            return self._subscribers > 0
 
     def publish(
         self, payload: dict[str, Any], *, durable_offset: int | None = None,

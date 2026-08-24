@@ -386,7 +386,10 @@ Angelus 可以从 MCP server 发现工具，并将其直接挂载到参与执行
 
 - `stdio`
 - Streamable HTTP
-- 兼容旧服务的 SSE
+- 全局加密服务器注册表与会话级 Agent/工具授权
+- tools、resources/templates、prompts/completion 与 session roots
+
+旧 SSE transport 不再受支持。
 
 ## Plugin System
 
@@ -732,23 +735,12 @@ Agent 工作台可能执行代码、调用远端服务、启动本地进程并�
 
 # MCP 示例
 
-在 Agent 执行设置中启用 MCP，并提供 server 定义：
+在设置的独立 MCP 页面中新增全局服务器，测试连接后，再为当前会话授权
+Coordinator、Worker 和具体工具。静态 Header、Bearer/OAuth token 与 stdio
+环境变量值只以加密形式保存在 Angelus 应用状态目录，浏览器只看到配置状态。
 
-```json
-[
-  {
-    "name": "filesystem",
-    "transport": "stdio",
-    "command": "npx",
-    "args": [
-      "-y",
-      "@modelcontextprotocol/server-filesystem",
-      "C:\\Users\\you\\Documents"
-    ],
-    "env": []
-  }
-]
-```
+`${project_root}` 只允许用于 stdio 的参数和工作目录，并在运行开始时解析为
+当前会话绑定的项目目录。
 
 发现到的工具会以类似以下名称加入 Agent：
 

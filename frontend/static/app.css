@@ -310,7 +310,10 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 :root[data-theme="light"] .memory-session-option.selected { background:#eef2fb; }
 :root[data-theme="light"] .plugin-settings-layout { background:#f7f9fd; border-color:#d6dfef; }:root[data-theme="light"] .plugin-status-list { border-color:#d6dfef; }:root[data-theme="light"] .plugin-status-card:hover,:root[data-theme="light"] .plugin-status-card.selected { background:#eef2fb; border-color:#c6bdf2; }:root[data-theme="light"] .plugin-lifecycle { background:#f1f5fb; border-color:#d6dfef; }
 
-@media (max-width:650px) { .plugin-settings-layout { grid-template-columns:1fr; }.plugin-status-list { max-height:160px; border-right:0; border-bottom:1px solid var(--line); } }
+.mcp-console-layout { display:grid; grid-template-columns:minmax(180px,.75fr) minmax(0,1.5fr); min-height:330px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }.mcp-server-form { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.mcp-server-form > label { display:grid; gap:4px; color:var(--muted); font-size:9px; }.mcp-server-form > label:has(textarea),.mcp-role-scope,.mcp-tool-preview,.mcp-server-form .plugin-settings-actions { grid-column:1/-1; }.mcp-role-scope { display:flex; gap:14px; border:1px solid var(--line); border-radius:6px; color:var(--soft); font-size:10px; }.mcp-role-scope label { display:flex; align-items:center; gap:5px; }.mcp-tool-preview { display:grid; gap:5px; max-height:135px; overflow:auto; padding:8px; border:1px solid var(--line); border-radius:6px; font-size:9px; }.mcp-tool-preview label { display:flex; gap:5px; align-items:center; }
+.mcp-oauth-actions { grid-column:1/-1; display:flex; align-items:center; gap:7px; color:var(--muted); font-size:9px; }
+.mcp-approval-fields { display:grid; gap:7px; }.mcp-approval-fields label { display:grid; gap:4px; color:var(--muted); font-size:10px; }
+@media (max-width:650px) { .plugin-settings-layout,.mcp-console-layout { grid-template-columns:1fr; }.plugin-status-list { max-height:160px; border-right:0; border-bottom:1px solid var(--line); } }
 
 /* Agent context graph dialog. The card's primary action still selects its
    transcript; the small secondary control opens this independent inspector. */
@@ -408,6 +411,7 @@ body::before {
 button { transition:border-color .16s ease,background .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease; }
 button:active:not(:disabled) { transform:translateY(1px); }
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid rgba(155,140,255,.78); outline-offset:2px; }
+.composer textarea:focus-visible { outline:none; }
 input,select,textarea { border-color:var(--line2); border-radius:9px; background:#10131b; }
 input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow:0 0 0 3px rgba(155,140,255,.12); }
 

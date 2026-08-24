@@ -252,10 +252,14 @@ swarm, TLB-RAG, and utilities.
 | [test_graph_store.py](test_graph_store.py#L147) | `SerializationTests.test_roundtrip` | `None` | `Any` | Implement `SerializationTests.test_roundtrip`. |
 | [test_graph_store.py](test_graph_store.py#L161) | `SerializationTests.test_save_load` | `None` | `Any` | Implement `SerializationTests.test_save_load`. |
 | [test_graph_store.py](test_graph_store.py#L174) | `SerializationTests.test_save_failure_keeps_previous_file_and_removes_temporary_file` | `None` | `Any` | Implement `SerializationTests.test_save_failure_keeps_previous_file_and_removes_temporary_file`. |
-| [test_mcp_tools.py](test_mcp_tools.py#L26) | `test_stdio_mcp_tools_are_discovered_and_called_without_shell` | `tmp_path: Path` | `None` | Implement `test_stdio_mcp_tools_are_discovered_and_called_without_shell`. |
-| [test_mcp_tools.py](test_mcp_tools.py#L46) | `test_mcp_rejects_inline_secret_values` | `None` | `None` | Implement `test_mcp_rejects_inline_secret_values`. |
-| [test_mcp_tools.py](test_mcp_tools.py#L56) | `test_desktop_sidecar_collects_official_mcp_client_runtime` | `None` | `None` | Implement `test_desktop_sidecar_collects_official_mcp_client_runtime`. |
-| [test_mcp_tools.py](test_mcp_tools.py#L65) | `test_desktop_sidecar_build_uses_a_cross_platform_non_shell_launcher` | `None` | `None` | Implement `test_desktop_sidecar_build_uses_a_cross_platform_non_shell_launcher`. |
+| [test_mcp_registry.py](test_mcp_registry.py#L13) | `test_registry_encrypts_credentials_and_public_view_is_masked` | `tmp_path: Path, monkeypatch: pytest.MonkeyPatch` | `None` | Never persist or return static headers, env values, or bearer tokens. |
+| [test_mcp_registry.py](test_mcp_registry.py#L38) | `test_registry_rejects_legacy_sse_and_forbidden_templates` | `None` | `None` | Allow project expansion only in controlled stdio args and cwd. |
+| [test_mcp_registry.py](test_mcp_registry.py#L46) | `test_run_config_rejects_removed_raw_mcp_fields` | `None` | `None` | Force browser clients to use server-side session bindings. |
+| [test_mcp_tools.py](test_mcp_tools.py#L53) | `test_stdio_mcp_tools_are_discovered_and_called_without_shell` | `tmp_path: Path` | `None` | Reuse one real stdio process across discovery and repeated tool calls. |
+| [test_mcp_tools.py](test_mcp_tools.py#L77) | `test_mcp_rejects_inline_secret_values` | `None` | `None` | Implement `test_mcp_rejects_inline_secret_values`. |
+| [test_mcp_tools.py](test_mcp_tools.py#L87) | `test_stdio_mcp_reconnects_only_for_the_call_after_a_disconnect` | `tmp_path: Path` | `None` | Do not replay a failed call; reconnect the server on its next call. |
+| [test_mcp_tools.py](test_mcp_tools.py#L109) | `test_desktop_sidecar_collects_official_mcp_client_runtime` | `None` | `None` | Implement `test_desktop_sidecar_collects_official_mcp_client_runtime`. |
+| [test_mcp_tools.py](test_mcp_tools.py#L118) | `test_desktop_sidecar_build_uses_a_cross_platform_non_shell_launcher` | `None` | `None` | Implement `test_desktop_sidecar_build_uses_a_cross_platform_non_shell_launcher`. |
 | [test_plugin_api.py](test_plugin_api.py#L66) | `_manifest` | `name: str, **overrides: Any` | `dict` | Implement `_manifest`. |
 | [test_plugin_api.py](test_plugin_api.py#L79) | `_write_plugin` | `base: Path, name: str, assets: tuple[str, ...]` | `Path` | Implement `_write_plugin`. |
 | [test_plugin_api.py](test_plugin_api.py#L99) | `_add_registry_record` | `registry: Any, name: str, enabled: bool, permissions: list[str] \| None` | `dict` | Implement `_add_registry_record`. |
@@ -399,6 +403,13 @@ swarm, TLB-RAG, and utilities.
 | [test_run_profile_persistence.py](test_run_profile_persistence.py#L132) | `RunProfilePersistenceTests.test_start_run_persists_profile_in_state_and_event_log` | `None` | `None` | Run provenance survives both the active and terminal state rewrite. |
 | [test_run_profile_persistence.py](test_run_profile_persistence.py#L168) | `RunProfilePersistenceTests.test_start_run_persists_single_agent_tool_lifecycle_event` | `None` | `None` | Single-Agent hooks must survive serialization into the durable Trace. |
 | [test_run_profile_persistence.py](test_run_profile_persistence.py#L200) | `RunProfilePersistenceTests.test_start_run_reuses_completed_swarm_without_rebuilding_agents` | `None` | `None` | A second Swarm turn must run the retained graph instead of replacing it. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L20) | `_BlockingAgent.run` | `message: str, max_rounds: int \| None, control: Any` | `Any` | Wait for release, then honor the supplied cooperative control. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L30) | `test_agent_stop_is_isolated_until_global_stop` | `None` | `None` | Stop one Worker without changing another Worker or the whole run. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L43) | `test_agent_force_stop_sets_only_its_combined_terminal_event` | `None` | `None` | Targeted force-stop leaves independent model cancellation events clear. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L56) | `test_global_stop_reaches_existing_and_future_agent_views` | `None` | `None` | Global control applies to already registered and later scheduled Agents. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L67) | `test_graph_does_not_submit_a_targeted_queued_agent` | `None` | `None` | Cancel queued work while an independent running Agent still completes. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L91) | `test_graph_isolates_a_running_agent_stop` | `None` | `None` | Let an independent Worker finish after its peer stops at a boundary. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L113) | `test_mcp_approval_rejects_without_browser_and_returns_submitted_fields` | `None` | `None` | Fail closed without SSE and avoid retaining elicited values afterward. |
 | [test_session_history.py](test_session_history.py#L10) | `test_session_history_returns_display_turns_and_bounded_tool_results` | `None` | `None` | Restore user/assistant text together with persisted tool audit data. |
 | [test_session_history.py](test_session_history.py#L30) | `test_session_history_recovers_legacy_structured_tool_result` | `None` | `None` | Legacy ``str(dict)`` tool results must hydrate as structured browser data. |
 | [test_session_history.py](test_session_history.py#L52) | `test_event_history_keeps_raw_stdout_as_text` | `None` | `None` | A bracketed stdout line must not be misclassified as structured JSON. |
@@ -550,13 +561,13 @@ swarm, TLB-RAG, and utilities.
 | [test_workbench_assets.py](test_workbench_assets.py#L257) | `test_usage_tiles_show_current_lifecycle_tokens_in_green` | `None` | `None` | Each session usage tile and per-Agent card shows the latest run's tokens as a green +X line. |
 | [test_workbench_assets.py](test_workbench_assets.py#L270) | `test_running_session_does_not_turn_unknown_agents_into_running_agents` | `None` | `None` | Keep each Agent light tied to evidence, not the session-wide run flag. |
 | [test_workbench_assets.py](test_workbench_assets.py#L279) | `test_completed_swarm_is_blue_even_when_a_worker_failed` | `None` | `None` | Represent successful coordinator recovery as a completed aggregate run. |
-| [test_workbench_assets.py](test_workbench_assets.py#L291) | `test_agents_panel_renders_only_the_single_topology_tree` | `None` | `None` | Avoid presenting the same Swarm hierarchy twice in the Agents panel. |
-| [test_workbench_assets.py](test_workbench_assets.py#L300) | `test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height` | `None` | `None` | The inspector exposes isolated plans and no longer caps topology height. |
-| [test_workbench_assets.py](test_workbench_assets.py#L312) | `test_agent_settings_expose_native_mcp_tool_configuration` | `None` | `None` | Keep MCP discovery an explicit Agent-run setting with JSON validation. |
-| [test_workbench_assets.py](test_workbench_assets.py#L324) | `test_light_plan_agent_picker_overrides_the_dark_surface` | `None` | `None` | The plan Agent selector must remain readable in the light theme. |
-| [test_workbench_assets.py](test_workbench_assets.py#L332) | `test_kimi_code_connector_preset_survives_provider_refresh` | `None` | `None` | Kimi Code is a named connector choice, not a fragile manual preset. |
-| [test_workbench_assets.py](test_workbench_assets.py#L347) | `test_applied_steering_is_a_right_aligned_chat_input` | `None` | `None` | Keep applied steering beside the original user messages in chat. |
-| [test_workbench_assets.py](test_workbench_assets.py#L368) | `test_context_dialog_exposes_compaction_input_preview_tab` | `None` | `None` | Keep the third context-dialog tab wired to its read-only API route. |
+| [test_workbench_assets.py](test_workbench_assets.py#L292) | `test_agents_panel_renders_only_the_single_topology_tree` | `None` | `None` | Avoid presenting the same Swarm hierarchy twice in the Agents panel. |
+| [test_workbench_assets.py](test_workbench_assets.py#L301) | `test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height` | `None` | `None` | The inspector exposes isolated plans and no longer caps topology height. |
+| [test_workbench_assets.py](test_workbench_assets.py#L313) | `test_managed_mcp_console_replaces_browser_json_configuration` | `None` | `None` | Keep MCP configuration in the managed global registry and session grants. |
+| [test_workbench_assets.py](test_workbench_assets.py#L328) | `test_light_plan_agent_picker_overrides_the_dark_surface` | `None` | `None` | The plan Agent selector must remain readable in the light theme. |
+| [test_workbench_assets.py](test_workbench_assets.py#L336) | `test_kimi_code_connector_preset_survives_provider_refresh` | `None` | `None` | Kimi Code is a named connector choice, not a fragile manual preset. |
+| [test_workbench_assets.py](test_workbench_assets.py#L351) | `test_applied_steering_is_a_right_aligned_chat_input` | `None` | `None` | Keep applied steering beside the original user messages in chat. |
+| [test_workbench_assets.py](test_workbench_assets.py#L372) | `test_context_dialog_exposes_compaction_input_preview_tab` | `None` | `None` | Keep the third context-dialog tab wired to its read-only API route. |
 | [test_workspace_deletion.py](test_workspace_deletion.py#L10) | `test_remove_workspace_deletes_only_its_directory_and_registry_record` | `None` | `None` | Remove a stopped non-default workspace while retaining the default one. |
 | [test_workspace_opening.py](test_workspace_opening.py#L11) | `test_open_session_folder_launches_windows_explorer` | `monkeypatch: Any, tmp_path: Path` | `None` | Implement `test_open_session_folder_launches_windows_explorer`. |
 
@@ -626,6 +637,7 @@ swarm, TLB-RAG, and utilities.
 | [test_run_profile_persistence.py](test_run_profile_persistence.py#L49) | `_CompletedSwarm` | `None` | `object` | Minimal retained Swarm stand-in for multi-turn run construction tests. |
 | [test_run_profile_persistence.py](test_run_profile_persistence.py#L72) | `_ImmediateThread` | `target: object, **_kwargs: object` | `object` | Execute a worker target synchronously while retaining Thread's start API. |
 | [test_run_profile_persistence.py](test_run_profile_persistence.py#L82) | `RunProfilePersistenceTests` | `None` | `unittest.TestCase` | Exercise provenance snapshots and concurrent event durability. |
+| [test_scoped_run_control.py](test_scoped_run_control.py#L12) | `_BlockingAgent` | `started: threading.Event, release: threading.Event` | `object` | Minimal graph Agent that can expose scheduling and controlled release. |
 | [test_session_observability.py](test_session_observability.py#L13) | `SessionObservabilityTests` | `None` | `unittest.TestCase` | Exercise event pagination and per-Agent token aggregation. |
 | [test_session_steers.py](test_session_steers.py#L13) | `SessionSteersTests` | `None` | `unittest.TestCase` | Ensure applied steering instructions survive browser refreshes. |
 | [test_sse_stream.py](test_sse_stream.py#L45) | `TestSseStream` | `None` | `object` | Exercise after-offset replay and no-active-run behaviour. |

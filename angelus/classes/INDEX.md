@@ -41,30 +41,43 @@ Each class has its own module and is re-exported by `__init__.py`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [active_run.py](active_run.py#L27) | `ActiveRun.register_process` | `process: Any` | `None` | Implement `ActiveRun.register_process`. |
-| [active_run.py](active_run.py#L31) | `ActiveRun.unregister_process` | `process: Any` | `None` | Implement `ActiveRun.unregister_process`. |
-| [active_run.py](active_run.py#L35) | `ActiveRun.publish_ephemeral_event` | `payload: dict[str, Any]` | `None` | Queue one live-only browser event without adding it to the audit log. |
-| [active_run.py](active_run.py#L44) | `ActiveRun.force_stop` | `None` | `None` | Terminally cancel model I/O and kill registered tool processes. |
-| [active_run.py](active_run.py#L68) | `ActiveRun.reset_for_next_turn` | `durable_offset: int` | `None` | Reuse this completed run holder without replacing its Swarm graph. |
-| [browser_run_control.py](browser_run_control.py#L20) | `BrowserRunControl.should_stop` | `None` | `bool` | Implement `BrowserRunControl.should_stop`. |
-| [browser_run_control.py](browser_run_control.py#L23) | `BrowserRunControl.drain_steers` | `None` | `list[str]` | Implement `BrowserRunControl.drain_steers`. |
-| [browser_run_control.py](browser_run_control.py#L31) | `BrowserRunControl.stop` | `None` | `None` | Implement `BrowserRunControl.stop`. |
-| [browser_run_control.py](browser_run_control.py#L34) | `BrowserRunControl.force_stop` | `None` | `None` | Implement `BrowserRunControl.force_stop`. |
-| [browser_run_control.py](browser_run_control.py#L38) | `BrowserRunControl.reset` | `None` | `None` | Clear terminal controls before the same session begins another run. |
-| [browser_run_control.py](browser_run_control.py#L59) | `BrowserRunControl.force_stopped` | `None` | `threading.Event` | Implement `BrowserRunControl.force_stopped`. |
-| [browser_run_control.py](browser_run_control.py#L62) | `BrowserRunControl.steer` | `message: str` | `None` | Implement `BrowserRunControl.steer`. |
+| [active_run.py](active_run.py#L40) | `ActiveRun.request_mcp_approval` | `server: str, agent: str, capability: str, details: dict[str, Any]` | `dict[str, Any]` | Ask an attached browser to approve one MCP client capability. |
+| [active_run.py](active_run.py#L76) | `ActiveRun.resolve_mcp_approval` | `approval_id: str, response: dict[str, Any]` | `dict[str, Any]` | Resolve one pending MCP approval without logging submitted values. |
+| [active_run.py](active_run.py#L102) | `ActiveRun.register_process` | `process: Any, agent: str` | `None` | Register a Shell process under its owning Agent. |
+| [active_run.py](active_run.py#L112) | `ActiveRun.unregister_process` | `process: Any` | `None` | Forget one completed Shell process. |
+| [active_run.py](active_run.py#L121) | `ActiveRun.publish_ephemeral_event` | `payload: dict[str, Any]` | `None` | Queue one live-only browser event without adding it to the audit log. |
+| [active_run.py](active_run.py#L130) | `ActiveRun.force_stop` | `agent: str` | `None` | Cancel model/tool I/O for the whole run or one Agent. |
+| [active_run.py](active_run.py#L170) | `ActiveRun.reset_for_next_turn` | `durable_offset: int` | `None` | Reuse this completed run holder without replacing its Swarm graph. |
+| [browser_run_control.py](browser_run_control.py#L22) | `_CombinedEvent.is_set` | `None` | `bool` | Return whether any constituent terminal event is set. |
+| [browser_run_control.py](browser_run_control.py#L26) | `_CombinedEvent.wait` | `timeout: float \| None` | `bool` | Wait up to ``timeout`` seconds for a constituent event. |
+| [browser_run_control.py](browser_run_control.py#L50) | `AgentScopedRunControl.should_stop` | `None` | `bool` | Return whether the run or this Agent should stop. |
+| [browser_run_control.py](browser_run_control.py#L54) | `AgentScopedRunControl.drain_steers` | `None` | `list[str]` | Deliver session steering only to the coordinator. |
+| [browser_run_control.py](browser_run_control.py#L59) | `AgentScopedRunControl.force_stopped` | `None` | `_CombinedEvent` | Return the global-or-local terminal cancellation event. |
+| [browser_run_control.py](browser_run_control.py#L81) | `BrowserRunControl.register_agent` | `agent: str` | `None` | Ensure stable stop events exist for ``agent``. |
+| [browser_run_control.py](browser_run_control.py#L91) | `BrowserRunControl.known_agents` | `None` | `tuple[str, ...]` | Return registered Agent identifiers in deterministic order. |
+| [browser_run_control.py](browser_run_control.py#L96) | `BrowserRunControl._agent_force_event` | `agent: str` | `threading.Event` | Return the stable terminal event for ``agent``. |
+| [browser_run_control.py](browser_run_control.py#L101) | `BrowserRunControl.for_agent` | `agent: str` | `AgentScopedRunControl` | Return a control view combining global and ``agent`` state. |
+| [browser_run_control.py](browser_run_control.py#L113) | `BrowserRunControl.should_stop` | `agent: str` | `bool` | Return whether global or selected-Agent cooperative stop is set. |
+| [browser_run_control.py](browser_run_control.py#L120) | `BrowserRunControl.drain_steers` | `None` | `list[str]` | Drain all unapplied session-level steering messages. |
+| [browser_run_control.py](browser_run_control.py#L129) | `BrowserRunControl.stop` | `agent: str` | `None` | Request cooperative stop for the whole run or one Agent. |
+| [browser_run_control.py](browser_run_control.py#L141) | `BrowserRunControl.force_stop` | `agent: str` | `None` | Request terminal stop for the whole run or one Agent. |
+| [browser_run_control.py](browser_run_control.py#L155) | `BrowserRunControl.reset` | `None` | `None` | Clear terminal controls before the same session begins another run. |
+| [browser_run_control.py](browser_run_control.py#L179) | `BrowserRunControl.force_stopped` | `None` | `threading.Event` | Return the run-wide terminal cancellation event. |
+| [browser_run_control.py](browser_run_control.py#L183) | `BrowserRunControl.steer` | `message: str` | `None` | Queue a session-level coordinator steering message. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [active_run.py](active_run.py#L15) | `ActiveRun` | `control: BrowserRunControl, event_broker: EventBroker, done: threading.Event, swarm: AgentSwarm \| None, mcp_bridge: Any \| None, mcp_tools: list[Any], processes: set[Any], processes_lock: threading.Lock` | `object` | Live work and its multi-subscriber broker, owned by one session. |
-| [browser_run_control.py](browser_run_control.py#L7) | `BrowserRunControl` | `None` | `AgentRunControl` | Thread-safe browser controls with cooperative and terminal stop modes. |
+| [active_run.py](active_run.py#L17) | `ActiveRun` | `control: BrowserRunControl, event_broker: EventBroker, done: threading.Event, swarm: AgentSwarm \| None, mcp_bridge: Any \| None, mcp_tools: list[Any], mcp_servers: list[dict[str, Any]], processes: dict[Any, str], processes_lock: threading.Lock, mcp_sampling_handler: Any \| None, mcp_approval_condition: threading.Condition, mcp_approvals: dict[str, dict[str, Any]], mcp_remembered_approvals: set[tuple[str, str]]` | `object` | Live work and its multi-subscriber broker, owned by one session. |
+| [browser_run_control.py](browser_run_control.py#L11) | `_CombinedEvent` | `*events: threading.Event` | `object` | Expose the union of global and Agent-local terminal stop events. |
+| [browser_run_control.py](browser_run_control.py#L34) | `AgentScopedRunControl` | `owner: 'BrowserRunControl', agent: str` | `AgentRunControl` | Project one Agent's stop state from a run-level registry. |
+| [browser_run_control.py](browser_run_control.py#L64) | `BrowserRunControl` | `None` | `AgentRunControl` | Thread-safe browser controls with cooperative and terminal stop modes. |
 | [browser_session.py](browser_session.py#L10) | `BrowserSession` | `lock: threading.Lock, active: ActiveRun \| None` | `object` | In-memory state that prevents concurrent runs in the same chat. |
 | [compact_request.py](compact_request.py#L6) | `CompactRequest` | `agent: str, config: RunConfig` | `BaseModel` | Manual context-compaction request for one Agent. |
 | [connector_request.py](connector_request.py#L4) | `ConnectorRequest` | `name: str, provider: str, model: str, api_key: str, api_url: str` | `BaseModel` | A named, persisted backend connection configuration. |
 | [project_path_request.py](project_path_request.py#L6) | `ProjectPathRequest` | `project_path: str` | `BaseModel` | Absolute existing project directory selected by the local user. |
-| [run_config.py](run_config.py#L5) | `RunConfig` | `provider: str, model: str, api_key: str, connector_id: str, api_url: str, system_prompt: str, temperature: float, max_tokens: int, max_rounds: int, max_retries: int, max_context_threshold: int, enable_shell: bool, enable_mcp: bool, mcp_servers: list[dict[str, Any]], enable_swarm: bool, max_swarm_agents: int, session_memory_search_sessions: list[str], session_memory_read_sessions: list[str], session_artifact_search_sessions: list[str], session_artifact_open_sessions: list[str]` | `BaseModel` | Settings used to create the backend and Agent for a browser session. |
+| [run_config.py](run_config.py#L4) | `RunConfig` | `provider: str, model: str, api_key: str, connector_id: str, api_url: str, system_prompt: str, temperature: float, max_tokens: int, max_rounds: int, max_retries: int, max_context_threshold: int, enable_shell: bool, enable_swarm: bool, max_swarm_agents: int, session_memory_search_sessions: list[str], session_memory_read_sessions: list[str], session_artifact_search_sessions: list[str], session_artifact_open_sessions: list[str]` | `BaseModel` | Settings used to create the backend and Agent for a browser session. |
 | [run_request.py](run_request.py#L6) | `RunRequest` | `session_id: str, workspace_id: str, message: str, config: RunConfig` | `BaseModel` | A message and its non-persisted browser-side configuration. |
 | [steer_request.py](steer_request.py#L4) | `SteerRequest` | `message: str` | `BaseModel` | One instruction added at the next safe agent boundary. |
 | [task_plan_request.py](task_plan_request.py#L6) | `TaskPlanRequest` | `goal: str, summary: str, tasks: list[dict[str, Any]]` | `BaseModel` | Entire user task plan supplied by the browser or Agent planning tool. |

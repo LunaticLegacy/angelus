@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from llmfetcher import AgentRunStopped
@@ -17,6 +17,7 @@ from llmfetcher.swarm_module import AgentFailure
 
 from ..classes import ActiveRun, BrowserRunControl, RunRequest, SteerRequest
 from .. import connectors, runtime, storage
+from ..mcp_registry import resolve_session_servers
 from ..history import render_markdown
 from ..event_stream import (
     EventBroker,
@@ -117,7 +118,12 @@ def start_run(request: RunRequest) -> dict[str, str]:
     with session.lock:
         if session.active and not session.active.done.is_set():
             raise HTTPException(status_code=409, detail="This chat already has an active run")
-        if config.enable_swarm and session.active and session.active.swarm is not None:
+        if (
+            config.enable_swarm
+            and session.active
+            and session.active.swarm is not None
+            and not session.active.mcp_servers
+        ):
             # Keep the in-process execution graph and every Agent instance
             # alive between user turns. Tool closures retain this ActiveRun,
             # so reset it in place rather than replacing its identity.
@@ -135,9 +141,14 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 active.swarm = runtime._restore_swarm(
                     config, workspace_id, session_id, active,
                 )
+        # MCP configuration is resolved exclusively from the global registry
+        # and this session's authorization policy at the run boundary.
+        active.mcp_servers = resolve_session_servers(
+            session_id, _project_path(workspace_id, session_id)
+        )
         session.active = active
     started_at = time.time()
-    runtime_profile = runtime._runtime_profile_snapshot(config)
+    runtime_profile = runtime._runtime_profile_snapshot(config, active.mcp_servers)
     _persist_json(_run_state_path(workspace_id, session_id), {
         "status": "running", "run_id": session_id, "started_at": started_at,
         "runtime_profile": runtime_profile,
@@ -154,6 +165,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
     })
 
     def execute() -> None:
+        """Run the configured Agent graph and persist one terminal outcome."""
         started = time.time()
         terminal_status = "completed"
         error_message = ""
@@ -273,7 +285,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
             # browser refresh can explain a run that is no longer live.
             publish_durable_event(active, workspace_id, session_id, error_payload)
         finally:
-            if active.mcp_bridge is not None and active.swarm is None:
+            if active.mcp_bridge is not None:
                 try:
                     active.mcp_bridge.close()
                 except Exception:
@@ -426,31 +438,85 @@ def stream_events(
         headers={"Cache-Control": "no-cache"},
     )
 
+def _control_target(active: ActiveRun, requested: Any) -> tuple[str, dict[str, str]]:
+    """Validate one control target and snapshot current Agent states.
+
+    Args:
+        active: Live run that owns the control registry and optional Swarm.
+        requested: JSON body containing an optional ``agent`` field.
+
+    Returns:
+        Normalized target and current per-Agent canonical states.
+
+    Raises:
+        HTTPException: If a concrete Agent does not exist in this run.
+    """
+    target = str(requested.get("agent", "all") if isinstance(requested, dict) else "all").strip() or "all"
+    states: dict[str, str] = {}
+    if active.swarm is not None:
+        snapshot = active.swarm.view_snapshot()
+        states = {
+            str(node["id"]): str(snapshot.get("node_states", {}).get(node["id"], {}).get("state", "queued"))
+            for node in snapshot.get("nodes", [])
+            if node.get("kind") == "agent"
+        }
+    else:
+        states = {"coordinator": "running"}
+    if target != "all" and target not in states:
+        raise HTTPException(status_code=404, detail=f"Unknown Agent: {target}")
+    if target != "all" and states.get(target) in {"completed", "failed", "interrupted", "cancelled"}:
+        raise HTTPException(status_code=409, detail=f"Agent {target!r} is already terminal")
+    return target, states
+
+
 @router.post("/api/workspaces/{workspace_id}/runs/{session_id}/stop")
-def stop_run(workspace_id: str, session_id: str) -> dict[str, bool]:
-    """Request a stop at the next completed model-and-tool boundary."""
+def stop_run(
+    workspace_id: str,
+    session_id: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Request a cooperative stop for all work or one selected Agent.
+
+    Args:
+        workspace_id: Browser storage partition.
+        session_id: Active run identifier.
+        payload: JSON object whose ``agent`` defaults to ``all``.
+    """
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
-    session.active.control.stop()
-    if session.active.swarm is not None:
+    target, states = _control_target(session.active, payload)
+    session.active.control.stop(target)
+    if target == "all" and session.active.swarm is not None:
         session.active.swarm.request_shutdown()
-    return {"ok": True}
+    return {"ok": True, "accepted": True, "target": target, "agent_states": states}
 
 @router.post("/api/workspaces/{workspace_id}/runs/{session_id}/force-stop")
-def force_stop_run(workspace_id: str, session_id: str) -> dict[str, bool]:
-    """Interrupt an in-flight model request and kill registered tool processes."""
+def force_stop_run(
+    workspace_id: str,
+    session_id: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Force-stop model and tool I/O for all work or one Agent.
+
+    Args:
+        workspace_id: Browser storage partition.
+        session_id: Active run identifier.
+        payload: JSON object whose ``agent`` defaults to ``all``.
+    """
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
-    session.active.force_stop()
-    if session.active.swarm is not None:
+    target, states = _control_target(session.active, payload)
+    session.active.force_stop(target)
+    if target == "all" and session.active.swarm is not None:
         session.active.swarm.request_shutdown()
-    _persist_json(_run_state_path(workspace_id, session_id), {
-        "status": "force_stopping", "run_id": session_id,
-        "requested_at": time.time(),
-    })
-    return {"ok": True}
+    if target == "all":
+        _persist_json(_run_state_path(workspace_id, session_id), {
+            "status": "force_stopping", "run_id": session_id,
+            "requested_at": time.time(),
+        })
+    return {"ok": True, "accepted": True, "target": target, "agent_states": states}
 
 @router.post("/api/workspaces/{workspace_id}/runs/{session_id}/steer")
 def steer_run(workspace_id: str, session_id: str, request: SteerRequest) -> dict[str, bool]:
@@ -461,4 +527,36 @@ def steer_run(workspace_id: str, session_id: str, request: SteerRequest) -> dict
     session.active.control.steer(request.message)
     return {"ok": True}
 
-__all__ = ["start_run", "get_run_status", "stream_events", "stop_run", "force_stop_run", "steer_run", "router"]
+
+@router.post("/api/workspaces/{workspace_id}/runs/{session_id}/mcp-approvals/{approval_id}")
+def resolve_mcp_approval(
+    workspace_id: str,
+    session_id: str,
+    approval_id: str,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Resolve sampling or elicitation without logging submitted values.
+
+    Args:
+        workspace_id: Browser storage partition.
+        session_id: Active run identifier.
+        approval_id: Opaque pending approval identifier from SSE.
+        payload: ``decision``, optional ``remember``, and elicitation content.
+    """
+    safe_workspace = _safe_id(workspace_id, "workspace")
+    safe_session = _safe_id(session_id, "session")
+    session = _get_session(safe_workspace, safe_session)
+    if not session.active or session.active.done.is_set():
+        raise HTTPException(status_code=409, detail="No active run")
+    if payload.get("decision") not in {"allow", "reject"}:
+        raise HTTPException(status_code=422, detail="decision must be allow or reject")
+    try:
+        audit = session.active.resolve_mcp_approval(approval_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="MCP approval not found") from exc
+    publish_durable_event(session.active, safe_workspace, safe_session, {
+        "event": "mcp_approval_resolved", "timestamp": time.time(), **audit,
+    })
+    return {"ok": True, **audit}
+
+__all__ = ["start_run", "get_run_status", "stream_events", "stop_run", "force_stop_run", "steer_run", "resolve_mcp_approval", "router"]
