@@ -17,7 +17,7 @@ class ActiveRunReuseTests(unittest.TestCase):
         force_event = control.force_stopped
         active.control.steer("stale steer")
         active.control.force_stop()
-        active.events.put({"event": "old"})
+        active.event_broker.publish({"event": "old"})
         active.done.set()
 
         active.reset_for_next_turn()
@@ -28,7 +28,7 @@ class ActiveRunReuseTests(unittest.TestCase):
         self.assertFalse(active.control.should_stop())
         self.assertFalse(force_event.is_set())
         self.assertEqual(active.control.drain_steers(), [])
-        self.assertTrue(active.events.empty())
+        self.assertEqual(active.event_broker.snapshot().sequence, 0)
 
     def test_reset_rejects_a_still_running_holder(self) -> None:
         """An in-flight run cannot be reset into a competing execution turn."""
@@ -40,10 +40,10 @@ class ActiveRunReuseTests(unittest.TestCase):
         """Keep provider deltas out of the durable-event persistence path."""
         active = ActiveRun(control=BrowserRunControl())
         active.publish_ephemeral_event({"type": "agent:stream_delta"})
-        self.assertEqual(
-            active.events.get_nowait(),
-            {"type": "agent:stream_delta", "ephemeral": True},
-        )
+        batch = active.event_broker.wait_after(0, timeout=0)
+        self.assertEqual(batch.events[0].payload, {
+            "type": "agent:stream_delta", "ephemeral": True,
+        })
 
 
 if __name__ == "__main__":

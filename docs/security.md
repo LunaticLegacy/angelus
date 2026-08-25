@@ -5,6 +5,15 @@
 > 本文档描述插件系统的**风险模型**、v1 的安全边界与 v2 子进程隔离路线。任何安全相关决策
 > 的变更（新增权限 action、放宽白名单、改变 checksum 语义）必须先更新本文档再改代码。
 
+## MCP 凭据与项目边界
+
+MCP server 定义属于全局应用状态，项目目录只接收运行时解析后的访问，不保存
+server 配置或秘密。静态 Header、Bearer/OAuth token、OAuth client secret 和 stdio
+环境变量值逐项使用本机 RSA-OAEP 密钥加密；公共 API 只返回字段名与“已配置”标记。
+`${project_root}` 仅允许出现在 stdio `args`/`cwd`，URL、command、Header 和秘密字段
+拒绝模板。每个会话单独授权 server、Coordinator/Worker 角色和工具白名单；旧 SSE
+transport 被拒绝。MCP roots 只暴露当前会话绑定的项目根目录，不暴露状态目录。
+
 ---
 
 ## 1. 威胁模型与信任边界

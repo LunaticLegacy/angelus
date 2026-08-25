@@ -91,8 +91,13 @@ def _safe_id(value: str, label: str) -> str:
     return value
 
 def _read_workspaces() -> list[dict[str, str]]:
-    """Return the session registry, repairing a missing default session."""
+    """Return the session registry, repairing a missing default session.
+
+    Side Effects:
+        Creates the configured state root and default registry when absent.
+    """
     if not WORKSPACE_INDEX.exists():
+        WORKSPACE_INDEX.parent.mkdir(parents=True, exist_ok=True)
         default = [{"id": "default", "name": "default"}]
         WORKSPACE_INDEX.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
         return default
@@ -105,7 +110,15 @@ def _read_workspaces() -> list[dict[str, str]]:
     return [{"id": "default", "name": "default"}]
 
 def _write_workspaces(workspaces: list[dict[str, str]]) -> None:
-    """Atomically replace the small local workspace registry."""
+    """Atomically replace the small local workspace registry.
+
+    Args:
+        workspaces: Complete JSON-compatible session record list.
+
+    Side Effects:
+        Creates the configured state root before replacing ``sessions.json``.
+    """
+    WORKSPACE_INDEX.parent.mkdir(parents=True, exist_ok=True)
     temporary = WORKSPACE_INDEX.with_suffix(".tmp")
     temporary.write_text(json.dumps(workspaces, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(WORKSPACE_INDEX)
@@ -162,6 +175,60 @@ def _append_conversation_turn(workspace_id: str, session_id: str, turn: dict[str
 def _workspace_exists(workspace_id: str) -> bool:
     """Return whether a workspace is registered locally."""
     return any(item["id"] == workspace_id for item in _read_workspaces())
+
+
+def _validate_project_path(value: str) -> Path:
+    """Validate and canonicalize one user-selected project directory.
+
+    Args:
+        value: Absolute directory path returned by the host folder picker.
+
+    Returns:
+        Resolved existing directory with read, write, and traversal access.
+
+    Raises:
+        ValueError: If the path is relative, missing, not a directory, or not
+            usable as an Agent working directory.
+    """
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("Project path must be absolute")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("Project directory does not exist") from exc
+    if not resolved.is_dir():
+        raise ValueError("Project path must be a directory")
+    if not os.access(resolved, os.R_OK | os.W_OK | os.X_OK):
+        raise ValueError("Project directory must be readable and writable")
+    return resolved
+
+
+def _project_path(workspace_id: str, session_id: str) -> Path:
+    """Return the user-project root bound to one browser session.
+
+    Args:
+        workspace_id: Validated registry/session directory identity.
+        session_id: Browser-stable chat identity retained for compatibility.
+
+    Returns:
+        Registered canonical project directory. Legacy records without a
+        ``project_path`` fall back to their internal state directory.
+
+    Side Effects:
+        The legacy fallback may create the internal session directory through
+        :func:`_session_path`, matching pre-project-path behavior.
+    """
+    safe_workspace = _safe_id(workspace_id, "workspace")
+    safe_session = _safe_id(session_id, "session")
+    record = next(
+        (item for item in _read_workspaces() if item.get("id") == safe_workspace),
+        None,
+    )
+    configured = record.get("project_path") if isinstance(record, dict) else None
+    if isinstance(configured, str) and configured:
+        return Path(configured).expanduser().resolve(strict=False)
+    return _session_path(safe_workspace, safe_session)
 
 def _session_id_from_name(name: str, existing: set[str]) -> str:
     """Build a stable directory-safe session ID from a user display name.
@@ -285,7 +352,7 @@ def _persist_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     temporary.replace(path)
 
-def _append_session_event(workspace_id: str, session_id: str, payload: dict[str, Any]) -> None:
+def _append_session_event(workspace_id: str, session_id: str, payload: dict[str, Any]) -> int:
     """Append one serialized runtime event to the session's durable trace.
 
     Args:
@@ -293,6 +360,9 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
         session_id: Browser-stable session identity.
         payload: SSE-compatible event payload. Non-JSON exception data is
             rendered with ``str`` so observability cannot break execution.
+
+    Returns:
+        Byte offset immediately after the flushed and fsynced record.
     """
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
     serialized = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
@@ -303,6 +373,56 @@ def _append_session_event(workspace_id: str, session_id: str, payload: dict[str,
             handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
+            return handle.tell()
+
+
+def _session_event_log_size(workspace_id: str, session_id: str) -> int:
+    """Return the current durable event-log byte length, or zero if absent.
+
+    Args:
+        workspace_id: Storage partition owning the event log.
+        session_id: Browser-stable session identity.
+
+    Returns:
+        Current file size in bytes, or zero when no readable log exists.
+    """
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    try:
+        return event_path.stat().st_size
+    except OSError:
+        return 0
+
+def _iter_session_event_log(workspace_id: str, session_id: str):
+    """Yield valid durable events for one browser session in write order.
+
+    Args:
+        workspace_id: Session storage partition that owns ``events.ndjson``.
+        session_id: Browser-visible session identity within that partition.
+
+    Yields:
+        JSON object records in chronological order. Malformed or partial lines
+        are ignored so a concurrent append never breaks historical inspection.
+
+    The log is streamed line by line instead of being materialized with
+    ``read_text().splitlines()``.  Hot endpoints (graph reconcile, usage,
+    steers, transcript rebuild) call this repeatedly while a run appends to
+    logs that can reach hundreds of megabytes; materializing the whole parsed
+    list per request creates multi-hundred-MB transients that CPython/glibc
+    arenas never return to the OS, ratcheting process RSS upward.
+    """
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    try:
+        with event_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    yield payload
+    except OSError:
+        return
+
 
 def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str, Any]]:
     """Read valid durable events for one browser session in write order.
@@ -314,27 +434,187 @@ def _read_session_event_log(workspace_id: str, session_id: str) -> list[dict[str
     Returns:
         JSON object records in chronological order. Malformed or partial lines
         are ignored so a concurrent append never breaks historical inspection.
+
+    This materializes the full parsed log and should only be used by callers
+    that genuinely need every record at once.  Hot, read-mostly endpoints
+    should prefer :func:`_iter_session_event_log` so a large log is never
+    fully resident in memory.
+    """
+    return list(_iter_session_event_log(workspace_id, session_id))
+
+def _read_session_event_log_from(
+    workspace_id: str,
+    session_id: str,
+    offset_bytes: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """Read durable events appended at or after a byte offset.
+
+    Args:
+        workspace_id: Session storage partition that owns ``events.ndjson``.
+        session_id: Browser-visible session identity within that partition.
+        offset_bytes: Byte position in ``events.ndjson`` where the previous
+            read stopped. Pass the second element of the previous return value
+            to tail only newly appended records without rescanning history.
+
+    Returns:
+        A ``(events, next_offset)`` pair: JSON object records in write order
+        that begin at or after ``offset_bytes``, and the byte offset at which
+        the next incremental read should resume. A trailing partial line (a
+        concurrent append in progress) is not consumed, so the next poll
+        retries it once the writer finishes.
+    """
+    records, consumed = _read_session_event_records_from(
+        workspace_id, session_id, offset_bytes,
+    )
+    return [payload for payload, _ in records], consumed
+
+
+def _read_session_event_records_from(
+    workspace_id: str,
+    session_id: str,
+    offset_bytes: int = 0,
+    until_offset: int | None = None,
+) -> tuple[list[tuple[dict[str, Any], int]], int]:
+    """Read durable payloads with their end offsets inside a byte range.
+
+    Args:
+        workspace_id: Storage partition owning the event log.
+        session_id: Browser-stable session identity.
+        offset_bytes: Inclusive byte position where reading begins.
+        until_offset: Optional exclusive snapshot boundary; bytes committed
+            later are left for the in-memory broker or a subsequent recovery.
+
+    Returns:
+        Parsed ``(payload, end_offset)`` records and the next byte position.
     """
     event_path = _session_path(workspace_id, session_id) / "events.ndjson"
     try:
-        lines = event_path.read_text(encoding="utf-8").splitlines()
+        with event_path.open("rb") as handle:
+            handle.seek(max(0, offset_bytes))
+            limit = None if until_offset is None else max(0, until_offset - handle.tell())
+            raw = handle.read() if limit is None else handle.read(limit)
     except OSError:
-        return []
+        return [], max(0, offset_bytes)
 
-    events: list[dict[str, Any]] = []
+    events: list[tuple[dict[str, Any], int]] = []
+    consumed = max(0, offset_bytes)
+    lines = raw.split(b"\n")
+    # A trailing line without a newline is an in-progress append; leave its
+    # bytes unconsumed so the next poll retries it after the writer flushes.
+    if raw and not raw.endswith(b"\n"):
+        lines = lines[:-1]
     for line in lines:
+        consumed += len(line) + 1
+        if not line:
+            continue
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
+            # Malformed lines still advance the offset so a tail loop can
+            # never spin forever on the same bytes.
             continue
         if isinstance(payload, dict):
-            events.append(payload)
-    return events
+            events.append((payload, consumed))
+    return events, consumed
+
+
+def _session_event_offset_after(workspace_id: str, session_id: str, after: int) -> int:
+    """Return the byte offset just past ``after`` valid durable events.
+
+    Args:
+        workspace_id: Session storage partition that owns ``events.ndjson``.
+        session_id: Browser-visible session identity.
+        after: Number of already-rendered records to skip; ``<= 0`` starts at
+            the beginning of the log.
+
+    Returns:
+        A byte offset suitable for ``_read_session_event_log_from``. Malformed
+        lines are skipped without counting toward ``after``.
+    """
+    if after <= 0:
+        return 0
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    offset = 0
+    seen = 0
+    try:
+        with event_path.open("rb") as handle:
+            for line in handle:
+                offset += len(line)
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    seen += 1
+                    if seen >= after:
+                        break
+    except OSError:
+        return 0
+    return offset
+
+
+def _read_previous_line(
+    handle: Any, position: int, chunk_size: int = 64 * 1024,
+) -> tuple[int, bytes] | None:
+    """Read the complete binary line immediately before a byte boundary.
+
+    Args:
+        handle: Seekable binary file object owned by the caller.
+        position: Exclusive boundary, normally a prior line start or EOF.
+        chunk_size: Maximum reverse-search block size in bytes.
+
+    Returns:
+        ``(line_start, line_without_newline)`` or ``None`` at file start.
+    """
+    if position <= 0:
+        return None
+    end = position
+    handle.seek(end - 1)
+    if handle.read(1) == b"\n":
+        end -= 1
+    search = end
+    suffix = b""
+    while search > 0:
+        start = max(0, search - chunk_size)
+        handle.seek(start)
+        block = handle.read(search - start)
+        newline = block.rfind(b"\n")
+        if newline >= 0:
+            return start + newline + 1, block[newline + 1:] + suffix
+        suffix = block + suffix
+        search = start
+    return 0, suffix
+
+
+def _last_complete_line_offset(path: Path) -> int:
+    """Return the byte boundary after the last newline-terminated record.
+
+    Args:
+        path: Append-only binary/NDJSON file that may have an in-progress tail.
+
+    Returns:
+        File size when the tail is complete, otherwise the boundary after the
+        preceding newline. Missing or empty files return zero.
+    """
+    try:
+        size = path.stat().st_size
+        if size <= 0:
+            return 0
+        with path.open("rb") as handle:
+            handle.seek(size - 1)
+            if handle.read(1) == b"\n":
+                return size
+            record = _read_previous_line(handle, size)
+            return record[0] if record is not None else 0
+    except OSError:
+        return 0
+
 
 def _session_event_page(
     workspace_id: str,
     session_id: str,
     *,
+    cursor: str | None = None,
     before: int | None,
     limit: int,
 ) -> dict[str, Any]:
@@ -343,25 +623,64 @@ def _session_event_page(
     Args:
         workspace_id: Session storage partition that owns the event log.
         session_id: Browser-visible session identity.
-        before: Exclusive chronological offset for older-event pagination;
+        cursor: Opaque event-log byte cursor for the next older page.
+        before: Deprecated exclusive event index used by old clients;
             ``None`` starts from the newest stored event.
         limit: Requested maximum number of records. Values are clamped to
             ``1..500`` to keep the inspector responsive.
 
     Returns:
-        A mapping containing newest-first ``events``, the total event count,
-        and ``next_before`` for the next older page or ``None`` at the start.
+        Newest-first events, an opaque older cursor, ``has_more``, and the
+        current durable byte offset used to resume SSE replay.
+
+    Raises:
+        ValueError: If ``cursor`` is outside the current durable log.
     """
-    events = _read_session_event_log(workspace_id, session_id)
     page_limit = max(1, min(limit, 500))
-    end = len(events) if before is None else max(0, min(before, len(events)))
-    start = max(0, end - page_limit)
-    # Reverse only the selected slice so the UI can prepend live events while
-    # appending older history without reordering either group.
+    event_path = _session_path(workspace_id, session_id) / "events.ndjson"
+    durable_offset = _last_complete_line_offset(event_path)
+    if cursor is not None:
+        try:
+            position = int(cursor)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid trace cursor") from exc
+        if not 0 <= position <= durable_offset:
+            raise ValueError("Invalid trace cursor")
+    elif before is not None:
+        position = _session_event_offset_after(workspace_id, session_id, max(0, int(before)))
+    else:
+        position = durable_offset
+
+    selected: list[tuple[int, dict[str, Any]]] = []
+    has_more = False
+    try:
+        with event_path.open("rb") as handle:
+            scan = position
+            while scan > 0:
+                record = _read_previous_line(handle, scan)
+                if record is None:
+                    break
+                line_start, raw = record
+                scan = line_start
+                try:
+                    payload = json.loads(raw)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                if len(selected) == page_limit:
+                    has_more = True
+                    break
+                selected.append((line_start, payload))
+    except OSError:
+        selected = []
+    next_cursor = str(selected[-1][0]) if selected and has_more else None
     return {
-        "events": list(reversed(events[start:end])),
-        "total": len(events),
-        "next_before": start if start else None,
+        "events": [payload for _, payload in selected],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "durable_offset": durable_offset,
+        "next_before": 1 if has_more else None,
     }
 
 __all__ = [
@@ -374,6 +693,8 @@ __all__ = [
     "_write_conversation",
     "_append_conversation_turn",
     "_workspace_exists",
+    "_validate_project_path",
+    "_project_path",
     "_session_id_from_name",
     "_remove_workspace",
     "_stop_then_remove_workspace",
@@ -383,6 +704,7 @@ __all__ = [
     "_persist_json",
     "_append_session_event",
     "_read_session_event_log",
+    "_iter_session_event_log",
     "_session_event_page",
     "PACKAGE_ROOT",
     "PROJECT_ROOT",

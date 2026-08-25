@@ -17,7 +17,7 @@ export function createTraceView() {
 
   function formatTime(timestamp) {
     if (!timestamp) return "";
-    const date = new Date(timestamp);
+    const date = new Date(timestamp * 1000);
     return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("zh-CN", {
       hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
     });

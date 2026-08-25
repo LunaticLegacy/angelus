@@ -58,8 +58,8 @@ class SwarmRestartRecoveryTests(unittest.TestCase):
             finally:
                 storage.WORKSPACE_ROOT = original_root
 
-    def test_current_threshold_overwrites_retained_context_checkpoint(self) -> None:
-        """Topology context cards must expose the threshold selected for this turn."""
+    def test_current_threshold_updates_memory_without_pre_run_checkpoint_write(self) -> None:
+        """A new setting must not serialize a fresh handler over old context."""
         with tempfile.TemporaryDirectory() as directory:
             original_root = storage.WORKSPACE_ROOT
             storage.WORKSPACE_ROOT = Path(directory)
@@ -79,7 +79,9 @@ class SwarmRestartRecoveryTests(unittest.TestCase):
                 context_path = storage._context_path("demo", "demo", "coordinator")
                 stored = json.loads(context_path.read_text(encoding="utf-8"))
                 self.assertIn("coordinator", synchronized)
-                self.assertEqual(stored["compress_threshold"], 8192)
+                self.assertEqual(stored["compress_threshold"], 262144)
+                self.assertEqual(coordinator.max_context_threshold, 8192)  # type: ignore[union-attr]
+                self.assertEqual(coordinator.context_handler.compress_threshold, 8192)  # type: ignore[union-attr]
             finally:
                 storage.WORKSPACE_ROOT = original_root
 

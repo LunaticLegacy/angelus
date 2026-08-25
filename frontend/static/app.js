@@ -1,6 +1,6 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=tool-payload-2";
+import { createChatView } from "./components/chat-view.js?v=history-pagination-2";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { initPlugins, loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-controls-1";
@@ -38,8 +38,15 @@ let sourceWorkspaceId = "";
 let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
+let messagesBefore = null;
+let messageLoadPending = false;
+let historyGeneration = 0;
 let traceEvents = [];
+// Newest lifecycle/error event per Agent id, kept in sync with traceEvents so
+// agentStateView resolves a state in O(1) instead of scanning the whole trace.
+let traceEventIndex = new Map();
 let durableEventCount = 0;
+let durableEventOffset = 0;
 let renderedSteerEvents = new Set();
 let renderedRoundEvents = new Set();
 let currentAgents = [];
@@ -47,10 +54,13 @@ let currentGraph = {nodes:[],edges:[],assignments:{},task_states:{},node_states:
 let selectedPlanAgent = localStorage.llmfetcherPlanAgent || "coordinator";
 let availableSessions = [];
 let runActive = false;
+let runRetryCount = 0;
 let pendingRoundTools = new Map();
 let streamingMessages = new Map();
 let pluginStatuses = [];
 let selectedPluginKey = "";
+let mcpServersState = [];
+let mcpBindingsState = [];
 let contextDialogAgent = "";
 
 const KIMI_CODE_PROVIDER = "kimi-code";
@@ -59,26 +69,24 @@ const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";
 const KIMI_CODE_TEMPERATURE = 1;
 
 const value = (id) => $(id).value.trim();
-function mcpServers() { const raw=$("mcp-servers").value.trim(); if(!raw)return []; let servers; try { servers=JSON.parse(raw); } catch { throw new Error("MCP 服务器配置必须是合法 JSON"); } if(!Array.isArray(servers))throw new Error("MCP 服务器配置必须是 JSON 数组"); return servers; }
 const config = () => ({
   provider: value("provider"), model: value("model"), api_key: $("api-key").value, connector_id: connectorId,
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), max_context_threshold: Number($("max-context-threshold").value),
-  enable_shell: $("enable-shell").checked, enable_mcp: $("enable-mcp").checked,
-  mcp_servers: $("enable-mcp").checked ? mcpServers() : [], enable_swarm: $("enable-swarm").checked,
+  enable_shell: $("enable-shell").checked, enable_swarm: $("enable-swarm").checked,
   max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "max-swarm-agents", "session-memory-sessions", "mcp-servers"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function settingsKey(id=workspaceId) { return `llmfetcherAgentSettings:${id}`; }
 function connectionDraftKey(id=workspaceId) { return `llmfetcherConnectionDraft:${id}`; }
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
-function persistSettings() { if(!workspaceId) return; localStorage.setItem(settingsKey(), JSON.stringify({...persistedFields(agentSettingsIds), enable_shell:$("enable-shell").checked, enable_mcp:$("enable-mcp").checked, enable_swarm:$("enable-swarm").checked})); if(!connectorId) localStorage.setItem(connectionDraftKey(), JSON.stringify(persistedFields(connectionDraftIds))); }
-function restoreSettings() { try { let settings=JSON.parse(localStorage.getItem(settingsKey()) || "null"); let draft=JSON.parse(localStorage.getItem(connectionDraftKey()) || "null"); const legacy=JSON.parse(localStorage.getItem(`llmfetcherSettings:${workspaceId}`) || "null"); if(legacy) { settings ??={}; agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_"); if(legacy[key] !== undefined) settings[key]=legacy[key];}); settings.enable_shell ??=legacy.enable_shell; settings.enable_mcp ??=legacy.enable_mcp; settings.enable_swarm ??=legacy.enable_swarm; if(!connectorId) { draft ??={}; connectionDraftIds.forEach(id=>{const key=id.replaceAll("-","_"); if(legacy[key] !== undefined) draft[key]=legacy[key];}); } localStorage.setItem(settingsKey(),JSON.stringify(settings)); if(draft) localStorage.setItem(connectionDraftKey(),JSON.stringify(draft)); localStorage.removeItem(`llmfetcherSettings:${workspaceId}`); } if(settings) { agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_"); if(settings[key] !== undefined) $(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell); $("enable-mcp").checked=Boolean(settings.enable_mcp); $("enable-swarm").checked=Boolean(settings.enable_swarm); } if(!connectorId && draft) connectionDraftIds.forEach(id=>{const key=id.replaceAll("-","_"); if(draft[key] !== undefined) $(id).value=draft[key];}); } catch { /* Ignore malformed browser-local settings. */ } renderMemorySessionPicker(); }
-function bindSettingsPersistence() { [...agentSettingsIds,...connectionDraftIds,"enable-shell","enable-mcp","enable-swarm"].forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,persistSettings))); }
+function persistSettings() { if(!workspaceId) return; localStorage.setItem(settingsKey(), JSON.stringify({...persistedFields(agentSettingsIds), enable_shell:$("enable-shell").checked, enable_swarm:$("enable-swarm").checked})); if(!connectorId) localStorage.setItem(connectionDraftKey(), JSON.stringify(persistedFields(connectionDraftIds))); }
+function restoreSettings() { try { const settings=JSON.parse(localStorage.getItem(settingsKey()) || "null"); const draft=JSON.parse(localStorage.getItem(connectionDraftKey()) || "null"); if(settings) { agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_"); if(settings[key] !== undefined) $(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell); $("enable-swarm").checked=Boolean(settings.enable_swarm); } if(!connectorId && draft) connectionDraftIds.forEach(id=>{const key=id.replaceAll("-","_"); if(draft[key] !== undefined) $(id).value=draft[key];}); } catch { /* Ignore malformed browser-local settings. */ } renderMemorySessionPicker(); }
+function bindSettingsPersistence() { [...agentSettingsIds,...connectionDraftIds,"enable-shell","enable-swarm"].forEach(id=>["input","change"].forEach(event=>$(id).addEventListener(event,persistSettings))); }
 function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
 function providerLabel(provider) { return provider===KIMI_CODE_PROVIDER ? "Kimi Code" : provider; }
 function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。该模型只接受温度 1，已自动锁定。" : ""; }
@@ -91,9 +99,9 @@ function renderMemorySessionPicker() { const options=$("session-memory-options")
 const chatView = createChatView({ getAgentLabel: () => selectedAgent });
 const traceView = createTraceView();
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
-function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??""})); }
+function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??"", duration_ms:Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null})); }
 /** Append a single transcript turn live (real-time path). */
-function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="", usage=null, modelDurationMs=null) { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs},agentName); }
+function appendMessage(role, content, reasoning="", contentHtml="", reasoningHtml="", tools=[], agentName="", usage=null, modelDurationMs=null, timestamp=null) { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs,timestamp},agentName); }
 function streamKey(agent, round) { return `${agent || "coordinator"}:${round || ""}`; }
 function renderStreamDelta(agent, data) { const key=streamKey(agent,data?.round); let state=streamingMessages.get(key); if(!state){state={content:"",reasoning:"",view:chatView.beginStream(agent)};streamingMessages.set(key,state);} if(data?.channel==="reasoning")state.reasoning+=String(data.delta||"");else state.content+=String(data?.delta||"");state.view.update(state.content,state.reasoning); }
 function discardStream(agent, round) { const key=streamKey(agent,round); const state=streamingMessages.get(key); if(state){state.view.remove();streamingMessages.delete(key);} }
@@ -104,19 +112,27 @@ function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEve
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
 function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.render(messages, assistantLabel); }
-async function loadAllAgentBehavior() { const [{total=0},{messages=[]}]=await Promise.all([apiJson(`/api/sessions/${sessionId}/events?limit=1`),apiJson(`/api/sessions/${sessionId}/messages`)]); durableEventCount=total; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(messages, "coordinator"); }
+/** Restore the accessible history control if an older cached view removed it. */
+function ensureLoadMoreMessagesButton() { let button=$("load-more-messages"); if(button)return button; button=document.createElement("button"); button.id="load-more-messages"; button.className="load-more-messages"; button.type="button"; button.textContent="加载更早消息"; $("chat").prepend(button); return button; }
+function setMessageHistoryButton(hasMore, text="加载更早消息") { const button=ensureLoadMoreMessagesButton(); button.hidden=!hasMore; button.textContent=text; return button; }
+async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); setMessageHistoryButton(Boolean(page.has_more)); }
 function trace(title, message="", data=null, kind="") { traceView.append(title, message, data, kind); }
 function tracePayload(event, position="prepend") { traceView.appendEvent(event, position); }
+/** Present one server-initiated sampling or elicitation request for approval. */
+function openMcpApproval(event) { $("mcp-approval-id").value=event.id; $("mcp-approval-remember").checked=false; const details=event.details||{}; $("mcp-approval-summary").textContent=`${event.server} 请求 ${event.capability} · Agent ${event.agent}${details.max_tokens?` · 最多 ${details.max_tokens} tokens`:""}`; const fields=Array.isArray(details.fields)?details.fields:[]; $("mcp-approval-fields").innerHTML=fields.map(name=>`<label>${escapeHtml(name)}<input data-mcp-elicit-field="${escapeHtml(name)}" autocomplete="off" /></label>`).join(""); $("mcp-approval-dialog").showModal(); }
+/** Submit a decision; elicited values travel only in this response body. */
+async function answerMcpApproval(decision) { const id=$("mcp-approval-id").value;if(!id)return;const content=Object.fromEntries([...document.querySelectorAll("[data-mcp-elicit-field]")].map(input=>[input.dataset.mcpElicitField,input.value]));await apiPost(`/api/workspaces/${workspaceId}/runs/${sessionId}/mcp-approvals/${id}`,{decision,remember:$("mcp-approval-remember").checked,content});$("mcp-approval-dialog").close();trace("MCP 审批",`${decision==="allow"?"已允许":"已拒绝"} ${id.slice(0,8)}`); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
-function setRunning(running) { runActive=running; $("stop").disabled=!running; $("force-stop").disabled=!running; const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? "调整正在执行的 Agent…" : "给 Agent 一个任务… （/ 开头为指令，/help 查看）"; if(running){ resizeComposer(); setSteerStatus("运行中 — 指令会在安全的轮次边界生效"); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
+function setRunning(running) { runActive=running; updateStopAvailability(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? "调整正在执行的 Agent…" : "给 Agent 一个任务… （/ 开头为指令，/help 查看）"; if(running){ resizeComposer(); setSteerStatus("运行中 — 指令会在安全的轮次边界生效"); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
 let steerStatusTimer = null;
 const steerHintText = "运行中 — 指令会在安全的轮次边界生效";
 function setSteerStatus(text, state="") { const el=$("steer-status"); if(!el) return; const hint=el.closest(".steer-hint"); el.textContent=text; el.className=state ? `steer-status ${state}` : "steer-status"; if(hint) hint.className=`steer-hint ${state || ""}`.trim(); clearTimeout(steerStatusTimer); if(state) steerStatusTimer=setTimeout(()=>{ el.textContent=steerHintText; el.className="steer-status"; if(hint) hint.className="steer-hint"; }, 6000); }
 async function sendSteer(message) { const send=$("send"), input=$("message"); send.disabled=true; setSteerStatus("正在加入队列…","sending"); try { const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/steer`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message})}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`); input.value=""; resizeComposer(); setSteerStatus("指令已加入队列，将在安全的轮次边界应用 ✓","queued"); } catch(error) { setSteerStatus(`发送失败：${error.message}`,"error"); trace("调整指令发送失败", error.message); } finally { send.disabled=false; input.focus(); } }
 async function apiJson(path) { const response=await fetch(path); if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${path})`); return response.json(); }
+async function apiPost(path, body={}) { const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
-async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); if(!sessions.length) throw new Error("会话列表为空"); availableSessions=sessions; const select=$("workspace"); select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===workspaceId); $("workspace-open-hint").textContent=opened?`当前工作空间：${opened.name}`:""; const recent=$("recent-sessions"); recent.innerHTML=sessions.map(item=>`<button class="recent-session ${item.id===workspaceId?"active":""}" type="button" data-workspace-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status||"idle")}" title="会话状态：${escapeHtml(({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[item.status]||"待机")}">${escapeHtml(item.name)}</button>`).join(""); recent.querySelectorAll("[data-workspace-id]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.workspaceId).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); if(!sessions.length) throw new Error("会话列表为空"); availableSessions=sessions; const select=$("workspace"); select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===workspaceId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; const recent=$("recent-sessions"); recent.innerHTML=sessions.map(item=>`<button class="recent-session ${item.id===workspaceId?"active":""}" type="button" data-workspace-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.status||"idle")}" title="会话状态：${escapeHtml(({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[item.status]||"待机")}">${escapeHtml(item.name)}</button>`).join(""); recent.querySelectorAll("[data-workspace-id]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.workspaceId).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
 function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
 async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; localStorage.llmfetcherConnector=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
@@ -129,7 +145,7 @@ async function saveSelectedConnector() { if(!connectorId){openConnectorDialog();
 /** Open the document-native name dialog used by both new and unsaved connectors. */
 function openConnectorDialog() { const dialog=$("new-connector-dialog"); const input=$("new-connector-name"); input.value=""; dialog.showModal(); input.focus(); }
 function openSettings(section="connection") { const dialog=$("settings-dialog"); showSettingsSection(section); if(!dialog.open) dialog.showModal(); }
-function showSettingsSection(section) { document.querySelectorAll("[data-settings-panel]").forEach(panel=>panel.classList.toggle("active",panel.dataset.settingsPanel===section)); document.querySelectorAll("[data-settings-section]").forEach(button=>{const active=button.dataset.settingsSection===section; button.classList.toggle("active",active); button.setAttribute("aria-selected",String(active));}); if(section==="plugins") loadPluginStatuses().catch(error=>setPluginFeedback(`加载插件状态失败：${error.message}`,"error")); }
+function showSettingsSection(section) { document.querySelectorAll("[data-settings-panel]").forEach(panel=>panel.classList.toggle("active",panel.dataset.settingsPanel===section)); document.querySelectorAll("[data-settings-section]").forEach(button=>{const active=button.dataset.settingsSection===section; button.classList.toggle("active",active); button.setAttribute("aria-selected",String(active));}); if(section==="plugins") loadPluginStatuses().catch(error=>setPluginFeedback(`加载插件状态失败：${error.message}`,"error")); if(section==="mcp") loadMcpConsole().catch(error=>setMcpFeedback(`加载失败：${error.message}`,"error")); }
 function setPluginFeedback(text="", state="") { const el=$("plugin-settings-feedback"); if(!el)return; el.textContent=text; el.className=state ? `plugin-settings-feedback ${state}` : "plugin-settings-feedback"; }
 function pluginStateLabel(state) { return ({active:"已加载", discovered:"已发现", blocked:"已阻塞", error:"错误", inactive:"未加载"})[state] || state || "未知"; }
 function pluginSettingsRegistration(name) { return window.Angelus?.getRegisteredSettings?.().find(item=>item?.plugin===name) || null; }
@@ -143,8 +159,24 @@ function renderPluginDetail(plugin, payload={}) { const detail=$("plugin-setting
 async function selectPluginSettings(key) { selectedPluginKey=key; const plugin=pluginStatuses.find(item=>pluginKey(item)===key); if(!plugin)return; document.querySelectorAll(".plugin-status-card").forEach(card=>card.classList.toggle("selected",card.dataset.pluginKey===key)); if(!plugin.settings_available || !plugin.id) { renderPluginDetail(plugin,{}); return; } try { const payload=await apiJson(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`); renderPluginDetail(plugin,payload); } catch(error) { $("plugin-settings-detail").innerHTML=`<p class="empty">无法读取设置：${escapeHtml(error.message)}</p>`; } }
 async function savePluginSettings(event, plugin) { event.preventDefault(); let settings; try { settings=JSON.parse($("plugin-settings-json").value); if(!settings || Array.isArray(settings) || typeof settings!=="object") throw new Error("设置必须是 JSON 对象"); } catch(error) { setPluginFeedback(`无法保存：${error.message}`,"error"); return; } const response=await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(settings)}); const payload=await response.json().catch(()=>({})); if(!response.ok) { setPluginFeedback(`无法保存：${payload.detail||response.statusText}`,"error"); return; } plugin.has_saved_settings=Object.keys(settings).length>0; setPluginFeedback(`${plugin.name} 的设置已保存；下次插件加载时生效。`,"success"); }
 async function changePluginLifecycle(plugin, action) { if(!plugin)return; const registering=action==="register"; const loading=action==="load"; if(!registering && !plugin.id)return; const requested=Array.isArray(plugin.permissions_requested)?plugin.permissions_requested:[]; const granted=Array.isArray(plugin.permissions_granted)?plugin.permissions_granted:[]; const missing=requested.filter(item=>!granted.includes(item)); const message=registering ? `将“${plugin.name}”加入本机工作台注册表不会执行插件代码。之后仍需确认权限才能加载。\n\n继续吗？` : loading ? `加载“${plugin.name}”会执行其插件代码。${missing.length?`\n\n同时授予其声明的权限：\n${missing.map(item=>`• ${item}`).join("\n")}`:""}\n\n继续吗？` : `卸载“${plugin.name}”会停止插件并移除其前端面板。插件文件和设置会保留。\n\n继续吗？`; if(!window.confirm(message))return; const button=document.querySelector("[data-plugin-action]"); if(button)button.disabled=true; try { const url=registering ? `/api/plugins/discovered/${encodeURIComponent(plugin.name)}/register` : `/api/plugins/${encodeURIComponent(plugin.id)}/${loading?"load":"unload"}`; const response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true,grant_permissions:loading&&missing.length>0})}); const payload=await response.json().catch(()=>({})); if(!response.ok)throw new Error(payload.detail||response.statusText); if(registering)selectedPluginKey=payload.plugin?.id||plugin.name; if(loading)await loadPlugins(); else if(!registering)unloadPlugin(plugin.name); await loadPluginStatuses(); setPluginFeedback(registering ? `${plugin.name} 已加入工作台，可继续加载。` : loading ? `${plugin.name} 已加载。` : `${plugin.name} 已卸载；插件文件和设置已保留。`,"success"); } catch(error) { const verb=registering?"加入":loading?"加载":"卸载"; setPluginFeedback(`${verb}失败：${error.message}`,"error"); if(button)button.disabled=false; } }
+/** Show a local outcome for managed MCP operations. */
+function setMcpFeedback(text="", state="") { const el=$("mcp-feedback"); el.textContent=text; el.className=state?`plugin-settings-feedback ${state}`:"plugin-settings-feedback"; }
+/** Parse one NAME=VALUE-per-line credential field without using raw JSON. */
+function mcpKeyValues(id) { const result={}; $(id).value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).forEach(line=>{const split=line.indexOf("=");if(split<1)throw new Error(`${id} 必须使用 NAME=VALUE 格式`);result[line.slice(0,split).trim()]=line.slice(split+1);});return result; }
+/** Toggle fields whose shape depends on the selected MCP transport. */
+function updateMcpTransportFields() { const stdio=$("mcp-transport").value==="stdio",auth=$("mcp-auth-type").value; document.querySelectorAll("[data-mcp-stdio]").forEach(el=>el.hidden=!stdio); document.querySelectorAll("[data-mcp-http]").forEach(el=>el.hidden=stdio); document.querySelectorAll("[data-mcp-bearer]").forEach(el=>el.hidden=auth!=="bearer"); document.querySelectorAll("[data-mcp-oauth]").forEach(el=>el.hidden=auth!=="oauth"); }
+/** Reset the structured MCP editor for a new global server. */
+function resetMcpForm() { $("mcp-server-form").reset(); $("mcp-server-id").value=""; $("delete-mcp-server").hidden=true; $("probe-mcp-server").hidden=true; $("mcp-tool-preview").innerHTML='<p class="empty">保存并测试连接后可选择工具。</p>'; updateMcpTransportFields(); }
+/** Render one server plus this session's role and tool authorization. */
+function selectMcpServer(serverId) { const server=mcpServersState.find(item=>item.id===serverId); if(!server){resetMcpForm();return;} const binding=mcpBindingsState.find(item=>item.server_id===server.id)||{roles:[],tools:[]}; $("mcp-server-id").value=server.id; $("mcp-name").value=server.name; $("mcp-transport").value=server.transport; $("mcp-command").value=server.command||""; $("mcp-args").value=(server.args||[]).join("\n"); $("mcp-cwd").value=server.cwd||""; $("mcp-url").value=server.url||""; $("mcp-headers").value=(server.headers||[]).map(name=>`${name}=`).join("\n"); $("mcp-env").value=(server.env||[]).map(name=>`${name}=`).join("\n"); $("mcp-auth-type").value=server.auth_type||"none"; $("mcp-bearer").value=""; $("mcp-bearer").placeholder=server.has_bearer_token?"••••••••（留空保留）":"可选"; $("mcp-oauth-authorize-url").value=server.oauth_authorize_url||""; $("mcp-oauth-token-url").value=server.oauth_token_url||""; $("mcp-oauth-client-id").value=server.oauth_client_id||""; $("mcp-oauth-client-secret").value=""; $("mcp-oauth-scopes").value=server.oauth_scopes||""; $("mcp-oauth-status").textContent=server.oauth_connected?"已连接":"未连接"; $("mcp-role-coordinator").checked=binding.roles.includes("coordinator"); $("mcp-role-worker").checked=binding.roles.includes("worker"); $("delete-mcp-server").hidden=false; $("probe-mcp-server").hidden=false; const tools=server.capabilities?.tools||[]; $("mcp-tool-preview").innerHTML=tools.length?`<strong>工具白名单</strong>${tools.map(tool=>`<label><input type="checkbox" data-mcp-tool="${escapeHtml(tool)}" ${!binding.tools.length||binding.tools.includes(tool)?"checked":""} /> ${escapeHtml(tool)}</label>`).join("")}`:'<p class="empty">尚无能力缓存，请测试连接。</p>'; updateMcpTransportFields(); }
+/** Load global server metadata and current-session authorization together. */
+async function loadMcpConsole() { const [servers,bindings]=await Promise.all([apiJson("/api/mcp/servers"),apiJson(`/api/sessions/${sessionId}/mcp-bindings`)]);mcpServersState=servers.servers||[];mcpBindingsState=bindings.bindings||[];$("mcp-server-list").innerHTML=mcpServersState.length?mcpServersState.map(server=>`<button type="button" class="plugin-status-card" data-mcp-server="${escapeHtml(server.id)}"><i class="plugin-status-dot ${server.probe?.ok?"active":server.probe?.checked_at?"error":"discovered"}"></i><span><strong>${escapeHtml(server.name)}</strong><small>${escapeHtml(server.transport)} · ${server.probe?.ok?"已连接":"未验证"}</small></span></button>`).join(""):'<p class="empty">尚未配置服务器。</p>';document.querySelectorAll("[data-mcp-server]").forEach(button=>button.addEventListener("click",()=>selectMcpServer(button.dataset.mcpServer)));if(mcpServersState.length)selectMcpServer(mcpServersState[0].id);else resetMcpForm(); }
+/** Persist the current session's roles and checked tool allowlist. */
+async function saveMcpBinding(serverId) { const roles=[];if($("mcp-role-coordinator").checked)roles.push("coordinator");if($("mcp-role-worker").checked)roles.push("worker");const tools=[...document.querySelectorAll("[data-mcp-tool]:checked")].map(input=>input.dataset.mcpTool);const other=mcpBindingsState.filter(item=>item.server_id!==serverId);if(roles.length)other.push({server_id:serverId,roles,tools});const response=await fetch(`/api/sessions/${sessionId}/mcp-bindings`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({bindings:other})});if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||response.statusText);} }
+/** Save structured server fields, keeping masked credentials server-side. */
+async function saveMcpServer(event) { event.preventDefault();const id=$("mcp-server-id").value;const payload={name:value("mcp-name"),transport:value("mcp-transport"),command:value("mcp-command"),args:$("mcp-args").value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),cwd:value("mcp-cwd"),url:value("mcp-url"),headers:mcpKeyValues("mcp-headers"),env:mcpKeyValues("mcp-env"),auth_type:value("mcp-auth-type"),bearer_token:$("mcp-bearer").value,oauth_authorize_url:value("mcp-oauth-authorize-url"),oauth_token_url:value("mcp-oauth-token-url"),oauth_client_id:value("mcp-oauth-client-id"),oauth_client_secret:$("mcp-oauth-client-secret").value,oauth_scopes:value("mcp-oauth-scopes")};const response=await fetch(id?`/api/mcp/servers/${id}`:"/api/mcp/servers",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const server=await response.json().catch(()=>({}));if(!response.ok)throw new Error(server.detail||response.statusText);await saveMcpBinding(server.id);await loadMcpConsole();selectMcpServer(server.id);setMcpFeedback(`${server.name} 已安全保存。`,"success"); }
 function planUrl() { return `/api/sessions/${sessionId}/plan?agent=${encodeURIComponent(selectedPlanAgent)}`; }
-function messagesUrl() { return `/api/sessions/${sessionId}/messages?agent=${encodeURIComponent(selectedAgent)}`; }
+function messagesUrl(cursor=null, selectedSession=sessionId, agent=selectedAgent) { const params=new URLSearchParams({agent,limit:"200"}); if(cursor!=null) params.set("cursor",String(cursor)); return `/api/sessions/${selectedSession}/messages?${params.toString()}`; }
 function graphUrl() { return `/api/sessions/${sessionId}/graph`; }
 function agentIcon(agent) { if(agent.id === "all") return ["purple", "✦"]; if(agent.id === "coordinator") return ["purple", "♛"]; if(agent.dynamic) return ["amber", "↳"]; return ["blue", "&lt;/&gt;"]; }
 function acknowledgementKey() { return `llmfetcherAcknowledgedAgents:${sessionId}`; }
@@ -153,18 +185,21 @@ function acknowledgedAgents() { try { return new Set(JSON.parse(localStorage.get
 function agentStateView(agentId, agents=currentAgents) {
   const agentIds=(agents||[]).filter(agent=>agent.id!=="all").map(agent=>agent.id);
   if(agentId==="all"){
-    // A completed run is successful even when the coordinator recovered from
-    // a failed worker; retain the worker's red light without failing the run.
-    if(!runActive && currentGraph.run_status?.status==="completed") return stateView("completed","当前会话：运行完毕",agentId);
     const views=agentIds.map(id=>agentStateView(id,agents));
-    const priority=["failed","interrupted","queued","running","completed"];
+    if(views.some(view=>view.canonical==="running")) return stateView("running","当前会话：正在运行",agentId);
+    if(views.some(view=>view.canonical==="queued")) return stateView("queued","当前会话：等待执行",agentId);
+    const terminal=String(currentGraph.run_status?.status||"");
+    if(!runActive && terminal==="completed") return stateView("completed","当前会话：运行完毕",agentId);
+    if(!runActive && terminal==="error") return stateView("failed","当前会话：运行错误",agentId);
+    if(!runActive && ["stopped","interrupted"].includes(terminal)) return stateView("interrupted","当前会话：已停止",agentId);
+    const priority=["failed","interrupted","completed"];
     const canonical=priority.find(state=>views.some(view=>view.canonical===state))||"idle";
     return stateView(canonical,canonical==="idle"?"当前会话待机":`当前会话：${stateLabel(canonical)}`,agentId);
   }
 
   // The live/persisted trace is newer than a graph response already in the
   // browser, so it wins until the refreshed graph snapshot arrives.
-  const event=traceEvents.find(item=>(item.event==="lifecycle"&&item.agent===agentId)||(item.event==="error"&&agentId==="coordinator"));
+  const event=traceEventIndex.get(agentId);
   const persisted=currentGraph.node_states?.[agentId];
   if(event&&(!persisted?.state||Number(event.timestamp||0)>=Number(persisted.updated_at||0))){
     const type=String(event.type||"");
@@ -176,7 +211,7 @@ function agentStateView(agentId, agents=currentAgents) {
     else if(["agent:complete","agent:completed"].includes(type)) canonical="completed";
     else if(type==="task:reported"){
       const status=String(event.data?.status||"").toLowerCase();
-      canonical=["completed","complete","success","succeeded","done"].includes(status)?"completed":"failed";
+      canonical=["completed","complete","success","succeeded","done"].includes(status)?"completed":["interrupted","stopped"].includes(status)?"interrupted":["cancelled","canceled"].includes(status)?"cancelled":"failed";
     } else if(type==="task:finalized") canonical=String(event.data?.state||"interrupted");
     return stateView(canonical,event.message||stateLabel(canonical),agentId);
   }
@@ -188,13 +223,15 @@ function stateLabel(state) { return ({idle:"待机",queued:"等待执行",runnin
 /** Apply acknowledgement and color-class rules to a canonical Agent state. */
 function stateView(canonical, message, agentId) { const acknowledged=canonical==="completed" && acknowledgedAgents().has(agentId); const ui=acknowledged?"idle":canonical==="queued"?"pending":["failed","interrupted"].includes(canonical)?"error":canonical==="cancelled"?"idle":canonical; return {canonical,ui,message:acknowledged?"已确认完成":message}; }
 function agentRunState(agentId, agents=currentAgents) { return agentStateView(agentId,agents).ui; }
+/** Enable controls only when the selected scope has live or queued work. */
+function updateStopAvailability() { const state=agentStateView(selectedAgent).canonical; const actionable=runActive && (selectedAgent==="all" || ["running","queued"].includes(state)); $("stop").disabled=!actionable; $("force-stop").disabled=!actionable; const label=selectedAgent==="all"?"整个运行":selectedAgent; $("stop").title=`停止 ${label}`; $("force-stop").title=`强行停止 ${label}`; }
 function acknowledgeAgent(agentId) { const acknowledged=acknowledgedAgents(); if(agentId === "all") currentAgents.filter(agent=>agent.id !== "all" && agentRunState(agent.id) === "completed").forEach(agent=>acknowledged.add(agent.id)); else acknowledged.add(agentId); localStorage.setItem(acknowledgementKey(),JSON.stringify([...acknowledged])); renderAgentSelector(currentAgents); }
 /** Render a secondary context-graph action without changing Agent-card selection. */
 function agentCard(agent, selected, tone, icon, subtitle, view, title) {
   if (agent.id === "all") return `<button class="agent-filter ${selected?"selected active":""}" type="button" data-agent="all" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="agent-state ${view.ui}" data-ack-agent="all" title="${escapeHtml(title)}"></i></button>`;
   return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span></button><button class="agent-context-button" type="button" data-context-agent="${escapeHtml(agent.id)}" title="查看 ${escapeHtml(agent.name)} 的上下文图" aria-label="查看 ${escapeHtml(agent.name)} 的上下文图">◎</button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
 }
-function renderAgentSelector(agents=[]) { const row=$("agent-row"); const visible=agents.length ? agents : [{id:"all",name:"全部",kind:"filter"}]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"当前会话":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openContextGraph(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); }
+function renderAgentSelector(agents=[]) { const row=$("agent-row"); const visible=agents.length ? agents : [{id:"all",name:"全部",kind:"filter"}]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"当前会话":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openContextGraph(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
 
 /** Map untrusted entity types to the finite visual palette used by the graph. */
 function contextNodeTone(type) { return ({file:"blue",tool:"amber",person:"pink",decision:"green",module:"purple",framework:"purple"})[String(type).toLowerCase()] || "slate"; }
@@ -235,8 +272,8 @@ function renderContextGraph(payload) {
   document.querySelectorAll("[data-context-node]").forEach(control=>control.addEventListener("click",()=>renderContextGraphDetail(graph,control.dataset.contextNode)));
   renderContextGraphDetail(graph,nodes[0].id);
 }
-/** Switch the context dialog between its graph and raw-context top-level tabs. */
-function selectContextDialogTab(tab) { const selected=tab==="prompt"?"prompt":"graph"; document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>{const active=button.dataset.contextDialogTab===selected;button.setAttribute("aria-selected",String(active));button.classList.toggle("active",active);}); $("context-panel-graph").hidden=selected!=="graph"; $("context-panel-prompt").hidden=selected!=="prompt"; }
+/** Switch the context dialog between its graph, raw-context and compaction-input tabs. */
+function selectContextDialogTab(tab) { const selected=tab==="prompt"?"prompt":tab==="compaction"?"compaction":"graph"; document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>{const active=button.dataset.contextDialogTab===selected;button.setAttribute("aria-selected",String(active));button.classList.toggle("active",active);}); $("context-panel-graph").hidden=selected!=="graph"; $("context-panel-prompt").hidden=selected!=="prompt"; $("context-panel-compaction").hidden=selected!=="compaction"; }
 /**
  * Decode complete JSON-string layers for the context preview without touching raw text.
  *
@@ -254,15 +291,26 @@ function readablePromptValue(value,indent="") { if(value===null)return "null"; i
 function renderContextPrompt(payload) { const metadata=Array.isArray(payload.metadata)?payload.metadata:[], request=payload.request&&typeof payload.request==="object"?payload.request:null, stats=payload.stats&&typeof payload.stats==="object"?payload.stats:null, preview=$("context-prompt-preview"), rows=$("context-metadata-list"); preview.textContent=request?readablePromptValue(request):"此 Agent 尚未捕获完整远程请求。持久化 checkpoint 及其历史 tool_calls 不能替代真实请求，因此不会在这里伪装成远程 payload。请重启到当前版本后发起一次新的模型请求。"; $("context-request-note").textContent=request?"最近一次实际远程请求的完整内容；不保存 API key 或 endpoint。":"未捕获远程请求快照；下方仅保留当前 checkpoint 的元数据，不能代表远程请求。"; $("context-prompt-status").textContent=request?`${Number((request.messages||[]).length)} 条请求消息`:"快照缺失"; $("context-request-stats").innerHTML=stats?`<span>消息 <b>${Number(stats.messages)}</b></span><span>请求 <b>${Number(stats.characters).toLocaleString()}</b> 字符</span><span>工具 <b>${Number(stats.tool_schemas)}</b></span><span>Schema <b>${Number(stats.tool_schema_characters).toLocaleString()}</b> 字符</span><span>估算 <b>≈${Number(stats.estimated_tokens).toLocaleString()}</b> tokens</span>`:""; rows.innerHTML=metadata.length?metadata.map(item=>`<tr><td>${Number(item.index||0)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.type)}</td><td>${Number(item.length||0).toLocaleString()}</td><td>${escapeHtml(item.timeline)}</td></tr>`).join(""):'<tr><td colspan="5">没有可显示的上下文元数据。</td></tr>'; }
 /** Fetch the complete persisted checkpoint once for the dialog's context tab. */
 async function loadContextPrompt(agentId) { const payload=await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context`);renderContextPrompt(payload); }
+/** Render one Agent's live compaction-input preview in the dialog's third tab. */
+function renderCompactionInput(payload) {
+  const text=String(payload.text||""), characters=Number(payload.characters||0), threshold=Number(payload.threshold||0), round=Number(payload.round||0), messages=Number(payload.messages||0), omitted=Number(payload.omitted||0), estimatedTokens=Number(payload.estimated_tokens||0), preview=$("context-compaction-preview");
+  preview.textContent=text || "此 Agent 尚无持久化上下文，压缩器没有可发送的输入。";
+  $("context-compaction-note").textContent=text ? "压缩触发时，这段文本会作为摘要请求发送给压缩模型；实时从当前 checkpoint 重建，不调用模型。" : "压缩触发时，这段文本会作为摘要请求发送给压缩模型；当前 checkpoint 为空。";
+  $("context-compaction-status").textContent=text ? `${messages} 条消息` : "无输入";
+  const ratio=threshold>0 ? `${Math.round(Math.min(1,characters/threshold)*100)}%` : "—";
+  $("context-compaction-stats").innerHTML=`<span>输入 <b>${characters.toLocaleString()}</b> 字符</span><span>预算 <b>${threshold.toLocaleString()}</b> 字符</span><span>占用 <b>${ratio}</b></span><span>省略 <b>${omitted}</b> 条</span><span>估算 <b>≈${estimatedTokens.toLocaleString()}</b> tokens</span><span>轮次 <b>${round}</b></span>`;
+}
+/** Fetch the exact compaction input the compactor would send for one Agent. */
+async function loadCompactionInput(agentId) { const payload=await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context/compaction-input`);renderCompactionInput(payload); }
 /** Fetch a single Agent's persisted graph and open it in the theme-aware dialog. */
 async function openContextGraph(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   contextDialogAgent=agentId;
   $("context-graph-title").textContent=`${agentId} · 上下文图`; $("context-graph-subtitle").textContent="正在读取最近一次持久化 checkpoint…";
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
-  selectContextDialogTab("graph");$("context-prompt-preview").textContent="正在读取当前上下文…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";
+  selectContextDialogTab("graph");$("context-prompt-preview").textContent="正在读取当前上下文…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在读取压缩器输入…";$("context-compaction-status").textContent="读取中…";
   if(!dialog.open) dialog.showModal();
-  try { const [graphPayload]=await Promise.all([apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context-graph`),loadContextPrompt(agentId)]);renderContextGraph(graphPayload); }
+  try { const [graphPayload]=await Promise.all([apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/context-graph`),loadContextPrompt(agentId),loadCompactionInput(agentId)]);renderContextGraph(graphPayload); }
   catch(error) { $("context-graph-subtitle").textContent="无法读取上下文图。"; $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`;$("context-prompt-preview").textContent=error.message; }
 }
 async function loadAgents() { try { const payload=await apiJson(`/api/sessions/${sessionId}/agents`); renderAgentSelector(payload.agents); } catch(error) { trace("Agent 列表加载失败",error.message); renderAgentSelector(); } }
@@ -271,10 +319,15 @@ function renderGraph(graph) { const target=$("execution-graph"); const nodes=gra
 /** Refresh the graph data used by the selector, topology, and usage views. */
 async function loadGraph() { const response=await fetch(graphUrl()); if(response.status===404){currentGraph={nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};renderAgentSelector(currentAgents);return;} if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${graphUrl()})`); currentGraph=await response.json();renderAgentSelector(currentAgents); }
 /** Build the cursor-paginated durable Trace request for the selected session. */
-function traceUrl(before=null) { const params=new URLSearchParams({limit:"200"}); if(before !== null) params.set("before",String(before)); return `/api/sessions/${sessionId}/events?${params}`; }
+function traceUrl(cursor=null) { const params=new URLSearchParams({limit:"200"}); if(cursor !== null) params.set("cursor",String(cursor)); return `/api/sessions/${sessionId}/events?${params}`; }
 /** Streaming deltas are transport-only; the completed round remains the trace record. */
 function isTraceVisible(event) { return !(event?.event === "lifecycle" && event?.type === "agent:stream_delta"); }
-async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); if(reset){ traceEvents=events; traceBefore=page.next_before; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_before; } if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=traceBefore === null; }
+/** Debounced graph+plan reload so a burst of SSE events coalesces into one. */
+const scheduleGraphPlanReload = debounce(() => {
+  loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message));
+  loadPlan().catch(error=>trace("任务规划加载失败",error.message));
+}, 150);
+async function loadTrace(reset=true) { const page=await apiJson(traceUrl(reset ? null : traceBefore)); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); durableEventOffset=Number(page.durable_offset||0); if(reset){ traceEvents=events; traceBefore=page.next_cursor??null; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_cursor??null; } rebuildTraceEventIndex(); if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=!page.has_more; }
 function agentContextStats(agent) {
   const ctx = agent.context || {};
   const messages = Number(ctx.messages || 0);
@@ -323,42 +376,80 @@ function initInspectorTabs() { document.querySelectorAll("[data-inspector-panel]
 function knownPlanAgents() { const known=new Map([["coordinator",{id:"coordinator",name:"协调者（总计划）"}]]); for(const agent of currentAgents||[]) if(agent?.id && agent.id!=="all") known.set(agent.id,agent); for(const node of currentGraph.nodes||[]) if(node?.id) known.set(node.id,{id:node.id,name:node.id,dynamic:node.dynamic}); return [...known.values()]; }
 function renderPlanAgentPicker() { const select=$("plan-agent"); if(!select)return; const agents=knownPlanAgents(); if(!agents.some(agent=>agent.id===selectedPlanAgent)) selectedPlanAgent="coordinator"; select.innerHTML=agents.map(agent=>`<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.id==="coordinator"?"协调者（总计划）":agent.name||agent.id)}</option>`).join(""); select.value=selectedPlanAgent; }
 async function loadPlan() { renderPlanAgentPicker(); const plan=await apiJson(planUrl()); const agentLabel=selectedPlanAgent==="coordinator"?"协调者":selectedPlanAgent; $("plan-summary").textContent=plan.goal ? `${agentLabel} · ${plan.goal}${plan.summary ? ` · ${plan.summary}` : ""}` : `${agentLabel} 尚未建立任务计划。`; $("task-plan").innerHTML=(plan.tasks||[]).map(task=>renderTaskPlanItem(task)).join("") || `<p class="empty">尚未建立任务计划。</p>`; }
-async function updatePlanStatus(taskId,status) { const response=await fetch(`${planUrl()}/tasks/${taskId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})}); if(!response.ok) throw new Error("任务状态更新失败"); await loadPlan(); }
 /** Rehydrate the aggregate view or one Agent's durable trajectory and transcript. */
 async function loadHistory() {
   streamingMessages.clear();
-  if (selectedAgent === "all") return loadAllAgentBehavior();
-  const [{messages = []}, {total = 0}] = await Promise.all([
-    apiJson(messagesUrl()),
-    apiJson(`/api/sessions/${sessionId}/events?limit=1`),
-  ]);
-  durableEventCount = total;
+  const snapshot={session:sessionId,agent:selectedAgent,generation:++historyGeneration};
+  messageLoadPending=false;
+  if (selectedAgent === "all") return loadAllAgentBehavior(snapshot);
+  const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent));
+  if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
+  const messages = page.messages || [];
+  messagesBefore = page.next_cursor ?? null;
   renderedSteerEvents.clear();
   renderedRoundEvents.clear();
   pendingRoundTools.clear();
   const chat = $("chat");
-  chat.innerHTML = "";
+  const loadMore=ensureLoadMoreMessagesButton();
+  chat.replaceChildren(loadMore);
   if (!messages.length) {
-    chat.innerHTML = `<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`;
+    loadMore.insertAdjacentHTML("afterend",`<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`);
+    loadMore.hidden = true;
     return;
   }
   const fragment = document.createDocumentFragment();
   for (const message of messages) {
     fragment.append(chatView.buildMessage(message, selectedAgent));
   }
-  chat.append(fragment);
+  loadMore.after(fragment);
   chat.scrollTop = chat.scrollHeight;
+  loadMore.hidden = !page.has_more;
+}
+
+/** Prepend one older page of messages above the current transcript. */
+async function loadOlderMessages() {
+  if (messagesBefore === null || messageLoadPending) return;
+  const chat = $("chat");
+  const button=ensureLoadMoreMessagesButton();
+  const snapshot={session:sessionId,agent:selectedAgent,cursor:messagesBefore,generation:historyGeneration};
+  const previousHeight = chat.scrollHeight;
+  const previousTop=chat.scrollTop;
+  messageLoadPending=true;
+  button.disabled=true;
+  button.textContent="正在加载…";
+  let failed=false;
+  try {
+    const page = await apiJson(messagesUrl(snapshot.cursor,snapshot.session,snapshot.agent));
+    if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
+    const older = page.messages || [];
+    messagesBefore = page.next_cursor ?? null;
+    if (!older.length) { button.hidden = true; return; }
+    const fragment = document.createDocumentFragment();
+    for (const message of older) fragment.append(chatView.buildMessage(message, snapshot.agent === "all" ? "coordinator" : snapshot.agent));
+    button.after(fragment);
+    chat.scrollTop = chat.scrollHeight - previousHeight + previousTop;
+    button.hidden = !page.has_more;
+  } catch(error) {
+    failed=true;
+    button.hidden=false;
+    button.textContent="加载失败，点击重试";
+    throw error;
+  } finally {
+    messageLoadPending=false;
+    button.disabled=false;
+    if(!failed) button.textContent="加载更早消息";
+  }
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { clearCompactStatus(); persistSettings(); if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; traceEvents=[]; durableEventCount=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
+async function switchSession(selected) { clearCompactStatus(); persistSettings(); historyGeneration+=1; if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; await loadWorkspaces(selected); await loadConnectors(); restoreSettings(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }
 
 async function start(message) {
   let runConfig;
   try { runConfig=config(); } catch(error) { setStatus("MCP 配置无效", "error"); trace("MCP 配置无效", error.message); alert(error.message); return; }
   // Show the submitted prompt immediately in every filter; the durable reload
   // after a result will replace this optimistic turn with canonical history.
-  setRunning(true); setStatus("正在执行", "running"); appendMessage("user", message);
+  setRunning(true); runRetryCount = 0; setStatus("正在执行", "running"); appendMessage("user", message);
   try {
     const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, workspace_id:workspaceId, message, config:runConfig})});
     const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
@@ -373,12 +464,40 @@ function showCompactStatus(text, state="running", dismissMs=0) {
   if(dismissMs>0) compactStatusTimer=setTimeout(()=>{ el.hidden=true; el.className="compact-status"; }, dismissMs);
 }
 function clearCompactStatus() { clearTimeout(compactStatusTimer); const el=$("compact-status"); if(el){ el.hidden=true; el.className="compact-status"; } }
+/** Coalesce a burst of SSE-driven refreshes into one trailing call. */
+function debounce(fn, wait=150) {
+  let timer = null;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+/** Record the newest matching event for an Agent in the O(1) state index. */
+function indexTraceEvent(event) {
+  if(!event) return;
+  if(event.event === "lifecycle") traceEventIndex.set(event.agent || "coordinator", event);
+  else if(event.event === "error") traceEventIndex.set("coordinator", event);
+}
+/** Rebuild the index from traceEvents (newest-first); first match wins. */
+function rebuildTraceEventIndex() {
+  traceEventIndex = new Map();
+  for(const event of traceEvents) {
+    if(event.event === "lifecycle") {
+      const agent = event.agent || "coordinator";
+      if(!traceEventIndex.has(agent)) traceEventIndex.set(agent, event);
+    } else if(event.event === "error" && !traceEventIndex.has("coordinator")) {
+      traceEventIndex.set("coordinator", event);
+    }
+  }
+}
 function handleEvent(event) {
+  if(event.event === "mcp_approval_requested") { openMcpApproval(event); trace("MCP 请求审批",`${event.server} · ${event.capability} · ${event.agent}`); return; }
+  if(event.event === "mcp_trace") { tracePayload({...event,message:`${event.server} · ${event.kind}`}); return; }
   if(!event.ephemeral) durableEventCount+=1;
   // A captured preflight snapshot is durable before its SSE event arrives,
   // so an open inspector can safely refresh to the exact newest request.
   if(event.event === "lifecycle" && event.type === "agent:remote_request" && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) loadContextPrompt(contextDialogAgent).catch(error=>trace("上下文请求预览刷新失败",error.message));
-  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } traceEvents.unshift(event); tracePayload(event); renderAgentSelector(currentAgents);
+  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } traceEvents.unshift(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
   if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator";
     if(event.type==="context:compact_started"){ const ratio=typeof cd.ratio==="number"?` ${cd.ratio}%`:"";
       const csize=cd.context_size?` · ${cd.context_size} 字符`:"";
@@ -386,13 +505,14 @@ function handleEvent(event) {
     else if(event.type==="context:compact_success"){ showCompactStatus(`上下文压缩完成（${cagent}）：${cd.archived_messages??"N"} 条消息 → 1 条摘要`,"success",4000); }
     else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
     else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
-  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundContentHtml=String(roundData.assistant_content_html||""); const roundReasoningHtml=String(roundData.reasoning_content_html||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundContentHtml, roundReasoningHtml, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); } return; }
-  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); loadPlan().catch(error=>trace("任务规划加载失败",error.message)); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); traceEvents.unshift(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
-  if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); traceEvents.unshift({...event,type:"agent:error",agent:event.agent || "coordinator"}); tracePayload(event); renderAgentSelector(currentAgents); appendRunErrorBlock("运行失败",event.message); setStatus("运行失败", "error"); return; }
-  if(event.event === "stopped") { setWorkspaceIndicator(workspaceId,"done"); traceEvents.unshift(event); tracePayload(event); }
-  if(event.event === "done") { setWorkspaceIndicator(workspaceId,"done"); finish(); loadGraph().then(loadAgents).catch(error=>trace("执行图加载失败",error.message)); }
+  if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
+  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundContentHtml=String(roundData.assistant_content_html||""); const roundReasoningHtml=String(roundData.reasoning_content_html||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundContentHtml, roundReasoningHtml, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") loadUsage().catch(error=>trace("用量加载失败",error.message)); if(activeInspectorPanel === "inspector-agents") loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
+  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); traceEvents.unshift(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
+  if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; traceEvents.unshift(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); return; }
+  if(event.event === "stopped") { setWorkspaceIndicator(workspaceId,"done"); traceEvents.unshift(event); indexTraceEvent(event); tracePayload(event); }
+  if(event.event === "done") { setWorkspaceIndicator(workspaceId,"done"); finish(); scheduleGraphPlanReload(); }
 }
-function finish() { clearCompactStatus(); source?.close(); source=null; sourceWorkspaceId=""; setRunning(false); if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
+function finish() { clearCompactStatus(); source?.close(); source=null; sourceWorkspaceId=""; setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
 /* ---- Slash commands -------------------------------------------------- */
 function showSlashHelp() {
   chatView.removeWelcome();
@@ -418,8 +538,8 @@ function showSlashHelp() {
 function sessionByName(name) { return availableSessions.find(item=>item.name===name || item.id===name); }
 async function switchSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } await switchSession(target.id); trace("已切换会话", target.name); }
 async function deleteSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } if(!confirm(`删除会话「${target.name}」？此操作不可撤销。`)) return; const response=await fetch(`/api/sessions/${encodeURIComponent(target.id)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:target.id})}); if(!response.ok){ const payload=await response.json().catch(()=>({})); throw new Error(payload.detail||"删除失败"); } await loadWorkspaces(); setStatus(`已删除会话「${target.name}」`); trace("已删除会话", target.name); }
-async function runStop() { await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/stop`,{method:"POST"}); $("stop").disabled=true; setStatus("等待安全停止", "running"); }
-async function runForceStop() { if(!confirm("强行停止当前会话？这会中断当前模型请求，并立即终止正在执行的 Shell 工具进程。")) return; $("force-stop").disabled=true; $("stop").disabled=true; setStatus("正在强行停止", "running"); const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/force-stop`,{method:"POST"}); if(!response.ok){const message=`${response.status} ${response.statusText}`;trace("强行停止失败",message);appendRunErrorBlock("强行停止失败",message);setStatus("停止失败","error"); setRunning(true); return;} trace("强行停止","已请求中断当前模型调用并终止工具进程。"); }
+async function runStop() { const target=selectedAgent; const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/stop`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:target})}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||response.statusText);} $("stop").disabled=true; setStatus(target==="all"?"等待安全停止":`等待停止 ${target}`, "running"); }
+async function runForceStop() { const target=selectedAgent; const label=target==="all"?"整个运行":` Agent “${target}”`; if(!confirm(`强行停止${label}？这会中断其当前模型请求，并立即终止其 Shell 与 MCP 调用。`)) return; $("force-stop").disabled=true; $("stop").disabled=true; setStatus(target==="all"?"正在强行停止":`正在强行停止 ${target}`, "running"); const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/force-stop`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:target})}); if(!response.ok){const payload=await response.json().catch(()=>({}));const message=payload.detail||`${response.status} ${response.statusText}`;trace("强行停止失败",message);appendRunErrorBlock("强行停止失败",message);setStatus("停止失败","error"); updateStopAvailability(); return;} trace("强行停止",`已请求中断${label}的模型与工具调用。`); }
 let compacting=false;
 async function runCompact(agent="coordinator") {
   if(compacting){ setStatus("压缩已在进行中…", "running"); return; }
@@ -468,7 +588,7 @@ function dispatchSlashCommand(parsed) {
 
 /** Resize the composer to its content, restoring the compact size when empty. */
 function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,170)}px`; }
-function connectRunEvents(runId, after=durableEventCount) { source?.close(); const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?after=${after}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId) handleEvent(JSON.parse(event.data)); }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); else if(eventSource.readyState===EventSource.CONNECTING && source===eventSource) setStatus("连接中断，正在重连…", "running"); }; }
+function connectRunEvents(runId, after=durableEventCount) { source?.close(); const resume=durableEventOffset > 0 ? `cursor=${durableEventOffset}` : `after=${after}`; const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?${resume}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId){ const offset=Number(event.lastEventId); if(Number.isSafeInteger(offset) && offset >= 0) durableEventOffset=offset; handleEvent(JSON.parse(event.data)); } }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); else if(eventSource.readyState===EventSource.CONNECTING && source===eventSource) setStatus("连接中断，正在重连…", "running"); }; }
 async function restoreRunState() { try { const state=await apiJson(`/api/workspaces/${workspaceId}/runs/${sessionId}/status`); if(state.active && state.run_id){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(state.run_id, durableEventCount); return; } if(state.status === "error" || state.status === "interrupted"){ const title=state.status === "interrupted" ? "执行已中断" : "上次运行失败"; setStatus(title,"error"); appendRunErrorBlock(title,state.error); trace(title,state.error); return; } if(state.status === "completed") setStatus("已完成"); else if(state.status === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
 $("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; if(runActive){ sendSteer(message); return; } $("message").value=""; resizeComposer(); const parsed=parseSlashCommand(message); if(parsed){ dispatchSlashCommand(parsed); return; } start(message);});
 $("message").addEventListener("keydown", (event)=>{
@@ -484,11 +604,16 @@ $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace(
 $("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
 document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
+$("change-workspace-directory").addEventListener("click",async()=>{try{const projectPath=await pickWorkspaceDirectory();if(!projectPath)return;const response=await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/project-path`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_path:projectPath})});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.detail||"无法更改项目目录");await loadWorkspaces(sessionId);trace("已更改项目目录",payload.project_path);}catch(error){trace("更改项目目录失败",error.message);alert(`无法更改项目目录：${error.message}`);}});
 $("open-workspace").addEventListener("click",async()=>{try{const response=await fetch(`/api/sessions/${encodeURIComponent(workspaceId)}/open-folder`,{method:"POST"});const payload=await response.json();if(!response.ok)throw new Error(payload.detail||"无法打开工作空间目录");trace("已打开工作空间目录",payload.path||workspaceId);}catch(error){trace("打开工作空间目录失败",error.message);alert(`无法打开工作空间目录：${error.message}`);}});
-async function createAndSwitchSession(name) {
+/** Ask the loopback backend to show the host operating system's folder picker. */
+async function pickWorkspaceDirectory() { const payload=await apiPost("/api/workspace-directory/pick"); return payload.cancelled ? null : String(payload.path||""); }
+async function createAndSwitchSession(name, projectPath=null) {
   if(!name?.trim()) return;
   try {
-    const response=await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    const selectedPath=projectPath || await pickWorkspaceDirectory();
+    if(!selectedPath) return;
+    const response=await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,project_path:selectedPath})});
     const session=await response.json();
     if(!response.ok) throw new Error(session.detail || "无法创建会话");
     await switchSession(session.id);
@@ -504,26 +629,44 @@ async function createAndSwitchSession(name) {
 $("new-workspace").addEventListener("click", ()=>{
   const dialog=$("new-session-dialog");
   const input=$("new-session-name");
+  const path=$("new-session-path");
   input.value="";
+  path.value="";
+  $("new-session-feedback").textContent="";
   dialog.showModal();
   input.focus();
 });
 $("cancel-new-session").addEventListener("click", ()=>$("new-session-dialog").close());
+$("choose-session-directory").addEventListener("click",async()=>{const button=$("choose-session-directory"),feedback=$("new-session-feedback");button.disabled=true;feedback.textContent="正在打开目录选择器…";try{const path=await pickWorkspaceDirectory();if(!path){$("new-session-dialog").close();return;}$("new-session-path").value=path;feedback.textContent="已选择项目目录。";}catch(error){feedback.textContent=`无法选择目录：${error.message}`;}finally{button.disabled=false;}});
 $("new-session-form").addEventListener("submit", async event=>{
   event.preventDefault();
   const input=$("new-session-name");
   const name=input.value.trim();
   if(!name) { input.focus(); return; }
+  const projectPath=$("new-session-path").value.trim();
+  if(!projectPath){$("new-session-feedback").textContent="请先选择一个已有项目目录。";return;}
   $("new-session-dialog").close();
-  await createAndSwitchSession(name);
+  await createAndSwitchSession(name,projectPath);
 });
 $("delete-workspace").addEventListener("click",async()=>{const selected=$("workspace").selectedOptions[0];if(!selected)return;const targetId=selected.value;const name=selected.text;if(!confirm(`删除会话“${name}”及其所有数据？此操作不可恢复。`))return;const confirmation=prompt(`请输入会话名称“${name}”以确认删除：`);if(confirmation !== name)return;const response=await fetch(`/api/sessions/${encodeURIComponent(targetId)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation})});const payload=await response.json();if(response.status===404){await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已不存在",`${name} 已被移除，已切换到有效会话。`);return;}if(!response.ok){alert(payload.detail||"无法删除会话");return;}if(payload.status==="stopping"){trace("正在停止并删除会话",payload.message);return;}await loadWorkspaces();await loadHistory();await loadPlan();await loadGraph();trace("会话已删除",name);});
 $("connector").addEventListener("change", event=>{connectorId=event.target.value;localStorage.llmfetcherConnector=connectorId;loadConnectors(connectorId).then(()=>{ persistSettings(); updateModelSummary(); });});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
+$("open-external-agent-hub").addEventListener("click", () => { const dialog=$("external-agent-hub-dialog"); if (!dialog.open) dialog.showModal(); });
+$("close-external-agent-hub").addEventListener("click", () => $("external-agent-hub-dialog").close());
 document.querySelectorAll("[data-settings-section]").forEach(button=>button.addEventListener("click",()=>showSettingsSection(button.dataset.settingsSection)));
-$("refresh-plugins").addEventListener("click",()=>loadPluginStatuses().catch(error=>setPluginFeedback(`加载插件状态失败：${error.message}`,"error")));
+$("refresh-plugins").addEventListener("click",async()=>{const button=$("refresh-plugins");if(button)button.disabled=true;try{const summary=await apiPost("/api/plugins/rescan");await loadPlugins();await loadPluginStatuses();const parts=[];if(summary?.added?.length)parts.push(`新发现 ${summary.added.length} 个`);if(summary?.loaded?.length)parts.push(`新加载 ${summary.loaded.length} 个`);if(summary?.removed?.length)parts.push(`移除 ${summary.removed.length} 个`);setPluginFeedback(parts.length?`已重新扫描：${parts.join("，")}。`:"已重新扫描，无变化。","success");}catch(error){setPluginFeedback(`重新扫描失败：${error.message}`,"error");}finally{if(button)button.disabled=false;}});
+$("mcp-transport").addEventListener("change",updateMcpTransportFields);
+$("mcp-auth-type").addEventListener("change",updateMcpTransportFields);
+$("new-mcp-server").addEventListener("click",resetMcpForm);
+$("mcp-server-form").addEventListener("submit",event=>saveMcpServer(event).catch(error=>setMcpFeedback(`保存失败：${error.message}`,"error")));
+$("probe-mcp-server").addEventListener("click",async()=>{const id=$("mcp-server-id").value;if(!id)return;setMcpFeedback("正在测试连接…");try{const server=await apiPost(`/api/mcp/servers/${id}/probe`);await loadMcpConsole();selectMcpServer(id);setMcpFeedback(server.probe?.ok?"连接成功，能力缓存已更新。":`连接失败：${server.probe?.error||"未知错误"}`,server.probe?.ok?"success":"error");}catch(error){setMcpFeedback(`连接失败：${error.message}`,"error");}});
+$("connect-mcp-oauth").addEventListener("click",async()=>{const id=$("mcp-server-id").value;if(!id)return;try{const redirect_uri=`${location.origin}/api/mcp/oauth/callback`;const payload=await apiPost(`/api/mcp/servers/${id}/oauth/connect`,{redirect_uri});window.open(payload.authorization_url,"mcp-oauth","popup,width=680,height=760");setMcpFeedback("已打开 OAuth 授权窗口；完成后重新载入此页。","success");}catch(error){setMcpFeedback(`OAuth 连接失败：${error.message}`,"error");}});
+$("disconnect-mcp-oauth").addEventListener("click",async()=>{const id=$("mcp-server-id").value;if(!id)return;try{await apiPost(`/api/mcp/servers/${id}/oauth/disconnect`);await loadMcpConsole();selectMcpServer(id);setMcpFeedback("OAuth token 已删除。","success");}catch(error){setMcpFeedback(`OAuth 断开失败：${error.message}`,"error");}});
+$("delete-mcp-server").addEventListener("click",async()=>{const id=$("mcp-server-id").value;if(!id||!confirm("删除这个全局 MCP 服务器及其加密凭据？"))return;const response=await fetch(`/api/mcp/servers/${id}`,{method:"DELETE"});if(!response.ok){setMcpFeedback(`删除失败：${response.statusText}`,"error");return;}await loadMcpConsole();setMcpFeedback("服务器已删除。","success");});
+$("mcp-approval-form").addEventListener("submit",event=>{event.preventDefault();answerMcpApproval("allow").catch(error=>trace("MCP 审批失败",error.message));});
+$("reject-mcp-approval").addEventListener("click",()=>answerMcpApproval("reject").catch(error=>trace("MCP 审批失败",error.message)));
 $("session-memory-search").addEventListener("input", renderMemorySessionPicker);
 $("cancel-new-connector").addEventListener("click", ()=>$("new-connector-dialog").close());
 $("new-connector-form").addEventListener("submit", async event=>{event.preventDefault(); const input=$("new-connector-name"); const name=input.value.trim(); if(!name){input.focus();return;} $("new-connector-dialog").close(); try{await createConnector(name);}catch(error){trace("保存连接器失败",error.message);connectorFeedback("保存失败","error");alert(`无法保存连接器：${error.message}`);}});
@@ -534,8 +677,9 @@ $("plan-agent").addEventListener("change",event=>{selectedPlanAgent=event.target
 $("refresh-graph").addEventListener("click",()=>loadInspectorAgents().catch(error=>trace("执行图加载失败",error.message)));
 $("refresh-trace").addEventListener("click",()=>loadTrace(true).catch(error=>trace("Trace 加载失败",error.message)));
 $("load-more-trace").addEventListener("click",()=>loadTrace(false).catch(error=>trace("Trace 加载失败",error.message)));
+$("chat").addEventListener("click",event=>{if(event.target.closest("#load-more-messages"))loadOlderMessages().catch(error=>trace("消息加载失败",error.message));});
+$("chat").addEventListener("scroll",()=>{if($("chat").scrollTop<=24&&messagesBefore!==null&&!messageLoadPending)loadOlderMessages().catch(error=>trace("消息加载失败",error.message));});
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
-$("task-plan").addEventListener("change",event=>{if(event.target.matches(".task-state"))updatePlanStatus(event.target.dataset.taskId,event.target.value).catch(error=>trace("任务更新失败",error.message));});
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
 async function initializeConsole() { initInspectorTabs(); bindSettingsPersistence(); await initPlugins(); await loadProviders(); await loadWorkspaces(); await loadConnectors(); restoreSettings(); applyProviderPreset(); updateModelSummary(); await Promise.all([loadPlan(),loadGraph(),loadTrace(true)]); await rehydrateSelectedView({reloadAgents:true}); await loadInspectorAgents(); }

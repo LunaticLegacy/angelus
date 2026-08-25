@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -369,8 +370,9 @@ class PersistenceTests(unittest.TestCase):
             self.assertTrue(h.save(path))
 
             self.assertEqual(h._pending, [])
+            checkpoint = json.loads(path.read_text(encoding="utf-8"))
             restored = GraphStore()
-            self.assertTrue(restored.load(f"{path}.graph.json"))
+            self.assertTrue(restored.load(path.with_name(checkpoint["graph_checkpoint"])))
             self.assertIsNotNone(restored.find_entity_by_name("durable.py"))
 
     def test_save_load_roundtrip(self):
@@ -385,7 +387,8 @@ class PersistenceTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "ctx.json"
             self.assertTrue(h.save(path))
-            self.assertTrue(Path(f"{path}.graph.json").exists())
+            checkpoint = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(path.with_name(checkpoint["graph_checkpoint"]).exists())
 
             h2 = GraphContextHandler(
                 compacting_fetcher=_RecordingCompactor(),

@@ -279,6 +279,9 @@ class ContextEditStore:
             )
             raw["messages"] = messages
             raw["context_editing"] = {"revision_id": revision.revision_id, "graph_stale": True}
+            raw["schema_version"] = max(2, int(raw.get("schema_version", 1) or 1))
+            raw["checkpoint_generation"] = uuid.uuid4().hex
+            raw.pop("graph_checkpoint", None)
             snapshot = {"revision": revision.to_dict(), "context": raw}
             _atomic_json(self.revision_dir / f"{revision.revision_id}.json", snapshot)
             _atomic_json(self.path, raw)
@@ -311,6 +314,9 @@ class ContextEditStore:
             )
             restored = dict(source_context)
             restored["context_editing"] = {"revision_id": new_revision.revision_id, "graph_stale": True}
+            restored["schema_version"] = max(2, int(restored.get("schema_version", 1) or 1))
+            restored["checkpoint_generation"] = uuid.uuid4().hex
+            restored.pop("graph_checkpoint", None)
             _atomic_json(self.revision_dir / f"{new_revision.revision_id}.json", {"revision": new_revision.to_dict(), "context": restored})
             _atomic_json(self.path, restored)
             self._append_audit(new_revision)
