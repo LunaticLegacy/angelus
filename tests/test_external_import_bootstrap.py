@@ -7,6 +7,7 @@ from pathlib import Path
 
 from angelus import external_agents, storage
 from angelus.external_providers.claude_code import ClaudeCodeProvider
+from angelus.history import _agent_turns_page
 
 
 def test_imported_history_seeds_the_coordinator_checkpoint(monkeypatch, tmp_path: Path) -> None:
@@ -39,6 +40,11 @@ def test_imported_history_seeds_the_coordinator_checkpoint(monkeypatch, tmp_path
     ]
     assert checkpoint["imported_context"]["active_messages"] == 2
     assert imported["meta"]["context_bootstrap"]["active_messages"] == 2
+
+    coordinator_page = _agent_turns_page(imported["id"], imported["id"], "coordinator")
+    assert [turn["content"] for turn in coordinator_page["messages"]] == [
+        "Fix the failed login", "I found the token parser failure.",
+    ]
 
 
 def test_claude_export_history_reads_only_discovered_transcript(tmp_path: Path) -> None:

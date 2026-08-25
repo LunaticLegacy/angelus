@@ -329,6 +329,43 @@ def _render_turn(turn: dict[str, Any]) -> dict[str, Any]:
     return rendered
 
 
+def _conversation_page(turns: list[dict[str, Any]], cursor: str | None, before: int | None, limit: int) -> dict[str, Any]:
+    """Page an imported conversation when no native lifecycle turns exist.
+
+    Args:
+        turns: Chronological display-safe messages from ``conversation.json``.
+        cursor: Opaque ``import:<offset>`` cursor from an earlier page.
+        before: Legacy exclusive message index used by older callers.
+        limit: Already clamped maximum returned message count.
+
+    Returns:
+        The same browser transcript envelope as the durable event projection.
+
+    Raises:
+        ValueError: If a supplied import fallback cursor is malformed.
+    """
+    total = len(turns)
+    if cursor is not None:
+        if not cursor.startswith("import:"):
+            raise ValueError("Invalid transcript cursor")
+        try:
+            end = int(cursor.removeprefix("import:"))
+        except ValueError as exc:
+            raise ValueError("Invalid transcript cursor") from exc
+        if not 0 <= end <= total:
+            raise ValueError("Invalid transcript cursor")
+    else:
+        end = total if before is None else max(0, min(int(before), total))
+    start = max(0, end - limit)
+    has_more = start > 0
+    return {
+        "messages": turns[start:end], "total": total,
+        "next_cursor": f"import:{start}" if has_more else None,
+        "has_more": has_more,
+        "next_before": start if has_more else None,
+    }
+
+
 def transcript_page(
     workspace_id: str,
     session_id: str,
@@ -369,6 +406,14 @@ def transcript_page(
         checkpoint = _synchronize_projection(session_path)
         projection_path = session_path / _PROJECTION_NAME
         total = int(checkpoint.get("shared_count", 0)) + int(checkpoint.get("agent_counts", {}).get("coordinator" if safe_agent == "all" else safe_agent, 0))
+        if total == 0 and "/" not in safe_workspace and safe_agent in {"all", "coordinator"}:
+            # Imported histories are intentionally non-executing audit events,
+            # not fabricated agent:round records.  They still belong to the
+            # Coordinator and must render in the normal chat pane.
+            from .transcripts import _read_session_history
+            imported_turns = _read_session_history(safe_workspace, safe_session)
+            if imported_turns:
+                return _conversation_page(imported_turns, cursor, before, page_limit)
         projection_length = int(checkpoint["projection_length"])
         if cursor is not None:
             try:

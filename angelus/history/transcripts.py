@@ -499,6 +499,14 @@ def _agent_turns_page(
                 before=before, limit=page_limit,
             )
     elif total == 0:
+        # External imports deliberately persist display turns rather than
+        # synthesizing Angelus lifecycle rounds.  The Coordinator filter is
+        # still the owner of that imported conversation, so present the same
+        # formatted projection instead of an empty Agent trace.
+        if safe_agent == "coordinator":
+            imported_turns = _read_session_history(workspace_id, session_id)
+            if imported_turns:
+                return _paginate_turns(imported_turns, before=before, limit=page_limit)
         context_path = (_path_resolver or _session_path)(workspace_id, session_id) / "contexts" / f"{safe_agent}.json"
         legacy = _turns_from_legacy_context(context_path)
         for turn in legacy:
