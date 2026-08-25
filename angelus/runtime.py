@@ -239,6 +239,95 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
     return agent
 
 
+def _build_http_worker_agent(
+    coordinator: Agent,
+    workspace_id: str,
+    session_id: str,
+    active: ActiveRun,
+    agent_name: str,
+    system_prompt: str,
+) -> Agent:
+    """Create one browser-added graph worker from the live coordinator.
+
+    Unlike a TaskBus-dispatched worker, a worker created through the graph
+    editor has no task assignment, so it must not receive the terminal
+    ``report_task`` tool (that tool would fail without a TaskBus record). It
+    reuses the coordinator's fetcher, compaction threshold, and execution
+    budgets so the new node is immediately runnable in the live Swarm.
+
+    Args:
+        coordinator: Live coordinator Agent already registered in the Swarm.
+            Its fetcher, context threshold, and default budgets are reused.
+        workspace_id: Storage partition owning the session.
+        session_id: Browser-stable session identity.
+        active: Process-local lifecycle holder for shell/MCP registration.
+        agent_name: New graph-local worker identity.
+        system_prompt: Worker role prompt supplied by the browser editor.
+
+    Returns:
+        Configured Agent with an isolated context path and no report tool.
+    """
+    fetcher = coordinator.llm_fetcher
+    worker = Agent(
+        llm_fetcher=fetcher,
+        system_prompt=system_prompt,
+        max_context_threshold=coordinator.max_context_threshold,
+        context_path=_context_path(workspace_id, session_id, agent_name),
+        default_max_rounds=coordinator.default_max_rounds,
+        default_max_tokens=coordinator.default_max_tokens,
+        enable_stop_turn=True,
+        default_stream=True,
+        # Graph long-term memory for the browser-added worker, persisted as
+        # ``<context_path>.graph.json`` and reusing the coordinator fetcher.
+        context_handler=GraphContextHandler(
+            compacting_fetcher=fetcher,
+            extraction_fetcher=SemanticGraphWorker(fetcher),
+            query_fetcher=SemanticGraphWorker(fetcher),
+            max_context_threshold=coordinator.max_context_threshold,
+        ),
+    )
+    _enable_optional_agent_controls(worker)
+    if "shell" in coordinator.tool_handler.tool_dict:
+        worker.add_tools(create_shell_tools(
+            sandbox_cwd=str(_project_path(workspace_id, session_id)),
+            register_process=(lambda process: active.register_process(process, agent_name)) if active else None,
+            unregister_process=active.unregister_process if active else None,
+            force_stop_event=active.control.for_agent(agent_name).force_stopped if active else None,
+        ))
+    worker.add_tools(_mcp_tools(active, agent_name))
+
+    def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
+        _publish_plan_change(active, workspace_id, session_id, agent_name, event_type, plan)
+
+    worker.add_tools(create_task_planning_tools(
+        _plan_store(workspace_id, session_id, agent_name),
+        on_changed=_on_plan_changed,
+    ))
+    worker.add_tools(create_session_memory_tools(
+        _session_memory_store(), session_id,
+        _worker_memory_capabilities(session_id), uuid.uuid4().hex,
+    ))
+    worker.add_tools(_bind_worker_context_tools(
+        workspace_id, session_id, agent_name, worker, [],
+    ))
+    return worker
+
+
+def _worker_memory_capabilities(current_session: str) -> dict[str, set[str]]:
+    """Return the default memory grants for a browser-added graph worker.
+
+    Browser-added workers have no persisted RunConfig, so they receive the
+    same conservative default as a coordinator with no extra session grants:
+    their own session only, for every capability.
+    """
+    return {
+        "session_memory.search_sessions": {current_session},
+        "session_memory.read_sessions": {current_session},
+        "session_artifact.search_sessions": {current_session},
+        "session_artifact.open_sessions": {current_session},
+    }
+
+
 def _mcp_tools(active: ActiveRun | None, agent_name: str) -> list[Any]:
     """Return registry-authorized MCP tools for one run Agent.
 
@@ -724,6 +813,7 @@ __all__ = [
     "_redacted_api_url",
     "_runtime_profile_snapshot",
     "_build_agent",
+    "_build_http_worker_agent",
     "_memory_capabilities",
     "_session_memory_store",
     "_plan_store",

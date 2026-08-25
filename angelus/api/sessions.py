@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from ..context_editing import ContextEditError, ContextEditOperation, ContextEditStore
 from ..classes import (
@@ -33,11 +34,12 @@ from ..history import (
     _read_agent_history,
     _session_usage_summary,
 )
-from ..runtime import _plan_store, _session_memory_store
+from ..runtime import _build_http_worker_agent, _plan_store, _session_memory_store
 from ..session_memory import CAPABILITIES, SessionMemoryError
 from .. import storage
 from ..storage import (
     _deleting_workspaces,
+    _get_session,
     _persist_json,
     _project_path,
     _iter_session_event_log,
@@ -55,6 +57,7 @@ from ..storage import (
     _write_workspaces,
 )
 from .runs import get_run_status
+from ..event_stream import publish_durable_event
 
 router = APIRouter()
 
@@ -698,6 +701,292 @@ def _reconcile_graph_view(
 def get_session_graph_by_id(session_id: str) -> dict[str, Any]:
     """Return a session's safe persisted execution-graph view."""
     return get_session_graph(session_id, session_id)
+
+
+class GraphAgentRequest(BaseModel):
+    """Create one browser-added Swarm worker node."""
+
+    name: str = Field(..., min_length=1, max_length=80)
+    system_prompt: str = Field(..., min_length=1)
+
+
+class GraphConnectionRequest(BaseModel):
+    """Add one dependency edge between two existing graph nodes."""
+
+    source: str = Field(..., min_length=1, max_length=80)
+    target: str = Field(..., min_length=1, max_length=80)
+
+
+class GraphMapperRequest(BaseModel):
+    """Set a safe declarative input aggregator on one agent node."""
+
+    agent: str = Field(..., min_length=1, max_length=80)
+    mode: str = "labelled"
+
+
+class GraphRouterRequest(BaseModel):
+    """Set a declarative router on one agent after its completion."""
+
+    agent: str = Field(..., min_length=1, max_length=80)
+    targets: list[str] = Field(default_factory=list)
+
+
+def _require_live_swarm(session_id: str) -> tuple[Any, Any]:
+    """Return ``(session, swarm)`` or reject edits against a live graph.
+
+    Browser-side graph editing requires the in-process Swarm that currently
+    owns this session. A completed, absent, or still-running-outside-turn
+    Swarm cannot accept safe topology mutations, so the request fails with
+    a 409 before contacting the graph.
+
+    Args:
+        session_id: Browser-visible session identity.
+
+    Returns:
+        The session holder (for locking) and its live :class:`AgentSwarm`.
+
+    Raises:
+        HTTPException: 409 when no live Swarm is currently active.
+    """
+    safe_session_id = _safe_id(session_id, "session")
+    session = _get_session(safe_session_id, safe_session_id)
+    if (
+        session.active is None
+        or session.active.swarm is None
+        or session.active.done.is_set()
+    ):
+        raise HTTPException(status_code=409, detail="No live swarm is active in this session")
+    return session, session.active.swarm
+
+
+def _persist_live_graph_view(session_id: str, swarm: Any) -> None:
+    """Atomically persist the live topology for the browser graph inspector.
+
+    Args:
+        session_id: Browser-visible session identity.
+        swarm: Live Swarm whose ``view_snapshot`` replaces ``graph-view.json``.
+    """
+    _persist_json(_session_path(session_id, session_id) / "graph-view.json", swarm.view_snapshot())
+
+
+def _publish_graph_mutation(
+    session: Any, session_id: str, action: str, detail: str,
+) -> None:
+    """Append one durable graph-edit event and relay it to live SSE clients.
+
+    Args:
+        session: Session holder carrying the live ``ActiveRun`` broker.
+        session_id: Browser-visible session identity.
+        action: Stable machine action (``add_agent``, ``remove_agent``, ...).
+        detail: Short human-readable mutation summary.
+    """
+    publish_durable_event(session.active, session_id, session_id, {
+        "event": "lifecycle",
+        "type": f"graph_edit:{action}",
+        "source": "graph",
+        "agent": "coordinator",
+        "message": detail,
+        "data": {"action": action, "detail": detail, "session_id": session_id},
+        "timestamp": time.time(),
+    })
+
+
+@router.post("/api/sessions/{session_id}/graph/agents")
+def add_graph_agent(session_id: str, request: GraphAgentRequest) -> dict[str, Any]:
+    """Create and register a new live Swarm worker from browser settings.
+
+    The worker reuses the live coordinator's fetcher, compaction threshold,
+    and execution budgets; its context stays isolated under its own path and
+    it never receives the TaskBus-bound ``report_task`` tool.
+
+    Args:
+        session_id: Browser-visible session identity.
+        request: New worker name and role prompt.
+
+    Returns:
+        Mutation status plus the live persisted graph snapshot.
+
+    Raises:
+        HTTPException: 409 when the graph rejects the requested identity.
+    """
+    agent_name = _safe_id(request.name, "agent")
+    session, swarm = _require_live_swarm(session_id)
+    with session.lock:
+        coordinator = swarm.get_agent("coordinator")
+        if coordinator is None:
+            raise HTTPException(status_code=409, detail="Coordinator is missing from the live swarm")
+        worker = _build_http_worker_agent(
+            coordinator, session_id, session_id,
+            session.active, agent_name, request.system_prompt,
+        )
+        status = swarm.dynamic_add_agent(agent_name, worker)
+        if status.startswith("Error"):
+            raise HTTPException(status_code=409, detail=status)
+        _persist_live_graph_view(session_id, swarm)
+    _publish_graph_mutation(session, session_id, "add_agent", status)
+    return {"ok": True, "status": status, "agent": agent_name}
+
+
+@router.delete("/api/sessions/{session_id}/graph/agents")
+def remove_graph_agent(session_id: str, name: str) -> dict[str, Any]:
+    """Remove a single live Swarm node and every edge touching it.
+
+    Args:
+        session_id: Browser-visible session identity.
+        name: Existing graph node identity to remove.
+
+    Returns:
+        Mutation status plus the live persisted graph snapshot.
+
+    Raises:
+        HTTPException: 409 for unknown nodes or the protected coordinator.
+    """
+    agent_name = _safe_id(name, "agent")
+    if agent_name == "coordinator":
+        raise HTTPException(status_code=400, detail="The coordinator node cannot be removed")
+    session, swarm = _require_live_swarm(session_id)
+    with session.lock:
+        if swarm.get_agent(agent_name) is None:
+            raise HTTPException(status_code=409, detail=f"Agent '{agent_name}' does not exist")
+        status = swarm.dynamic_remove_agent(agent_name)
+        if status.startswith("Error"):
+            raise HTTPException(status_code=409, detail=status)
+        _persist_live_graph_view(session_id, swarm)
+    _publish_graph_mutation(session, session_id, "remove_agent", status)
+    return {"ok": True, "status": status, "agent": agent_name}
+
+
+@router.post("/api/sessions/{session_id}/graph/connections")
+def add_graph_connection(session_id: str, request: GraphConnectionRequest) -> dict[str, Any]:
+    """Add one dependency edge between two existing live graph nodes.
+
+    Args:
+        session_id: Browser-visible session identity.
+        request: Predecessor ``source`` and successor ``target`` identities.
+
+    Returns:
+        Mutation status plus the live persisted graph snapshot.
+    """
+    source = _safe_id(request.source, "agent")
+    target = _safe_id(request.target, "agent")
+    session, swarm = _require_live_swarm(session_id)
+    with session.lock:
+        status = swarm.dynamic_add_connection(source, target)
+        if status.startswith("Error"):
+            raise HTTPException(status_code=409, detail=status)
+        _persist_live_graph_view(session_id, swarm)
+    _publish_graph_mutation(session, session_id, "add_connection", status)
+    return {"ok": True, "status": status, "source": source, "target": target}
+
+
+@router.delete("/api/sessions/{session_id}/graph/connections")
+def remove_graph_connection(session_id: str, source: str, target: str) -> dict[str, Any]:
+    """Remove one dependency edge between two live graph nodes.
+
+    Args:
+        session_id: Browser-visible session identity.
+        source: Predecessor node identity.
+        target: Successor node identity.
+
+    Returns:
+        Mutation status plus the live persisted graph snapshot.
+    """
+    safe_source = _safe_id(source, "agent")
+    safe_target = _safe_id(target, "agent")
+    session, swarm = _require_live_swarm(session_id)
+    with session.lock:
+        status = swarm.dynamic_remove_connection(safe_source, safe_target)
+        if status.startswith("Error"):
+            raise HTTPException(status_code=409, detail=status)
+        _persist_live_graph_view(session_id, swarm)
+    _publish_graph_mutation(session, session_id, "remove_connection", status)
+    return {"ok": True, "status": status, "source": safe_source, "target": safe_target}
+
+
+@router.post("/api/sessions/{session_id}/graph/mapper")
+def set_graph_mapper(session_id: str, request: GraphMapperRequest) -> dict[str, Any]:
+    """Set a safe declarative input mapper on one live agent node.
+
+    Args:
+        session_id: Browser-visible session identity.
+        request: Target agent and one of ``labelled``, ``concat``, ``json``.
+
+    Returns:
+        Mutation status plus the live persisted graph snapshot.
+    """
+    agent_name = _safe_id(request.agent, "agent")
+    session, swarm = _require_live_swarm(session_id)
+    with session.lock:
+        status = swarm.dynamic_set_mapper(agent_name, request.mode)
+        if status.startswith("Error"):
+            raise HTTPException(status_code=409, detail=status)
+        _persist_live_graph_view(session_id, swarm)
+    _publish_graph_mutation(session, session_id, "set_mapper", status)
+    return {"ok": True, "status": status, "agent": agent_name, "mode": request.mode}
+
+
+@router.post("/api/sessions/{session_id}/graph/router")
+def set_graph_router(session_id: str, request: GraphRouterRequest) -> dict[str, Any]:
+    """Set a declarative successor router on one live agent node.
+
+    Args:
+        session_id: Browser-visible session identity.
+        request: Source agent and an ordered list of successor names.
+
+    Returns:
+        Mutation status plus the live persisted graph snapshot.
+    """
+    agent_name = _safe_id(request.agent, "agent")
+    targets = [_safe_id(str(target), "agent") for target in request.targets]
+    session, swarm = _require_live_swarm(session_id)
+    with session.lock:
+        status = swarm.dynamic_set_router(agent_name, targets)
+        if status.startswith("Error"):
+            raise HTTPException(status_code=409, detail=status)
+        _persist_live_graph_view(session_id, swarm)
+    _publish_graph_mutation(session, session_id, "set_router", status)
+    return {"ok": True, "status": status, "agent": agent_name, "targets": targets}
+
+
+@router.get("/api/sessions/{session_id}/graph/info")
+def get_graph_edit_info(session_id: str) -> dict[str, Any]:
+    """Return a compact live topology view for the graph editing toolbar.
+
+    Unlike the heavy reconciled graph view, this endpoint returns only the
+    node names, dependency edges, and concurrency cap needed to populate
+    editing pickers for a live Swarm.
+
+    Args:
+        session_id: Browser-visible session identity.
+
+    Returns:
+        Live ``nodes``, ``edges``, ``max_concurrency_agents`` and an ``ok``
+        flag. Fails with 409 when no live Swarm is active.
+    """
+    swarm = _require_live_swarm(session_id)[1]
+    snapshot = swarm.view_snapshot()
+    nodes = sorted({
+        str(node.get("id", ""))
+        for node in snapshot.get("nodes", [])
+        if isinstance(node, dict) and str(node.get("id", ""))
+    })
+    edges = [
+        {
+            "source": str(edge.get("source", "")),
+            "target": str(edge.get("target", "")),
+            "kind": str(edge.get("kind", "dependency")),
+        }
+        for edge in snapshot.get("edges", [])
+        if isinstance(edge, dict)
+    ]
+    return {
+        "ok": True,
+        "nodes": nodes,
+        "edges": edges,
+        "max_concurrency_agents": snapshot.get("max_concurrency_agents"),
+    }
+
+
 
 @router.get("/api/sessions/{session_id}/events")
 def get_session_events(

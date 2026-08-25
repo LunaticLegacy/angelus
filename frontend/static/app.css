@@ -159,6 +159,14 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 /* The Agents tab is a delegation tree first, then the lower-level graph
    details.  This keeps the coordinator → worker relationship legible. */
 .agents-legend { margin:0; color:var(--muted); font-size:9px; line-height:1.45; }.agents-legend i { display:inline-block; width:16px; margin-right:4px; border-top:1px solid #52617a; vertical-align:middle; }
+.graph-edit-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:5px; padding:6px; border:1px solid var(--line); border-radius:8px; background:#0d1727; }
+.graph-edit-button { padding:4px 7px; border:1px solid var(--line2); border-radius:6px; background:#17253b; color:var(--soft); font-size:9px; white-space:nowrap; }
+.graph-edit-button:hover:not(:disabled) { border-color:#7565d2; color:var(--text); }
+.graph-edit-button:disabled { opacity:.45; cursor:not-allowed; }
+.graph-edit-status { min-width:0; flex:1 1 100%; margin:0; color:var(--muted); font-size:8px; line-height:1.4; overflow-wrap:anywhere; }
+.graph-edit-status.success { color:var(--green); }
+.graph-edit-status.error { color:var(--red); }
+.graph-edit-status.muted { color:#6e7b91; }
 .plan-agent-picker { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; border:1px solid var(--line); border-radius:6px; background:#101a2b; color:var(--muted); font-size:9px; }.plan-agent-picker select { width:auto; max-width:68%; margin:0; padding:4px 22px 4px 6px; font-size:9px; }
 .mcp-settings { display:grid; gap:7px; padding:10px; border:1px solid #354663; border-radius:7px; background:linear-gradient(135deg,#101d31,#0d1727); }.mcp-settings > p { margin:0; color:var(--muted); font-size:9px; line-height:1.5; }.mcp-settings > label:not(.toggle-line) { display:grid; gap:5px; color:var(--muted); font-size:10px; }.mcp-settings textarea { min-height:128px; resize:vertical; font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
 .inspector-agents-list { flex:1 1 auto; min-height:0; max-height:none; padding:1px 3px 1px 1px; }.agent-topology-branch { position:relative; }.agent-topology-children { margin:0 0 4px 12px; padding-left:10px; border-left:1px solid #42516d; }.agent-topology-children > .agent-topology-branch::before { content:""; position:absolute; top:20px; left:-11px; width:10px; border-top:1px solid #42516d; }
@@ -241,6 +249,8 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 :root[data-theme="light"] .activity { background:linear-gradient(180deg,#ffffff,#f7f9fd); }
 :root[data-theme="light"] .metrics div,:root[data-theme="light"] .task-block,:root[data-theme="light"] .graph-node,:root[data-theme="light"] .trace-toggle,:root[data-theme="light"] .inspector-agent,:root[data-theme="light"] .usage-total div,:root[data-theme="light"] .usage-agent,:root[data-theme="light"] .agent-behavior,:root[data-theme="light"] .agent-behavior-block { background:#f7f9fd; }
 :root[data-theme="light"] .refresh-button,:root[data-theme="light"] .load-more-trace,:root[data-theme="light"] .load-more-messages { background:#e9edf6; }
+:root[data-theme="light"] .graph-edit-toolbar { background:#f7f9fd; }
+:root[data-theme="light"] .graph-edit-button { background:#e9edf6; }
 :root[data-theme="light"] .load-more-trace:hover,:root[data-theme="light"] .load-more-messages:hover { border-color:#9fb2d8; }
 :root[data-theme="light"] .empty { color:#8b96ab; }
 :root[data-theme="light"] .task-block { border-left-color:#c6d2e6; }

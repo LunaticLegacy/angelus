@@ -367,7 +367,84 @@ function renderAgentTopology(agents, graph) {
     control.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openContextGraph(control.dataset.contextAgent);}});
   });
 }
-async function loadInspectorAgents() { const [agentPayload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/agents`),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,graphPayload);renderAgentSelector(agentPayload.agents); }
+async function loadInspectorAgents() { const [agentPayload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/agents`),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,graphPayload);renderAgentSelector(agentPayload.agents); loadGraphEditInfo(); }
+function graphEditUrl() { return `/api/sessions/${sessionId}/graph`; }
+let graphEditStatusTimer = null;
+function graphEditFeedback(text="", state="") { const el=$("graph-edit-status"); if(!el) return; el.textContent=text; el.className=state ? `graph-edit-status ${state}` : "graph-edit-status"; clearTimeout(graphEditStatusTimer); if(state) graphEditStatusTimer=setTimeout(()=>graphEditFeedback("",""),5000); }
+/** Reflect live-Swarm availability into the graph-edit toolbar controls. */
+async function loadGraphEditInfo() {
+  const editableButtons=["graph-add-connection","graph-remove-agent","graph-remove-connection","graph-set-mapper","graph-set-router"];
+  const allButtons=["graph-add-agent",...editableButtons];
+  const setDisabled=(list,disabled)=>list.forEach(id=>{const el=$(id);if(el)el.disabled=disabled;});
+  try {
+    const info=await apiJson(`${graphEditUrl()}/info`);
+    const nodes=info.nodes||[];
+    setDisabled(allButtons,false);
+    setDisabled(editableButtons,nodes.length===0);
+    graphEditFeedback(nodes.length ? `活动 Swarm · ${nodes.length} 节点${info.max_concurrency_agents ? ` · 并发 ${info.max_concurrency_agents}` : ""}` : "活动 Swarm · 仅协调者");
+  } catch(error) {
+    setDisabled(allButtons,true);
+    graphEditFeedback("无活动 Swarm · 图编辑不可用","muted");
+  }
+}
+async function graphAddAgent() {
+  const name=(prompt("新 Agent 名称（字母/数字/_/-，最长 80）：")||"").trim();
+  if(!name) return;
+  const system_prompt=(prompt(`Agent「${name}」的角色提示词：`)||"").trim();
+  if(!system_prompt){ graphEditFeedback("角色提示词不能为空","error"); return; }
+  const payload=await apiPost(`${graphEditUrl()}/agents`,{name,system_prompt});
+  graphEditFeedback(payload.status||`Agent ${name} 已添加`,"success");
+  await loadInspectorAgents();
+}
+async function graphConnect() {
+  const source=(prompt("连接起点（source Agent）：")||"").trim();
+  if(!source) return;
+  const target=(prompt(`连接终点（target Agent，由 ${source} 调度）：`)||"").trim();
+  if(!target) return;
+  const payload=await apiPost(`${graphEditUrl()}/connections`,{source,target});
+  graphEditFeedback(payload.status||`已连接 ${source} → ${target}`,"success");
+  await loadInspectorAgents();
+}
+async function graphRemoveAgent() {
+  const candidates=(currentGraph.nodes||[]).map(node=>node.id||"").filter(id=>id && id!=="coordinator");
+  const name=(prompt(`删除哪个 Agent？（可用：${candidates.join("、") || "无"}）`)||"").trim();
+  if(!name) return;
+  if(name==="coordinator"){ graphEditFeedback("协调者节点不能删除","error"); return; }
+  if(!confirm(`删除 Agent「${name}」及其所有连接？`)) return;
+  const response=await fetch(`${graphEditUrl()}/agents?name=${encodeURIComponent(name)}`,{method:"DELETE"});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
+  graphEditFeedback(payload.status||`Agent ${name} 已删除`,"success");
+  await loadInspectorAgents();
+}
+async function graphDisconnect() {
+  const source=(prompt("连接起点（source）：")||"").trim();
+  if(!source) return;
+  const target=(prompt("连接终点（target）：")||"").trim();
+  if(!target) return;
+  const response=await fetch(`${graphEditUrl()}/connections?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`,{method:"DELETE"});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
+  graphEditFeedback(payload.status||`已断开 ${source} → ${target}`,"success");
+  await loadInspectorAgents();
+}
+async function graphSetMapper() {
+  const agent=(prompt("目标 Agent：")||"").trim();
+  if(!agent) return;
+  const mode=(prompt("聚合模式（labelled / concat / json）：","labelled")||"labelled").trim();
+  const payload=await apiPost(`${graphEditUrl()}/mapper`,{agent,mode});
+  graphEditFeedback(payload.status||`Mapper ${mode} 已设置`,"success");
+  await loadInspectorAgents();
+}
+async function graphSetRouter() {
+  const agent=(prompt("路由源 Agent：")||"").trim();
+  if(!agent) return;
+  const raw=(prompt("后继 Agent 列表（逗号分隔）：")||"").trim();
+  const targets=raw ? raw.split(/[,\s，]+/).map(v=>v.trim()).filter(Boolean) : [];
+  const payload=await apiPost(`${graphEditUrl()}/router`,{agent,targets});
+  graphEditFeedback(payload.status||`Router 已设置（${targets.join("、")||"无"}）`,"success");
+  await loadInspectorAgents();
+}
 function usageCells(usage, run=null) { return [["Input","input"],["Output","output"],["Total","total"],["Cached","cached"],["Reasoning","reasoning"]].map(([label,key])=>`<span>${run ? `<i class="usage-round">+${Number(run[key] || 0).toLocaleString()}</i>` : ""}<small>${label}</small><b>${Number(usage[key] || 0).toLocaleString()}</b></span>`).join(""); }
 /** Render per-Agent token totals with the same reconciled state lights as other Agent surfaces. */
 async function loadUsage() { const [payload,graphPayload]=await Promise.all([apiJson(`/api/sessions/${sessionId}/usage`),apiJson(graphUrl()).catch(()=>null)]); if(graphPayload) currentGraph=graphPayload; const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage, payload.run).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>{const view=agentStateView(agent.id); return `<article class="usage-agent"><header><span class="usage-agent-title"><i class="agent-state ${escapeHtml(view.ui)}" title="${escapeHtml(view.message)}"></i><strong>${escapeHtml(agent.id)}</strong></span><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage, agent.run)}</div></article>`;}).join(""); }
@@ -683,6 +760,12 @@ $("delete-connector").addEventListener("click", async()=>{if(!connectorId||!conf
 $("refresh-plan").addEventListener("click",()=>loadPlan().catch(error=>trace("任务规划加载失败",error.message)));
 $("plan-agent").addEventListener("change",event=>{selectedPlanAgent=event.target.value||"coordinator";localStorage.llmfetcherPlanAgent=selectedPlanAgent;loadPlan().catch(error=>trace("任务规划加载失败",error.message));});
 $("refresh-graph").addEventListener("click",()=>loadInspectorAgents().catch(error=>trace("执行图加载失败",error.message)));
+$("graph-add-agent").addEventListener("click",()=>graphAddAgent().catch(error=>{trace("图编辑失败",error.message);graphEditFeedback(error.message,"error");}));
+$("graph-add-connection").addEventListener("click",()=>graphConnect().catch(error=>{trace("图编辑失败",error.message);graphEditFeedback(error.message,"error");}));
+$("graph-remove-agent").addEventListener("click",()=>graphRemoveAgent().catch(error=>{trace("图编辑失败",error.message);graphEditFeedback(error.message,"error");}));
+$("graph-remove-connection").addEventListener("click",()=>graphDisconnect().catch(error=>{trace("图编辑失败",error.message);graphEditFeedback(error.message,"error");}));
+$("graph-set-mapper").addEventListener("click",()=>graphSetMapper().catch(error=>{trace("图编辑失败",error.message);graphEditFeedback(error.message,"error");}));
+$("graph-set-router").addEventListener("click",()=>graphSetRouter().catch(error=>{trace("图编辑失败",error.message);graphEditFeedback(error.message,"error");}));
 $("refresh-trace").addEventListener("click",()=>loadTrace(true).catch(error=>trace("Trace 加载失败",error.message)));
 $("load-more-trace").addEventListener("click",()=>loadTrace(false).catch(error=>trace("Trace 加载失败",error.message)));
 $("chat").addEventListener("click",event=>{if(event.target.closest("#load-more-messages"))loadOlderMessages().catch(error=>trace("消息加载失败",error.message));});
