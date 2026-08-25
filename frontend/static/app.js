@@ -88,7 +88,16 @@ function profileUrl() { return $("profile-scope")?.value==="global"?"/api/run-pr
 function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell);$("enable-swarm").checked=Boolean(settings.enable_swarm); const status=$("profile-status"),scope=$("profile-scope"); if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?"<b>继承全局默认</b> · 有效值由默认档案提供。":"<b>会话 Coordinator 覆盖</b> · 当前编辑完整 Agent 档案。"; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); }
 async function restoreSettings() { if(!workspaceId||!$("profile-scope"))return; const profile=await apiJson(profileUrl()); applyProfile(profile); }
 async function persistSettings() { if(!workspaceId||!$("profile-scope"))return; const profile=await apiPut(profileUrl(),profilePayload()); applyProfile(profile); }
-function bindSettingsPersistence() { [...agentSettingsIds,...connectionDraftIds,"enable-shell","enable-swarm"].forEach(id=>["change"].forEach(event=>$(id).addEventListener(event,()=>persistSettings().catch(error=>trace("保存运行档案失败",error.message)))); }
+function bindSettingsPersistence() {
+  /** Persist only completed field changes, leaving live typing responsive. */
+  [...agentSettingsIds, ...connectionDraftIds, "enable-shell", "enable-swarm"].forEach((id) => {
+    ["change"].forEach((event) => {
+      $(id).addEventListener(event, () => {
+        persistSettings().catch((error) => trace("保存运行档案失败", error.message));
+      });
+    });
+  });
+}
 const TOOL_GROUPS={planning:["set_task_plan","update_task_status","read_task_plan"],file_discovery:["tlb_rag"],session_memory:["search_session_memory","read_session_memory","search_session_artifacts","open_session_artifact"],handoff:["handoff_session","create_session_handoff"],context:["read_context","edit_context","restore_context"],shell:["shell"],swarm:["dispatch_subagent","dispatch_subagents","revive_agent","wait_for_reports","report_task","dynamic_add_agent","dynamic_add_connection","dynamic_remove_agent","dynamic_remove_connection","dynamic_set_mapper","dynamic_set_router","dynamic_get_info"],mcp:["mcp"],turn_control:["stop_turn"]};
 function renderToolPermissions(policy) { const target=$("tool-permissions");if(!target)return;const categories=policy.categories||{},tools=policy.tools||{};target.innerHTML=Object.entries(TOOL_GROUPS).map(([group,names])=>`<fieldset class="permission-group"><label><input type="checkbox" data-permission-category="${group}" ${categories[group]?"checked":""}/> ${group}</label><div>${names.map(name=>`<label><input type="checkbox" data-permission-tool="${name}" ${tools[name]?"checked":""}/> ${name}</label>`).join("")}</div></fieldset>`).join("");target.querySelectorAll("input").forEach(input=>input.addEventListener("change",async()=>{const next={categories:{...categories},tools:{...tools}};if(input.dataset.permissionCategory)next.categories[input.dataset.permissionCategory]=input.checked;else next.tools[input.dataset.permissionTool]=input.checked;const profile=await apiPut(profileUrl(),{tool_permissions:next});applyProfile(profile);})); }
 function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
