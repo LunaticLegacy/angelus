@@ -17,6 +17,7 @@ from llmfetcher.swarm_module import GraphPersistenceError
 from llmfetcher.swarm_module.swarm import AgentSwarm
 from llmfetcher.tools.shell_tools import create_shell_tools
 from llmfetcher.tools.spawn_tools import create_swarm_tools, create_task_report_tool
+from llmfetcher.rag_module_tlb import create_tlb_rag_tool
 
 from .classes import ActiveRun, RunConfig
 from .context_editing import ContextEditStore, create_context_editing_tools
@@ -35,6 +36,53 @@ from .storage import (
     _session_path,
 )
 from .task_planning import TaskPlanStore, create_task_planning_tools
+
+
+# Runtime enforcement is intentionally close to tool registration: disabled
+# tools are not merely rejected at invocation time; they are absent from the
+# model-visible schema.  Categories are stable settings keys, while the name
+# fallback lets future first-party tools remain safely disabled by default.
+TOOL_CATEGORIES: dict[str, set[str]] = {
+    "planning": {"set_task_plan", "update_task_status", "read_task_plan"},
+    "file_discovery": {"tlb_rag"},
+    "session_memory": {"search_session_memory", "read_session_memory", "search_session_artifacts", "open_session_artifact"},
+    "handoff": {"handoff_session", "create_session_handoff"},
+    "context": {"read_context", "edit_context", "restore_context"},
+    "shell": {"shell"},
+    "swarm": {"dispatch_subagent", "dispatch_subagents", "revive_agent", "wait_for_reports", "report_task", "dynamic_add_agent", "dynamic_add_connection", "dynamic_remove_agent", "dynamic_remove_connection", "dynamic_set_mapper", "dynamic_set_router", "dynamic_get_info"},
+    "mcp": set(),
+    "turn_control": {"stop_turn"},
+}
+
+
+def _tool_permitted(config: RunConfig, category: str, tool_name: str) -> bool:
+    """Return whether a category and one named tool are both explicitly enabled.
+
+    Args:
+        config: Frozen run profile containing ``tool_permissions``.
+        category: Stable first-party tool group or ``mcp``.
+        tool_name: Registered tool name.  MCP names are server-qualified.
+
+    Returns:
+        ``True`` only when the category and concrete tool toggles are true.
+    """
+    policy = config.tool_permissions if isinstance(config.tool_permissions, dict) else {}
+    categories = policy.get("categories", {})
+    tools = policy.get("tools", {})
+    return bool(isinstance(categories, dict) and categories.get(category) is True and
+                isinstance(tools, dict) and tools.get(tool_name) is True)
+
+
+def _category_permitted(config: RunConfig, category: str) -> bool:
+    """Return whether a category gate is enabled before per-tool filtering."""
+    policy = config.tool_permissions if isinstance(config.tool_permissions, dict) else {}
+    categories = policy.get("categories", {})
+    return bool(isinstance(categories, dict) and categories.get(category) is True)
+
+
+def _allowed_tools(config: RunConfig, category: str, tools: list[Any]) -> list[Any]:
+    """Filter generated tools to the explicit two-level permission allowlist."""
+    return [tool for tool in tools if _tool_permitted(config, category, str(getattr(tool, "name", "")))]
 
 
 
@@ -99,6 +147,7 @@ def _runtime_profile_snapshot(
         "max_retries": config.max_retries,
         "max_context_threshold": config.max_context_threshold,
         "enable_shell": config.enable_shell,
+        "tool_permissions": config.tool_permissions,
         "mcp_servers": sorted(
             ({"name": str(server.get("name", "")), "transport": str(server.get("transport", "stdio"))}
              for server in (mcp_servers or [])),
@@ -117,7 +166,7 @@ def _runtime_profile_snapshot(
     return {**profile, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
 
-def _enable_optional_agent_controls(agent: Agent) -> None:
+def _enable_optional_agent_controls(agent: Agent, config: RunConfig) -> None:
     """Enable first-party streaming controls without requiring a new Agent ABI.
 
     A desktop sidecar can temporarily import an older installed LLMFetcher
@@ -126,7 +175,7 @@ def _enable_optional_agent_controls(agent: Agent) -> None:
     opt into new behavior only through post-construction capabilities.
     """
     add_stop_turn = getattr(agent, "add_stop_turn_tool", None)
-    if callable(add_stop_turn):
+    if callable(add_stop_turn) and _tool_permitted(config, "turn_control", "stop_turn"):
         add_stop_turn()
     if hasattr(agent, "default_stream"):
         agent.default_stream = True
@@ -189,9 +238,14 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
 
         active.mcp_sampling_handler = sample_mcp
     semantic_worker = SemanticGraphWorker(fetcher)
+    planning_instruction = (
+        "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. "
+        "Keep task status current with update_task_status as work progresses."
+        if _tool_permitted(config, "planning", "set_task_plan") else ""
+    )
     agent = Agent(
         llm_fetcher=fetcher,
-        system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses. In a Swarm, every dispatched or revived work package must use a leaf plan task ID as plan_task_id; plans do not dispatch work by themselves." + f"\n\nThe current project root is {json.dumps(str(project_path), ensure_ascii=False)}. Treat it as the authoritative working directory for project files; Angelus runtime state is stored separately."),
+        system_prompt=(config.system_prompt + planning_instruction + f"\n\nThe current project root is {json.dumps(str(project_path), ensure_ascii=False)}. Treat it as the authoritative working directory for project files; Angelus runtime state is stored separately."),
         # Keep browser-selected compaction behavior consistent for the
         # coordinator and every subsequently created session Agent.
         max_context_threshold=config.max_context_threshold,
@@ -209,33 +263,39 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
             max_context_threshold=config.max_context_threshold,
         ),
     )
-    _enable_optional_agent_controls(agent)
+    # Dynamic workers copy this frozen profile rather than consulting settings
+    # mid-run, which preserves the run-boundary audit guarantee.
+    agent._angelus_run_config = config  # type: ignore[attr-defined]
+    _enable_optional_agent_controls(agent, config)
     if config.enable_shell:
-        agent.add_tools(create_shell_tools(
+        agent.add_tools(_allowed_tools(config, "shell", create_shell_tools(
             sandbox_cwd=str(project_path),
             register_process=(lambda process: active.register_process(process, agent_name)) if active else None,
             unregister_process=active.unregister_process if active else None,
             force_stop_event=active.control.for_agent(agent_name).force_stopped if active else None,
-        ))
-    agent.add_tools(_mcp_tools(active, agent_name))
+        )))
+    agent.add_tools(_allowed_tools(config, "file_discovery", [
+        create_tlb_rag_tool(project_path, fetcher),
+    ]))
+    agent.add_tools(_mcp_tools(active, agent_name, config))
     def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
         _publish_plan_change(
             active, workspace_id, session_id, agent_name, event_type, plan
         )
 
-    agent.add_tools(create_task_planning_tools(
+    agent.add_tools(_allowed_tools(config, "planning", create_task_planning_tools(
         _plan_store(workspace_id, session_id),
         on_changed=_on_plan_changed,
-    ))
-    agent.add_tools(create_session_memory_tools(
+    )))
+    agent.add_tools(_allowed_tools(config, "session_memory", create_session_memory_tools(
         _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
-    ))
+    )))
     context_path = _context_path(workspace_id, session_id, agent_name)
-    agent.add_tools(create_context_editing_tools(
+    agent.add_tools(_allowed_tools(config, "context", create_context_editing_tools(
         ContextEditStore(context_path, agent_name),
         persist_context=lambda: agent.context_handler.save(context_path),
         reload_context=lambda: agent.context_handler.load(context_path),
-    ))
+    )))
     return agent
 
 
@@ -286,30 +346,31 @@ def _build_http_worker_agent(
             max_context_threshold=coordinator.max_context_threshold,
         ),
     )
-    _enable_optional_agent_controls(worker)
+    inherited_config = getattr(coordinator, "_angelus_run_config", RunConfig(model=""))
+    _enable_optional_agent_controls(worker, inherited_config)
     if "shell" in coordinator.tool_handler.tool_dict:
-        worker.add_tools(create_shell_tools(
+        worker.add_tools(_allowed_tools(inherited_config, "shell", create_shell_tools(
             sandbox_cwd=str(_project_path(workspace_id, session_id)),
             register_process=(lambda process: active.register_process(process, agent_name)) if active else None,
             unregister_process=active.unregister_process if active else None,
             force_stop_event=active.control.for_agent(agent_name).force_stopped if active else None,
-        ))
-    worker.add_tools(_mcp_tools(active, agent_name))
+        )))
+    worker.add_tools(_mcp_tools(active, agent_name, inherited_config))
 
     def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
         _publish_plan_change(active, workspace_id, session_id, agent_name, event_type, plan)
 
-    worker.add_tools(create_task_planning_tools(
+    worker.add_tools(_allowed_tools(inherited_config, "planning", create_task_planning_tools(
         _plan_store(workspace_id, session_id, agent_name),
         on_changed=_on_plan_changed,
-    ))
-    worker.add_tools(create_session_memory_tools(
+    )))
+    worker.add_tools(_allowed_tools(inherited_config, "session_memory", create_session_memory_tools(
         _session_memory_store(), session_id,
         _worker_memory_capabilities(session_id), uuid.uuid4().hex,
-    ))
-    worker.add_tools(_bind_worker_context_tools(
+    )))
+    worker.add_tools(_allowed_tools(inherited_config, "context", _bind_worker_context_tools(
         workspace_id, session_id, agent_name, worker, [],
-    ))
+    )))
     return worker
 
 
@@ -328,14 +389,14 @@ def _worker_memory_capabilities(current_session: str) -> dict[str, set[str]]:
     }
 
 
-def _mcp_tools(active: ActiveRun | None, agent_name: str) -> list[Any]:
+def _mcp_tools(active: ActiveRun | None, agent_name: str, config: RunConfig) -> list[Any]:
     """Return registry-authorized MCP tools for one run Agent.
 
     Args:
         active: Run lifecycle holder containing resolved session bindings.
         agent_name: Concrete graph identity; dynamic names use worker policy.
     """
-    if active is None or not active.mcp_servers:
+    if active is None or not active.mcp_servers or not _category_permitted(config, "mcp"):
         return []
     if active.mcp_bridge is None:
         bridge, tools = create_mcp_tools(
@@ -362,7 +423,12 @@ def _mcp_tools(active: ActiveRun | None, agent_name: str) -> list[Any]:
         parts = str(tool.name).split(".", 2)
         if len(parts) != 3 or parts[1] not in policies:
             continue
-        authorized.append(tool)
+        # MCP has the existing server/role/tool grant plus the profile's
+        # category switch. Individual MCP tools may be enabled by their full
+        # registered name; the synthetic ``mcp`` toggle enables the granted
+        # set for convenient category-wide selection.
+        if _tool_permitted(config, "mcp", str(tool.name)) or _tool_permitted(config, "mcp", "mcp"):
+            authorized.append(tool)
     return authorized
 
 def _memory_capabilities(config: RunConfig, current_session: str) -> dict[str, set[str]]:
@@ -466,22 +532,22 @@ def _worker_tools_for(
         """Publish mutations to the plan owned by this one worker."""
         _publish_plan_change(active, workspace_id, session_id, agent_name, event_type, plan)
 
-    tools = create_task_planning_tools(
+    tools = _allowed_tools(config, "planning", create_task_planning_tools(
         _plan_store(workspace_id, session_id, agent_name),
         on_changed=on_plan_changed,
-    )
-    tools.extend(create_session_memory_tools(
+    ))
+    tools.extend(_allowed_tools(config, "session_memory", create_session_memory_tools(
         _session_memory_store(), session_id,
         _memory_capabilities(config, session_id), uuid.uuid4().hex,
-    ))
+    )))
     if config.enable_shell:
-        tools.extend(create_shell_tools(
+        tools.extend(_allowed_tools(config, "shell", create_shell_tools(
             sandbox_cwd=str(_project_path(workspace_id, session_id)),
             register_process=lambda process: active.register_process(process, agent_name),
             unregister_process=active.unregister_process,
             force_stop_event=active.control.for_agent(agent_name).force_stopped,
-        ))
-    tools.extend(_mcp_tools(active, agent_name))
+        )))
+    tools.extend(_mcp_tools(active, agent_name, config))
     return tools
 
 
@@ -533,6 +599,8 @@ def _attach_swarm_runtime_tools(
     Side Effects:
         Adds dispatch, graph-control, and revival tools to ``coordinator``.
     """
+    if not _tool_permitted(config, "swarm", "dispatch_subagent"):
+        return
     swarm_tool_kwargs: dict[str, Any] = {
         "swarm": swarm,
         "llm_fetcher": coordinator.llm_fetcher,
@@ -551,7 +619,7 @@ def _attach_swarm_runtime_tools(
     }
     supported = inspect.signature(create_swarm_tools).parameters
     optional_controls = {
-        "worker_enable_stop_turn": True,
+        "worker_enable_stop_turn": _tool_permitted(config, "turn_control", "stop_turn"),
         "worker_default_stream": True,
         "require_plan_task_id": True,
         "plan_task_validator": lambda task_id: _plan_store(
@@ -562,10 +630,10 @@ def _attach_swarm_runtime_tools(
         name: value for name, value in optional_controls.items()
         if name in supported
     })
-    coordinator.add_tools(create_swarm_tools(**{
+    coordinator.add_tools(_allowed_tools(config, "swarm", create_swarm_tools(**{
         name: value for name, value in swarm_tool_kwargs.items()
         if name in supported
-    }))
+    })))
 
 
 def _attach_swarm_observer(
@@ -780,7 +848,9 @@ def _restore_swarm(
     for agent_name in swarm.dispatched_agent_names():
         worker = swarm.get_agent(agent_name)
         if worker is not None:
-            worker.add_tools([create_task_report_tool(swarm, agent_name, worker.request_completion)])
+            worker.add_tools(_allowed_tools(config, "swarm", [
+                create_task_report_tool(swarm, agent_name, worker.request_completion),
+            ]))
     _attach_swarm_observer(swarm, workspace_id, session_id, active)
     return swarm
 

@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | `ConversionReport` | Versioned import/transfer fidelity record listing preserved, degraded, omitted, and summarized content. | Created by `canonicalize_events`; serialized by archive/import/transfer APIs. |
 | `provider_catalog` / `save_provider` / `runtime_provider` | Exposes the built-in Codex, Claude Code, OpenCode and reserved-provider capability catalog; persists only non-secret connection metadata; accepts browser endpoint configuration only for OpenCode and creates its adapter for a saved loopback endpoint. | Called by `api.external_agents` provider routes. |
-| `canonicalize_events` | Converts supported vendor transcript objects into canonical non-executing `external_agent.*` messages/raw events, preserving unknown records. | Called by import preview and commit routes. |
+| `canonicalize_events` / `_bootstrap_context` / `import_events` | Converts external transcripts into non-executing records, derives a bounded coordinator checkpoint, and creates a project-bound session with display history and provenance. | `_bootstrap_context` is called by `import_events`; import preview/commit and direct provider import call the conversion flow. |
 | `build_archive` / `parse_archive` | Writes and securely validates Angelus Session Archive v1 ZIPs; validates paths, symlinks, member/expanded limits, format and event checksums. | Called by archive export, import preview, and import commit routes. |
 | `import_events` | Always creates a new project-bound Angelus session, appends canonical events, projects display messages, and persists provenance/loss metadata. | Called by `api.external_agents.commit_import`; calls `storage` event and conversation writers. |
 | `lease_link` | Grants or renews a tab-scoped exclusive 60-second external-control lease and returns read-only status to competing tabs. | Called by `api.external_agents.heartbeat_external_lease`. |
@@ -47,29 +47,28 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `ExternalAgentProvider` | Private fixed-action adapter contract for discovery, reads, owned session lifecycle, subscriptions, diff, and approval; it deliberately rejects generic vendor-protocol pass-through. | Implemented by Codex, OpenCode, and Claude Code adapters; stored in `ExternalProviderRegistry`. |
+| `ExternalAgentProvider` / `export_history(session_id)` | Private fixed-action adapter contract plus optional read-only transcript export. An adapter that cannot safely expose history fails closed rather than accepting generic protocol input. | Implemented by Codex, OpenCode, and Claude Code adapters; Claude's export is called by `api.external_agents.import_discovered_session`. |
 | `ExternalSession` / `ExternalEvent` | Credential-free provider-neutral descriptors and canonical event envelopes; raw vendor events remain private to synchronization callers. | Returned by provider discovery/read/subscription methods. |
 | `ExternalProviderRegistry` / `provider_registry` | Owns registered built-in runtime adapters and exposes their available capability catalog. | Populated during adapter bootstrap; consumed by the External Agent Hub. |
 | `bootstrap_builtin_providers` | Lazily instantiates Codex, OpenCode, and Claude Code adapters without spawning their optional runtimes; repeated calls retain the same process-scoped instances. | Called by `external_agents.provider_catalog` and API discovery/action routes. |
 | `CodexAppServerClient.initialize` / `CodexAppServerRuntime` / `CodexAppServerProvider.probe` / `api.external_agents.probe_external_provider` | Runs the Codex App Server over stdio JSON-RPC with request futures, mandatory ordered `initialize`/`initialized` handshake, notifications/server requests, stderr monitoring, restart and no-write-replay semantics; the provider maps only fixed thread/turn actions. A failed probe returns its safe transport reason to the Hub instead of discarding it. | `CodexAppServerClient.request` ensures initialization before each non-handshake RPC; `api.external_agents.probe_external_provider` invokes the fixed probe before discovery; `probeProvider` renders its response. |
 | `OpenCodeProvider` | Enforces loopback-or-explicit-auth endpoint policy and maps fixed OpenCode HTTP operations plus cursor-resuming, de-duplicated SSE into canonical events. | Registered by `bootstrap_builtin_providers`; invoked by discovery/action routes. |
-| `ClaudeCodeProvider` | Inspects Claude transcript JSONL read-only and runs CLI `stream-json` only for Angelus-owned processes; discovered external sessions are never attached or controlled. | Registered by `bootstrap_builtin_providers`; invoked by discovery/action routes. |
+| `ClaudeCodeProvider` / `export_history` | Inspects Claude transcript JSONL read-only, exports bounded user/assistant history only from the configured history root, and runs CLI `stream-json` only for Angelus-owned processes. Discovered external sessions are never attached or controlled. | Registered by `bootstrap_builtin_providers`; direct import calls `read` then `export_history`. |
 
 ## `angelus.api.external_agents`
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| provider/import/archive/transfer routes | Provides capability discovery, Codex App Server handshake probing, safe local runtime auto-detection, credential-free archive export, import preview/commit, and no-side-effect handoff preview. | Mounted by `api.include_api_routes`; calls `angelus.external_agents`. |
+| provider/import/archive/transfer routes | Provides capability discovery, credential-free archive export, transcript preview/commit, and direct read-only Claude session import. Direct import seeds a new coordinator checkpoint and never replays tools. | Mounted by `api.include_api_routes`; calls `angelus.external_agents` and provider `export_history`. |
 | link/lease/action routes | Stores safe Angelus UUID links, enforces exclusive leases, and capability-gates fixed actions without arbitrary vendor protocol pass-through. | Mounted by `api.include_api_routes`; action route intentionally does not execute absent a provider runtime. |
-| `external_agent_hub_page` | Serves the isolated External Agent Hub at `/external-agents`, preserving the existing main workbench layout and asset contract. | Calls FastAPI `FileResponse`; its page loads `frontend/static/external-agents.js`. |
+| `external_agent_hub_page` / `import_discovered_session` | Serves the import-first Hub and imports one read-only provider history into a fresh workspace. | The Hub calls the import route; it calls adapter `read` / `export_history`, then canonicalization and checkpoint bootstrap. |
 
 ## `frontend/static/external-agents.js`
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `loadProviders` / `autoDetectProviders` / `renderProviderSettings` / `selectProvider` / `saveProvider` / `probeProvider` | Fetches and renders the public Provider catalog, safely detects local Codex/Claude/OpenCode availability, renders only settings supported by the selected Provider, saves only OpenCode's non-secret loopback setting, and makes the Codex probe complete its App Server handshake before discovery. | Called by Hub initialization and Provider card/form controls; calls Provider catalog/auto-detect/config/probe APIs. |
-| Hub tutorial listeners | Opens an in-page quick-start dialog describing detection, provider configuration, Codex handshake probing, discovery, lease acquisition, and capability-gated controls. | Called by `#open-hub-tutorial` / `#close-hub-tutorial`; controls `#hub-tutorial`. |
-| `discoverSessions` / `linkSession` / `renewLease` / `activateLink` / `renderLink` / `runAction` | Discovers read-only vendor sessions, creates safe Angelus links, maintains a tab-scoped control lease every 20 seconds, and exposes only provider-advertised fixed actions with idempotency keys. | Called by Hub controls; calls discovery, link, lease, and action APIs. |
+| `loadProviders` / `autoDetectProviders` / `selectProvider` / `discoverSessions` | Renders import capabilities, detects local sources without starting sessions, and discovers read-only source sessions. | Called by import-Hub controls; calls provider catalog, auto-detect, and discovery APIs. |
+| `reviewDiscoveredSession` / `previewFileImport` / `commitImport` | Shows conversion fidelity and project binding before creating an independent workspace from direct source history or JSON/JSONL transcript; posts the new session ID to its parent workbench. | Calls import preview/commit APIs; parent `app.js` switches to the returned workspace. |
 | `frontend/static/app.js` external-hub listeners | Opens and closes the modal iframe from the Workbench sidebar without navigating away from the current Angelus session. | Called by `#open-external-agent-hub` and `#close-external-agent-hub`; loads `/external-agents` inside `#external-agent-hub-frame`. |
 
 ## `angelus.cli`
@@ -162,6 +161,16 @@ projection concern and is indexed by `angelus/history/INDEX.md`.
 | `start_run(request)` — retained Swarm path | Reuses an in-memory completed `ActiveRun`/`AgentSwarm`; after a server restart it attempts `runtime._restore_swarm` before building a new graph. The execution thread calls `AgentSwarm.run` on the retained or rebuilt object. | Calls `ActiveRun.reset_for_next_turn`, conditionally calls `_restore_swarm`/`_build_swarm`, then calls `AgentSwarm.run`; terminal cleanup persists the recovery snapshot. |
 
 ## `angelus.mcp_registry` / `angelus.mcp_tools` / `angelus.api.mcp`
+
+## `angelus.run_profiles` / `angelus.api.profiles` / runtime permission assembly
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `run_profiles.default_profile()` / `resolve_profile(workspace_id, agent_name)` | Builds the credential-free global default and overlays a session Agent override. Returns a validated `RunConfig` plus field provenance; API keys are never profile fields. | Called by `profile_view` and `api.runs.start_run`; connector credentials remain in `connectors`. |
+| `run_profiles.update_profile(...)` / `restore_inheritance(...)` / `profile_view(...)` | Atomically persists global defaults or complete Agent overrides, validates fields through `RunConfig`, and can remove an override to restore default inheritance. | Called by GET/PUT/DELETE routes in `api.profiles`; settings UI renders effective values and source state. |
+| `api.profiles.get_global_profile` / `put_global_profile` / `get_agent_profile` / `put_agent_profile` / `delete_agent_profile` | Exposes non-secret global and session-Agent profile operations. | Called by `frontend/static/app.js::restoreSettings`, `persistSettings`, and restore-inheritance action. |
+| `connectors._resolve_connector_key(config)` | At the run boundary, replaces provider, model, API URL, and API key from a selected saved connector. Missing connectors fail before Agent construction. | Called by `api.runs.start_run`; prevents stale browser fields from partially selecting an old backend. |
+| `runtime._tool_permitted` / `_allowed_tools` | Requires both a category toggle and exact tool toggle, then filters generated first-party tool objects before registration. | `_build_agent`, dynamic worker factories, shell/MCP assembly, and Swarm setup call it. |
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
