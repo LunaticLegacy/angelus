@@ -40,7 +40,7 @@ from ..storage import (
     _deleting_workspaces,
     _persist_json,
     _project_path,
-    _read_session_event_log,
+    _iter_session_event_log,
     _read_workspaces,
     _remove_workspace,
     _safe_id,
@@ -560,7 +560,7 @@ def _reconcile_graph_view(
         for node in nodes
         if node.get("id") and node.get("parent")
     }
-    for event in _read_session_event_log(workspace_id, session_id):
+    for event in _iter_session_event_log(workspace_id, session_id):
         event_kind = str(event.get("event", ""))
         event_type = str(event.get("type", ""))
         agent = str(event.get("agent", "") or "")
@@ -743,9 +743,8 @@ def get_session_steers(session_id: str) -> dict[str, Any]:
         Steer records in chronological order with round and message payloads.
     """
     safe_session_id = _safe_id(session_id, "session")
-    events = _read_session_event_log(safe_session_id, safe_session_id)
     steers = []
-    for event in events:
+    for event in _iter_session_event_log(safe_session_id, safe_session_id):
         if event.get("event") != "lifecycle" or event.get("type") != "agent:steer_applied":
             continue
         data = event.get("data")
@@ -771,7 +770,7 @@ def get_session_usage(session_id: str) -> dict[str, Any]:
         their completed ``agent:round`` lifecycle event.
     """
     safe_session_id = _safe_id(session_id, "session")
-    return _session_usage_summary(_read_session_event_log(safe_session_id, safe_session_id))
+    return _session_usage_summary(_iter_session_event_log(safe_session_id, safe_session_id))
 
 @router.put("/api/workspaces/{workspace_id}/sessions/{session_id}/plan")
 def replace_task_plan(

@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from ..context_stats import estimate_context_length
-from ..storage import _read_session_event_log, _safe_id, _session_path
+from ..storage import _iter_session_event_log, _safe_id, _session_path
 from .models import (
     AgentContextMetadata,
     AgentContextPreview,
@@ -116,12 +116,13 @@ def _agent_context_preview(session_id: str, agent_name: str) -> AgentContextPrev
             message_index += 1
     request: dict[str, Any] | None = None
     request_round: int | None = None
-    for event in reversed(_read_session_event_log(safe_session, safe_session)):
+    # Latest snapshot wins: scan forward and overwrite so the newest matching
+    # remote-request record is kept without reversing or materializing the log.
+    for event in _iter_session_event_log(safe_session, safe_session):
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
         if event.get("event") == "lifecycle" and event.get("type") == "agent:remote_request" and event.get("agent") == safe_agent and isinstance(data.get("request"), dict):
             request = data["request"]
             request_round = data.get("round") if isinstance(data.get("round"), int) else None
-            break
     stats: RemoteRequestStats | None = None
     if request is not None:
         # The visible request body and its metadata must describe the same

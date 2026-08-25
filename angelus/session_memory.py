@@ -110,11 +110,18 @@ class SessionMemoryStore:
             add("graph", json.dumps(graph, ensure_ascii=False), summary="Persisted execution graph")
         events = root / "events.ndjson"
         if events.exists():
-            for index, line in enumerate(events.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                event = _read_json_line(line)
-                if isinstance(event, dict) and (event.get("event") == "result" or event.get("type") == "agent:tools_completed"):
-                    add("tool_result", json.dumps(event.get("data", event), ensure_ascii=False), timeline=index,
-                        summary=_safe_text(event.get("message", event.get("event", "tool result")), 400))
+            # Stream the append-only log line by line so a multi-hundred-MB
+            # events.ndjson is never fully resident just to snapshot evidence.
+            # The serialized body is bounded by _safe_text before it is stored.
+            try:
+                with events.open("r", encoding="utf-8", errors="replace") as handle:
+                    for index, line in enumerate(handle, 1):
+                        event = _read_json_line(line)
+                        if isinstance(event, dict) and (event.get("event") == "result" or event.get("type") == "agent:tools_completed"):
+                            add("tool_result", json.dumps(event.get("data", event), ensure_ascii=False), timeline=index,
+                                summary=_safe_text(event.get("message", event.get("event", "tool result")), 400))
+            except OSError:
+                pass
         for handoff in (root / "handoffs").glob("*.json") if (root / "handoffs").is_dir() else []:
             raw = _read_json(handoff, {})
             if isinstance(raw, dict):

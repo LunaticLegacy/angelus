@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Iterable
 
 from ..storage import _safe_id, _session_path
 
@@ -11,33 +11,41 @@ def _empty_usage() -> dict[str, int]:
     """Return the complete token-usage shape used by session aggregations."""
     return {"input": 0, "output": 0, "total": 0, "cached": 0, "reasoning": 0}
 
-def _usage_from_events(events: list[dict[str, Any]]) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+def _usage_from_events(events: Iterable[dict[str, Any]]) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
     """Aggregate usage events into (session-wide, per-agent) token dicts.
 
     Ledger deltas (``agent:usage`` / ``agent:internal_usage``) are preferred
     when present; otherwise the display-only ``agent:round.round_usage``
     payload is used so legacy logs stay supported.
+
+    The log is consumed in a single streaming pass.  Only the filtered
+    ``(agent, usage)`` records are retained while deciding which source wins,
+    so a multi-hundred-MB ``events.ndjson`` never needs to be fully resident.
     """
-    ledger_events = [
-        event for event in events
-        if event.get("event") == "lifecycle"
-        and event.get("type") in {"agent:usage", "agent:internal_usage"}
-    ]
-    source_events = ledger_events or [
-        event for event in events
-        if event.get("event") == "lifecycle" and event.get("type") == "agent:round"
-    ]
+    ledger: list[tuple[str, dict[str, Any]]] = []
+    rounds: list[tuple[str, dict[str, Any]]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") != "lifecycle":
+            continue
+        event_type = event.get("type")
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        agent = str(event.get("agent") or "unknown")
+        if event_type in {"agent:usage", "agent:internal_usage"}:
+            usage = data.get("usage")
+            if isinstance(usage, dict):
+                ledger.append((agent, usage))
+        elif event_type == "agent:round":
+            usage = data.get("round_usage")
+            if isinstance(usage, dict):
+                rounds.append((agent, usage))
+    source = ledger if ledger else rounds
     total = _empty_usage()
     by_agent: dict[str, dict[str, int]] = {}
-    for event in source_events:
-        agent = str(event.get("agent") or "unknown")
-        data = event.get("data")
-        usage = (
-            data.get("usage") if ledger_events and isinstance(data, dict)
-            else data.get("round_usage") if isinstance(data, dict) else None
-        )
-        if not isinstance(usage, dict):
-            continue
+    for agent, usage in source:
         agent_usage = by_agent.setdefault(agent, _empty_usage())
         for key in total:
             value = usage.get(key, 0)
@@ -48,7 +56,7 @@ def _usage_from_events(events: list[dict[str, Any]]) -> tuple[dict[str, int], di
     return total, by_agent
 
 
-def _current_run_window(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _current_run_window(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return the durable events of the most recent lifecycle run.
 
     The "本次" (this lifecycle) window starts at the last ``run_started``
@@ -59,33 +67,48 @@ def _current_run_window(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     Legacy logs without a ``run_started`` marker have no run boundary, so the
     whole log is treated as a single window to keep the summary well-defined.
+
+    The input may be any iterable; the returned window is a materialized list
+    only when the caller genuinely needs the records.  Hot usage aggregation
+    should prefer :func:`_usage_from_events` on a bounded window instead.
     """
     start = None
-    for index, event in enumerate(events):
+    index = 0
+    for event in events:
         if event.get("event") == "run_started":
             start = index
+        index += 1
     if start is None:
         return list(events)
-    for end in range(start + 1, len(events)):
-        event = events[end]
-        if event.get("event") == "done":
-            return events[start:end]
-        if (
-            event.get("event") == "lifecycle"
-            and event.get("type") == "agent:steer_applied"
+    # Re-iterate to slice the window.  Callers with a one-shot iterator should
+    # use the streaming summary instead; this helper keeps its list contract
+    # for legacy tests and callers that already hold the records.
+    window: list[dict[str, Any]] = []
+    for index, event in enumerate(events):
+        if index < start:
+            continue
+        if index > start and (
+            event.get("event") == "done"
+            or (
+                event.get("event") == "lifecycle"
+                and event.get("type") == "agent:steer_applied"
+            )
         ):
-            return events[start:end]
-    return events[start:]
+            break
+        window.append(event)
+    return window
 
 
-def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+def _session_usage_summary(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate the canonical per-call token ledger for a browser session.
 
     Args:
         events: Chronological or reverse-chronological durable event records.
             New logs contribute ``agent:usage`` and ``agent:internal_usage``
             lifecycle records.  Old logs without either retain the
-            ``agent:round.round_usage`` compatibility path.
+            ``agent:round.round_usage`` compatibility path.  Any iterable is
+            accepted; hot endpoints pass the streaming event-log iterator so a
+            large log is never fully materialized.
 
     Returns:
         A mapping with session-wide ``usage``, per-agent usage records, a
@@ -98,31 +121,84 @@ def _session_usage_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
     compaction and graph calls are visible, while the summary does not sum the
     duplicate per-round display payload.
     """
-    total, by_agent = _usage_from_events(events)
+    total = _empty_usage()
+    by_agent: dict[str, dict[str, int]] = {}
+    run_total = _empty_usage()
+    run_by_agent: dict[str, dict[str, int]] = {}
+    round_usage = _empty_usage()
+
+    # Single streaming pass.  Ledger deltas win over round payloads, but the
+    # decision is only known after the whole log is scanned, so both candidate
+    # sources are accumulated as compact (agent, usage) records.
+    ledger: list[tuple[str, dict[str, Any]]] = []
+    rounds: list[tuple[str, dict[str, Any]]] = []
+    # Current-run window tracking: the window starts at the last run_started
+    # and ends at the first done/steer_applied after it.  Events before the
+    # last run_started are ignored; steer work after the boundary is excluded.
+    # Legacy logs without any run_started have no boundary, so the whole log
+    # is treated as one window (matching the previous list-based semantics).
+    seen_run_started = False
+    in_run = False
+    run_ledger: list[tuple[str, dict[str, Any]]] = []
+    run_rounds: list[tuple[str, dict[str, Any]]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_kind = event.get("event")
+        event_type = event.get("type")
+        data = event.get("data")
+        is_usage = event_kind == "lifecycle" and event_type in {"agent:usage", "agent:internal_usage"}
+        is_round = event_kind == "lifecycle" and event_type == "agent:round"
+        if event_kind == "run_started":
+            seen_run_started = True
+            in_run = True
+            run_ledger = []
+            run_rounds = []
+            continue
+        if in_run and (
+            event_kind == "done"
+            or (event_kind == "lifecycle" and event_type == "agent:steer_applied")
+        ):
+            in_run = False
+            continue
+        if is_usage and isinstance(data, dict) and isinstance(data.get("usage"), dict):
+            ledger.append((str(event.get("agent") or "unknown"), data["usage"]))
+            if in_run or not seen_run_started:
+                run_ledger.append((str(event.get("agent") or "unknown"), data["usage"]))
+        elif is_round and isinstance(data, dict) and isinstance(data.get("round_usage"), dict):
+            rounds.append((str(event.get("agent") or "unknown"), data["round_usage"]))
+            if in_run or not seen_run_started:
+                run_rounds.append((str(event.get("agent") or "unknown"), data["round_usage"]))
+            # Newest completed round wins for the "本轮" line.
+            for key in round_usage:
+                value = data["round_usage"].get(key, 0)
+                if isinstance(value, (int, float)):
+                    round_usage[key] = max(0, int(value))
+
+    def _aggregate(source: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+        agg_total = _empty_usage()
+        agg_by_agent: dict[str, dict[str, int]] = {}
+        for agent, usage in source:
+            agent_usage = agg_by_agent.setdefault(agent, _empty_usage())
+            for key in agg_total:
+                value = usage.get(key, 0)
+                if isinstance(value, (int, float)):
+                    tokens = max(0, int(value))
+                    agg_total[key] += tokens
+                    agent_usage[key] += tokens
+        return agg_total, agg_by_agent
+
+    source = ledger if ledger else rounds
+    total, by_agent = _aggregate(source)
+    run_source = run_ledger if run_ledger else run_rounds
+    run_total, run_by_agent = _aggregate(run_source)
+
     agents = [
         {"id": agent, "usage": usage}
         for agent, usage in sorted(by_agent.items(), key=lambda item: (-item[1]["total"], item[0]))
     ]
-    run_total, run_by_agent = _usage_from_events(_current_run_window(events))
     for agent in agents:
         agent["run"] = run_by_agent.get(agent["id"], _empty_usage())
-    # Per-round usage for the legacy "本轮" line: the most recently completed
-    # model round.  Scanned newest-first so the latest ``agent:round`` wins;
-    # the ``round_usage`` payload is the same one that backs chat-message token
-    # stats, so the usage tile stays consistent with the transcript.
-    round_usage = _empty_usage()
-    for event in reversed(events):
-        if event.get("event") != "lifecycle" or event.get("type") != "agent:round":
-            continue
-        data = event.get("data")
-        usage = data.get("round_usage") if isinstance(data, dict) else None
-        if not isinstance(usage, dict):
-            continue
-        for key in round_usage:
-            value = usage.get(key, 0)
-            if isinstance(value, (int, float)):
-                round_usage[key] = max(0, int(value))
-        break
     return {"usage": total, "run": run_total, "agents": agents, "round": round_usage}
 
 
@@ -185,4 +261,3 @@ def _archived_context_page(
         "total": len(evidence),
         "next_before": start if start else None,
     }
-
