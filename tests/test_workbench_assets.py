@@ -31,6 +31,8 @@ def test_workspace_row_actions_target_their_own_session_without_switching() -> N
     assert 'id="change-workspace-directory"' not in template
     assert 'data-session-change-directory=' in script
     assert 'data-session-open-folder=' in script
+    assert 'data-session-agent-profile=' in script
+    assert "function openAgentProfile" in script
     assert 'aria-label="更改 ${escapeHtml(item.name)} 的项目目录"' in script
     assert 'aria-label="打开 ${escapeHtml(item.name)} 的项目目录"' in script
     assert "open-folder" in script
