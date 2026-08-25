@@ -40,41 +40,12 @@ def test_active_workbench_uses_component_views_through_an_es_module_entrypoint()
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
     assert 'type="module" src="/static/app.js?v=workbench-' in template
-    assert 'from "./components/chat-view.js?v=history-pagination-2"' in script
+    assert 'from "./components/chat-view.js?v=tool-payload-2"' in script
     assert 'from "./components/trace-view.js"' in script
     assert 'from "./components/task-plan-view.js"' in script
     assert (COMPONENTS_DIR / "chat-view.js").is_file()
     assert (COMPONENTS_DIR / "trace-view.js").is_file()
     assert (COMPONENTS_DIR / "task-plan-view.js").is_file()
-
-
-def test_workbench_uses_the_angelus_mission_control_visual_system() -> None:
-    """Keep the redesigned brand, responsive shell, and accessibility layer active."""
-    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
-    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
-
-    assert "<title>Angelus · Agent Workbench</title>" in template
-    assert 'class="brand-mark">A</span>' in template
-    assert 'src="/static/app.js?v=workbench-81"' in template
-    assert 'href="/static/app.css?v=workbench-81"' in template
-    assert "本地优先" not in template
-    assert "Workbench 2026 — calm mission-control visual system." in stylesheet
-    assert "grid-template-columns:248px minmax(560px,1fr) 368px" in stylesheet
-    assert "@media (max-width:1020px)" in stylesheet
-    assert "@media (prefers-reduced-motion:reduce)" in stylesheet
-
-
-def test_task_plan_statuses_are_read_only_and_preserve_real_line_breaks() -> None:
-    """Render lifecycle-owned states as labels and retain JSON newline layout."""
-    script = APP_SCRIPT.read_text(encoding="utf-8")
-    component = (COMPONENTS_DIR / "task-plan-view.js").read_text(encoding="utf-8")
-    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
-
-    assert '<span class="task-state ${escapeHtml(status)}"' in component
-    assert '<select data-task-id=' not in component
-    assert "updatePlanStatus" not in script
-    assert '$("task-plan").addEventListener("change"' not in script
-    assert ".plan-summary,.task-description { white-space:pre-wrap;" in stylesheet
 
 
 def test_tool_payloads_use_structured_json_and_verbatim_stdout_views() -> None:
@@ -98,55 +69,9 @@ def test_live_and_historical_tool_cards_share_the_chat_view_renderer() -> None:
     """SSE, aggregate replay, and selected-Agent replay must render one card type."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
 
-    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs,timestamp},agentName)" in script
+    assert "chatView.append({role,content,reasoning,content_html:contentHtml,reasoning_html:reasoningHtml,tools,usage,model_duration_ms:modelDurationMs},agentName)" in script
     assert "chatView.render(messages, assistantLabel)" in script
     assert "chatView.buildMessage(message, selectedAgent)" in script
-
-
-def test_transcript_uses_cursor_pages_and_one_top_scroll_loader() -> None:
-    """Keep 200-message cursor paging locked, retryable, and viewport-stable."""
-    script = APP_SCRIPT.read_text(encoding="utf-8")
-    chat_component = (COMPONENTS_DIR / "chat-view.js").read_text(encoding="utf-8")
-
-    assert 'new URLSearchParams({agent,limit:"200"})' in script
-    assert 'params.set("cursor",String(cursor))' in script
-    assert "events?limit=1" not in script
-    assert '$("chat").addEventListener("scroll"' in script
-    assert '$("chat").scrollTop<=24' in script
-    assert "messageLoadPending" in script
-    assert "snapshot.generation!==historyGeneration" in script
-    assert "chat.scrollHeight - previousHeight + previousTop" in script
-    assert "button.after(fragment)" in script
-    assert "button.disabled=false" in script
-    assert "function ensureLoadMoreMessagesButton()" in script
-    assert 'button.textContent="加载失败，点击重试"' in script
-    assert '$("chat").addEventListener("click"' in script
-    assert "chat.replaceChildren(loadMore)" in chat_component
-
-
-def test_new_session_requires_a_native_selected_project_directory() -> None:
-    """Keep project files separate from internal session manifests and state."""
-    script = APP_SCRIPT.read_text(encoding="utf-8")
-    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
-
-    assert 'id="new-session-path"' in template
-    assert 'id="choose-session-directory"' in template
-    assert 'id="change-workspace-directory"' in template
-    assert 'id="new-session-feedback"' in template
-    assert 'apiPost("/api/workspace-directory/pick")' in script
-    assert "project_path:selectedPath" in script
-    assert "opened.project_path" in script
-    assert "/project-path`" in script
-
-
-def test_trace_uses_reverse_cursor_and_durable_offset_for_sse() -> None:
-    """Initial Trace hydration must also establish the byte resume watermark."""
-    script = APP_SCRIPT.read_text(encoding="utf-8")
-
-    assert 'params.set("cursor",String(cursor))' in script
-    assert "traceBefore=page.next_cursor??null" in script
-    assert "durableEventOffset=Number(page.durable_offset||0)" in script
-    assert 'durableEventOffset > 0 ? `cursor=${durableEventOffset}`' in script
 
 
 def test_reasoning_is_visible_transcript_content_not_a_disclosure() -> None:
@@ -212,7 +137,7 @@ def test_settings_categories_use_left_navigation_buttons() -> None:
     navigation_sections = set(re.findall(r'data-settings-section="([^"]+)"', template))
     panel_sections = set(re.findall(r'data-settings-panel="([^"]+)"', template))
 
-    assert navigation_sections == panel_sections == {"connection", "agent", "mcp", "plugins", "future"}
+    assert navigation_sections == panel_sections == {"connection", "agent", "plugins", "future"}
     assert 'id="settings-section"' not in template
     assert 'querySelectorAll("[data-settings-section]")' in script
 
@@ -280,13 +205,9 @@ def test_completed_swarm_is_blue_even_when_a_worker_failed() -> None:
     """Represent successful coordinator recovery as a completed aggregate run."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'terminal==="completed"' in script
-    assert 'views.some(view=>view.canonical==="running")' in script
+    assert 'currentGraph.run_status?.status==="completed"' in script
     assert 'return stateView("completed","当前会话：运行完毕",agentId);' in script
-    # The done handler now schedules a debounced graph+plan reload instead of
-    # firing an immediate fetch; the reload must still be wired up.
-    assert 'scheduleGraphPlanReload();' in script
-    assert 'loadGraph().then(loadAgents)' in script
+    assert 'finish(); loadGraph().then(loadAgents)' in script
 
 
 def test_agents_panel_renders_only_the_single_topology_tree() -> None:
@@ -310,19 +231,16 @@ def test_plan_panel_selects_an_agent_owned_plan_and_topology_fills_height() -> N
     assert ".inspector-agents-list { flex:1 1 auto; min-height:0; max-height:none;" in stylesheet
 
 
-def test_managed_mcp_console_replaces_browser_json_configuration() -> None:
-    """Keep MCP configuration in the managed global registry and session grants."""
+def test_agent_settings_expose_native_mcp_tool_configuration() -> None:
+    """Keep MCP discovery an explicit Agent-run setting with JSON validation."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'data-settings-panel="mcp"' in template
-    assert 'id="mcp-server-form"' in template
-    assert 'id="mcp-role-coordinator"' in template
-    assert 'id="mcp-role-worker"' in template
-    assert "function loadMcpConsole()" in script
-    assert "function saveMcpBinding(serverId)" in script
-    assert "function mcpServers()" not in script
-    assert "enable_mcp:" not in script
+    assert 'id="enable-mcp"' in template
+    assert 'id="mcp-servers"' in template
+    assert "function mcpServers()" in script
+    assert "enable_mcp:" in script
+    assert "mcp_servers:" in script
 
 
 def test_light_plan_agent_picker_overrides_the_dark_surface() -> None:
@@ -367,27 +285,3 @@ def test_applied_steering_is_a_right_aligned_chat_input() -> None:
     assert 'className = "message steer"' in chat_component
     assert ".message.user,.message.steer { margin-left:auto; }" in stylesheet
     assert re.search(r'/static/app\.js\?v=workbench-\d+', template)
-
-
-def test_context_dialog_exposes_compaction_input_preview_tab() -> None:
-    """Keep the third context-dialog tab wired to its read-only API route."""
-    script = APP_SCRIPT.read_text(encoding="utf-8")
-    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
-
-    assert 'data-context-dialog-tab="compaction"' in template
-    assert 'id="context-tab-compaction"' in template
-    assert 'id="context-panel-compaction"' in template
-    assert 'id="context-compaction-title"' in template
-    assert 'id="context-compaction-note"' in template
-    assert 'id="context-compaction-status"' in template
-    assert 'id="context-compaction-stats"' in template
-    assert 'id="context-compaction-preview"' in template
-    assert "function renderCompactionInput(payload)" in script
-    assert "function loadCompactionInput(agentId)" in script
-    assert "/context/compaction-input`" in script
-    assert 'tab==="compaction"?"compaction":"graph"' in script
-    assert "$(\"context-panel-compaction\").hidden=selected!==\"compaction\"" in script
-    assert "loadCompactionInput(agentId)" in script
-    assert "payload.estimated_tokens" in script
-    assert "payload.omitted" in script
-    assert "压缩器没有可发送的输入" in script

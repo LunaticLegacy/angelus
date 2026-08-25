@@ -5,7 +5,6 @@ from .run_request import RunRequest
 from .compact_request import CompactRequest
 from .steer_request import SteerRequest
 from .workspace_request import WorkspaceRequest
-from .project_path_request import ProjectPathRequest
 from .workspace_delete_request import WorkspaceDeleteRequest
 from .connector_request import ConnectorRequest
 from .task_plan_request import TaskPlanRequest
@@ -20,7 +19,6 @@ __all__ = [
     "CompactRequest",
     "SteerRequest",
     "WorkspaceRequest",
-    "ProjectPathRequest",
     "WorkspaceDeleteRequest",
     "ConnectorRequest",
     "TaskPlanRequest",

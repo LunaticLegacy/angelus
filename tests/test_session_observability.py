@@ -61,9 +61,6 @@ class SessionObservabilityTests(unittest.TestCase):
                 page = webapp._session_event_page("demo", "demo", before=None, limit=2)
                 self.assertEqual([event["event"] for event in page["events"]], ["result", "lifecycle"])
                 self.assertEqual(page["next_before"], 1)
-                self.assertTrue(page["has_more"])
-                self.assertIsNotNone(page["next_cursor"])
-                self.assertEqual(page["durable_offset"], event_path.stat().st_size)
 
                 summary = webapp._session_usage_summary(webapp._read_session_event_log("demo", "demo"))
                 self.assertEqual(summary["usage"], {"input": 10, "output": 3, "total": 13, "cached": 1, "reasoning": 1})
@@ -74,36 +71,6 @@ class SessionObservabilityTests(unittest.TestCase):
                 self.assertEqual(summary["run"], summary["usage"])
                 for agent in summary["agents"]:
                     self.assertEqual(agent["run"], agent["usage"])
-            finally:
-                storage.WORKSPACE_ROOT = original_root
-
-    def test_event_cursor_pages_backwards_and_skips_incomplete_tail(self) -> None:
-        """Trace cursors cover old records while SSE resumes at a complete line."""
-        with tempfile.TemporaryDirectory() as directory:
-            original_root = storage.WORKSPACE_ROOT
-            storage.WORKSPACE_ROOT = Path(directory)
-            try:
-                event_path = webapp._session_path("demo", "demo") / "events.ndjson"
-                complete = b"".join(
-                    json.dumps({"event": "item", "index": index}).encode() + b"\n"
-                    for index in range(5)
-                )
-                event_path.write_bytes(complete + b'{"event":"partial"')
-
-                newest = webapp._session_event_page("demo", "demo", before=None, limit=2)
-                older = webapp._session_event_page(
-                    "demo", "demo", cursor=newest["next_cursor"], before=None, limit=2,
-                )
-                oldest = webapp._session_event_page(
-                    "demo", "demo", cursor=older["next_cursor"], before=None, limit=2,
-                )
-
-                self.assertEqual([event["index"] for event in newest["events"]], [4, 3])
-                self.assertEqual([event["index"] for event in older["events"]], [2, 1])
-                self.assertEqual([event["index"] for event in oldest["events"]], [0])
-                self.assertEqual(newest["durable_offset"], len(complete))
-                self.assertFalse(oldest["has_more"])
-                self.assertIsNone(oldest["next_cursor"])
             finally:
                 storage.WORKSPACE_ROOT = original_root
 

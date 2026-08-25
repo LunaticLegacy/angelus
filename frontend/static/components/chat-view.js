@@ -173,37 +173,17 @@ export function createChatView({ getAgentLabel }) {
     return `<pre class="tool-stdout">${escapeHtml(String(value))}</pre>`;
   }
 
-  /** Format a wall-clock duration in milliseconds as a compact human label. */
-  function formatDuration(durationMs) {
-    const ms = Number(durationMs);
-    if (!Number.isFinite(ms) || ms < 0) return "";
-    if (ms < 1000) return `${Math.round(ms)}ms`;
-    return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)}s`;
-  }
-
   function renderTools(tools = []) {
     if (!tools.length) return "";
-    const calls = tools.map((tool) => {
-      const duration = formatDuration(tool.duration_ms);
-      const badge = duration ? `<span class="tool-duration">${escapeHtml(duration)}</span>` : "";
-      return `
-      <article class="tool-call"><strong>${escapeHtml(tool.name)}</strong>${badge}<p>参数</p>
+    const calls = tools.map((tool) => `
+      <article class="tool-call"><strong>${escapeHtml(tool.name)}</strong><p>参数</p>
       ${renderToolPayload(tool.arguments, "无参数")}<p>结果</p>
-      ${renderToolPayload(tool.result, "无返回内容")}</article>`;
-    }).join("");
+      ${renderToolPayload(tool.result, "无返回内容")}</article>`).join("");
     return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
   }
 
-  /** Format an epoch-seconds value as local HH:MM:SS. */
-  function formatClock(epochSeconds) {
-    if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return "";
-    const date = new Date(epochSeconds * 1000);
-    const pad = (value) => String(value).padStart(2, "0");
-    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  }
-
   /** One-line token accounting footer for one model round. */
-  function buildTokenStats(usage, modelDurationMs = null, timestamp = null, durationMs = null) {
+  function buildTokenStats(usage, modelDurationMs = null) {
     if (!usage || typeof usage !== "object") return "";
     const n = (value) => Math.max(0, Number(value || 0));
     const fmt = (value) => n(value).toLocaleString();
@@ -216,19 +196,6 @@ export function createChatView({ getAgentLabel }) {
     if (seconds > 0 && output > 0) {
       text += ` · ${(output / seconds).toFixed(1)} tok/s`;
     }
-    // The block's end time is the durable round timestamp; the start is end
-    // minus the full round duration (fall back to the model duration).
-    const end = Number(timestamp);
-    const spanMs = Number.isFinite(Number(durationMs)) && Number(durationMs) > 0
-      ? Number(durationMs)
-      : (Number.isFinite(Number(modelDurationMs)) && Number(modelDurationMs) > 0 ? Number(modelDurationMs) : 0);
-    if (Number.isFinite(end) && end > 0) {
-      const startText = formatClock(end - spanMs / 1000);
-      const endText = formatClock(end);
-      if (startText && endText) {
-        text += ` · 起始 ${startText} · 结束 ${endText}`;
-      }
-    }
     return `<footer class="message-tokens">${escapeHtml(text)}</footer>`;
   }
 
@@ -236,7 +203,7 @@ export function createChatView({ getAgentLabel }) {
   function buildMessage(message, agentName = "") {
     const { role, content, reasoning = "", content_html: contentHtml = "",
       reasoning_html: reasoningHtml = "", tools = [], usage = null,
-      model_duration_ms = null, timestamp = null, duration_ms = null } = message;
+      model_duration_ms = null } = message;
     if (role === "steer") return buildSteer(content);
 
     const element = document.createElement("article");
@@ -250,7 +217,7 @@ export function createChatView({ getAgentLabel }) {
 
     // Reasoning is visible before the formal answer in both live and restored
     // transcript cards, so readers see the model's working context first.
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, timestamp, duration_ms) : ""}`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms) : ""}`;
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));
     return element;
@@ -305,24 +272,16 @@ export function createChatView({ getAgentLabel }) {
 
   function render(messages, assistantLabel = "coordinator") {
     const chat = $("chat");
-    let loadMore = $("load-more-messages");
-    if (!loadMore) {
-      loadMore = document.createElement("button");
-      loadMore.id = "load-more-messages";
-      loadMore.className = "load-more-messages";
-      loadMore.type = "button";
-      loadMore.textContent = "加载更早消息";
-    }
-    chat.replaceChildren(loadMore);
+    chat.innerHTML = "";
     if (!messages.length) {
-      loadMore.insertAdjacentHTML("afterend", '<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>');
+      chat.innerHTML = '<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>';
       return;
     }
     const fragment = document.createDocumentFragment();
     for (const message of messages) {
       fragment.append(buildMessage(message, message.role === "assistant" ? assistantLabel : ""));
     }
-    loadMore.after(fragment);
+    chat.append(fragment);
     chat.scrollTop = chat.scrollHeight;
   }
 

@@ -8,18 +8,11 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
-from starlette.requests import Request
 
-from angelus import storage
+from fastapi.testclient import TestClient
+
+from angelus import storage, webapp
 from angelus.classes import ActiveRun, BrowserRunControl
-from angelus.api.runs import _event_resume_offset
-from angelus.event_stream import (
-    EventBroker,
-    historical_event_stream,
-    live_event_stream,
-    publish_durable_event,
-)
 from llmfetcher.agent import Agent
 from llmfetcher.context_handlers.linear import _COMPACTING_SYSTEM_PROMPT
 from llmfetcher.llm_types import LLMOutput
@@ -32,14 +25,20 @@ def _seed_events(count: int = 3) -> None:
         })
 
 
-def _payloads(chunks: list[str]) -> list[dict]:
-    """Decode data records while ignoring SSE IDs and keepalive comments."""
-    return [
-        json.loads(line[6:])
-        for chunk in chunks
-        for line in chunk.splitlines()
-        if line.startswith("data: ")
-    ]
+def _collect(client: TestClient, url: str, seconds: float = 1.0):
+    received: list[dict] = []
+    def consume() -> None:
+        try:
+            with client.stream("GET", url) as response:
+                for line in response.iter_lines():
+                    if line.startswith("data: "):
+                        received.append(json.loads(line[6:]))
+        except Exception as exc:  # pragma: no cover - defensive
+            received.append({"error": str(exc)})
+    thread = threading.Thread(target=consume, daemon=True)
+    thread.start()
+    time.sleep(seconds)
+    return thread, received
 
 
 class TestSseStream:
@@ -56,29 +55,21 @@ class TestSseStream:
                 with storage._sessions_lock:
                     storage._sessions[key] = storage.BrowserSession()
                 session = storage._get_session("demo", "demo")
-                active = ActiveRun(
-                    control=BrowserRunControl(),
-                    event_broker=EventBroker(
-                        durable_offset=storage._session_event_log_size("demo", "demo"),
-                    ),
-                )
+                active = ActiveRun(control=BrowserRunControl())
                 session.active = active
-                start_offset = storage._session_event_offset_after("demo", "demo", 3)
-
-                def publish() -> None:
-                    time.sleep(0.02)
-                    publish_durable_event(active, "demo", "demo", {
-                        "event": "lifecycle", "type": "NEW-1", "timestamp": 3,
-                    })
-                    active.event_broker.close()
-                    active.done.set()
-
-                thread = threading.Thread(target=publish)
-                thread.start()
-                received = _payloads(list(live_event_stream(
-                    "demo", "demo", active, start_offset,
-                )))
-                thread.join(timeout=2)
+                client = TestClient(webapp.app)
+                thread, received = _collect(
+                    client,
+                    "/api/workspaces/demo/runs/demo/events?after=3",
+                    seconds=0.6,
+                )
+                # 追加一条新事件，应被流推送
+                storage._append_session_event("demo", "demo", {
+                    "event": "lifecycle", "type": "NEW-1", "timestamp": 3,
+                })
+                time.sleep(0.6)
+                active.done.set()
+                thread.join(timeout=5)
                 types = [event.get("type") for event in received]
                 assert "NEW-1" in types, f"expected NEW-1, got {types}"
                 assert all(not str(t).startswith("OLD-") for t in types), (
@@ -96,61 +87,16 @@ class TestSseStream:
             storage.WORKSPACE_ROOT = Path(directory)
             try:
                 _seed_events(2)
-                received = _payloads(list(historical_event_stream(
-                    "demo", "demo", 0,
-                )))
+                client = TestClient(webapp.app)
+                thread, received = _collect(
+                    client,
+                    "/api/workspaces/demo/runs/demo/events?after=0",
+                    seconds=1.0,
+                )
+                thread.join(timeout=5)
                 assert len(received) == 2, f"expected 2 replayed events, got {len(received)}"
                 assert [e.get("type") for e in received] == ["OLD-0", "OLD-1"]
             finally:
-                storage.WORKSPACE_ROOT = original_root
-
-    def test_resume_cursor_precedence_and_legacy_count(self) -> None:
-        """Last-Event-ID wins over cursor, which wins over legacy after."""
-        with tempfile.TemporaryDirectory() as directory:
-            original_root = storage.WORKSPACE_ROOT
-            storage.WORKSPACE_ROOT = Path(directory)
-            try:
-                _seed_events(2)
-                first_offset = storage._session_event_offset_after("demo", "demo", 1)
-                request = Request({
-                    "type": "http",
-                    "headers": [(b"last-event-id", str(first_offset).encode())],
-                })
-                assert _event_resume_offset(
-                    request, "demo", "demo", after=0, cursor=1,
-                ) == first_offset
-                assert _event_resume_offset(
-                    Request({"type": "http", "headers": []}),
-                    "demo", "demo", after=0, cursor=first_offset,
-                ) == first_offset
-                assert _event_resume_offset(
-                    Request({"type": "http", "headers": []}),
-                    "demo", "demo", after=1, cursor=None,
-                ) == first_offset
-            finally:
-                storage.WORKSPACE_ROOT = original_root
-
-    def test_idle_keepalive_does_not_reread_event_log(self) -> None:
-        """Idle live connections perform one handoff read, not timed polling."""
-        with tempfile.TemporaryDirectory() as directory:
-            original_root = storage.WORKSPACE_ROOT
-            storage.WORKSPACE_ROOT = Path(directory)
-            active = ActiveRun(control=BrowserRunControl())
-            try:
-                from angelus.event_stream import sse
-
-                original_reader = sse._read_session_event_records_from
-                with patch.object(
-                    sse, "_read_session_event_records_from", wraps=original_reader,
-                ) as reader:
-                    stream = live_event_stream(
-                        "demo", "demo", active, 0, keepalive_timeout=0.02,
-                    )
-                    assert next(stream) == ": keepalive\n\n"
-                    assert next(stream) == ": keepalive\n\n"
-                    assert reader.call_count == 1
-            finally:
-                active.event_broker.close()
                 storage.WORKSPACE_ROOT = original_root
 
 
@@ -213,7 +159,8 @@ class TestCompactionLifecycleStream:
                         "data": event.data,
                         "timestamp": event.timestamp,
                     }
-                    publish_durable_event(active, "demo", "demo", payload)
+                    storage._append_session_event("demo", "demo", payload)
+                    active.events.put(payload)
 
                 agent.add_hook(capture)
                 agent.run("trigger a compaction")
@@ -241,11 +188,15 @@ class TestCompactionLifecycleStream:
                 assert success["archived_messages"] >= 1
                 assert success["abstract_characters"] > 0
 
-                # The same events must be readable back through SSE replay.
+                # The same events must be readable back over the SSE endpoint.
+                client = TestClient(webapp.app)
                 session.active = None  # replay the durable tail once, then close
-                received = _payloads(list(historical_event_stream(
-                    "demo", "demo", 0,
-                )))
+                thread, received = _collect(
+                    client,
+                    "/api/workspaces/demo/runs/demo/events?after=0",
+                    seconds=0.8,
+                )
+                thread.join(timeout=5)
                 streamed = [e.get("type") for e in received]
                 assert "context:compact_started" in streamed, streamed
                 assert "context:compact_success" in streamed, streamed

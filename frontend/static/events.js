@@ -9,26 +9,18 @@
 
 let _source = null;
 let _workspaceId = "";
-let _durableOffset = 0;
-let _runKey = "";
 
 export function connectRun(workspaceId, runId, handlers) {
-  const runKey = `${workspaceId}:${runId}`;
-  if (runKey !== _runKey) _durableOffset = 0;
   disconnect();
-  _runKey = runKey;
 
-  const query = _durableOffset > 0 ? `?cursor=${_durableOffset}` : "";
   const source = new EventSource(
-    `/api/workspaces/${workspaceId}/runs/${runId}/events${query}`
+    `/api/workspaces/${workspaceId}/runs/${runId}/events`
   );
   _source = source;
   _workspaceId = workspaceId;
 
   source.onmessage = (event) => {
     if (workspaceId !== _workspaceId) return; // stale — user switched away
-    const offset = Number(event.lastEventId);
-    if (Number.isSafeInteger(offset) && offset >= 0) _durableOffset = offset;
     handlers.onEvent?.(JSON.parse(event.data));
   };
 

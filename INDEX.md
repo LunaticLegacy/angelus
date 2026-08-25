@@ -30,7 +30,7 @@ Angelus 是建立在 `llmfetcher` 子模块之上的本地优先 Agent 控制平
 ## Quick Intent Routing
 
 - **HTTP API、SSE、浏览器入口** → `angelus/api/` 与 `angelus/webapp.py`
-- **会话、事件账本、状态目录** → `angelus/storage.py`、`angelus/history/INDEX.md`
+- **会话、事件账本、状态目录** → `angelus/storage.py`、`angelus/history.py`
 - **Agent / Swarm 构建** → `angelus/runtime.py`；算法实现见 `llmfetcher/`
 - **插件宿主、权限和注册表** → `angelus/plugins/`、`angelus/plugin_*.py`
 - **前端工作台** → `frontend/INDEX.md` → `frontend/static/INDEX.md`
@@ -40,19 +40,3 @@ Angelus 是建立在 `llmfetcher` 子模块之上的本地优先 Agent 控制平
 - **内置工具** → `llmfetcher/tools/`
 - **测试覆盖** → `tests/INDEX.md`
 - **架构语义参考** → `docs/semantic-map.md`
-
-<!-- BEGIN GENERATED SYMBOL MAP -->
-
-## Function Map
-
-| Source | Function / method | Input types | Output type | Semantics |
-|---|---|---|---|---|
-| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
-
-## Class Map
-
-| Source | Class | Constructor / field input types | Base(s) | Semantics |
-|---|---|---|---|---|
-| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
-
-<!-- END GENERATED SYMBOL MAP -->

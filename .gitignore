@@ -67,8 +67,5 @@ src-tauri/binaries/*
 /*-backend.spec
 
 # Angelus-based plugin
-/plugins/
+plugins/
 
-
-# Spike generated ledger (real transcript data, not part of the repo).
-scripts/spike_product_adapters/out/

@@ -22,7 +22,6 @@ from .classes import (
     BrowserRunControl,
     BrowserSession,
     ConnectorRequest,
-    ProjectPathRequest,
     RunConfig,
     RunRequest,
     SteerRequest,
@@ -40,6 +39,7 @@ from .api import include_api_routes
 from .api.connectors import *  # noqa: F401,F403
 from .api.runs import *  # noqa: F401,F403
 from .api.sessions import *  # noqa: F401,F403
+
 # Preserve the historical behaviour of migrating legacy state at import time.
 migrate_legacy_state()
 
@@ -60,7 +60,6 @@ def _assemble_plugins(app: FastAPI) -> Any:
     """
     from . import plugin_registry
     from .plugin_bootstrap import install_bundled_plugins
-    from .plugins.autoreload import start_plugin_autoreload
     from .plugins.bridge_routes import include_plugin_routes
     from .plugins.manager import PluginManager
 
@@ -78,12 +77,6 @@ def _assemble_plugins(app: FastAPI) -> Any:
     bridge = include_plugin_routes(app, manager, registry=plugin_registry)
     app.state.plugin_manager = manager
     app.state.plugin_bridge = bridge
-
-    # Optional background hot discovery (ANGELUS_PLUGIN_AUTORELOAD, off by
-    # default).  The daemon thread calls the same bridge.rescan() as the
-    # workbench refresh button; a plugin directory dropped into the
-    # persistent plugins folder becomes visible without a manual refresh.
-    app.state.plugin_autoreloader = start_plugin_autoreload(bridge.rescan)
     return manager
 
 
