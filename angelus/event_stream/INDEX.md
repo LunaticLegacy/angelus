@@ -31,9 +31,10 @@
 | [broker.py](broker.py#L130) | `EventBroker.wait_after` | `sequence: int, timeout: float` | `BrokerBatch` | Wait for and return events newer than one subscriber sequence. |
 | [broker.py](broker.py#L160) | `EventBroker.close` | `None` | `None` | Close the broker and wake all waiting subscribers. |
 | [publisher.py](publisher.py#L11) | `publish_durable_event` | `active: ActiveRun \| None, workspace_id: str, session_id: str, payload: dict[str, Any]` | `int` | Append, fsync, then broadcast one durable browser event. |
-| [sse.py](sse.py#L14) | `encode_sse_event` | `payload: dict[str, Any], durable_offset: int \| None` | `str` | Serialize one payload without advancing SSE IDs for live-only data. |
-| [sse.py](sse.py#L31) | `historical_event_stream` | `workspace_id: str, session_id: str, start_offset: int` | `Iterator[str]` | Replay durable records once for a session without a live worker. |
-| [sse.py](sse.py#L51) | `live_event_stream` | `workspace_id: str, session_id: str, active: ActiveRun, start_offset: int, keepalive_timeout: float` | `Iterator[str]` | Replay a durable snapshot, then consume event-driven broadcasts. |
+| [sse.py](sse.py#L14) | `_sse_json_fallback` | `value: Any` | `str` | Render unexpected live-only values without terminating an SSE stream. |
+| [sse.py](sse.py#L33) | `encode_sse_event` | `payload: dict[str, Any], durable_offset: int \| None` | `str` | Serialize one payload without advancing SSE IDs for live-only data. |
+| [sse.py](sse.py#L53) | `historical_event_stream` | `workspace_id: str, session_id: str, start_offset: int` | `Iterator[str]` | Replay durable records once for a session without a live worker. |
+| [sse.py](sse.py#L73) | `live_event_stream` | `workspace_id: str, session_id: str, active: ActiveRun, start_offset: int, keepalive_timeout: float` | `Iterator[str]` | Replay a durable snapshot, then consume event-driven broadcasts. |
 
 ## Class Map
 

@@ -149,13 +149,21 @@ swarm, TLB-RAG, and utilities.
 | [test_context_stats.py](test_context_stats.py#L255) | `AgentContextPreviewStatsTests.test_remote_request_stats_dataclass_fields_are_complete` | `None` | `None` | Implement `AgentContextPreviewStatsTests.test_remote_request_stats_dataclass_fields_are_complete`. |
 | [test_context_stats.py](test_context_stats.py#L260) | `AgentContextPreviewStatsTests.test_preview_stats_match_estimate_context_length` | `None` | `None` | Implement `AgentContextPreviewStatsTests.test_preview_stats_match_estimate_context_length`. |
 | [test_context_stats.py](test_context_stats.py#L298) | `AgentContextPreviewStatsTests.test_preview_without_remote_request_has_no_stats` | `None` | `None` | Implement `AgentContextPreviewStatsTests.test_preview_without_remote_request_has_no_stats`. |
-| [test_desktop_packaging.py](test_desktop_packaging.py#L9) | `test_windows_msi_uses_a_numeric_wix_version_for_alpha_releases` | `None` | `None` | WiX must not derive an MSI version from the textual `-alpha` suffix. |
+| [test_desktop_packaging.py](test_desktop_packaging.py#L11) | `test_windows_msi_uses_a_numeric_wix_version_for_preview_releases` | `None` | `None` | WiX must not derive an MSI version from the textual `-preview` suffix. |
+| [test_desktop_packaging.py](test_desktop_packaging.py#L20) | `test_preview_release_metadata_and_trigger_stay_aligned` | `None` | `None` | Keep package formats and the desktop release tag on one preview release. |
 | [test_event_broker.py](test_event_broker.py#L11) | `test_two_subscribers_receive_the_same_event` | `None` | `None` | Independent cursors observe one publication without competing. |
 | [test_event_broker.py](test_event_broker.py#L33) | `test_overflow_reports_gap_and_durable_watermark` | `None` | `None` | A slow cursor receives an explicit disk-recovery boundary. |
 | [test_event_broker.py](test_event_broker.py#L47) | `test_idle_wait_does_not_wake_until_timeout` | `None` | `None` | An idle broker waits instead of producing a polling tick. |
 | [test_execution_graph_persistence.py](test_execution_graph_persistence.py#L14) | `_agent` | `prompt: str` | `Agent` | Build a tool-free Agent suitable for default persistence tests. |
 | [test_execution_graph_persistence.py](test_execution_graph_persistence.py#L32) | `ExecutionGraphPersistenceTests.test_save_and_load_restores_agents_edges_and_callbacks` | `None` | `None` | Restore a graph with mapper/router callbacks through a registry. |
 | [test_execution_graph_persistence.py](test_execution_graph_persistence.py#L61) | `ExecutionGraphPersistenceTests.test_callbacks_require_explicit_registry` | `None` | `None` | Reject implicit serialization of arbitrary executable callbacks. |
+| [test_external_agent_provider_settings.py](test_external_agent_provider_settings.py#L11) | `test_only_opencode_accepts_a_browser_configured_endpoint` | `monkeypatch: pytest.MonkeyPatch, tmp_path: Any` | `None` | Reject endpoint data for CLI-backed Providers before private state is written. |
+| [test_external_agent_provider_settings.py](test_external_agent_provider_settings.py#L27) | `test_opencode_persists_its_loopback_endpoint` | `monkeypatch: pytest.MonkeyPatch, tmp_path: Any` | `None` | Persist a selected OpenCode endpoint without exposing any credential field. |
+| [test_external_codex_provider.py](test_external_codex_provider.py#L20) | `_FakeRuntime.call` | `factory: Any` | `Any` | Invoke the factory with a fake async client and record its request. |
+| [test_external_codex_provider.py](test_external_codex_provider.py#L40) | `_FakeRuntime.close` | `None` | `None` | Match the real runtime cleanup surface. |
+| [test_external_codex_provider.py](test_external_codex_provider.py#L44) | `test_codex_provider_maps_fixed_contract_actions_to_safe_rpc_payloads` | `None` | `None` | Discovery/start/send/steer use fixed methods rather than passthrough JSON. |
+| [test_external_codex_provider.py](test_external_codex_provider.py#L65) | `test_codex_provider_rejects_steering_a_turn_it_does_not_own` | `None` | `None` | A random thread cannot be controlled without Angelus-observed turn state. |
+| [test_external_codex_provider.py](test_external_codex_provider.py#L77) | `test_codex_client_initializes_once_before_thread_requests` | `None` | `None` | Issue Codex's ordered handshake before a normal App Server request. |
 | [test_graph_builder.py](test_graph_builder.py#L21) | `_FakeFetcher.fetch` | `msg: Any, system_prompt: Any, temperature: Any, max_tokens: Any, context_handler: Any, backend_name: Any, tools: Any` | `Any` | Implement `_FakeFetcher.fetch`. |
 | [test_graph_builder.py](test_graph_builder.py#L32) | `_msg` | `role: str, content: str, timeline: int` | `LLMContext` | Implement `_msg`. |
 | [test_graph_builder.py](test_graph_builder.py#L37) | `BuilderLlmTests.test_llm_extraction_upserts` | `None` | `Any` | Implement `BuilderLlmTests.test_llm_extraction_upserts`. |
@@ -167,6 +175,14 @@ swarm, TLB-RAG, and utilities.
 | [test_graph_builder.py](test_graph_builder.py#L119) | `RegexExtractionTests.test_file_function_hashtag` | `None` | `Any` | Implement `RegexExtractionTests.test_file_function_hashtag`. |
 | [test_graph_builder.py](test_graph_builder.py#L130) | `RegexExtractionTests.test_relations_empty` | `None` | `Any` | Implement `RegexExtractionTests.test_relations_empty`. |
 | [test_graph_builder.py](test_graph_builder.py#L136) | `StatsTests.test_stats_str` | `None` | `Any` | Implement `StatsTests.test_stats_str`. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L16) | `_install_live_swarm` | `session_id: str` | `None` | Register a session holder with a live coordinator-led Swarm. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L34) | `GraphEditApiTests.setUp` | `None` | `None` | Implement `GraphEditApiTests.setUp`. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L39) | `GraphEditApiTests.tearDown` | `None` | `None` | Implement `GraphEditApiTests.tearDown`. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L46) | `GraphEditApiTests._expect_http` | `status_code: int, call: Any` | `None` | Implement `GraphEditApiTests._expect_http`. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L51) | `GraphEditApiTests.test_mutations_reject_sessions_without_a_live_swarm` | `None` | `None` | Every mutation requires an active Swarm; absent/done holders 409. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L67) | `GraphEditApiTests.test_happy_path_mutates_topology_and_persists_view_and_events` | `None` | `None` | Add/connect/mapper/router/remove round-trips through the live graph. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L128) | `GraphEditApiTests.test_duplicate_agent_and_unknown_targets_are_rejected` | `None` | `None` | Duplicate names, unknown nodes, and bad mapper modes return 409. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L160) | `GraphEditApiTests.test_coordinator_is_protected_and_names_are_validated` | `None` | `None` | Removing the coordinator is a 400; unsafe names are rejected. |
 | [test_graph_handler.py](test_graph_handler.py#L25) | `_RecordingCompactor.fetch` | `msg: Any, system_prompt: Any, temperature: Any, max_tokens: Any, context_handler: Any, backend_name: Any, tools: Any` | `Any` | Implement `_RecordingCompactor.fetch`. |
 | [test_graph_handler.py](test_graph_handler.py#L44) | `_FakeExtractionFetcher.fetch` | `msg: Any, system_prompt: Any, temperature: Any, max_tokens: Any, context_handler: Any, backend_name: Any, tools: Any` | `Any` | Implement `_FakeExtractionFetcher.fetch`. |
 | [test_graph_handler.py](test_graph_handler.py#L58) | `_FakeQueryFetcher.fetch` | `msg: Any, system_prompt: Any, temperature: Any, max_tokens: Any, context_handler: Any, backend_name: Any, tools: Any` | `Any` | Implement `_FakeQueryFetcher.fetch`. |
@@ -435,6 +451,7 @@ swarm, TLB-RAG, and utilities.
 | [test_spike_product_adapters.py](test_spike_product_adapters.py#L48) | `test_claude_adapter_normalizes_user_and_tool_use` | `tmp_path: Any` | `None` | Implement `test_claude_adapter_normalizes_user_and_tool_use`. |
 | [test_spike_product_adapters.py](test_spike_product_adapters.py#L60) | `test_codex_adapter_normalizes_tool_round_trip` | `tmp_path: Any` | `None` | Implement `test_codex_adapter_normalizes_tool_round_trip`. |
 | [test_spike_product_adapters.py](test_spike_product_adapters.py#L72) | `test_codex_developer_message_is_meta_not_user` | `tmp_path: Any` | `None` | Implement `test_codex_developer_message_is_meta_not_user`. |
+| [test_sse_serialization.py](test_sse_serialization.py#L14) | `test_encode_sse_event_normalizes_nested_exception_values` | `None` | `None` | Keep SSE subscribers alive when a live error is an exception instance. |
 | [test_sse_stream.py](test_sse_stream.py#L28) | `_seed_events` | `count: int` | `None` | Implement `_seed_events`. |
 | [test_sse_stream.py](test_sse_stream.py#L35) | `_payloads` | `chunks: list[str]` | `list[dict]` | Decode data records while ignoring SSE IDs and keepalive comments. |
 | [test_sse_stream.py](test_sse_stream.py#L48) | `TestSseStream.test_after_offset_skips_replayed_history` | `None` | `None` | A refresh that already rendered N events must not receive them again. |
@@ -595,11 +612,13 @@ swarm, TLB-RAG, and utilities.
 | [test_context_stats.py](test_context_stats.py#L142) | `AgentContextStatsTests` | `None` | `unittest.TestCase` | ``_agent_context_stats`` keeps legacy keys and adds the spec fields. |
 | [test_context_stats.py](test_context_stats.py#L250) | `AgentContextPreviewStatsTests` | `None` | `unittest.TestCase` | ``RemoteRequestStats`` from ``_agent_context_preview`` stays complete. |
 | [test_execution_graph_persistence.py](test_execution_graph_persistence.py#L29) | `ExecutionGraphPersistenceTests` | `None` | `unittest.TestCase` | Verify graph topology and callback identity survive a disk round trip. |
+| [test_external_codex_provider.py](test_external_codex_provider.py#L13) | `_FakeRuntime` | `None` | `object` | Record fixed provider RPCs without launching a Codex child process. |
 | [test_graph_builder.py](test_graph_builder.py#L13) | `_FakeFetcher` | `payload: str, fail: bool` | `object` | Injectable fetcher returning a fixed JSON extraction. |
 | [test_graph_builder.py](test_graph_builder.py#L36) | `BuilderLlmTests` | `None` | `unittest.TestCase` | Provide `BuilderLlmTests` behavior. |
 | [test_graph_builder.py](test_graph_builder.py#L90) | `BuilderTimelineTests` | `None` | `unittest.TestCase` | Provide `BuilderTimelineTests` behavior. |
 | [test_graph_builder.py](test_graph_builder.py#L118) | `RegexExtractionTests` | `None` | `unittest.TestCase` | Provide `RegexExtractionTests` behavior. |
 | [test_graph_builder.py](test_graph_builder.py#L135) | `StatsTests` | `None` | `unittest.TestCase` | Provide `StatsTests` behavior. |
+| [test_graph_edit_api.py](test_graph_edit_api.py#L31) | `GraphEditApiTests` | `None` | `unittest.TestCase` | Exercise the graph editing toolbar endpoints against a live Swarm. |
 | [test_graph_handler.py](test_graph_handler.py#L19) | `_RecordingCompactor` | `None` | `object` | Fake fetcher that returns a valid compaction payload. |
 | [test_graph_handler.py](test_graph_handler.py#L37) | `_FakeExtractionFetcher` | `payload: str` | `object` | Fake LLM that returns a fixed entity/relation JSON payload. |
 | [test_graph_handler.py](test_graph_handler.py#L51) | `_FakeQueryFetcher` | `payload: str` | `object` | Fake LLM that returns fixed seed entities for a query. |
@@ -640,6 +659,7 @@ swarm, TLB-RAG, and utilities.
 | [test_scoped_run_control.py](test_scoped_run_control.py#L12) | `_BlockingAgent` | `started: threading.Event, release: threading.Event` | `object` | Minimal graph Agent that can expose scheduling and controlled release. |
 | [test_session_observability.py](test_session_observability.py#L13) | `SessionObservabilityTests` | `None` | `unittest.TestCase` | Exercise event pagination and per-Agent token aggregation. |
 | [test_session_steers.py](test_session_steers.py#L13) | `SessionSteersTests` | `None` | `unittest.TestCase` | Ensure applied steering instructions survive browser refreshes. |
+| [test_sse_serialization.py](test_sse_serialization.py#L10) | `_ProviderFailure` | `None` | `Exception` | Minimal exception type representing a provider callback failure. |
 | [test_sse_stream.py](test_sse_stream.py#L45) | `TestSseStream` | `None` | `object` | Exercise after-offset replay and no-active-run behaviour. |
 | [test_sse_stream.py](test_sse_stream.py#L157) | `_CompactionFetcher` | `None` | `object` | Return normal replies, and an abstract for compaction requests. |
 | [test_sse_stream.py](test_sse_stream.py#L182) | `TestCompactionLifecycleStream` | `None` | `object` | Agent auto-compaction events persist and reach the SSE stream. |

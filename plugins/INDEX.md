@@ -18,61 +18,62 @@
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [angelus-control-plane-ui/main.py](angelus-control-plane-ui/main.py#L17) | `ControlPlaneUIPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `ControlPlaneUIPlugin.setup`. |
-| [angelus-control-plane-ui/main.py](angelus-control-plane-ui/main.py#L21) | `ControlPlaneUIPlugin.teardown` | `None` | `None` | Implement `ControlPlaneUIPlugin.teardown`. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L15) | `$` | `selector: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: $. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L16) | `$$` | `selector: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: $$. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L56) | `currentSessionId` | `None` | `unknown` | Perform the browser runtime operation: current session id. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L60) | `esc` | `value: unknown` | `unknown` | Perform the browser runtime operation: esc. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L69) | `pluginElement` | `tag: unknown, className: unknown` | `unknown` | Perform the browser runtime operation: plugin element. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L76) | `clamp` | `value: unknown, min: unknown, max: unknown` | `unknown` | Perform the browser runtime operation: clamp. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L80) | `finite` | `value: unknown, fallback: unknown` | `unknown` | Perform the browser runtime operation: finite. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L85) | `formatDuration` | `ms: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L95) | `formatClock` | `epochSeconds: unknown, withDate: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L105) | `formatNumber` | `value: unknown, digits: unknown` | `unknown` | Perform the browser runtime operation: format number. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L110) | `eventKey` | `event: unknown, index: unknown` | `unknown` | Perform the browser runtime operation: event key. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L124) | `apiJson` | `path: unknown` | `Promise<unknown>` | Perform the browser runtime operation: api json. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L137) | `loadEventsSince` | `sessionId: unknown, cutoffSeconds: unknown, maxPages: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load events since. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L173) | `loadLatestRunEvents` | `sessionId: unknown, maxPages: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load latest run events. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L201) | `lastRunWindow` | `events: unknown` | `unknown` | Perform the browser runtime operation: last run window. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L272) | `setView` | `view: unknown` | `unknown` | Perform the browser runtime operation: set view. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L299) | `timelineSpans` | `events: unknown` | `unknown` | Perform the browser runtime operation: timeline spans. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L382) | `timelineBounds` | `spans: unknown, inputs: unknown` | `unknown` | Perform the browser runtime operation: timeline bounds. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L395) | `spanCard` | `span: unknown, bounds: unknown, pxPerSecond: unknown` | `unknown` | Perform the browser runtime operation: span card. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L409) | `timeTicks` | `bounds: unknown, pxPerSecond: unknown` | `unknown` | Perform the browser runtime operation: time ticks. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L424) | `renderTimeline` | `None` | `unknown` | Perform the browser runtime operation: render timeline. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L445) | `column` | `lane: unknown, spans: unknown` | `unknown` | Perform the browser runtime operation: column. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L472) | `detailRows` | `detail: unknown` | `unknown` | Perform the browser runtime operation: detail rows. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L480) | `jsonBlock` | `title: unknown, value: unknown` | `unknown` | Perform the browser runtime operation: json block. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L488) | `overlayContent` | `span: unknown` | `unknown` | Perform the browser runtime operation: overlay content. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L503) | `chooseOverlayRect` | `sourceRect: unknown` | `unknown` | Perform the browser runtime operation: choose overlay rect. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L515) | `closeTimelineOverlay` | `animated: unknown` | `unknown` | Perform the browser runtime operation: close timeline overlay. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L536) | `openTimelineOverlay` | `source: unknown, span: unknown` | `unknown` | Perform the browser runtime operation: open timeline overlay. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L556) | `refreshTimeline` | `force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh timeline. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L587) | `rangeCutoff` | `key: unknown` | `unknown` | Perform the browser runtime operation: range cutoff. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L597) | `quantile` | `values: unknown, p: unknown` | `unknown` | Perform the browser runtime operation: quantile. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L607) | `average` | `values: unknown` | `unknown` | Perform the browser runtime operation: average. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L611) | `stddev` | `values: unknown` | `unknown` | Perform the browser runtime operation: stddev. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L617) | `telemetry` | `events: unknown` | `unknown` | Perform the browser runtime operation: telemetry. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L669) | `bucketSeries` | `items: unknown, start: unknown, end: unknown, bucketSeconds: unknown, valueFn: unknown, reducer: unknown` | `unknown` | Perform the browser runtime operation: bucket series. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L686) | `chartSvg` | `series: unknown, options: unknown` | `unknown` | Perform the browser runtime operation: chart svg. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L696) | `x` | `index: unknown` | `unknown` | Perform the browser runtime operation: x. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L697) | `y` | `value: unknown` | `unknown` | Perform the browser runtime operation: y. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L720) | `tokenTotals` | `modelCalls: unknown, internal: unknown` | `unknown` | Perform the browser runtime operation: token totals. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L728) | `activitySeries` | `modelCalls: unknown, tools: unknown, start: unknown, end: unknown, bucket: unknown` | `unknown` | Perform the browser runtime operation: activity series. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L736) | `internalBreakdown` | `records: unknown` | `unknown` | Perform the browser runtime operation: internal breakdown. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L746) | `renderStatistics` | `None` | `unknown` | Perform the browser runtime operation: render statistics. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L816) | `refreshStatistics` | `force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh statistics. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L863) | `agentSuggestions` | `prefix: unknown` | `Promise<unknown>` | Perform the browser runtime operation: agent suggestions. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L872) | `sessionSuggestions` | `prefix: unknown` | `unknown` | Perform the browser runtime operation: session suggestions. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L879) | `commandCatalog` | `None` | `unknown` | Perform the browser runtime operation: command catalog. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L887) | `slashItems` | `value: unknown` | `Promise<unknown>` | Perform the browser runtime operation: slash items. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L916) | `renderSlashConsole` | `None` | `unknown` | Perform the browser runtime operation: render slash console. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L947) | `updateSlashConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: update slash console. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L959) | `closeSlashConsole` | `None` | `unknown` | Perform the browser runtime operation: close slash console. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L966) | `replaceInput` | `value: unknown` | `unknown` | Perform the browser runtime operation: replace input. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L973) | `clearAndResizeInput` | `None` | `unknown` | Perform the browser runtime operation: clear and resize input. |
-| [angelus-control-plane-ui/plugin.js](angelus-control-plane-ui/plugin.js#L978) | `acceptSlashSelection` | `execute: unknown` | `unknown` | Perform the browser runtime operation: accept slash selection. |
+| [angelus-control-plane-ui-v0.2.2/main.py](angelus-control-plane-ui-v0.2.2/main.py#L17) | `ControlPlaneUIPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `ControlPlaneUIPlugin.setup`. |
+| [angelus-control-plane-ui-v0.2.2/main.py](angelus-control-plane-ui-v0.2.2/main.py#L21) | `ControlPlaneUIPlugin.teardown` | `None` | `None` | Implement `ControlPlaneUIPlugin.teardown`. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L15) | `$` | `selector: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: $. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L16) | `$$` | `selector: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: $$. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L57) | `currentSessionId` | `None` | `unknown` | Perform the browser runtime operation: current session id. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L61) | `esc` | `value: unknown` | `unknown` | Perform the browser runtime operation: esc. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L70) | `pluginElement` | `tag: unknown, className: unknown` | `unknown` | Perform the browser runtime operation: plugin element. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L77) | `clamp` | `value: unknown, min: unknown, max: unknown` | `unknown` | Perform the browser runtime operation: clamp. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L81) | `finite` | `value: unknown, fallback: unknown` | `unknown` | Perform the browser runtime operation: finite. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L86) | `formatDuration` | `ms: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L96) | `formatClock` | `epochSeconds: unknown, withDate: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L106) | `formatNumber` | `value: unknown, digits: unknown` | `unknown` | Perform the browser runtime operation: format number. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L111) | `eventKey` | `event: unknown, index: unknown` | `unknown` | Perform the browser runtime operation: event key. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L125) | `apiJson` | `path: unknown` | `Promise<unknown>` | Perform the browser runtime operation: api json. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L138) | `loadEventsSince` | `sessionId: unknown, cutoffSeconds: unknown, maxPages: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load events since. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L174) | `loadLatestRunEvents` | `sessionId: unknown, maxPages: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load latest run events. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L202) | `lastRunWindow` | `events: unknown` | `unknown` | Perform the browser runtime operation: last run window. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L273) | `setView` | `view: unknown` | `unknown` | Perform the browser runtime operation: set view. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L300) | `timelineSpans` | `events: unknown` | `unknown` | Perform the browser runtime operation: timeline spans. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L383) | `timelineBounds` | `spans: unknown, inputs: unknown` | `unknown` | Perform the browser runtime operation: timeline bounds. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L396) | `spanCard` | `span: unknown, bounds: unknown, pxPerSecond: unknown` | `unknown` | Perform the browser runtime operation: span card. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L410) | `timeTicks` | `bounds: unknown, pxPerSecond: unknown` | `unknown` | Perform the browser runtime operation: time ticks. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L425) | `renderTimeline` | `None` | `unknown` | Perform the browser runtime operation: render timeline. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L446) | `column` | `lane: unknown, spans: unknown` | `unknown` | Perform the browser runtime operation: column. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L473) | `detailRows` | `detail: unknown` | `unknown` | Perform the browser runtime operation: detail rows. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L481) | `jsonBlock` | `title: unknown, value: unknown` | `unknown` | Perform the browser runtime operation: json block. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L489) | `overlayContent` | `span: unknown` | `unknown` | Perform the browser runtime operation: overlay content. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L504) | `chooseOverlayRect` | `sourceRect: unknown` | `unknown` | Perform the browser runtime operation: choose overlay rect. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L516) | `closeTimelineOverlay` | `animated: unknown` | `unknown` | Perform the browser runtime operation: close timeline overlay. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L537) | `openTimelineOverlay` | `source: unknown, span: unknown` | `unknown` | Perform the browser runtime operation: open timeline overlay. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L557) | `refreshTimeline` | `force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh timeline. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L588) | `rangeCutoff` | `key: unknown` | `unknown` | Perform the browser runtime operation: range cutoff. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L598) | `quantile` | `values: unknown, p: unknown` | `unknown` | Perform the browser runtime operation: quantile. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L608) | `average` | `values: unknown` | `unknown` | Perform the browser runtime operation: average. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L612) | `stddev` | `values: unknown` | `unknown` | Perform the browser runtime operation: stddev. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L618) | `eventAgent` | `event: unknown` | `unknown` | Perform the browser runtime operation: event agent. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L623) | `telemetry` | `events: unknown` | `unknown` | Perform the browser runtime operation: telemetry. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L681) | `bucketSeries` | `items: unknown, start: unknown, end: unknown, bucketSeconds: unknown, valueFn: unknown, reducer: unknown` | `unknown` | Perform the browser runtime operation: bucket series. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L698) | `chartSvg` | `series: unknown, options: unknown` | `unknown` | Perform the browser runtime operation: chart svg. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L708) | `x` | `index: unknown` | `unknown` | Perform the browser runtime operation: x. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L709) | `y` | `value: unknown` | `unknown` | Perform the browser runtime operation: y. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L732) | `tokenTotals` | `modelCalls: unknown, internal: unknown` | `unknown` | Perform the browser runtime operation: token totals. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L740) | `activitySeries` | `modelCalls: unknown, tools: unknown, start: unknown, end: unknown, bucket: unknown` | `unknown` | Perform the browser runtime operation: activity series. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L748) | `internalBreakdown` | `records: unknown` | `unknown` | Perform the browser runtime operation: internal breakdown. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L758) | `renderStatistics` | `None` | `unknown` | Perform the browser runtime operation: render statistics. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L851) | `refreshStatistics` | `force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh statistics. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L898) | `agentSuggestions` | `prefix: unknown` | `Promise<unknown>` | Perform the browser runtime operation: agent suggestions. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L907) | `sessionSuggestions` | `prefix: unknown` | `unknown` | Perform the browser runtime operation: session suggestions. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L914) | `commandCatalog` | `None` | `unknown` | Perform the browser runtime operation: command catalog. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L922) | `slashItems` | `value: unknown` | `Promise<unknown>` | Perform the browser runtime operation: slash items. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L951) | `renderSlashConsole` | `None` | `unknown` | Perform the browser runtime operation: render slash console. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L982) | `updateSlashConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: update slash console. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L994) | `closeSlashConsole` | `None` | `unknown` | Perform the browser runtime operation: close slash console. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L1001) | `replaceInput` | `value: unknown` | `unknown` | Perform the browser runtime operation: replace input. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L1008) | `clearAndResizeInput` | `None` | `unknown` | Perform the browser runtime operation: clear and resize input. |
+| [angelus-control-plane-ui-v0.2.2/plugin.js](angelus-control-plane-ui-v0.2.2/plugin.js#L1013) | `acceptSlashSelection` | `execute: unknown` | `unknown` | Perform the browser runtime operation: accept slash selection. |
 | [angelus/main.py](angelus/main.py#L14) | `AngelusSkinPlugin.setup` | `runtime: Any` | `Any` | Implement `AngelusSkinPlugin.setup`. |
 | [angelus/main.py](angelus/main.py#L17) | `AngelusSkinPlugin.teardown` | `None` | `Any` | Implement `AngelusSkinPlugin.teardown`. |
 | [angelus/plugin.js](angelus/plugin.js#L9) | `node` | `className: unknown, parent: unknown` | `unknown` | Perform the browser runtime operation: node. |
@@ -95,7 +96,7 @@
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [angelus-control-plane-ui/main.py](angelus-control-plane-ui/main.py#L13) | `ControlPlaneUIPlugin` | `None` | `AngelusPlugin` | Provide `ControlPlaneUIPlugin` behavior. |
+| [angelus-control-plane-ui-v0.2.2/main.py](angelus-control-plane-ui-v0.2.2/main.py#L13) | `ControlPlaneUIPlugin` | `None` | `AngelusPlugin` | Provide `ControlPlaneUIPlugin` behavior. |
 | [angelus/main.py](angelus/main.py#L10) | `AngelusSkinPlugin` | `None` | `AngelusPlugin` | Provide `AngelusSkinPlugin` behavior. |
 | [demo-hello/main.py](demo-hello/main.py#L24) | `DemoHelloPlugin` | `None` | `AngelusPlugin` | Provide `DemoHelloPlugin` behavior. |
 | [example-tool/main.py](example-tool/main.py#L48) | `ExampleToolPlugin` | `None` | `AngelusPlugin` | 网络搜索工具示例：``web_search`` 工具 + ``tool.before``/``tool.after`` 钩子。 |
