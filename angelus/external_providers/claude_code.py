@@ -51,6 +51,40 @@ def _content_text(content: Any) -> str:
                      if isinstance(block, dict) and block.get("type") == "text").strip()
 
 
+def _importable_transcript_message(raw: Any) -> tuple[str, str] | None:
+    """Project one Claude transcript record into a user-visible history turn.
+
+    Args:
+        raw: Parsed Claude JSONL record from a read-only discovered transcript.
+
+    Returns:
+        A ``(role, content)`` pair for a mainline user/assistant message, or
+        ``None`` for metadata, sidechains, tool activity, empty thinking,
+        local-command artifacts, and synthetic/API-error responses.
+    """
+    if not isinstance(raw, dict) or raw.get("type") not in {"user", "assistant"}:
+        return None
+    if raw.get("isMeta") or raw.get("isSidechain") or raw.get("isApiErrorMessage"):
+        return None
+    message = raw.get("message")
+    if not isinstance(message, dict) or message.get("role", raw.get("type")) != raw.get("type"):
+        return None
+    if raw.get("type") == "assistant" and message.get("model") == "<synthetic>":
+        return None
+    content = _content_text(message.get("content"))
+    if not content or _is_local_command_artifact(content):
+        return None
+    return str(raw["type"]), content
+
+
+def _is_local_command_artifact(content: str) -> bool:
+    """Identify Claude CLI's non-conversational local-command transcript tags."""
+    return content.lstrip().startswith((
+        "<local-command-caveat>", "<local-command-stdout>",
+        "<local-command-stderr>", "<command-name>",
+    ))
+
+
 class ClaudeCodeProvider(ExternalAgentProvider):
     """Connect Angelus-owned Claude Code CLI processes and inspect transcripts.
 
@@ -184,21 +218,26 @@ class ClaudeCodeProvider(ExternalAgentProvider):
             raise ProviderError("Claude transcript is outside the configured history", code="forbidden")
 
         records: list[dict[str, Any]] = []
+        previous: tuple[str, str] | None = None
         try:
             with resolved.open("r", encoding="utf-8", errors="replace") as handle:
                 for index, line in enumerate(handle):
                     if index >= 10_000:
                         raise ProviderError("Claude transcript exceeds the import record limit", code="too_large")
                     raw = json.loads(line)
-                    if not isinstance(raw, dict) or raw.get("type") not in {"user", "assistant"}:
+                    message = _importable_transcript_message(raw)
+                    if message is None:
                         continue
-                    content = _content_text(raw.get("message"))
-                    if content:
-                        records.append({
-                            "id": str(raw.get("uuid") or raw.get("id") or f"{session_id}-{index}"),
-                            "role": str(raw["type"]), "content": content,
-                            "timestamp": raw.get("timestamp"),
-                        })
+                    role, content = message
+                    fingerprint = (role, content)
+                    if fingerprint == previous:
+                        continue
+                    records.append({
+                        "id": str(raw.get("uuid") or raw.get("id") or f"{session_id}-{index}"),
+                        "role": role, "content": content,
+                        "timestamp": raw.get("timestamp"),
+                    })
+                    previous = fingerprint
         except (OSError, json.JSONDecodeError) as exc:
             raise ProviderError("Claude transcript could not be read", code="invalid_transcript") from exc
         if not records:
@@ -481,10 +520,10 @@ class ClaudeCodeProvider(ExternalAgentProvider):
                     session_id = str(record.get("sessionId") or session_id)
                     updated_at = str(record.get("timestamp") or updated_at)
                     project_path = record.get("cwd") or record.get("project_path") or project_path
-                    if record.get("type") == "user":
-                        candidate = _content_text(record.get("message"))
-                        if candidate:
-                            title = candidate.replace("\n", " ")[:120]
+                    imported = _importable_transcript_message(record)
+                    if imported is not None and imported[0] == "user":
+                        title = imported[1].replace("\n", " ")[:120]
+                        if title:
                             break
         except (OSError, json.JSONDecodeError):
             return None

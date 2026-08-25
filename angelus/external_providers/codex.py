@@ -1049,12 +1049,23 @@ def _history_message(raw: Any, session_id: str, index: int) -> dict[str, Any] | 
         return None
     if role not in {"user", "assistant"} or not content:
         return None
+    if role == "user" and _is_codex_transcript_artifact(content):
+        return None
     return {
         "id": str(raw.get("id") or payload.get("id") or f"{session_id}-{index}"),
         "role": role,
         "content": content,
         "timestamp": raw.get("timestamp"),
     }
+
+
+def _is_codex_transcript_artifact(content: str) -> bool:
+    """Identify Codex's injected environment envelopes, not user instructions."""
+    return content.lstrip().startswith((
+        "<environment_context>", "<permissions instructions>",
+        "<skills_instructions>", "<apps_instructions>",
+        "<plugins_instructions>", "<collaboration_mode>",
+    ))
 
 
 def _history_session(transcript: Path) -> ExternalSession | None:

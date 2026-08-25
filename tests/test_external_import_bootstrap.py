@@ -61,3 +61,32 @@ def test_claude_export_history_reads_only_discovered_transcript(tmp_path: Path) 
     assert [(item["role"], item["content"]) for item in history] == [
         ("user", "Investigate login"), ("assistant", "Parser rejects an empty token."),
     ]
+
+
+def test_claude_history_rebuild_excludes_cli_artifacts_and_sidechains(tmp_path: Path) -> None:
+    """Keep a continuation transcript to the human-visible main conversation.
+
+    Args:
+        tmp_path: Temporary Claude configuration root with one mixed transcript.
+    """
+    transcript = tmp_path / "projects" / "demo" / "claude-session.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("\n".join([
+        json.dumps({"sessionId": "claude-session", "type": "user", "isMeta": True, "message": {"role": "user", "content": "<local-command-caveat>ignore</local-command-caveat>"}}),
+        json.dumps({"sessionId": "claude-session", "type": "user", "message": {"role": "user", "content": "Repair the login flow"}}),
+        json.dumps({"sessionId": "claude-session", "type": "assistant", "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": "No response requested."}]}}),
+        json.dumps({"sessionId": "claude-session", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "hidden"}]}}),
+        json.dumps({"sessionId": "claude-session", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The token parser needs a guard."}]}}),
+        json.dumps({"sessionId": "claude-session", "type": "assistant", "isSidechain": True, "message": {"role": "assistant", "content": [{"type": "text", "text": "Ignore this branch."}]}}),
+        json.dumps({"sessionId": "claude-session", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The token parser needs a guard."}]}}),
+    ]), encoding="utf-8")
+    provider = ClaudeCodeProvider(history_root=tmp_path, sdk=object())
+
+    sessions = provider.discover()
+    history = provider.export_history("claude-session")
+
+    assert sessions[0].title == "Repair the login flow"
+    assert [(item["role"], item["content"]) for item in history] == [
+        ("user", "Repair the login flow"),
+        ("assistant", "The token parser needs a guard."),
+    ]

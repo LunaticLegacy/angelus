@@ -173,3 +173,27 @@ def test_codex_history_uses_session_metadata_and_deduplicates_live_events(tmp_pa
         ("user", "Repair login"),
         ("assistant", "I found the parser problem."),
     ]
+
+
+def test_codex_history_uses_first_human_prompt_for_title(tmp_path: Path) -> None:
+    """Skip Codex-injected environment context in list titles and imports.
+
+    Args:
+        tmp_path: Temporary Codex home with one environment-wrapped prompt.
+    """
+    transcript = tmp_path / "sessions" / "2026" / "08" / "25" / "rollout-thread-title.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("\n".join([
+        json.dumps({"type": "session_meta", "payload": {"id": "thread-title", "cwd": "/project"}}),
+        json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context><cwd>/project</cwd></environment_context>"}]}}),
+        json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Rebuild the Codex history importer"}]}}),
+    ]), encoding="utf-8")
+    provider = CodexAppServerProvider(runtime=_FakeRuntime(), history_root=tmp_path)  # type: ignore[arg-type]
+
+    sessions = provider.discover()
+    history = provider.export_history("thread-title")
+
+    assert sessions[0].title == "Rebuild the Codex history importer"
+    assert [(item["role"], item["content"]) for item in history] == [
+        ("user", "Rebuild the Codex history importer"),
+    ]
