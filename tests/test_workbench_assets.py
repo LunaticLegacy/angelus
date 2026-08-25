@@ -253,6 +253,15 @@ def test_agent_execution_defers_shell_and_swarm_to_tool_permissions() -> None:
     assert 'querySelectorAll("[data-settings-section]")' in script
 
 
+def test_permission_category_checkboxes_bulk_toggle_their_tools() -> None:
+    """Make category permission actions persist an all-on or all-off tool set."""
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'const group = TOOL_GROUPS.find((item) => item.id === category);' in script
+    assert 'for (const [toolId] of group?.tools || []) next.tools[toolId] = input.checked;' in script
+    assert 'next.categories[category] = input.checked;' in script
+
+
 def test_memory_authorizations_are_selected_and_sent_as_run_grants() -> None:
     """Keep memory grants session-scoped, selectable, and present in run payloads."""
     script = APP_SCRIPT.read_text(encoding="utf-8")

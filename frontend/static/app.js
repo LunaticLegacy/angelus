@@ -126,8 +126,14 @@ function renderToolPermissions(policy) {
   }).join("")}`;
   target.querySelectorAll("input").forEach((input) => input.addEventListener("change", async () => {
     const next = { categories: { ...categories }, tools: { ...tools } };
-    if (input.dataset.permissionCategory) next.categories[input.dataset.permissionCategory] = input.checked;
-    else next.tools[input.dataset.permissionTool] = input.checked;
+    if (input.dataset.permissionCategory) {
+      const category = input.dataset.permissionCategory;
+      next.categories[category] = input.checked;
+      // A category checkbox is an intentional bulk choice: keep every
+      // contained tool aligned so the next rendered profile is unambiguous.
+      const group = TOOL_GROUPS.find((item) => item.id === category);
+      for (const [toolId] of group?.tools || []) next.tools[toolId] = input.checked;
+    } else next.tools[input.dataset.permissionTool] = input.checked;
     const profile = await apiPut(profileUrl(), { tool_permissions: next });
     applyProfile(profile);
   }));
