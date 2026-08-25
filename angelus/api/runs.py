@@ -196,9 +196,10 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     swarm = runtime._build_swarm(config, workspace_id, session_id, active)
                     active.swarm = swarm
                 # Settings are browser-local drafts until this boundary. Keep
-                # the selected threshold in memory so each Agent reapplies it
-                # after loading its checkpoint during ``swarm.run``.
-                runtime._synchronize_swarm_context_threshold(swarm, config)
+                # the selected execution settings in memory so each retained
+                # Agent applies the profile selected for this new turn while
+                # preserving its graph topology, task bus, and contexts.
+                runtime._synchronize_swarm_execution_settings(swarm, config)
                 outputs = swarm.run(request.message, control=active.control)
                 output = outputs.get("coordinator")
                 if not isinstance(output, LLMOutput):
