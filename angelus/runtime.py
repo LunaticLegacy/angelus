@@ -180,6 +180,30 @@ def _enable_optional_agent_controls(agent: Agent, config: RunConfig) -> None:
     if hasattr(agent, "default_stream"):
         agent.default_stream = True
 
+
+def _fetcher_for_config(config: RunConfig) -> LLMFetcher:
+    """Create the connector-authoritative fetcher for one resolved profile.
+
+    Args:
+        config: Resolved run profile with the connector key injected only in
+            memory by the run boundary.
+
+    Returns:
+        A provider-adapted fetcher for the selected connector and model.
+    """
+    provider, api_url = resolve_provider(config.provider, config.api_url)
+    backend = LLMBackendConfig(
+        name="browser",
+        provider=provider,
+        model=config.model.strip(),
+        api_key=config.api_key,
+        api_url=api_url or None,
+        timeout=120,
+        max_retries=config.max_retries,
+    )
+    return create_fetcher(backend, config.provider)
+
+
 def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent_name: str = "coordinator", active: ActiveRun | None = None) -> Agent:
     """Create one session-owned Agent from current UI settings.
 
@@ -195,17 +219,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         the session directory.
     """
     project_path = _project_path(workspace_id, session_id)
-    provider, api_url = resolve_provider(config.provider, config.api_url)
-    backend = LLMBackendConfig(
-        name="browser",
-        provider=provider,
-        model=config.model.strip(),
-        api_key=config.api_key,
-        api_url=api_url or None,
-        timeout=120,
-        max_retries=config.max_retries,
-    )
-    fetcher = create_fetcher(backend, config.provider)
+    fetcher = _fetcher_for_config(config)
     if active is not None and active.mcp_sampling_handler is None:
         def sample_mcp(params: Any) -> Any:
             """Run approved MCP sampling through this session connector only.
@@ -760,6 +774,53 @@ def _synchronize_swarm_context_threshold(swarm: AgentSwarm, config: RunConfig) -
     )
 
 
+def _synchronize_swarm_execution_settings(
+    swarm: AgentSwarm, config: RunConfig,
+) -> tuple[str, ...]:
+    """Apply next-turn execution budgets to an existing Swarm in place.
+
+    The Swarm graph, dispatched Workers, task bus, and each Agent context are
+    durable session state.  A profile edit must not replace them merely to
+    change the next turn's model-and-tool limits.  ``0`` is intentionally
+    assigned directly: it is the valid unlimited-rounds value, not an absent
+    setting that may fall back to the former global default.
+
+    Args:
+        swarm: Retained graph that has completed its preceding browser turn.
+        config: Already-resolved, connector-authoritative next-turn profile.
+
+    Returns:
+        Names of retained Agents whose execution defaults were updated.
+    """
+    agents = [
+        swarm.get_agent(str(node.get("id", "")))
+        for node in swarm.view_snapshot().get("nodes", [])
+        if isinstance(node, dict)
+    ]
+    fetcher = _fetcher_for_config(config)
+    synchronized: list[str] = []
+    for agent in (candidate for candidate in agents if candidate is not None):
+        agent.llm_fetcher = fetcher
+        agent.default_max_rounds = config.max_rounds
+        agent.default_max_tokens = config.max_tokens
+        agent._angelus_run_config = config  # type: ignore[attr-defined]
+        context_handler = getattr(agent, "context_handler", None)
+        linear = getattr(context_handler, "linear", context_handler)
+        if linear is not None and hasattr(linear, "llm_handler"):
+            linear.llm_handler = fetcher
+        builder = getattr(context_handler, "builder", None)
+        if builder is not None and hasattr(builder, "fetcher"):
+            builder.fetcher = SemanticGraphWorker(fetcher)
+        retriever = getattr(context_handler, "retriever", None)
+        if retriever is not None and hasattr(retriever, "query_fetcher"):
+            retriever.query_fetcher = SemanticGraphWorker(fetcher)
+        synchronized.append(getattr(agent, "_agent_name_in_graph", "") or "coordinator")
+    _synchronize_context_threshold(
+        [agent for agent in agents if agent is not None], config.max_context_threshold,
+    )
+    return tuple(synchronized)
+
+
 def _persist_swarm_snapshot(swarm: AgentSwarm, workspace_id: str, session_id: str) -> None:
     """Write a quiescent, credential-free Swarm recovery snapshot.
 
@@ -882,6 +943,7 @@ __all__ = [
     "_event_payload",
     "_redacted_api_url",
     "_runtime_profile_snapshot",
+    "_fetcher_for_config",
     "_build_agent",
     "_build_http_worker_agent",
     "_memory_capabilities",
@@ -890,6 +952,7 @@ __all__ = [
     "_build_swarm",
     "_synchronize_context_threshold",
     "_synchronize_swarm_context_threshold",
+    "_synchronize_swarm_execution_settings",
     "_persist_swarm_snapshot",
     "_restore_swarm",
 ]

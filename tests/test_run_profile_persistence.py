@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-from angelus import runtime, storage, webapp
+from angelus import run_profiles, runtime, storage, webapp
 from angelus.classes import RunConfig
 from angelus.classes import RunRequest
 from llmfetcher.events import ExecutionEvent
@@ -67,6 +67,25 @@ class _CompletedSwarm:
     def view_snapshot(self) -> dict[str, list[object]]:
         """Return the empty graph shape sufficient for persistence assertions."""
         return {"nodes": [], "edges": []}
+
+
+class _ProfileAwareSwarm(_CompletedSwarm):
+    """Retained Swarm double exposing one Coordinator for profile sync tests."""
+
+    def __init__(self) -> None:
+        self.coordinator = SimpleNamespace(
+            default_max_rounds=12,
+            default_max_tokens=4096,
+            _agent_name_in_graph="coordinator",
+        )
+
+    def get_agent(self, name: str) -> SimpleNamespace | None:
+        """Return the durable Coordinator addressed by the graph snapshot."""
+        return self.coordinator if name == "coordinator" else None
+
+    def view_snapshot(self) -> dict[str, list[object]]:
+        """Expose the retained Coordinator without fabricating graph changes."""
+        return {"nodes": [{"id": "coordinator"}], "edges": []}
 
 
 class _ImmediateThread:
@@ -221,6 +240,46 @@ class RunProfilePersistenceTests(unittest.TestCase):
 
                 self.assertEqual(build_swarm.call_count, 1)
                 self.assertIs(storage._sessions[key].active.swarm, swarm)
+            finally:
+                storage.WORKSPACE_ROOT = original_root
+                with storage._sessions_lock:
+                    storage._sessions.pop(key, None)
+                    if prior is not None:
+                        storage._sessions[key] = prior
+
+    def test_profile_change_updates_retained_swarm_with_zero_round_limit(self) -> None:
+        """A new Agent profile updates retained Swarm budgets without rebuilding it."""
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = storage.WORKSPACE_ROOT
+            key = ("demo", "demo")
+            storage.WORKSPACE_ROOT = Path(directory)
+            with storage._sessions_lock:
+                prior = storage._sessions.pop(key, None)
+            request = RunRequest(
+                workspace_id="demo", session_id="demo", message="continue",
+                config=RunConfig(model="test", api_key="hidden", enable_swarm=True),
+            )
+            swarm = _ProfileAwareSwarm()
+            profile_index = Path(directory) / "run-profiles.json"
+
+            try:
+                with (
+                    patch.object(storage, "_workspace_exists", return_value=True),
+                    patch.object(storage, "RUN_PROFILE_INDEX", profile_index),
+                    patch.object(runtime, "_build_swarm", return_value=swarm) as build_swarm,
+                    patch.object(runtime, "_fetcher_for_config", return_value=object()),
+                    patch.object(webapp.threading, "Thread", _ImmediateThread),
+                ):
+                    webapp.start_run(request)
+                    run_profiles.update_profile("demo", {
+                        "model": "test", "max_rounds": 0, "max_tokens": 65536,
+                        "enable_swarm": True,
+                    })
+                    webapp.start_run(request)
+
+                self.assertEqual(build_swarm.call_count, 1)
+                self.assertEqual(swarm.coordinator.default_max_rounds, 0)
+                self.assertEqual(swarm.coordinator.default_max_tokens, 65536)
             finally:
                 storage.WORKSPACE_ROOT = original_root
                 with storage._sessions_lock:
