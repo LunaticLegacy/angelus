@@ -115,6 +115,43 @@ def discover_external_sessions(provider_id: str, project_path: str | None = None
         raise HTTPException(status_code=503 if exc.retryable else 422, detail=str(exc)) from exc
 
 
+@router.post("/api/external-agents/providers/{provider_id}/sessions/{external_session_id}/import", status_code=201)
+def import_discovered_session(
+    provider_id: str,
+    external_session_id: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Import one readable external session into a new Angelus workspace.
+
+    Args:
+        provider_id: Registered provider that owns ``external_session_id``.
+        external_session_id: Provider-issued opaque session ID from discovery.
+        payload: Optional display ``name`` and required/overridden
+            ``project_path`` binding for the new local Angelus workspace.
+
+    Returns:
+        The new independent Angelus session, conversion report, and bounded
+        coordinator checkpoint metadata.
+
+    Raises:
+        HTTPException: If the provider cannot safely export history, the
+            project binding is unavailable, or the source was imported before.
+    """
+    body = _require_mapping(payload)
+    adapter = external.runtime_provider(provider_id)
+    try:
+        source = adapter.read(external_session_id)
+        transcript = adapter.export_history(external_session_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=503 if exc.retryable else 422, detail=str(exc)) from exc
+    project_path = str(body.get("project_path") or source.project_path or "")
+    if not project_path:
+        raise HTTPException(status_code=422, detail="Choose the project directory for the imported workspace")
+    events, report = external.canonicalize_events(provider_id, transcript)
+    name = str(body.get("name") or f"{source.title or provider_id} · import")
+    return external.import_events(name, project_path, provider_id, events, report, external_session_id)
+
+
 @router.get("/api/sessions/{session_id}/external-meta")
 def get_external_session_meta(session_id: str) -> dict[str, Any]:
     """Return additive source metadata for an Angelus session."""

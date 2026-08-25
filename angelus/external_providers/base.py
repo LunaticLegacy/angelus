@@ -120,6 +120,23 @@ class ExternalAgentProvider(ABC):
     def read(self, session_id: str) -> ExternalSession:
         """Read one external session metadata snapshot without attaching control."""
 
+    def export_history(self, session_id: str) -> list[dict[str, Any]]:
+        """Return a read-only, credential-free transcript for one session.
+
+        Args:
+            session_id: Opaque provider session identifier selected from a
+                prior :meth:`discover` result.
+
+        Returns:
+            Provider-neutral transcript records.  Callers canonicalize these
+            records before persisting them in a new Angelus workspace.
+
+        Raises:
+            ProviderError: If this provider cannot safely expose historical
+                content for import.
+        """
+        raise ProviderError("Provider does not support history export", code="unsupported")
+
     def start(self, prompt: str, *, project_path: str, model: str | None = None) -> ExternalSession:
         """Start an Angelus-owned external session or raise unsupported."""
         raise ProviderError("Provider does not support starting sessions", code="unsupported")

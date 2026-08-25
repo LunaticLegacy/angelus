@@ -1,95 +1,51 @@
-/** Capability-gated browser controller for the standalone External Agent Hub. */
-const state = { providers: [], selectedProvider: null, sessions: [], activeLink: null, lease: null };
-const clientInstanceId = crypto.randomUUID?.() || `hub-${Date.now()}-${Math.random()}`;
-let leaseTimer = null;
+/** Read-only external-history importer for independent Angelus workspaces. */
+const state = { providers: [], selectedProvider: null, sessions: [], candidate: null };
 const $ = (id) => document.getElementById(id);
 
-/** Request JSON from a Hub endpoint and return its safe error detail on failure. */
-async function request(path, options = {}) {
-  const response = await fetch(path, options);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
-  return payload;
-}
-/** Update the live feedback region without inserting Provider-controlled HTML. */
+/** Request JSON and expose only the server's browser-safe error detail. */
+async function request(path, options = {}) { const response = await fetch(path, options); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`); return payload; }
+/** Update the live status without interpreting external source material as HTML. */
 function feedback(message = "", kind = "") { const node = $("hub-feedback"); node.textContent = message; node.dataset.kind = kind; }
-/** Build a text-only button bound to one fixed local action. */
+/** Make a text-only button with one fixed local action. */
 function button(label, handler, disabled = false) { const node = document.createElement("button"); node.type = "button"; node.textContent = label; node.disabled = disabled; node.addEventListener("click", handler); return node; }
-/** Render Provider cards while preserving the current selection. */
+/** Render source cards according to their actual direct-import capability. */
 function renderProviders() {
   const root = $("provider-list"); root.replaceChildren();
   for (const provider of state.providers) {
-    const card = document.createElement("button"); card.type = "button"; card.className = "external-provider-card"; card.classList.toggle("selected", state.selectedProvider?.id === provider.id);
-    const title = document.createElement("strong"); title.textContent = provider.label;
-    const status = document.createElement("small"); status.textContent = `${provider.runtime_available ? "本机可用" : "运行时不可用"} · ${provider.configured ? "已配置" : "未配置"}`;
-    const caps = document.createElement("span"); caps.textContent = (provider.capabilities || []).join(" · ") || "预留接口";
-    card.append(title, status, caps); card.addEventListener("click", () => selectProvider(provider.id)); root.append(card);
+    const card = document.createElement("button"); card.type = "button"; card.className = "external-provider-card"; card.classList.toggle("selected", provider.id === state.selectedProvider?.id);
+    const direct = (provider.capabilities || []).includes("import_history");
+    card.append(Object.assign(document.createElement("strong"), { textContent: provider.label }), Object.assign(document.createElement("small"), { textContent: provider.runtime_available ? "本机可读取" : "运行时不可用" }), Object.assign(document.createElement("span"), { textContent: direct ? "可直接导入历史" : "可通过 transcript 文件导入" }));
+    card.addEventListener("click", () => selectProvider(provider.id)); root.append(card);
   }
-  if (!state.providers.length) root.textContent = "未发现 Provider。";
+  if (!state.providers.length) root.textContent = "未发现可用来源。";
 }
-/** Load public Provider metadata without starting a vendor runtime. */
+/** Load metadata only; discovery and transcript reading remain explicit actions. */
 async function loadProviders() { state.providers = (await request("/api/external-agents/providers")).providers || []; renderProviders(); }
-/** Probe every implemented local adapter and select the first detected provider. */
-async function autoDetectProviders() {
-  feedback("正在检测本机 Codex、Claude Code 与 OpenCode…"); const result = await request("/api/external-agents/providers/auto-detect", { method: "POST" }); await loadProviders();
-  const found = (result.providers || []).filter((item) => item.available); const first = found[0]; if (first) selectProvider(first.id);
-  feedback(found.length ? `检测到：${found.map((item) => state.providers.find((provider) => provider.id === item.id)?.label || item.id).join("、")}。` : "未检测到运行时；可检查 CLI/SDK 或 OpenCode loopback 服务。", found.length ? "success" : "warning");
-}
-/** Render endpoint fields and save actions that are valid for one selected Provider. */
-function renderProviderSettings(provider) {
-  const usesOpenCodeEndpoint = provider.id === "opencode";
-  // OpenCode alone accepts a browser-configured endpoint; CLI providers use local discovery.
-  $("provider-endpoint-row").hidden = !usesOpenCodeEndpoint;
-  $("save-provider").hidden = !usesOpenCodeEndpoint;
-  $("provider-settings-note").hidden = usesOpenCodeEndpoint;
-  $("provider-settings-note").textContent = provider.id === "codex" ? "Codex 使用本机 App Server 自动发现，无需填写 URL。" : provider.id === "claude-code" ? "Claude Code 使用本机 CLI/SDK 与 transcript 自动发现，无需填写 URL。" : "该 Provider 当前仅预留接口，尚无可保存的连接设置。";
-}
-/** Show one Provider configuration form and its capability-specific safety guidance. */
+/** Probe local providers and focus the first usable source. */
+async function autoDetectProviders() { const result = await request("/api/external-agents/providers/auto-detect", { method: "POST" }); await loadProviders(); const found = (result.providers || []).find((item) => item.available); if (found) selectProvider(found.id); feedback(found ? "已检测到本机来源。选择一个会话开始导入。" : "未检测到可直接读取的来源；仍可导入 transcript 文件。", found ? "success" : "warning"); }
+/** Select one provider and reset any old discovery result. */
 function selectProvider(providerId) {
-  state.selectedProvider = state.providers.find((item) => item.id === providerId) || null; renderProviders(); const provider = state.selectedProvider; $("provider-detail").hidden = !provider; if (!provider) return;
-  $("provider-label").value = provider.label; $("provider-endpoint").value = provider.endpoint || ""; $("provider-runtime-state").textContent = provider.runtime_available ? "本机可启动" : "运行时不可用";
-  renderProviderSettings(provider);
-  $("provider-help").textContent = provider.id === "claude-code" ? "已发现的 Claude transcript 仅可读取；只有 Angelus 启动的 Claude 会话可控制。" : provider.id === "opencode" ? "仅接受 loopback URL；远程服务及凭据不通过此页面配置。" : "Codex 使用本机 App Server；不会从浏览器接收命令或凭据。";
-  state.sessions = []; $("session-count").textContent = ""; $("external-session-list").textContent = "点击“发现会话”读取该 Provider。";
+  state.selectedProvider = state.providers.find((item) => item.id === providerId) || null; state.sessions = []; renderProviders(); const provider = state.selectedProvider; $("source-detail").hidden = !provider; if (!provider) return;
+  const direct = (provider.capabilities || []).includes("import_history"); $("source-title").textContent = `${provider.label} 会话`; $("source-help").textContent = direct ? "读取的是只读历史。导入后会创建新的 Angelus 工作空间，不会接管或修改原会话。" : "该来源暂不支持安全的直接历史读取；请使用下方 transcript 文件导入。"; $("discover-sessions").disabled = !direct; $("external-session-list").textContent = direct ? "点击“读取会话”查看可导入工作。" : "直接导入尚不可用。";
 }
-/** Persist non-secret local settings for the selected Provider. */
-async function saveProvider(event) {
-  event.preventDefault(); const provider = state.selectedProvider; if (!provider) return;
-  await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ configured: true, endpoint: $("provider-endpoint").value.trim() }) });
-  await loadProviders(); selectProvider(provider.id); feedback("Provider 设置已保存。", "success");
-}
-/** Probe installed runtime state without opening a vendor session. */
-async function probeProvider() { const provider = state.selectedProvider; if (!provider) return; const result = await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/probe`, { method: "POST" }); await loadProviders(); if (result.initialized) $("provider-runtime-state").textContent = "已完成握手"; feedback(result.available ? result.initialized ? "Codex App Server 已完成握手。" : "运行时可用。" : result.message || "运行时不可用；请检查本机 CLI、SDK 或 OpenCode 服务。", result.available ? "success" : "warning"); }
-/** Discover read-only session descriptors through the selected Provider adapter. */
-async function discoverSessions() { const provider = state.selectedProvider; if (!provider) return; feedback("正在发现外部会话…"); state.sessions = (await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/sessions`)).sessions || []; renderSessions(); feedback(`发现 ${state.sessions.length} 个会话。`, "success"); }
-/** Render safely text-projected external sessions with explicit Angelus-link actions. */
-function renderSessions() {
-  const root = $("external-session-list"); root.replaceChildren(); $("session-count").textContent = `${state.sessions.length} 个`;
-  for (const session of state.sessions) { const row = document.createElement("article"); row.className = "external-session-row"; const copy = document.createElement("div"); const title = document.createElement("strong"); title.textContent = session.title || session.id; const details = document.createElement("small"); details.textContent = `${session.status || "unknown"} · ${session.project_path || "未公开项目路径"}`; copy.append(title, details); row.append(copy, button("连接", () => linkSession(session))); root.append(row); }
-  if (!state.sessions.length) root.textContent = "没有可读取的会话。";
-}
-/** Create a safe Angelus link and request its non-preemptive control lease. */
-async function linkSession(session) { const link = await request("/api/external-agents/links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: session.provider, session_id: session.id, project_path: session.project_path || "" }) }); await activateLink(link); feedback("已连接外部会话。", "success"); }
-/** Acquire or renew this tab's exclusive control lease. */
-async function renewLease() { if (!state.activeLink) return; state.lease = await request(`/api/external-agents/links/${encodeURIComponent(state.activeLink.id)}/lease`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_instance_id: clientInstanceId, lease_token: state.lease?.lease_token }) }); renderLink(); }
-/** Start 20-second lease heartbeats after selecting a link. */
-async function activateLink(link) { state.activeLink = link; state.lease = null; clearInterval(leaseTimer); await renewLease(); leaseTimer = setInterval(() => renewLease().catch((error) => feedback(`控制 lease 续期失败：${error.message}`, "warning")), 20_000); }
-/** Render only operations advertised by the Provider and granted by the lease. */
-function renderLink() {
-  const link = state.activeLink; $("link-detail").hidden = !link; if (!link) return; const provider = state.providers.find((item) => item.id === link.provider); const caps = provider?.capabilities || []; const controls = state.lease?.mode === "control";
-  $("link-title").textContent = provider?.label || link.provider; $("link-subtitle").textContent = link.external_session_id; $("lease-state").textContent = controls ? "控制 lease 已取得" : "只读观察";
-  const capRoot = $("link-capabilities"); capRoot.replaceChildren(...caps.map((capability) => Object.assign(document.createElement("span"), { textContent: capability })));
-  const actions = $("link-actions"); actions.replaceChildren(); const labels = { send: "发送", steer: "Steer", interrupt: "中断", fork: "Fork", resume: "恢复", diff: "查看 Diff" }; for (const action of ["send", "steer", "resume", "fork", "interrupt", "diff"]) if (caps.includes(action)) actions.append(button(labels[action], () => runAction(action), !controls));
-}
-/** Submit one idempotent fixed action; arbitrary vendor payloads are never exposed. */
-async function runAction(action) { const link = state.activeLink; if (!link || state.lease?.mode !== "control") return; const result = await request(`/api/external-agents/links/${encodeURIComponent(link.id)}/actions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, lease_token: state.lease.lease_token, idempotency_key: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`, message: $("link-message").value }) }); const output = $("link-result"); output.hidden = false; output.textContent = JSON.stringify(result, null, 2); feedback(`${action} 已提交。`, "success"); }
-/** Drop this page's local lease state without interrupting the vendor session. */
-function releaseLink() { clearInterval(leaseTimer); state.lease = null; state.activeLink = null; $("link-detail").hidden = true; feedback("已断开本页控制。", "success"); }
+/** Discover only sessions exposed by the provider's read-only interface. */
+async function discoverSessions() { const provider = state.selectedProvider; if (!provider) return; state.sessions = (await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/sessions`)).sessions || []; renderSessions(); feedback(`找到 ${state.sessions.length} 个可读取会话。`, "success"); }
+/** Offer one explicit import action per source session—no control lease UI. */
+function renderSessions() { const root = $("external-session-list"); root.replaceChildren(); for (const session of state.sessions) { const row = document.createElement("article"); row.className = "external-session-row"; const copy = document.createElement("div"); copy.append(Object.assign(document.createElement("strong"), { textContent: session.title || session.id }), Object.assign(document.createElement("small"), { textContent: `${session.status || "unknown"} · ${session.project_path || "需要选择项目目录"}` })); row.append(copy, button("导入到 Angelus", () => reviewDiscoveredSession(session))); root.append(row); } if (!state.sessions.length) root.textContent = "没有可导入的会话。"; }
+/** Prepare a direct session import; the source is converted server-side at commit. */
+function reviewDiscoveredSession(session) { state.candidate = { kind: "discovered", provider: state.selectedProvider.id, session }; $("review-summary").textContent = `将从 ${state.selectedProvider.label} 只读导入“${session.title || session.id}”。`; $("import-name").value = `${session.title || state.selectedProvider.label} · import`; $("import-project-path").value = session.project_path || ""; renderReport({ preserved: ["对话历史", "来源标记"], degraded: ["工具调用不会重放"] }); $("import-review").hidden = false; $("import-review").scrollIntoView({ behavior: "smooth", block: "start" }); }
+/** Read a JSON array/object or JSONL transcript without uploading it before preview. */
+async function readTranscriptFile() { const file = $("transcript-file").files?.[0]; if (!file) throw new Error("请选择 transcript 文件"); const text = await file.text(); try { return JSON.parse(text); } catch (_) { return { events: text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)) }; } }
+/** Preview canonicalization before a file import can create any persistent workspace. */
+async function previewFileImport() { const provider = state.selectedProvider; if (!provider) throw new Error("请先选择来源类型"); const transcript = await readTranscriptFile(); const preview = await request("/api/external-agents/import/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: provider.id, transcript }) }); state.candidate = { kind: "file", provider: provider.id, transcript }; $("review-summary").textContent = `已解析 ${preview.event_count || 0} 条记录；请确认要绑定的项目目录。`; $("import-name").value = `${provider.label} transcript · import`; $("import-project-path").value = ""; renderReport(preview.conversion_report || {}); $("import-review").hidden = false; }
+/** Render only generated conversion metadata as text. */
+function renderReport(report) { const root = $("conversion-report"); root.replaceChildren(); for (const [label, values] of [["将保留", report.preserved], ["可能降级", report.degraded], ["省略", report.omitted]]) { if (Array.isArray(values) && values.length) { const item = document.createElement("p"); item.textContent = `${label}：${values.join("、")}`; root.append(item); } } }
+/** Commit an import and ask the parent workbench to open the new session. */
+async function commitImport() { const candidate = state.candidate; if (!candidate) throw new Error("请先选择一个会话或 transcript 文件"); const name = $("import-name").value.trim(); const project_path = $("import-project-path").value.trim(); if (!project_path) throw new Error("请输入要绑定的项目目录"); const options = { method: "POST", headers: { "Content-Type": "application/json" } }; let imported; if (candidate.kind === "discovered") { options.body = JSON.stringify({ name, project_path }); imported = await request(`/api/external-agents/providers/${encodeURIComponent(candidate.provider)}/sessions/${encodeURIComponent(candidate.session.id)}/import`, options); } else { options.body = JSON.stringify({ provider: candidate.provider, transcript: candidate.transcript, name, project_path }); imported = await request("/api/external-agents/import", options); } feedback("工作空间已创建。正在打开，可继续给 Angelus 下达下一步任务。", "success"); window.parent.postMessage({ type: "angelus:imported-session", sessionId: imported.id }, window.location.origin); }
 $("refresh-providers").addEventListener("click", () => loadProviders().catch((error) => feedback(error.message, "error")));
 $("auto-detect-providers").addEventListener("click", () => autoDetectProviders().catch((error) => feedback(error.message, "error")));
-$("provider-form").addEventListener("submit", (event) => saveProvider(event).catch((error) => feedback(error.message, "error")));
-$("probe-provider").addEventListener("click", () => probeProvider().catch((error) => feedback(error.message, "error")));
 $("discover-sessions").addEventListener("click", () => discoverSessions().catch((error) => feedback(error.message, "error")));
-$("release-link").addEventListener("click", releaseLink); window.addEventListener("pagehide", () => clearInterval(leaseTimer)); loadProviders().catch((error) => feedback(`无法读取 Provider：${error.message}`, "error"));
-$("open-hub-tutorial").addEventListener("click", () => $("hub-tutorial").showModal());
-$("close-hub-tutorial").addEventListener("click", () => $("hub-tutorial").close());
+$("preview-file-import").addEventListener("click", () => previewFileImport().catch((error) => feedback(error.message, "error")));
+$("commit-import").addEventListener("click", () => commitImport().catch((error) => feedback(error.message, "error")));
+$("cancel-import").addEventListener("click", () => { state.candidate = null; $("import-review").hidden = true; });
+loadProviders().catch((error) => feedback(`无法读取来源：${error.message}`, "error"));

@@ -26,6 +26,7 @@ from . import storage
 
 ARCHIVE_FORMAT = "angelus-session"
 ARCHIVE_VERSION = 1
+MAX_BOOTSTRAP_CONTEXT_CHARS = 120_000
 MAX_ARCHIVE_MEMBERS = 2_000
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 64 * 1024 * 1024
@@ -313,6 +314,62 @@ def write_session_meta(session_id: str, meta: dict[str, Any]) -> None:
     storage._persist_json(storage._session_path(session_id, session_id) / "session-meta.json", meta)
 
 
+def _bootstrap_context(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the first coordinator checkpoint from non-executing import events.
+
+    Args:
+        events: Ordered canonical external events, including message-completed
+            records and opaque raw evidence records.
+
+    Returns:
+        A valid linear-context checkpoint. The complete message history spans
+        ``archive`` and the bounded newest active suffix, which becomes the
+        prompt buffer for Angelus's first continuation turn.
+    """
+    archive: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "external_agent.message.completed":
+            continue
+        role = str(event.get("role", ""))
+        if role not in {"user", "assistant"}:
+            continue
+        archive.append({
+            "role": role,
+            "timeline": len(archive) + 1,
+            "content": str(event.get("content", "")),
+            "content_reasoning": "",
+            "tool_calls": [],
+            "tags": ["external-import"],
+        })
+
+    # Keep the newest evidence in the initial prompt while retaining older
+    # turns for later inspection, graph ingestion, or explicit handoff work.
+    active: list[dict[str, Any]] = []
+    used = 0
+    for item in reversed(archive):
+        size = len(str(item["content"]))
+        if active and used + size > MAX_BOOTSTRAP_CONTEXT_CHARS:
+            break
+        active.append(item)
+        used += size
+    active.reverse()
+    return {
+        "schema_version": 2,
+        "checkpoint_generation": uuid.uuid4().hex,
+        "compress_threshold": 262_144,
+        "round": max((int(item["timeline"]) for item in archive), default=0),
+        "abstract": None,
+        "messages": active,
+        "archive": archive[:-len(active)] if active else archive,
+        "imported_context": {
+            "source": "external_agent",
+            "active_messages": len(active),
+            "archived_messages": max(0, len(archive) - len(active)),
+            "active_characters": used,
+        },
+    }
+
+
 def import_events(name: str, project_path: str, provider: str, events: list[dict[str, Any]], report: ConversionReport, source_id: str = "") -> dict[str, Any]:
     """Create a new Angelus session and project canonical external events.
 
@@ -341,8 +398,14 @@ def import_events(name: str, project_path: str, provider: str, events: list[dict
         storage._append_session_event(session_id, session_id, event)
         if event.get("event") == "external_agent.message.completed" and event.get("role") in {"user", "assistant", "steer"}:
             storage._append_conversation_turn(session_id, session_id, {"role": event["role"], "content": str(event.get("content", "")), "reasoning": "", "tools": []})
+    # Seed the real Agent checkpoint separately from display history. Imported
+    # events never replay tools; the next Angelus turn starts from this bounded
+    # local context and a new user-selected continuation instruction.
+    checkpoint = _bootstrap_context(events)
+    storage._persist_json(storage._context_path(session_id, session_id, "coordinator"), checkpoint)
     meta = {"mode": "imported", "source_provider": provider, "source_id": source_id,
-            "format_version": ARCHIVE_VERSION, "imported_at": int(time.time()), "content_hash": source_hash}
+            "format_version": ARCHIVE_VERSION, "imported_at": int(time.time()), "content_hash": source_hash,
+            "context_bootstrap": checkpoint["imported_context"]}
     write_session_meta(session_id, meta)
     storage._persist_json(storage._session_path(session_id, session_id) / "conversion-report.json", report.to_dict())
     return {**record, "meta": meta, "conversion_report": report.to_dict()}

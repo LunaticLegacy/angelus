@@ -105,6 +105,7 @@ class ClaudeCodeProvider(ExternalAgentProvider):
         """Return fixed capabilities; controls are restricted to owned sessions."""
         return {
             ProviderCapability.DISCOVER, ProviderCapability.READ,
+            ProviderCapability.IMPORT_HISTORY,
             ProviderCapability.START, ProviderCapability.RESUME,
             ProviderCapability.FORK, ProviderCapability.SEND,
             ProviderCapability.INTERRUPT, ProviderCapability.APPROVAL,
@@ -155,6 +156,54 @@ class ClaudeCodeProvider(ExternalAgentProvider):
             if session.id == session_id:
                 return session
         raise ProviderError("Claude Code session was not found", code="not_found")
+
+    def export_history(self, session_id: str) -> list[dict[str, Any]]:
+        """Read a discovered Claude transcript without attaching to its process.
+
+        Args:
+            session_id: Claude's discovered transcript/session UUID.
+
+        Returns:
+            Ordered, provider-neutral user and assistant records. Tool and
+            unknown records remain absent here rather than becoming executable
+            Angelus input; their source transcript remains read-only evidence.
+
+        Raises:
+            ProviderError: If the session is unavailable, outside Claude's
+                configured history root, malformed, or too large to import.
+        """
+        session = self.read(session_id)
+        transcript_value = session.metadata.get("transcript_path")
+        transcript = Path(str(transcript_value or ""))
+        try:
+            root = self._history_root.resolve()
+            resolved = transcript.resolve()
+        except OSError as exc:
+            raise ProviderError("Claude transcript path is unavailable", code="unavailable") from exc
+        if root not in resolved.parents or not resolved.is_file():
+            raise ProviderError("Claude transcript is outside the configured history", code="forbidden")
+
+        records: list[dict[str, Any]] = []
+        try:
+            with resolved.open("r", encoding="utf-8", errors="replace") as handle:
+                for index, line in enumerate(handle):
+                    if index >= 10_000:
+                        raise ProviderError("Claude transcript exceeds the import record limit", code="too_large")
+                    raw = json.loads(line)
+                    if not isinstance(raw, dict) or raw.get("type") not in {"user", "assistant"}:
+                        continue
+                    content = _content_text(raw.get("message"))
+                    if content:
+                        records.append({
+                            "id": str(raw.get("uuid") or raw.get("id") or f"{session_id}-{index}"),
+                            "role": str(raw["type"]), "content": content,
+                            "timestamp": raw.get("timestamp"),
+                        })
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProviderError("Claude transcript could not be read", code="invalid_transcript") from exc
+        if not records:
+            raise ProviderError("Claude transcript contains no importable messages", code="empty")
+        return records
 
     def start(self, prompt: str, *, project_path: str, model: str | None = None) -> ExternalSession:
         """Start one Angelus-owned stream-json Claude Code session.
