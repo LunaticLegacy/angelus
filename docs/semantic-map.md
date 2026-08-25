@@ -41,13 +41,13 @@
 | --- | --- | --- |
 | `CodexAppServerClient` / `CodexAppServerClient._stdout_closed_error` | Owns an App Server stdio JSON-RPC child, allocates request IDs/Futures, drains JSON stdout, captures bounded stderr, routes notifications/server requests, fails pending calls on disconnect, and only restarts explicitly. On EOF it classifies the known read-only local-state startup failure without exposing raw stderr. | Owned by `CodexAppServerRuntime`; calls `asyncio.create_subprocess_exec`; `_read_stdout` calls `_stdout_closed_error`. |
 | `CodexAppServerRuntime` | Bridges the persistent async client into the synchronous provider contract on a private event-loop thread and queues canonicalized notifications. | Owned by `CodexAppServerProvider`; calls `CodexAppServerClient.request` / `stop`. |
-| `CodexAppServerProvider` | Implements fixed, capability-gated Codex discovery, thread/turn control, diff, approval, and subscription operations without generic RPC passthrough. | Registered by the external-provider bootstrap; calls `CodexAppServerRuntime.call`. |
+| `CodexAppServerProvider` / `export_history` / `_history_path` | Implements fixed, capability-gated Codex discovery, thread/turn control, diff, approval, and subscription operations without generic RPC passthrough. Its read-only import projection resolves only date-nested `rollout-<thread-id>.jsonl` files below `$CODEX_HOME`/`~/.codex`, preserving user/assistant text while omitting tools and reasoning. | Registered by the external-provider bootstrap; direct import calls `read` then `export_history`; App Server operations call `CodexAppServerRuntime.call`. |
 
 ## `angelus.external_providers`
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| `ExternalAgentProvider` / `export_history(session_id)` | Private fixed-action adapter contract plus optional read-only transcript export. An adapter that cannot safely expose history fails closed rather than accepting generic protocol input. | Implemented by Codex, OpenCode, and Claude Code adapters; Claude's export is called by `api.external_agents.import_discovered_session`. |
+| `ExternalAgentProvider` / `export_history(session_id)` | Private fixed-action adapter contract plus optional read-only transcript export. An adapter that cannot safely expose history fails closed rather than accepting generic protocol input. | Implemented by Codex, OpenCode, and Claude Code adapters; Codex and Claude exports are called by `api.external_agents.import_discovered_session`. |
 | `ExternalSession` / `ExternalEvent` | Credential-free provider-neutral descriptors and canonical event envelopes; raw vendor events remain private to synchronization callers. | Returned by provider discovery/read/subscription methods. |
 | `ExternalProviderRegistry` / `provider_registry` | Owns registered built-in runtime adapters and exposes their available capability catalog. | Populated during adapter bootstrap; consumed by the External Agent Hub. |
 | `bootstrap_builtin_providers` | Lazily instantiates Codex, OpenCode, and Claude Code adapters without spawning their optional runtimes; repeated calls retain the same process-scoped instances. | Called by `external_agents.provider_catalog` and API discovery/action routes. |
@@ -59,7 +59,7 @@
 
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
-| provider/import/archive/transfer routes | Provides capability discovery, credential-free archive export, transcript preview/commit, and direct read-only Claude session import. Direct import seeds a new coordinator checkpoint and never replays tools. | Mounted by `api.include_api_routes`; calls `angelus.external_agents` and provider `export_history`. |
+| provider/import/archive/transfer routes | Provides capability discovery, credential-free archive export, transcript preview/commit, and direct read-only Codex/Claude session import. Direct import seeds a new coordinator checkpoint and never replays tools. | Mounted by `api.include_api_routes`; calls `angelus.external_agents` and provider `export_history`. |
 | link/lease/action routes | Stores safe Angelus UUID links, enforces exclusive leases, and capability-gates fixed actions without arbitrary vendor protocol pass-through. | Mounted by `api.include_api_routes`; action route intentionally does not execute absent a provider runtime. |
 | `external_agent_hub_page` / `import_discovered_session` | Serves the import-first Hub and imports one read-only provider history into a fresh workspace. | The Hub calls the import route; it calls adapter `read` / `export_history`, then canonicalization and checkpoint bootstrap. |
 
@@ -68,7 +68,7 @@
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `loadProviders` / `autoDetectProviders` / `selectProvider` / `discoverSessions` | Renders import capabilities, detects local sources without starting sessions, and discovers read-only source sessions. | Called by import-Hub controls; calls provider catalog, auto-detect, and discovery APIs. |
-| `reviewDiscoveredSession` / `previewFileImport` / `commitImport` | Shows conversion fidelity and project binding before creating an independent workspace from direct source history or JSON/JSONL transcript; posts the new session ID to its parent workbench. | Calls import preview/commit APIs; parent `app.js` switches to the returned workspace. |
+| `reviewDiscoveredSession` / `previewFileImport` / `chooseImportDirectory` / `commitImport` | Shows conversion fidelity and project binding before creating an independent workspace from direct source history or JSON/JSONL transcript; the directory picker reuses the host-only workspace-directory API, and completion posts the new session ID to its parent workbench. | Calls import preview/commit and directory-picker APIs; parent `app.js` switches to the returned workspace. |
 | `frontend/static/app.js` external-hub listeners | Opens and closes the modal iframe from the Workbench sidebar without navigating away from the current Angelus session. | Called by `#open-external-agent-hub` and `#close-external-agent-hub`; loads `/external-agents` inside `#external-agent-hub-frame`. |
 
 ## `angelus.cli`

@@ -21,6 +21,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .base import ExternalAgentProvider, ExternalEvent, ExternalSession, ProviderCapability, ProviderError
@@ -32,8 +33,10 @@ ServerRequestHandler = Callable[[str, JSON], Awaitable[Any] | Any]
 
 CODEX_CAPABILITIES = frozenset({
     "discover", "read", "start", "resume", "fork", "send", "steer",
-    "interrupt", "diff", "usage", "approval",
+    "interrupt", "diff", "usage", "approval", "import_history",
 })
+
+_MAX_HISTORY_RECORDS = 10_000
 
 
 class CodexAppServerError(RuntimeError):
@@ -674,15 +677,26 @@ class CodexAppServerProvider(ExternalAgentProvider):
     id = "codex"
     label = "Codex"
 
-    def __init__(self, config: CodexAppServerConfig | None = None, *, runtime: CodexAppServerRuntime | None = None) -> None:
+    def __init__(
+        self,
+        config: CodexAppServerConfig | None = None,
+        *,
+        runtime: CodexAppServerRuntime | None = None,
+        history_root: Path | str | None = None,
+    ) -> None:
         """Create the adapter using a supplied test/runtime bridge when present.
 
         Args:
             config: Local App Server launch configuration.
             runtime: Optional prebuilt runtime for controlled lifecycle tests.
+            history_root: Optional Codex configuration root.  Read-only
+                transcripts are searched below its ``sessions`` directory;
+                the default is ``$CODEX_HOME`` or ``~/.codex``.
         """
         self._config = config or CodexAppServerConfig()
         self._runtime = runtime or CodexAppServerRuntime(self._config)
+        configured_root = history_root or os.environ.get("CODEX_HOME")
+        self._history_root = Path(configured_root) if configured_root else Path.home() / ".codex"
         self._active_turns: dict[str, str] = {}
 
     @property
@@ -724,6 +738,73 @@ class CodexAppServerProvider(ExternalAgentProvider):
             session_id: Opaque Codex thread id.
         """
         return _session_from_codex(_object(self._rpc("thread/read", {"threadId": _required_id(session_id)})))
+
+    def export_history(self, session_id: str) -> list[dict[str, Any]]:
+        """Export a discovered Codex JSONL transcript as read-only messages.
+
+        Args:
+            session_id: Opaque Codex thread ID previously returned by
+                :meth:`discover`.
+
+        Returns:
+            Ordered user and assistant messages suitable for Angelus' generic
+            external-history import.  Tool calls and reasoning records are
+            deliberately omitted, so importing never replays a local action.
+
+        Raises:
+            ProviderError: If the thread is no longer readable, no matching
+                local transcript exists, or its JSONL data is invalid.
+        """
+        session = self.read(session_id)
+        transcript = self._history_path(session.id)
+        records: list[dict[str, Any]] = []
+        try:
+            with transcript.open("r", encoding="utf-8", errors="replace") as handle:
+                for index, line in enumerate(handle):
+                    if index >= _MAX_HISTORY_RECORDS:
+                        raise ProviderError("Codex transcript exceeds the import record limit", code="too_large")
+                    raw = json.loads(line)
+                    record = _history_message(raw, session.id, index)
+                    if record is not None:
+                        records.append(record)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProviderError("Codex transcript could not be read", code="invalid_transcript") from exc
+        if not records:
+            raise ProviderError("Codex transcript contains no importable messages", code="empty")
+        return records
+
+    def _history_path(self, session_id: str) -> Path:
+        """Locate one session transcript without following paths outside Codex home.
+
+        Args:
+            session_id: Readable Codex thread ID used only in an exact rollout
+                filename match.
+
+        Returns:
+            Resolved JSONL transcript path below ``<codex-home>/sessions``.
+
+        Raises:
+            ProviderError: If the transcript is absent, inaccessible, or
+                resolves outside the configured read-only history directory.
+        """
+        safe_id = _required_id(session_id)
+        sessions_root = self._history_root / "sessions"
+        try:
+            root = sessions_root.resolve()
+        except OSError as exc:
+            raise ProviderError("Codex history directory is unavailable", code="unavailable") from exc
+        if not root.is_dir():
+            raise ProviderError("Codex local history directory was not found", code="not_found")
+
+        # Codex stores each thread as a date-nested rollout-<thread-id>.jsonl.
+        for candidate in root.rglob(f"rollout-{safe_id}.jsonl"):
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if root in resolved.parents and resolved.is_file():
+                return resolved
+        raise ProviderError("Codex transcript was not found in local history", code="not_found")
 
     def start(self, prompt: str, *, project_path: str, model: str | None = None) -> ExternalSession:
         """Create an Angelus-owned Codex thread then send the initial user prompt.
@@ -870,6 +951,77 @@ def _session_from_codex(record: JSON, *, fallback_id: str = "") -> ExternalSessi
     metadata = {key: value for key, value in record.items() if key not in {"threadId", "id", "title", "name", "status", "cwd", "projectPath"}}
     return ExternalSession(id=session_id, provider="codex", title=str(record.get("title") or record.get("name") or "Codex thread"),
                            status=str(record.get("status") or "unknown"), project_path=record.get("cwd") or record.get("projectPath"), metadata=metadata)
+
+
+def _history_message(raw: Any, session_id: str, index: int) -> dict[str, Any] | None:
+    """Project one Codex JSONL record into a safe display message.
+
+    Args:
+        raw: Parsed line from Codex' rollout transcript.
+        session_id: Owning thread ID used only for a stable fallback ID.
+        index: Zero-based source position for stable ordering and fallback IDs.
+
+    Returns:
+        A provider-neutral user/assistant record, or ``None`` when the line
+        describes a tool call, reasoning item, metadata, or unknown event.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+    payload = raw.get("payload")
+    event_type = str(raw.get("type") or "")
+    if not isinstance(payload, Mapping):
+        return None
+
+    # Current Codex rollouts retain typed response items, including ordinary
+    # chat messages.  Older event messages use user_message/agent_message.
+    role = str(payload.get("role") or "")
+    if event_type == "response_item" and str(payload.get("type") or "") == "message":
+        content = _codex_content_text(payload.get("content"))
+    elif str(payload.get("type") or "") == "user_message":
+        role, content = "user", _codex_content_text(payload.get("message", payload.get("content")))
+    elif str(payload.get("type") or "") == "agent_message":
+        role, content = "assistant", _codex_content_text(payload.get("message", payload.get("content")))
+    else:
+        return None
+    if role not in {"user", "assistant"} or not content:
+        return None
+    return {
+        "id": str(raw.get("id") or payload.get("id") or f"{session_id}-{index}"),
+        "role": role,
+        "content": content,
+        "timestamp": raw.get("timestamp"),
+    }
+
+
+def _codex_content_text(content: Any) -> str:
+    """Extract visible text from a Codex message content payload.
+
+    Args:
+        content: String, response content block mapping, or ordered content
+            block list as stored in a Codex rollout JSONL file.
+
+    Returns:
+        Joined user/assistant text.  Non-text blocks are ignored to preserve
+        the import boundary's no-tool-replay guarantee.
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, Mapping):
+        value = content.get("text", content.get("content", content.get("message", "")))
+        return _codex_content_text(value)
+    if not isinstance(content, Sequence) or isinstance(content, (str, bytes)):
+        return ""
+    text: list[str] = []
+    for block in content:
+        if not isinstance(block, Mapping):
+            continue
+        block_type = str(block.get("type") or "")
+        if block_type not in {"input_text", "output_text", "text"}:
+            continue
+        value = block.get("text", block.get("content", ""))
+        if isinstance(value, str) and value.strip():
+            text.append(value.strip())
+    return "\n".join(text)
 
 
 def _object(value: Any) -> JSON:

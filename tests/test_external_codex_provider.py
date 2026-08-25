@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any
+from pathlib import Path
 
 from angelus.external_providers.base import ProviderCapability, ProviderError
 from angelus.external_providers.codex import CodexAppServerClient, CodexAppServerProvider
@@ -53,6 +55,7 @@ def test_codex_provider_maps_fixed_contract_actions_to_safe_rpc_payloads() -> No
 
     assert sessions[0].id == "thread-1"
     assert ProviderCapability.STEER in provider.capabilities
+    assert ProviderCapability.IMPORT_HISTORY in provider.capabilities
     assert runtime.calls == [
         ("thread/list", {"cwd": "/work", "limit": 100}),
         ("thread/start", {"cwd": "/work", "model": "gpt-test"}),
@@ -97,3 +100,26 @@ def test_codex_client_initializes_once_before_thread_requests() -> None:
     asyncio.run(run())
 
     assert [call["method"] for call in calls] == ["initialize", "initialized", "thread/list", "thread/list"]
+
+
+def test_codex_export_history_reads_only_rollout_messages(tmp_path: Path) -> None:
+    """Export visible rollout messages while leaving tools and reasoning inert.
+
+    Args:
+        tmp_path: Temporary Codex configuration root containing one rollout.
+    """
+    transcript = tmp_path / "sessions" / "2026" / "08" / "25" / "rollout-thread-1.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("\n".join([
+        json.dumps({"timestamp": "2026-08-25T10:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Investigate login"}]}}),
+        json.dumps({"timestamp": "2026-08-25T10:01:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "The parser rejects empty tokens."}]}}),
+        json.dumps({"type": "response_item", "payload": {"type": "function_call", "name": "shell"}}),
+    ]), encoding="utf-8")
+    provider = CodexAppServerProvider(runtime=_FakeRuntime(), history_root=tmp_path)  # type: ignore[arg-type]
+
+    history = provider.export_history("thread-1")
+
+    assert [(item["role"], item["content"]) for item in history] == [
+        ("user", "Investigate login"),
+        ("assistant", "The parser rejects empty tokens."),
+    ]

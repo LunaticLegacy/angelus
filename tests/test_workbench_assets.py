@@ -8,6 +8,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 APP_SCRIPT = PROJECT_ROOT / "frontend" / "static" / "app.js"
 INDEX_TEMPLATE = PROJECT_ROOT / "frontend" / "templates" / "index.html"
 COMPONENTS_DIR = PROJECT_ROOT / "frontend" / "static" / "components"
+EXTERNAL_AGENT_SCRIPT = PROJECT_ROOT / "frontend" / "static" / "external-agents.js"
+EXTERNAL_AGENT_TEMPLATE = PROJECT_ROOT / "frontend" / "templates" / "external_agents.html"
 
 
 def test_event_listeners_target_existing_template_elements() -> None:
@@ -40,6 +42,20 @@ def test_workspace_row_actions_target_their_own_session_without_switching() -> N
     assert '$("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId)' in script
     assert "function changeWorkspaceDirectory(targetSessionId)" in script
     assert "function openWorkspaceFolder(targetSessionId)" in script
+
+
+def test_external_import_can_choose_its_project_directory() -> None:
+    """Expose the same host directory picker used by normal session creation."""
+    script = EXTERNAL_AGENT_SCRIPT.read_text(encoding="utf-8")
+    template = EXTERNAL_AGENT_TEMPLATE.read_text(encoding="utf-8")
+    stylesheet = (PROJECT_ROOT / "frontend" / "static" / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="choose-import-directory"' in template
+    assert 'id="import-project-path"' in template
+    assert "function chooseImportDirectory()" in script
+    assert 'request("/api/workspace-directory/pick", { method: "POST" })' in script
+    assert '$("import-project-path").value = path' in script
+    assert ".external-path-picker" in stylesheet
 
 
 def test_active_workbench_uses_component_views_through_an_es_module_entrypoint() -> None:
