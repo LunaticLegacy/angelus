@@ -199,6 +199,7 @@ projection concern and is indexed by `angelus/history/INDEX.md`.
 | `runStop()` / `runForceStop()` | Sends `{agent: selectedAgent}` and presents scope-specific confirmation/status text. | Stop buttons and slash commands call these; backend control routes validate targets. |
 | `loadMcpConsole()` / `selectMcpServer()` / `saveMcpServer()` / `saveMcpBinding()` | Renders structured global server forms, masked credentials, OAuth/probe state, capabilities, and current-session role/tool grants without localStorage JSON migration. | Settings navigation loads the console; MCP form and server cards invoke the managed APIs. |
 | `openMcpApproval(event)` / `answerMcpApproval(decision)` | Displays server, Agent, sampling token exposure or elicitation field names, and offers one-shot, session-remembered, or reject decisions. Submitted elicitation values are sent only in the approval response. | `handleEvent` opens the dialog for ephemeral `mcp_approval_requested`; the backend emits redacted `mcp_approval_resolved` audit events into Trace. |
+| `renderToolPermissions(policy)` | Renders readable Chinese category cards with a category master switch plus independently described tool switches; applying either switch saves the profile and re-renders effective state. | Called by `applyProfile`; sends profile updates through `apiPut(profileUrl(), ...)`. |
 
 ## `frontend/static/app.js` — context viewer
 

@@ -100,8 +100,37 @@ function bindSettingsPersistence() {
     });
   });
 }
-const TOOL_GROUPS={planning:["set_task_plan","update_task_status","read_task_plan"],file_discovery:["tlb_rag"],session_memory:["search_session_memory","read_session_memory","search_session_artifacts","open_session_artifact"],handoff:["handoff_session","create_session_handoff"],context:["read_context","edit_context","restore_context"],shell:["shell"],swarm:["dispatch_subagent","dispatch_subagents","revive_agent","wait_for_reports","report_task","dynamic_add_agent","dynamic_add_connection","dynamic_remove_agent","dynamic_remove_connection","dynamic_set_mapper","dynamic_set_router","dynamic_get_info"],mcp:["mcp"],turn_control:["stop_turn"]};
-function renderToolPermissions(policy) { const target=$("tool-permissions");if(!target)return;const categories=policy.categories||{},tools=policy.tools||{};target.innerHTML=Object.entries(TOOL_GROUPS).map(([group,names])=>`<fieldset class="permission-group"><label><input type="checkbox" data-permission-category="${group}" ${categories[group]?"checked":""}/> ${group}</label><div>${names.map(name=>`<label><input type="checkbox" data-permission-tool="${name}" ${tools[name]?"checked":""}/> ${name}</label>`).join("")}</div></fieldset>`).join("");target.querySelectorAll("input").forEach(input=>input.addEventListener("change",async()=>{const next={categories:{...categories},tools:{...tools}};if(input.dataset.permissionCategory)next.categories[input.dataset.permissionCategory]=input.checked;else next.tools[input.dataset.permissionTool]=input.checked;const profile=await apiPut(profileUrl(),{tool_permissions:next});applyProfile(profile);})); }
+const TOOL_GROUPS = [
+  { id:"planning", icon:"✓", title:"计划与任务", note:"让 Agent 规划、读取并更新任务进度。", tools:[["set_task_plan","创建任务计划","把复杂目标拆成可执行步骤"],["update_task_status","更新任务状态","标记步骤进行中、完成或受阻"],["read_task_plan","读取任务计划","查看当前保存的计划，不会修改它"]] },
+  { id:"file_discovery", icon:"⌕", title:"文件检索", note:"在当前项目中查找代码与资料。", tools:[["tlb_rag","项目检索","从项目文件中检索相关上下文"]] },
+  { id:"session_memory", icon:"◫", title:"会话记忆与证据", note:"跨会话查询已授权的记忆与产物。", tools:[["search_session_memory","搜索会话记忆","查找已授权会话的结论"],["read_session_memory","读取会话记忆","打开一条已保存的记忆"],["search_session_artifacts","搜索会话产物","查找文件、证据和交付物"],["open_session_artifact","打开会话产物","读取一个已授权的产物"]] },
+  { id:"handoff", icon:"↗", title:"会话交接", note:"创建或读取可继续执行的会话交接。", tools:[["handoff_session","交接到会话","把当前工作移交给目标会话"],["create_session_handoff","创建交接记录","保存后续 Agent 可读取的交接摘要"]] },
+  { id:"context", icon:"◌", title:"上下文管理", note:"查看、编辑或恢复 Agent 的持久化上下文。", tools:[["read_context","读取上下文","查看当前 Agent 上下文"],["edit_context","编辑上下文","修改保存的上下文内容"],["restore_context","恢复上下文","从一个历史版本恢复上下文"]] },
+  { id:"shell", icon:"›_", title:"Shell", note:"允许在绑定项目目录中执行命令。", tools:[["shell","执行 Shell 命令","可读取或修改项目文件，请谨慎开启"]] },
+  { id:"swarm", icon:"✦", title:"Swarm 协作", note:"创建、调度和管理多个协作 Agent。", tools:[["dispatch_subagent","派发子 Agent","创建一个带目标的协作任务"],["dispatch_subagents","批量派发","一次派发多个协作任务"],["revive_agent","重新启用 Agent","为完成的 Worker 分配新任务"],["wait_for_reports","等待报告","等待 Worker 返回结果"],["report_task","提交任务报告","Worker 向协调者提交结论"],["dynamic_add_agent","添加 Agent","编辑协作拓扑"],["dynamic_add_connection","添加连接","编辑调度关系"],["dynamic_remove_agent","移除 Agent","删除动态 Agent"],["dynamic_remove_connection","移除连接","删除调度关系"],["dynamic_set_mapper","设置聚合器","配置输入汇总方式"],["dynamic_set_router","设置路由","配置后续执行目标"],["dynamic_get_info","读取协作信息","查看当前协作图"]] },
+  { id:"mcp", icon:"◇", title:"MCP", note:"挂载已在 MCP 页面授权的外部工具。", tools:[["mcp","已授权 MCP 工具","仍需通过服务器、角色和工具三级授权"]] },
+  { id:"turn_control", icon:"■", title:"回合控制", note:"允许 Agent 主动结束当前执行回合。", tools:[["stop_turn","结束当前回合","在安全边界停止继续调用工具"]] },
+];
+
+function renderToolPermissions(policy) {
+  /** Render readable category cards while retaining the category-and-tool policy contract. */
+  const target = $("tool-permissions");
+  if (!target) return;
+  const categories = policy.categories || {};
+  const tools = policy.tools || {};
+  target.className = "permission-cards";
+  target.innerHTML = `<aside class="permission-summary"><span>权限规则</span><p>类别和单工具必须同时开启。关闭类别会让该类所有工具对 Agent 不可见。</p></aside>${TOOL_GROUPS.map((group) => {
+    const enabled = categories[group.id] === true;
+    return `<section class="permission-card ${enabled ? "is-enabled" : "is-disabled"}"><header><span class="permission-icon">${group.icon}</span><div><h4>${group.title}</h4><p>${group.note}</p></div><label class="permission-master"><input type="checkbox" data-permission-category="${group.id}" ${enabled ? "checked" : ""}/><span>启用类别</span></label></header><div class="permission-tool-list">${group.tools.map(([id, title, note]) => `<label class="permission-tool"><span><strong>${title}</strong><small>${note}</small></span><input type="checkbox" data-permission-tool="${id}" ${tools[id] === true ? "checked" : ""} aria-label="${title}"/></label>`).join("")}</div></section>`;
+  }).join("")}`;
+  target.querySelectorAll("input").forEach((input) => input.addEventListener("change", async () => {
+    const next = { categories: { ...categories }, tools: { ...tools } };
+    if (input.dataset.permissionCategory) next.categories[input.dataset.permissionCategory] = input.checked;
+    else next.tools[input.dataset.permissionTool] = input.checked;
+    const profile = await apiPut(profileUrl(), { tool_permissions: next });
+    applyProfile(profile);
+  }));
+}
 function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
 function providerLabel(provider) { return provider===KIMI_CODE_PROVIDER ? "Kimi Code" : provider; }
 function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。该模型只接受温度 1，已自动锁定。" : ""; }
