@@ -21,17 +21,23 @@ def test_event_listeners_target_existing_template_elements() -> None:
     assert listener_ids <= element_ids
 
 
-def test_workspace_button_opens_current_directory_without_replacing_the_session() -> None:
-    """The workspace button is a host-file-manager action, not a session switch."""
+def test_workspace_row_actions_target_their_own_session_without_switching() -> None:
+    """Project actions stay on their rendered session row, even when it is inactive."""
     script = APP_SCRIPT.read_text(encoding="utf-8")
     template = INDEX_TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'id="open-workspace"' in template
     assert 'id="workspace-open-hint"' in template
+    assert 'id="open-workspace"' not in template
+    assert 'id="change-workspace-directory"' not in template
+    assert 'data-session-change-directory=' in script
+    assert 'data-session-open-folder=' in script
+    assert 'aria-label="更改 ${escapeHtml(item.name)} 的项目目录"' in script
+    assert 'aria-label="打开 ${escapeHtml(item.name)} 的项目目录"' in script
     assert "open-folder" in script
-    assert "encodeURIComponent(workspaceId)" in script
+    assert "encodeURIComponent(targetSessionId)" in script
     assert '$("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId)' in script
-    assert '$("open-workspace").addEventListener("click"' in script
+    assert "function changeWorkspaceDirectory(targetSessionId)" in script
+    assert "function openWorkspaceFolder(targetSessionId)" in script
 
 
 def test_active_workbench_uses_component_views_through_an_es_module_entrypoint() -> None:
@@ -131,7 +137,7 @@ def test_new_session_requires_a_native_selected_project_directory() -> None:
 
     assert 'id="new-session-path"' in template
     assert 'id="choose-session-directory"' in template
-    assert 'id="change-workspace-directory"' in template
+    assert 'data-session-change-directory=' in script
     assert 'id="new-session-feedback"' in template
     assert 'apiPost("/api/workspace-directory/pick")' in script
     assert "project_path:selectedPath" in script
@@ -212,7 +218,7 @@ def test_settings_categories_use_left_navigation_buttons() -> None:
     navigation_sections = set(re.findall(r'data-settings-section="([^"]+)"', template))
     panel_sections = set(re.findall(r'data-settings-panel="([^"]+)"', template))
 
-    assert navigation_sections == panel_sections == {"connection", "agent", "mcp", "plugins", "future"}
+    assert navigation_sections == panel_sections == {"connection", "agent", "permissions", "mcp", "plugins", "future"}
     assert 'id="settings-section"' not in template
     assert 'querySelectorAll("[data-settings-section]")' in script
 

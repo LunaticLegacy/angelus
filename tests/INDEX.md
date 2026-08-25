@@ -12,7 +12,7 @@ swarm, TLB-RAG, and utilities.
 | `test_agent_turns_from_events.py` | `_agent_turns_from_events()` reconstructs conversation turns from event log |
 | `test_archive_retrieval.py` | Bounded lexical retrieval over compacted raw archive records |
 | `test_compact.py` | Manual context-compaction endpoint, staged events, and failure handling |
-| `test_connector_store.py` | Connector CRUD, API-key encryption/redaction, and server-side resolution |
+| `test_connector_store.py` | Connector CRUD, API-key encryption/redaction, and authoritative server-side backend resolution |
 | `test_cli_state_dir.py` | CLI `--state-dir` 对新旧状态根环境变量的同步与导入顺序 |
 | `test_context_archive_api.py` | Archived raw-context API pagination and provenance fields |
 | `test_context_editing.py` | Agent 活动上下文的检查、版本化编辑、审计、冲突检测和前向恢复 |
@@ -34,6 +34,7 @@ swarm, TLB-RAG, and utilities.
 | `test_mcp_tools.py` | Official MCP SDK stdio discovery, native tool bridging, schema preservation, invocation, and safe environment configuration |
 | `test_retrieved_context.py` | RetrievedContextHandler: TLB-RAG memory injection |
 | `test_run_profile_persistence.py` | Credential-free runtime profile and durable event persistence |
+| `test_run_profiles.py` | Persistent global defaults, per-Agent inheritance/restore, credential exclusion, and two-level tool permission gates |
 | `test_session_history.py` | Session history rebuild from events and legacy context files |
 | `test_session_memory.py` | Explicit cross-session memory/artifact grants and snapshot evidence boundaries |
 | `test_session_steers.py` | Durable retrieval and ordering of applied steering instructions |

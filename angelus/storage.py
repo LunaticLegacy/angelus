@@ -75,6 +75,7 @@ STATE_ROOT = (
 WORKSPACE_ROOT = STATE_ROOT
 WORKSPACE_INDEX = STATE_ROOT / "sessions.json"
 CONNECTOR_INDEX = STATE_ROOT / "connectors.json"
+RUN_PROFILE_INDEX = STATE_ROOT / "run-profiles.json"
 WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
 _sessions: dict[tuple[str, str], BrowserSession] = {}

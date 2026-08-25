@@ -12,6 +12,7 @@ from .runs import router as runs_router
 from .sessions import router as sessions_router
 from .mcp import router as mcp_router
 from .external_agents import router as external_agents_router
+from .profiles import router as profiles_router
 
 __all__ = ["include_api_routes"]
 
@@ -29,3 +30,4 @@ def include_api_routes(app: FastAPI) -> None:
     app.include_router(compact_router)
     app.include_router(mcp_router)
     app.include_router(external_agents_router)
+    app.include_router(profiles_router)

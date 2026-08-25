@@ -17,6 +17,7 @@ from llmfetcher.swarm_module import AgentFailure
 
 from ..classes import ActiveRun, BrowserRunControl, RunRequest, SteerRequest
 from .. import connectors, runtime, storage
+from .. import run_profiles
 from ..mcp_registry import resolve_session_servers
 from ..history import render_markdown
 from ..event_stream import (
@@ -110,7 +111,13 @@ def start_run(request: RunRequest) -> dict[str, str]:
     with _sessions_lock:
         if workspace_id in _deleting_workspaces:
             raise HTTPException(status_code=409, detail="Workspace is being deleted")
-    config = connectors._resolve_connector_key(request.config)
+    # Profile data is server-owned.  The request's configuration remains a
+    # compatibility fallback only for old clients that have not selected a
+    # persisted profile yet; a saved Agent profile always wins at this run
+    # boundary and stays frozen in the resulting runtime snapshot.
+    saved_config, _sources = run_profiles.resolve_profile(workspace_id, "coordinator")
+    config = saved_config if saved_config.model.strip() or saved_config.connector_id else request.config
+    config = connectors._resolve_connector_key(config)
     if not config.model.strip():
         raise HTTPException(status_code=422, detail="Model is required")
     session = _get_session(workspace_id, session_id)

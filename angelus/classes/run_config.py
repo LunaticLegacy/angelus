@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -34,3 +36,6 @@ class RunConfig(BaseModel):
     session_memory_read_sessions: list[str] = Field(default_factory=list)
     session_artifact_search_sessions: list[str] = Field(default_factory=list)
     session_artifact_open_sessions: list[str] = Field(default_factory=list)
+    # Categories and individual tools both default off.  Unknown entries are
+    # retained as forward-compatible UI state but never grant a tool by name.
+    tool_permissions: dict[str, Any] = Field(default_factory=dict)

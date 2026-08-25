@@ -478,6 +478,15 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 .recent-session:hover { border-color:var(--line); background:rgba(255,255,255,.025); color:var(--text); }
 .recent-session.active { border-color:rgba(155,140,255,.3); background:var(--accent-wash); color:#eeeaff; box-shadow:none; }
 .recent-session::before { left:12px; }
+.recent-session { align-items:center; gap:5px; padding:3px 4px 3px 29px; }
+.recent-session::before { top:50%; transform:translateY(-50%); }
+.recent-session-select { min-width:0; flex:1; padding:6px 0; overflow:hidden; background:transparent; color:inherit; text-align:left; font:inherit; }
+.recent-session-select span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.recent-session-actions { display:flex; flex:0 0 auto; gap:2px; opacity:0; pointer-events:none; transition:opacity .15s ease; }
+.recent-session:hover .recent-session-actions,.recent-session.active .recent-session-actions,.recent-session:focus-within .recent-session-actions { opacity:1; pointer-events:auto; }
+.recent-session-action { width:24px; height:24px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font-size:13px; line-height:1; }
+.recent-session-action:hover,.recent-session-action:focus-visible { border-color:var(--line2); background:var(--surface-raised); color:var(--text); }
+.recent-session-select:focus-visible,.recent-session-action:focus-visible { outline:2px solid var(--purple); outline-offset:1px; }
 
 /* The header prioritizes run state over decoration and remains compact. */
 .main-panel { grid-template-rows:76px auto minmax(0,1fr) auto; background:rgba(11,12,17,.62); }
@@ -647,4 +656,5 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{min-height:100vh!important}
 /* Component display rules must not override the semantic hidden attribute. */
 .external-hub [hidden]{display:none!important}
+.external-import-steps{display:flex;gap:8px;padding:0;margin:22px 0 32px;list-style:none;counter-reset:step}.external-import-steps li{flex:1;padding:10px 12px;border:1px solid #293b5c;border-radius:9px;color:#aab9d4;font-size:.85rem}.external-import-steps li.active{border-color:#8c6bff;background:rgba(140,107,255,.12);color:#e7eefc}.external-import-field{display:grid;gap:7px;margin:16px 0;color:#c7d3ea}.external-import-field input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #34486c;border-radius:8px;background:#0a1425;color:inherit}.external-conversion-report{margin:14px 0;padding:10px 13px;border-left:2px solid #8c6bff;background:rgba(140,107,255,.08);color:#b8c5dc}.external-conversion-report p{margin:4px 0}.external-import-hub .external-detail{box-shadow:0 10px 30px rgba(0,0,0,.12)}
 .external-tutorial{width:min(680px,calc(100vw - 40px));max-height:min(720px,calc(100vh - 40px));overflow:auto;padding:0;border:1px solid #405b8b;border-radius:14px;background:#101b2e;color:var(--text,#e7eefc)}.external-tutorial::backdrop{background:rgba(3,4,7,.76);backdrop-filter:blur(4px)}.external-tutorial header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px;border-bottom:1px solid #293b5c}.external-tutorial h2{margin:.15rem 0}.external-tutorial header button{border:1px solid #526991;border-radius:8px;background:#172945;color:inherit;font-size:24px;line-height:1;padding:3px 9px}.external-tutorial ol{display:grid;gap:14px;margin:0;padding:24px 42px}.external-tutorial li{line-height:1.55}.external-tutorial>p{padding:0 24px 24px}.external-tutorial code{font-family:var(--mono,monospace)}

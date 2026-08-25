@@ -135,14 +135,34 @@ def _public_connector(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 def _resolve_connector_key(config: RunConfig) -> RunConfig:
-    """Resolve a selected connector credential only for the impending run."""
+    """Resolve a selected connector as the authoritative run backend.
+
+    Args:
+        config: Profile-derived request configuration that may name a saved
+            connector.  Browser provider/model fields are intentionally not
+            trusted when a connector is selected.
+
+    Returns:
+        A copy whose provider, model, endpoint and API key all originate from
+        the saved connector.  No resolved secret is persisted by this helper.
+
+    Raises:
+        HTTPException: If the selected connector no longer exists.
+    """
     if not config.connector_id:
         return config
     connector_id = _safe_id(config.connector_id, "connector")
     connector = next((item for item in _read_connectors() if item.get("id") == connector_id), None)
     if connector is None:
         raise HTTPException(status_code=404, detail="选择的连接器不存在")
-    return config.model_copy(update={"api_key": str(connector.get("api_key", ""))})
+    # A connector is a coherent backend identity.  Overlaying only its key
+    # could silently send it to a stale model or endpoint from the page.
+    return config.model_copy(update={
+        "provider": str(connector.get("provider", "openai")),
+        "model": str(connector.get("model", "")),
+        "api_url": str(connector.get("api_url", "")),
+        "api_key": str(connector.get("api_key", "")),
+    })
 
 __all__ = [
     "_connector_key_paths",
