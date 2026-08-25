@@ -477,8 +477,8 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 }
 .recent-session:hover { border-color:var(--line); background:rgba(255,255,255,.025); color:var(--text); }
 .recent-session.active { border-color:rgba(155,140,255,.3); background:var(--accent-wash); color:#eeeaff; box-shadow:none; }
-.recent-session::before { left:12px; }
-.recent-session { align-items:center; gap:5px; padding:3px 4px 3px 29px; }
+.recent-session::before { left:8px; }
+.recent-session { align-items:center; gap:5px; padding:3px 4px 3px 21px; }
 .recent-session::before { top:50%; transform:translateY(-50%); }
 .recent-session-select { min-width:0; flex:1; padding:6px 0; overflow:hidden; background:transparent; color:inherit; text-align:left; font:inherit; }
 .recent-session-select span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

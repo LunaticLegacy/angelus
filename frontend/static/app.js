@@ -77,7 +77,8 @@ const config = () => ({
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), max_context_threshold: Number($("max-context-threshold").value),
-  enable_shell: $("enable-shell").checked, enable_swarm: $("enable-swarm").checked,
+  // Shell and Swarm are enabled exclusively by their permission categories.
+  enable_shell: Boolean(currentProfile?.effective?.enable_shell), enable_swarm: Boolean(currentProfile?.effective?.enable_swarm),
   max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
@@ -87,12 +88,12 @@ const connectionDraftIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
 function profilePayload() { return {...config(), api_key: undefined}; }
 function profileUrl() { const target=profileWorkspaceId||workspaceId; return $("profile-scope")?.value==="global"?"/api/run-profile":`/api/workspaces/${target}/agents/coordinator/run-profile`; }
-function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); $("enable-shell").checked=Boolean(settings.enable_shell);$("enable-swarm").checked=Boolean(settings.enable_swarm); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||workspaceId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); }
+function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||workspaceId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); }
 async function restoreSettings() { if(!workspaceId||!$("profile-scope"))return; const profile=await apiJson(profileUrl()); applyProfile(profile); }
 async function persistSettings() { if(!workspaceId||!$("profile-scope"))return; const profile=await apiPut(profileUrl(),profilePayload()); applyProfile(profile); }
 function bindSettingsPersistence() {
   /** Persist only completed field changes, leaving live typing responsive. */
-  [...agentSettingsIds, ...connectionDraftIds, "enable-shell", "enable-swarm"].forEach((id) => {
+  [...agentSettingsIds, ...connectionDraftIds].forEach((id) => {
     ["change"].forEach((event) => {
       $(id).addEventListener(event, () => {
         persistSettings().catch((error) => trace("保存运行档案失败", error.message));
@@ -577,7 +578,7 @@ async function start(message) {
     const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, workspace_id:workspaceId, message, config:runConfig})});
     const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
     setWorkspaceIndicator(workspaceId,"running"); connectRunEvents(payload.run_id);
-  } catch(error) { trace("请求失败", error.message, null); appendRunErrorBlock("无法启动运行", error.message); setStatus("请求失败", "error"); setRunning(false); }
+  } catch(error) { const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("请先设置连接器", message); setStatus("请求失败", "error"); setRunning(false); }
 }
 let compactStatusTimer=null;
 function showCompactStatus(text, state="running", dismissMs=0) {

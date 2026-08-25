@@ -221,6 +221,18 @@ def test_settings_categories_use_left_navigation_buttons() -> None:
     panel_sections = set(re.findall(r'data-settings-panel="([^"]+)"', template))
 
     assert navigation_sections == panel_sections == {"connection", "agent", "permissions", "mcp", "plugins", "future"}
+
+
+def test_agent_execution_defers_shell_and_swarm_to_tool_permissions() -> None:
+    """Keep Shell and Swarm authority in the unified permissions panel only."""
+    template = INDEX_TEMPLATE.read_text(encoding="utf-8")
+    script = APP_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'id="enable-shell"' not in template
+    assert 'id="enable-swarm"' not in template
+    assert '"enable-shell", "enable-swarm"' not in script
+    assert 'id:"shell"' in script
+    assert 'id:"swarm"' in script
     assert 'id="settings-section"' not in template
     assert 'querySelectorAll("[data-settings-section]")' in script
 

@@ -118,8 +118,18 @@ def start_run(request: RunRequest) -> dict[str, str]:
     saved_config, _sources = run_profiles.resolve_profile(workspace_id, "coordinator")
     config = saved_config if saved_config.model.strip() or saved_config.connector_id else request.config
     config = connectors._resolve_connector_key(config)
+    # Shell and Swarm belong to the unified permission panel.  Keep legacy
+    # persisted booleans compatible, but make an explicitly enabled category
+    # sufficient for all newly edited profiles.
+    config = config.model_copy(update={
+        "enable_shell": config.enable_shell or runtime._category_permitted(config, "shell"),
+        "enable_swarm": config.enable_swarm or runtime._category_permitted(config, "swarm"),
+    })
     if not config.model.strip():
-        raise HTTPException(status_code=422, detail="Model is required")
+        raise HTTPException(
+            status_code=422,
+            detail="尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。",
+        )
     session = _get_session(workspace_id, session_id)
     event_log_size = _session_event_log_size(workspace_id, session_id)
     with session.lock:
