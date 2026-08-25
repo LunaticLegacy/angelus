@@ -59,7 +59,7 @@ async function saveProvider(event) {
   await loadProviders(); selectProvider(provider.id); feedback("Provider 设置已保存。", "success");
 }
 /** Probe installed runtime state without opening a vendor session. */
-async function probeProvider() { const provider = state.selectedProvider; if (!provider) return; const result = await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/probe`, { method: "POST" }); await loadProviders(); if (result.initialized) $("provider-runtime-state").textContent = "已完成握手"; feedback(result.available ? result.initialized ? "Codex App Server 已完成握手。" : "运行时可用。" : "运行时不可用；请检查本机 CLI、SDK 或 OpenCode 服务。", result.available ? "success" : "warning"); }
+async function probeProvider() { const provider = state.selectedProvider; if (!provider) return; const result = await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/probe`, { method: "POST" }); await loadProviders(); if (result.initialized) $("provider-runtime-state").textContent = "已完成握手"; feedback(result.available ? result.initialized ? "Codex App Server 已完成握手。" : "运行时可用。" : result.message || "运行时不可用；请检查本机 CLI、SDK 或 OpenCode 服务。", result.available ? "success" : "warning"); }
 /** Discover read-only session descriptors through the selected Provider adapter. */
 async function discoverSessions() { const provider = state.selectedProvider; if (!provider) return; feedback("正在发现外部会话…"); state.sessions = (await request(`/api/external-agents/providers/${encodeURIComponent(provider.id)}/sessions`)).sessions || []; renderSessions(); feedback(`发现 ${state.sessions.length} 个会话。`, "success"); }
 /** Render safely text-projected external sessions with explicit Angelus-link actions. */

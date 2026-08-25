@@ -65,12 +65,13 @@ def probe_external_provider(provider_id: str) -> dict[str, Any]:
         if initialized:
             adapter.probe()
         available = True if initialized else adapter.available()
-    except ProviderError:
+    except ProviderError as exc:
         available = False
         initialized = False
     return {"provider": provider_id, "available": available, "initialized": initialized and available,
             "capabilities": provider["capabilities"],
-            "message": "Probe never creates a vendor session or executes a control action"}
+            "message": ("Probe never creates a vendor session or executes a control action"
+                        if available else str(exc))}
 
 
 @router.post("/api/external-agents/providers/auto-detect")

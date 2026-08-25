@@ -316,8 +316,36 @@ class CodexAppServerClient:
                 raise
         finally:
             if not self._closed:
-                self._fail_pending(CodexAppServerError("Codex App Server stdout closed"))
+                self._fail_pending(await self._stdout_closed_error())
                 await self._notify_disconnect(failure)
+
+    async def _stdout_closed_error(self) -> CodexAppServerError:
+        """Describe a terminal stdout close without exposing raw child stderr.
+
+        Returns:
+            A transport error with a safe, actionable reason when the local
+            App Server exited while initializing its writable state directory.
+
+        Notes:
+            The stderr reader runs independently from stdout.  Wait briefly
+            for an exited child and its reader so a startup failure is not
+            flattened into the otherwise unhelpful ``stdout closed`` message.
+        """
+        process = self._process
+        if process is not None and process.returncode is None:
+            # Give a terminating child enough time to publish its exit status.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(process.wait(), timeout=0.25)
+        if process is not None and process.returncode is not None and self._stderr_task is not None:
+            # Flush bounded diagnostics before classifying a known local-state failure.
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stderr_task
+        diagnostics = "\n".join(self._stderr).lower()
+        if "failed to initialize sqlite state runtime" in diagnostics and "read-only file system" in diagnostics:
+            return CodexAppServerError("Codex App Server cannot write its local state directory; start Angelus with a writable CODEX_HOME")
+        if process is not None and process.returncode is not None:
+            return CodexAppServerError(f"Codex App Server stdout closed (exit code {process.returncode})")
+        return CodexAppServerError("Codex App Server stdout closed")
 
     async def _read_stderr(self) -> None:
         """Capture bounded diagnostic stderr without treating it as protocol data."""
