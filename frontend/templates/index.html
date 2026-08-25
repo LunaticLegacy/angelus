@@ -7,15 +7,21 @@
     </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>llmfetcher · Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-71" />
+    <title>Angelus · Agent Workbench</title>
+    <link rel="stylesheet" href="/static/app.css?v=workbench-81" />
   </head>
   <body>
+    <dialog id="mcp-approval-dialog" class="session-dialog" aria-labelledby="mcp-approval-title">
+      <form id="mcp-approval-form" class="session-dialog-form"><input id="mcp-approval-id" type="hidden" /><h2 id="mcp-approval-title">MCP 请求授权</h2><p id="mcp-approval-summary"></p><div id="mcp-approval-fields" class="mcp-approval-fields"></div><label class="toggle-line"><span>允许并在当前会话记住</span><input id="mcp-approval-remember" type="checkbox" /><i></i></label><div class="session-dialog-actions"><button id="reject-mcp-approval" type="button">拒绝</button><button type="submit">仅本次允许</button></div></form>
+    </dialog>
     <dialog id="new-session-dialog" class="session-dialog" aria-labelledby="new-session-title">
       <form id="new-session-form" class="session-dialog-form">
         <h2 id="new-session-title">新建会话</h2>
         <label for="new-session-name">会话名称</label>
         <input id="new-session-name" name="name" maxlength="80" required autocomplete="off" placeholder="例如：资料检索" />
+        <label for="new-session-path">已有项目目录</label>
+        <div class="session-path-picker"><input id="new-session-path" name="project_path" readonly required placeholder="请选择项目目录" /><button id="choose-session-directory" type="button">选择目录</button></div>
+        <p id="new-session-feedback" class="session-dialog-feedback" aria-live="polite"></p>
         <div class="session-dialog-actions"><button id="cancel-new-session" type="button">取消</button><button type="submit">创建并进入</button></div>
       </form>
     </dialog>
@@ -34,6 +40,8 @@
           <nav class="settings-navigation" aria-label="设置类别" role="tablist">
             <button class="settings-nav-item active" type="button" data-settings-section="connection" role="tab" aria-selected="true">连接器</button>
             <button class="settings-nav-item" type="button" data-settings-section="agent" role="tab" aria-selected="false">Agent 执行</button>
+            <button class="settings-nav-item" type="button" data-settings-section="permissions" role="tab" aria-selected="false">工具权限</button>
+            <button class="settings-nav-item" type="button" data-settings-section="mcp" role="tab" aria-selected="false">MCP</button>
             <button class="settings-nav-item" type="button" data-settings-section="plugins" role="tab" aria-selected="false">插件</button>
             <button class="settings-nav-item" type="button" data-settings-section="future" role="tab" aria-selected="false">更多设置</button>
           </nav>
@@ -46,12 +54,28 @@
           <p id="provider-hint" class="provider-hint" hidden></p>
         </section>
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
-          <div class="settings-page-heading"><div><h3>Agent 执行</h3><p><b>当前会话独立</b> · 这些选项会保存在浏览器本地。</p></div></div>
+          <div class="settings-page-heading"><div><h3>Agent 执行</h3><p id="profile-status"><b>会话 Coordinator</b> · 正在加载持久化运行档案。</p></div><label>编辑<select id="profile-scope" aria-label="运行档案编辑范围"><option value="agent">当前会话 Coordinator</option><option value="global">全局默认</option></select></label><button id="restore-profile-inheritance" class="mini-button" type="button" title="恢复继承全局默认">↺</button></div>
           <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
-          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label class="toggle-line"><span>启用 Shell 工具</span><input id="enable-shell" type="checkbox" /><i></i></label><section class="mcp-settings" aria-labelledby="mcp-settings-title"><label class="toggle-line"><span id="mcp-settings-title">启用 MCP 工具</span><input id="enable-mcp" type="checkbox" /><i></i></label><p>通过官方 MCP SDK 发现并调用工具；不通过 Shell 复刻协议。配置仅保存服务器与环境变量名称。</p><label>MCP 服务器（JSON）<textarea id="mcp-servers" rows="7" spellcheck="false" placeholder='[{"name":"filesystem","transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\Users\\you\\Documents"],"env":[]}]'></textarea></label></section><label class="toggle-line"><span>启用 Agent Swarm</span><input id="enable-swarm" type="checkbox" /><i></i></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+        </section>
+        <section data-settings-panel="permissions" class="settings-page" role="tabpanel">
+          <div class="settings-page-heading"><div><h3>工具权限</h3><p>类别与单工具均须开启；新档案默认全部关闭。变更仅用于下一次运行。</p></div></div>
+          <div id="tool-permissions" class="settings-fields" aria-live="polite"></div>
+        </section>
+        <section data-settings-panel="mcp" class="settings-page mcp-console-page" role="tabpanel">
+          <div class="settings-page-heading"><div><h3>MCP 服务器</h3><p><b>全局注册表</b> · 凭据加密保存在应用状态目录。</p></div><button id="new-mcp-server" class="mini-button" type="button">＋</button></div>
+          <p id="mcp-feedback" class="plugin-settings-feedback" aria-live="polite"></p>
+          <div class="mcp-console-layout"><div id="mcp-server-list" class="plugin-status-list"></div><div class="plugin-settings-detail"><form id="mcp-server-form" class="mcp-server-form">
+            <input id="mcp-server-id" type="hidden" /><label>名称<input id="mcp-name" required pattern="[A-Za-z][A-Za-z0-9_-]{0,63}" /></label><label>Transport<select id="mcp-transport"><option value="stdio">stdio</option><option value="streamable-http">Streamable HTTP</option></select></label>
+            <label data-mcp-stdio>Command<input id="mcp-command" /></label><label data-mcp-stdio>Args <em>每行一个；支持 ${project_root}</em><textarea id="mcp-args" rows="4"></textarea></label><label data-mcp-stdio>工作目录<input id="mcp-cwd" placeholder="${project_root}" /></label><label data-mcp-http hidden>URL<input id="mcp-url" type="url" /></label>
+            <label>Headers <em>每行 NAME=VALUE</em><textarea id="mcp-headers" rows="3"></textarea></label><label data-mcp-stdio>环境变量 <em>每行 NAME=VALUE</em><textarea id="mcp-env" rows="3"></textarea></label><label>认证<select id="mcp-auth-type"><option value="none">无</option><option value="bearer">Bearer</option><option value="oauth">OAuth 2.0 + PKCE</option></select></label><label data-mcp-bearer hidden>Bearer token<input id="mcp-bearer" type="password" autocomplete="off" placeholder="留空保留已配置值" /></label>
+            <label data-mcp-oauth hidden>Authorize URL<input id="mcp-oauth-authorize-url" type="url" /></label><label data-mcp-oauth hidden>Token URL<input id="mcp-oauth-token-url" type="url" /></label><label data-mcp-oauth hidden>Client ID<input id="mcp-oauth-client-id" /></label><label data-mcp-oauth hidden>Client secret<input id="mcp-oauth-client-secret" type="password" autocomplete="off" /></label><label data-mcp-oauth hidden>Scopes<input id="mcp-oauth-scopes" /></label><div data-mcp-oauth hidden class="mcp-oauth-actions"><button id="connect-mcp-oauth" type="button">连接 OAuth</button><button id="disconnect-mcp-oauth" type="button">断开</button><span id="mcp-oauth-status"></span></div>
+            <fieldset class="mcp-role-scope"><legend>当前会话授权</legend><label><input id="mcp-role-coordinator" type="checkbox" /> Coordinator</label><label><input id="mcp-role-worker" type="checkbox" /> Worker</label></fieldset><div id="mcp-tool-preview" class="mcp-tool-preview"><p class="empty">测试连接后可选择工具。</p></div>
+            <div class="plugin-settings-actions"><button id="delete-mcp-server" class="danger" type="button" hidden>删除</button><button id="probe-mcp-server" type="button" hidden>测试连接</button><button type="submit">保存</button></div>
+          </form></div></div>
         </section>
         <section data-settings-panel="plugins" class="settings-page plugin-settings-page" role="tabpanel">
-          <div class="settings-page-heading"><div><h3>插件</h3><p><b>全局状态</b> · 查看发现、启用和加载结果；插件配置保存在本机注册表中。</p></div><button id="refresh-plugins" class="mini-button" type="button" title="刷新插件状态">↻</button></div>
+          <div class="settings-page-heading"><div><h3>插件</h3><p><b>全局状态</b> · 查看发现、启用和加载结果；插件配置保存在本机注册表中。</p></div><button id="refresh-plugins" class="mini-button" type="button" title="重新扫描插件目录（发现新插件并加载已启用项）">↻</button></div>
           <p id="plugin-settings-feedback" class="plugin-settings-feedback" aria-live="polite"></p>
           <div class="plugin-settings-layout"><div id="plugin-status-list" class="plugin-status-list" aria-label="插件状态"></div><div id="plugin-settings-detail" class="plugin-settings-detail"><p class="empty">选择一个声明设置能力的插件以查看配置。</p></div></div>
         </section>
@@ -63,28 +87,32 @@
     <dialog id="context-graph-dialog" class="session-dialog context-graph-dialog" aria-labelledby="context-graph-title">
       <div class="context-graph-dialog-body">
         <header class="context-graph-dialog-head"><div><p class="eyebrow">AGENT CONTEXT</p><h2 id="context-graph-title">上下文图</h2><p id="context-graph-subtitle">读取 Agent 已保存的上下文图。</p></div><button id="close-context-graph" class="dialog-close" type="button" aria-label="关闭上下文图">×</button></header>
-        <div class="context-dialog-tabs" role="tablist" aria-label="Agent 上下文查看方式"><button type="button" role="tab" id="context-tab-graph" data-context-dialog-tab="graph" aria-controls="context-panel-graph" aria-selected="true">实体图</button><button type="button" role="tab" id="context-tab-prompt" data-context-dialog-tab="prompt" aria-controls="context-panel-prompt" aria-selected="false">上下文</button></div>
+        <div class="context-dialog-tabs" role="tablist" aria-label="Agent 上下文查看方式"><button type="button" role="tab" id="context-tab-graph" data-context-dialog-tab="graph" aria-controls="context-panel-graph" aria-selected="true">实体图</button><button type="button" role="tab" id="context-tab-prompt" data-context-dialog-tab="prompt" aria-controls="context-panel-prompt" aria-selected="false">上下文</button><button type="button" role="tab" id="context-tab-compaction" data-context-dialog-tab="compaction" aria-controls="context-panel-compaction" aria-selected="false">压缩输入</button></div>
         <section id="context-panel-graph" class="context-dialog-panel" role="tabpanel" aria-labelledby="context-tab-graph"><div id="context-graph-summary" class="context-graph-summary"></div><div id="context-graph-canvas" class="context-graph-canvas" aria-label="上下文实体关系图"></div><div class="context-graph-details"><section><h3>实体</h3><div id="context-graph-nodes" class="context-graph-nodes"></div></section><section><h3>详情</h3><div id="context-graph-detail" class="context-graph-detail"><p class="empty">点击图中的实体查看其摘要、出现时间和关联。</p></div></section></div></section>
         <section id="context-panel-prompt" class="context-dialog-panel context-transcript" role="tabpanel" aria-labelledby="context-tab-prompt" hidden><header><div><p class="eyebrow">ACTIVE CONTEXT</p><h3 id="context-transcript-title">完整远程请求预览</h3><p id="context-request-note">最近一次实际远程请求的完整内容；不保存 API key 或 endpoint。</p></div><span id="context-prompt-status" class="context-prompt-status">—</span></header><div id="context-request-stats" class="context-request-stats" aria-label="实时请求长度统计"></div><div class="context-metadata" aria-labelledby="context-metadata-title"><h4 id="context-metadata-title">持久化上下文元数据</h4><div class="context-metadata-scroll"><table><thead><tr><th>索引</th><th>来源</th><th>类型</th><th>长度</th><th>时间线</th></tr></thead><tbody id="context-metadata-list"><tr><td colspan="5">正在读取…</td></tr></tbody></table></div></div><pre id="context-prompt-preview" class="context-prompt-preview"><span class="empty">选择 Agent 后读取当前上下文。</span></pre></section>
+        <section id="context-panel-compaction" class="context-dialog-panel context-transcript" role="tabpanel" aria-labelledby="context-tab-compaction" hidden><header><div><p class="eyebrow">COMPACTION INPUT</p><h3 id="context-compaction-title">压缩器输入预览</h3><p id="context-compaction-note">压缩触发时，这段文本会作为摘要请求发送给压缩模型；实时从当前 checkpoint 重建，不调用模型。</p></div><span id="context-compaction-status" class="context-prompt-status">—</span></header><div id="context-compaction-stats" class="context-request-stats" aria-label="压缩输入长度统计"></div><pre id="context-compaction-preview" class="context-prompt-preview"><span class="empty">选择 Agent 后读取压缩器输入。</span></pre></section>
       </div>
     </dialog>
+    <dialog id="external-agent-hub-dialog" class="external-hub-dialog" aria-label="External Agent Hub">
+      <header><div><p class="eyebrow">EXTERNAL AGENTS</p><h2>External Agent Hub</h2></div><button id="close-external-agent-hub" class="dialog-close" type="button" aria-label="关闭 External Agent Hub">×</button></header>
+      <iframe id="external-agent-hub-frame" title="External Agent Hub" src="/external-agents"></iframe>
+    </dialog>
     <aside class="sidebar">
-      <a class="brand" href="/"><span>✦</span><strong>llmfetcher</strong><small>WORKBENCH</small></a>
+      <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark">A</span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
 
       <section class="side-block">
         <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button" type="button" title="删除当前会话" aria-label="删除当前会话">⌫</button></div></div>
-        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div><button id="open-workspace" class="open-workspace-button" type="button" title="在文件资源管理器中打开当前工作空间" aria-label="在文件资源管理器中打开当前工作空间">打开</button></div>
+        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div></div>
         <p id="workspace-open-hint" class="workspace-open-hint" aria-live="polite"></p>
         <div id="recent-sessions" class="recent-sessions"></div>
       </section>
 
-      <p class="privacy">连接器与 Agent 参数集中在设置中管理。</p>
-      <div class="side-footer"><button id="open-settings" type="button" title="打开设置" onclick="document.getElementById('settings-dialog').showModal()">⚙</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
+      <div class="side-footer"><button id="open-external-agent-hub" type="button" title="打开 External Agent Hub" aria-label="打开 External Agent Hub">↗</button><button id="open-settings" type="button" title="打开设置" onclick="document.getElementById('settings-dialog').showModal()">⚙</button><button id="theme-toggle" type="button" title="切换浅色/深色主题">☾</button></div>
     </aside>
 
     <main class="main-panel">
       <header class="topbar">
-        <div class="title"><h1>与你的 Agent 一起工作</h1><p>LOCAL AGENT WORKBENCH</p></div>
+        <div class="title"><p>ACTIVE WORKSPACE</p><h1>与你的 Agent 一起工作</h1></div>
         <div class="run-overview"><span class="status-dot"></span><strong id="status" class="status idle">准备就绪</strong><span class="overview-divider"></span><div><small>Tokens</small><b id="header-tokens">—</b></div><div><small>时长</small><b id="header-duration">—</b></div><button id="stop" class="stop-button" type="button" disabled><span>■</span> 停止</button><button id="force-stop" class="force-button" type="button" disabled>强行停止</button></div>
       </header>
 
@@ -92,13 +120,13 @@
 
       <div id="agent-row" class="agent-row"></div>
 
-      <section id="chat" class="chat"><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
+      <section id="chat" class="chat"><button id="load-more-messages" class="load-more-messages" type="button" hidden>加载更早消息</button><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
 
       <form id="composer" class="composer"><div class="composer-box"><div class="steer-hint" id="steer-hint" hidden><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><textarea id="message" placeholder="给 Agent 一个任务… （/ 开头为指令，/help 查看）" rows="1" required></textarea><div class="composer-meta"><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
     </main>
 
     <aside class="activity" aria-label="会话执行信息">
-      <div class="activity-heading"><div><p class="eyebrow">SESSION INSPECTOR</p><h2>执行动态</h2></div><span class="activity-live"><i></i>LIVE</span></div>
+      <div class="activity-heading"><div><p class="eyebrow">SESSION INSPECTOR</p><h2>任务控制台</h2></div><span class="activity-live"><i></i>LIVE</span></div>
       <nav class="inspector-tabs" aria-label="执行信息模块">
         <button class="active" type="button" data-inspector-panel="inspector-plan">任务计划</button>
         <button type="button" data-inspector-panel="inspector-agents">Agents</button>
@@ -107,12 +135,12 @@
       </nav>
       <div class="inspector-panels">
         <section id="inspector-plan" class="inspector-panel active"><div class="section-title"><div><p class="eyebrow">TASK PLAN</p><h3>任务计划</h3></div><button id="refresh-plan" class="refresh-button" type="button">↻</button></div><label class="plan-agent-picker" for="plan-agent"><span>计划所属 Agent</span><select id="plan-agent" aria-label="选择 Agent 的任务计划"><option value="coordinator">协调者（总计划）</option></select></label><p id="plan-summary" class="plan-summary">Agent 生成的任务计划会显示在这里。</p><div id="task-plan" class="task-plan"><p class="empty">尚未建立任务计划。</p></div></section>
-        <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>协作拓扑</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><p class="agents-legend"><i></i>缩进表示调度关系；任务标签表示当前指派。点击下方 Agent 卡片可查看该 Agent 的上下文。</p><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div></section>
+        <section id="inspector-agents" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">AGENT SWARM</p><h3>协作拓扑</h3></div><button id="refresh-graph" class="refresh-button" type="button">↻</button></div><p class="agents-legend"><i></i>缩进表示调度关系；任务标签表示当前指派。点击下方 Agent 卡片可查看该 Agent 的上下文。</p><div class="graph-edit-toolbar" id="graph-edit-toolbar" aria-label="图编辑工具栏"><button type="button" id="graph-add-agent" class="graph-edit-button" title="添加动态子 Agent">＋Agent</button><button type="button" id="graph-add-connection" class="graph-edit-button" title="添加调度连接">＋连接</button><button type="button" id="graph-remove-agent" class="graph-edit-button" title="删除 Agent">－Agent</button><button type="button" id="graph-remove-connection" class="graph-edit-button" title="删除连接">－连接</button><button type="button" id="graph-set-mapper" class="graph-edit-button" title="设置输入聚合器">Mapper</button><button type="button" id="graph-set-router" class="graph-edit-button" title="设置后继路由">Router</button><span id="graph-edit-status" class="graph-edit-status" title="图编辑状态"></span></div><div id="inspector-agents-list" class="inspector-agents-list"><p class="empty">当前 session 尚未创建 Agent。</p></div></section>
         <section id="inspector-trace" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">EVENT STREAM</p><h3>Trace</h3></div><button id="refresh-trace" class="refresh-button" type="button">↻</button></div><div id="trace" class="trace"><p class="empty">当前 session 尚无事件。</p></div><button id="load-more-trace" class="load-more-trace" type="button" hidden>加载更早事件</button></section>
         <section id="inspector-usage" class="inspector-panel"><div class="section-title"><div><p class="eyebrow">TOKEN USAGE</p><h3>当前会话用量</h3></div><button id="refresh-usage" class="refresh-button" type="button">↻</button></div><div id="usage-total" class="usage-total"><p class="empty">尚无已完成的模型调用。</p></div><div id="usage-agents" class="usage-agents"></div></section>
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-75"></script>
+    <script type="module" src="/static/app.js?v=workbench-82"></script>
   </body>
 </html>

@@ -17,9 +17,11 @@ from llmfetcher.swarm_module import GraphPersistenceError
 from llmfetcher.swarm_module.swarm import AgentSwarm
 from llmfetcher.tools.shell_tools import create_shell_tools
 from llmfetcher.tools.spawn_tools import create_swarm_tools, create_task_report_tool
+from llmfetcher.rag_module_tlb import create_tlb_rag_tool
 
 from .classes import ActiveRun, RunConfig
 from .context_editing import ContextEditStore, create_context_editing_tools
+from .event_stream import publish_durable_event
 from .markdown import render_markdown
 from .mcp_tools import create_mcp_tools
 from .provider_adapters import create_fetcher, effective_temperature, resolve_provider
@@ -29,10 +31,58 @@ from .storage import (
     _append_session_event,
     _context_path,
     _persist_json,
+    _project_path,
     _safe_id,
     _session_path,
 )
 from .task_planning import TaskPlanStore, create_task_planning_tools
+
+
+# Runtime enforcement is intentionally close to tool registration: disabled
+# tools are not merely rejected at invocation time; they are absent from the
+# model-visible schema.  Categories are stable settings keys, while the name
+# fallback lets future first-party tools remain safely disabled by default.
+TOOL_CATEGORIES: dict[str, set[str]] = {
+    "planning": {"set_task_plan", "update_task_status", "read_task_plan"},
+    "file_discovery": {"tlb_rag"},
+    "session_memory": {"search_session_memory", "read_session_memory", "search_session_artifacts", "open_session_artifact"},
+    "handoff": {"handoff_session", "create_session_handoff"},
+    "context": {"read_context", "edit_context", "restore_context"},
+    "shell": {"shell"},
+    "swarm": {"dispatch_subagent", "dispatch_subagents", "revive_agent", "wait_for_reports", "report_task", "dynamic_add_agent", "dynamic_add_connection", "dynamic_remove_agent", "dynamic_remove_connection", "dynamic_set_mapper", "dynamic_set_router", "dynamic_get_info"},
+    "mcp": set(),
+    "turn_control": {"stop_turn"},
+}
+
+
+def _tool_permitted(config: RunConfig, category: str, tool_name: str) -> bool:
+    """Return whether a category and one named tool are both explicitly enabled.
+
+    Args:
+        config: Frozen run profile containing ``tool_permissions``.
+        category: Stable first-party tool group or ``mcp``.
+        tool_name: Registered tool name.  MCP names are server-qualified.
+
+    Returns:
+        ``True`` only when the category and concrete tool toggles are true.
+    """
+    policy = config.tool_permissions if isinstance(config.tool_permissions, dict) else {}
+    categories = policy.get("categories", {})
+    tools = policy.get("tools", {})
+    return bool(isinstance(categories, dict) and categories.get(category) is True and
+                isinstance(tools, dict) and tools.get(tool_name) is True)
+
+
+def _category_permitted(config: RunConfig, category: str) -> bool:
+    """Return whether a category gate is enabled before per-tool filtering."""
+    policy = config.tool_permissions if isinstance(config.tool_permissions, dict) else {}
+    categories = policy.get("categories", {})
+    return bool(isinstance(categories, dict) and categories.get(category) is True)
+
+
+def _allowed_tools(config: RunConfig, category: str, tools: list[Any]) -> list[Any]:
+    """Filter generated tools to the explicit two-level permission allowlist."""
+    return [tool for tool in tools if _tool_permitted(config, category, str(getattr(tool, "name", "")))]
 
 
 
@@ -70,12 +120,18 @@ def _redacted_api_url(value: str) -> str:
     except ValueError:
         return ""
 
-def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
+def _runtime_profile_snapshot(
+    config: RunConfig, mcp_servers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build a credential-free, stable description of one run's semantics.
 
-    The browser configuration is otherwise ephemeral.  Keeping this snapshot
+    The browser configuration is otherwise ephemeral. Keeping this snapshot
     next to the run terminal makes a restored context auditable without ever
-    serializing the API key or the full (potentially private) system prompt.
+    serializing the API key, MCP credentials, or private system prompt.
+
+    Args:
+        config: Validated browser run configuration without raw MCP fields.
+        mcp_servers: Server-side resolved, session-authorized MCP records.
     """
     system_prompt_digest = hashlib.sha256(config.system_prompt.encode("utf-8")).hexdigest()
     _, effective_api_url = resolve_provider(config.provider, config.api_url)
@@ -91,13 +147,10 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
         "max_retries": config.max_retries,
         "max_context_threshold": config.max_context_threshold,
         "enable_shell": config.enable_shell,
-        "enable_mcp": config.enable_mcp,
+        "tool_permissions": config.tool_permissions,
         "mcp_servers": sorted(
-            (
-                {"name": str(server.get("name", "")), "transport": str(server.get("transport", "stdio"))}
-                for server in config.mcp_servers
-                if isinstance(server, dict)
-            ),
+            ({"name": str(server.get("name", "")), "transport": str(server.get("transport", "stdio"))}
+             for server in (mcp_servers or [])),
             key=lambda server: (server["name"], server["transport"]),
         ),
         "enable_swarm": config.enable_swarm,
@@ -113,7 +166,7 @@ def _runtime_profile_snapshot(config: RunConfig) -> dict[str, Any]:
     return {**profile, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
 
-def _enable_optional_agent_controls(agent: Agent) -> None:
+def _enable_optional_agent_controls(agent: Agent, config: RunConfig) -> None:
     """Enable first-party streaming controls without requiring a new Agent ABI.
 
     A desktop sidecar can temporarily import an older installed LLMFetcher
@@ -122,7 +175,7 @@ def _enable_optional_agent_controls(agent: Agent) -> None:
     opt into new behavior only through post-construction capabilities.
     """
     add_stop_turn = getattr(agent, "add_stop_turn_tool", None)
-    if callable(add_stop_turn):
+    if callable(add_stop_turn) and _tool_permitted(config, "turn_control", "stop_turn"):
         add_stop_turn()
     if hasattr(agent, "default_stream"):
         agent.default_stream = True
@@ -141,6 +194,7 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         shell tools. Credentials remain in memory and are never written to
         the session directory.
     """
+    project_path = _project_path(workspace_id, session_id)
     provider, api_url = resolve_provider(config.provider, config.api_url)
     backend = LLMBackendConfig(
         name="browser",
@@ -152,10 +206,46 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
         max_retries=config.max_retries,
     )
     fetcher = create_fetcher(backend, config.provider)
+    if active is not None and active.mcp_sampling_handler is None:
+        def sample_mcp(params: Any) -> Any:
+            """Run approved MCP sampling through this session connector only.
+
+            Args:
+                params: SDK ``CreateMessageRequestParams`` request.
+
+            Returns:
+                SDK ``CreateMessageResult`` without any recursive tool call.
+            """
+            from mcp_types import CreateMessageResult, TextContent
+
+            lines: list[str] = []
+            for message in getattr(params, "messages", []):
+                content = getattr(message, "content", None)
+                text_value = getattr(content, "text", str(content or ""))
+                lines.append(f"{getattr(message, 'role', 'user')}: {text_value}")
+            requested = int(getattr(params, "max_tokens", config.max_tokens) or config.max_tokens)
+            result = fetcher.fetch(
+                "\n".join(lines),
+                system_prompt=str(getattr(params, "system_prompt", "") or config.system_prompt),
+                temperature=float(getattr(params, "temperature", config.temperature) or config.temperature),
+                max_tokens=min(requested, config.max_tokens, 4096),
+                tools=None,
+            )
+            return CreateMessageResult(
+                role="assistant", content=TextContent(text=result.content),
+                model=result.model or config.model, stopReason="endTurn",
+            )
+
+        active.mcp_sampling_handler = sample_mcp
     semantic_worker = SemanticGraphWorker(fetcher)
+    planning_instruction = (
+        "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. "
+        "Keep task status current with update_task_status as work progresses."
+        if _tool_permitted(config, "planning", "set_task_plan") else ""
+    )
     agent = Agent(
         llm_fetcher=fetcher,
-        system_prompt=(config.system_prompt + "\n\nFor a multi-step user goal, first call set_task_plan with an actionable nested plan. Keep task status current with update_task_status as work progresses. In a Swarm, every dispatched or revived work package must use a leaf plan task ID as plan_task_id; plans do not dispatch work by themselves."),
+        system_prompt=(config.system_prompt + planning_instruction + f"\n\nThe current project root is {json.dumps(str(project_path), ensure_ascii=False)}. Treat it as the authoritative working directory for project files; Angelus runtime state is stored separately."),
         # Keep browser-selected compaction behavior consistent for the
         # coordinator and every subsequently created session Agent.
         max_context_threshold=config.max_context_threshold,
@@ -173,47 +263,173 @@ def _build_agent(config: RunConfig, workspace_id: str, session_id: str, *, agent
             max_context_threshold=config.max_context_threshold,
         ),
     )
-    _enable_optional_agent_controls(agent)
+    # Dynamic workers copy this frozen profile rather than consulting settings
+    # mid-run, which preserves the run-boundary audit guarantee.
+    agent._angelus_run_config = config  # type: ignore[attr-defined]
+    _enable_optional_agent_controls(agent, config)
     if config.enable_shell:
-        agent.add_tools(create_shell_tools(
-            sandbox_cwd=str(_session_path(workspace_id, session_id)),
-            register_process=active.register_process if active else None,
+        agent.add_tools(_allowed_tools(config, "shell", create_shell_tools(
+            sandbox_cwd=str(project_path),
+            register_process=(lambda process: active.register_process(process, agent_name)) if active else None,
             unregister_process=active.unregister_process if active else None,
-            force_stop_event=active.control.force_stopped if active else None,
-        ))
-    agent.add_tools(_mcp_tools(config, active))
+            force_stop_event=active.control.for_agent(agent_name).force_stopped if active else None,
+        )))
+    agent.add_tools(_allowed_tools(config, "file_discovery", [
+        create_tlb_rag_tool(project_path, fetcher),
+    ]))
+    agent.add_tools(_mcp_tools(active, agent_name, config))
     def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
         _publish_plan_change(
             active, workspace_id, session_id, agent_name, event_type, plan
         )
 
-    agent.add_tools(create_task_planning_tools(
+    agent.add_tools(_allowed_tools(config, "planning", create_task_planning_tools(
         _plan_store(workspace_id, session_id),
         on_changed=_on_plan_changed,
-    ))
-    agent.add_tools(create_session_memory_tools(
+    )))
+    agent.add_tools(_allowed_tools(config, "session_memory", create_session_memory_tools(
         _session_memory_store(), session_id, _memory_capabilities(config, session_id), uuid.uuid4().hex,
-    ))
+    )))
     context_path = _context_path(workspace_id, session_id, agent_name)
-    agent.add_tools(create_context_editing_tools(
+    agent.add_tools(_allowed_tools(config, "context", create_context_editing_tools(
         ContextEditStore(context_path, agent_name),
         persist_context=lambda: agent.context_handler.save(context_path),
         reload_context=lambda: agent.context_handler.load(context_path),
-    ))
+    )))
     return agent
 
 
-def _mcp_tools(config: RunConfig, active: ActiveRun | None) -> list[Any]:
-    """Open one SDK-backed MCP bridge and share it across every run Agent."""
-    if not config.enable_mcp:
+def _build_http_worker_agent(
+    coordinator: Agent,
+    workspace_id: str,
+    session_id: str,
+    active: ActiveRun,
+    agent_name: str,
+    system_prompt: str,
+) -> Agent:
+    """Create one browser-added graph worker from the live coordinator.
+
+    Unlike a TaskBus-dispatched worker, a worker created through the graph
+    editor has no task assignment, so it must not receive the terminal
+    ``report_task`` tool (that tool would fail without a TaskBus record). It
+    reuses the coordinator's fetcher, compaction threshold, and execution
+    budgets so the new node is immediately runnable in the live Swarm.
+
+    Args:
+        coordinator: Live coordinator Agent already registered in the Swarm.
+            Its fetcher, context threshold, and default budgets are reused.
+        workspace_id: Storage partition owning the session.
+        session_id: Browser-stable session identity.
+        active: Process-local lifecycle holder for shell/MCP registration.
+        agent_name: New graph-local worker identity.
+        system_prompt: Worker role prompt supplied by the browser editor.
+
+    Returns:
+        Configured Agent with an isolated context path and no report tool.
+    """
+    fetcher = coordinator.llm_fetcher
+    worker = Agent(
+        llm_fetcher=fetcher,
+        system_prompt=system_prompt,
+        max_context_threshold=coordinator.max_context_threshold,
+        context_path=_context_path(workspace_id, session_id, agent_name),
+        default_max_rounds=coordinator.default_max_rounds,
+        default_max_tokens=coordinator.default_max_tokens,
+        enable_stop_turn=True,
+        default_stream=True,
+        # Graph long-term memory for the browser-added worker, persisted as
+        # ``<context_path>.graph.json`` and reusing the coordinator fetcher.
+        context_handler=GraphContextHandler(
+            compacting_fetcher=fetcher,
+            extraction_fetcher=SemanticGraphWorker(fetcher),
+            query_fetcher=SemanticGraphWorker(fetcher),
+            max_context_threshold=coordinator.max_context_threshold,
+        ),
+    )
+    inherited_config = getattr(coordinator, "_angelus_run_config", RunConfig(model=""))
+    _enable_optional_agent_controls(worker, inherited_config)
+    if "shell" in coordinator.tool_handler.tool_dict:
+        worker.add_tools(_allowed_tools(inherited_config, "shell", create_shell_tools(
+            sandbox_cwd=str(_project_path(workspace_id, session_id)),
+            register_process=(lambda process: active.register_process(process, agent_name)) if active else None,
+            unregister_process=active.unregister_process if active else None,
+            force_stop_event=active.control.for_agent(agent_name).force_stopped if active else None,
+        )))
+    worker.add_tools(_mcp_tools(active, agent_name, inherited_config))
+
+    def _on_plan_changed(event_type: str, plan: dict[str, Any]) -> None:
+        _publish_plan_change(active, workspace_id, session_id, agent_name, event_type, plan)
+
+    worker.add_tools(_allowed_tools(inherited_config, "planning", create_task_planning_tools(
+        _plan_store(workspace_id, session_id, agent_name),
+        on_changed=_on_plan_changed,
+    )))
+    worker.add_tools(_allowed_tools(inherited_config, "session_memory", create_session_memory_tools(
+        _session_memory_store(), session_id,
+        _worker_memory_capabilities(session_id), uuid.uuid4().hex,
+    )))
+    worker.add_tools(_allowed_tools(inherited_config, "context", _bind_worker_context_tools(
+        workspace_id, session_id, agent_name, worker, [],
+    )))
+    return worker
+
+
+def _worker_memory_capabilities(current_session: str) -> dict[str, set[str]]:
+    """Return the default memory grants for a browser-added graph worker.
+
+    Browser-added workers have no persisted RunConfig, so they receive the
+    same conservative default as a coordinator with no extra session grants:
+    their own session only, for every capability.
+    """
+    return {
+        "session_memory.search_sessions": {current_session},
+        "session_memory.read_sessions": {current_session},
+        "session_artifact.search_sessions": {current_session},
+        "session_artifact.open_sessions": {current_session},
+    }
+
+
+def _mcp_tools(active: ActiveRun | None, agent_name: str, config: RunConfig) -> list[Any]:
+    """Return registry-authorized MCP tools for one run Agent.
+
+    Args:
+        active: Run lifecycle holder containing resolved session bindings.
+        agent_name: Concrete graph identity; dynamic names use worker policy.
+    """
+    if active is None or not active.mcp_servers or not _category_permitted(config, "mcp"):
         return []
-    if active is None:
-        raise RuntimeError("MCP tools require an active browser run for lifecycle cleanup")
     if active.mcp_bridge is None:
-        bridge, tools = create_mcp_tools(config.mcp_servers)
+        bridge, tools = create_mcp_tools(
+            active.mcp_servers,
+            approval_handler=active.request_mcp_approval,
+            sampling_handler=active.mcp_sampling_handler,
+            event_handler=active.publish_ephemeral_event,
+        )
         active.mcp_bridge = bridge
         active.mcp_tools = tools
-    return list(active.mcp_tools)
+    role = "coordinator" if agent_name == "coordinator" else "worker"
+    policies = {str(server.get("name")): server for server in active.mcp_servers if role in server.get("roles", [])}
+    allowed: set[str] = set()
+    permit_all = False
+    for server_name, policy in policies.items():
+        allowlist = policy.get("tool_allowlist", [])
+        if not allowlist:
+            permit_all = True
+        allowed.update(str(item) for item in allowlist)
+        allowed.update(f"mcp.{server_name}.{item}" for item in allowlist)
+    authorized: list[Any] = []
+    source_tools = active.mcp_bridge.tools_for(agent_name, None if permit_all else allowed)
+    for tool in source_tools:
+        parts = str(tool.name).split(".", 2)
+        if len(parts) != 3 or parts[1] not in policies:
+            continue
+        # MCP has the existing server/role/tool grant plus the profile's
+        # category switch. Individual MCP tools may be enabled by their full
+        # registered name; the synthetic ``mcp`` toggle enables the granted
+        # set for convenient category-wide selection.
+        if _tool_permitted(config, "mcp", str(tool.name)) or _tool_permitted(config, "mcp", "mcp"):
+            authorized.append(tool)
+    return authorized
 
 def _memory_capabilities(config: RunConfig, current_session: str) -> dict[str, set[str]]:
     """Freeze the four explicit session grants for one Agent run."""
@@ -254,9 +470,7 @@ def _publish_plan_change(
             data={"plan": plan},
         )),
     }
-    _append_session_event(workspace_id, session_id, payload)
-    if active is not None:
-        active.events.put(payload)
+    publish_durable_event(active, workspace_id, session_id, payload)
 
 
 def _plan_store(
@@ -318,22 +532,22 @@ def _worker_tools_for(
         """Publish mutations to the plan owned by this one worker."""
         _publish_plan_change(active, workspace_id, session_id, agent_name, event_type, plan)
 
-    tools = create_task_planning_tools(
+    tools = _allowed_tools(config, "planning", create_task_planning_tools(
         _plan_store(workspace_id, session_id, agent_name),
         on_changed=on_plan_changed,
-    )
-    tools.extend(create_session_memory_tools(
+    ))
+    tools.extend(_allowed_tools(config, "session_memory", create_session_memory_tools(
         _session_memory_store(), session_id,
         _memory_capabilities(config, session_id), uuid.uuid4().hex,
-    ))
+    )))
     if config.enable_shell:
-        tools.extend(create_shell_tools(
-            sandbox_cwd=str(_session_path(workspace_id, session_id)),
-            register_process=active.register_process,
+        tools.extend(_allowed_tools(config, "shell", create_shell_tools(
+            sandbox_cwd=str(_project_path(workspace_id, session_id)),
+            register_process=lambda process: active.register_process(process, agent_name),
             unregister_process=active.unregister_process,
-            force_stop_event=active.control.force_stopped,
-        ))
-    tools.extend(_mcp_tools(config, active))
+            force_stop_event=active.control.for_agent(agent_name).force_stopped,
+        )))
+    tools.extend(_mcp_tools(active, agent_name, config))
     return tools
 
 
@@ -385,6 +599,8 @@ def _attach_swarm_runtime_tools(
     Side Effects:
         Adds dispatch, graph-control, and revival tools to ``coordinator``.
     """
+    if not _tool_permitted(config, "swarm", "dispatch_subagent"):
+        return
     swarm_tool_kwargs: dict[str, Any] = {
         "swarm": swarm,
         "llm_fetcher": coordinator.llm_fetcher,
@@ -403,7 +619,7 @@ def _attach_swarm_runtime_tools(
     }
     supported = inspect.signature(create_swarm_tools).parameters
     optional_controls = {
-        "worker_enable_stop_turn": True,
+        "worker_enable_stop_turn": _tool_permitted(config, "turn_control", "stop_turn"),
         "worker_default_stream": True,
         "require_plan_task_id": True,
         "plan_task_validator": lambda task_id: _plan_store(
@@ -414,10 +630,10 @@ def _attach_swarm_runtime_tools(
         name: value for name, value in optional_controls.items()
         if name in supported
     })
-    coordinator.add_tools(create_swarm_tools(**{
+    coordinator.add_tools(_allowed_tools(config, "swarm", create_swarm_tools(**{
         name: value for name, value in swarm_tool_kwargs.items()
         if name in supported
-    }))
+    })))
 
 
 def _attach_swarm_observer(
@@ -443,9 +659,8 @@ def _attach_swarm_observer(
         if event.event_type == "agent:stream_delta":
             active.publish_ephemeral_event(payload)
             return
-        _append_session_event(workspace_id, session_id, payload)
+        publish_durable_event(active, workspace_id, session_id, payload)
         _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
-        active.events.put(payload)
 
     swarm.add_hook(capture)
     _persist_json(_session_path(workspace_id, session_id) / "graph-view.json", swarm.view_snapshot())
@@ -506,20 +721,20 @@ def _synchronize_context_threshold(
             authoritative for their active context files.
 
     Returns:
-        Agent names whose context handler accepted and persisted the value.
+        Agent names whose context handler accepted the in-memory value.
 
     Side Effects:
-        Updates each Agent and its persisted context before ``Agent.run``
-        reloads that context. This prevents a prior checkpoint's threshold
-        from silently overriding a newer setting on retained Swarm workers.
+        Updates each Agent in memory. ``Agent.run`` reapplies the value after
+        loading the prior checkpoint and persists it only at the next safe
+        model boundary.
     """
     synchronized: list[str] = []
     for agent in agents:
         setter = getattr(agent, "set_context_threshold", None)
         # Test doubles and third-party Agent-compatible wrappers may predate
         # this optional synchronization method; they remain runnable while
-        # first-party Agents always persist the selected threshold.
-        if callable(setter) and setter(max_context_threshold, persist=True):
+        # first-party Agents always accept the selected threshold.
+        if callable(setter) and setter(max_context_threshold, persist=False):
             synchronized.append(getattr(agent, "_agent_name_in_graph", "") or "coordinator")
     return tuple(synchronized)
 
@@ -633,7 +848,9 @@ def _restore_swarm(
     for agent_name in swarm.dispatched_agent_names():
         worker = swarm.get_agent(agent_name)
         if worker is not None:
-            worker.add_tools([create_task_report_tool(swarm, agent_name, worker.request_completion)])
+            worker.add_tools(_allowed_tools(config, "swarm", [
+                create_task_report_tool(swarm, agent_name, worker.request_completion),
+            ]))
     _attach_swarm_observer(swarm, workspace_id, session_id, active)
     return swarm
 
@@ -666,6 +883,7 @@ __all__ = [
     "_redacted_api_url",
     "_runtime_profile_snapshot",
     "_build_agent",
+    "_build_http_worker_agent",
     "_memory_capabilities",
     "_session_memory_store",
     "_plan_store",

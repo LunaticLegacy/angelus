@@ -51,3 +51,41 @@ def test_blank_connector_update_keeps_saved_key_and_response_is_redacted() -> No
             assert webapp._read_connectors()[0]["api_key"] == "private-key"
         finally:
             storage.CONNECTOR_INDEX = original_index
+
+
+def test_selected_connector_is_the_authoritative_complete_run_backend() -> None:
+    """A saved connector overrides stale browser provider, model, URL, and key.
+
+    Connector selection is an opaque profile reference.  The run boundary must
+    therefore resolve the whole backend from encrypted server-side storage,
+    rather than merely filling a missing API key while retaining potentially
+    stale fields from the browser draft.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        original_index = storage.CONNECTOR_INDEX
+        storage.CONNECTOR_INDEX = Path(directory) / "connectors.json"
+        try:
+            webapp._write_connectors([{
+                "id": "saved-connector",
+                "name": "Saved connector",
+                "provider": "anthropic",
+                "model": "claude-test",
+                "api_url": "https://proxy.example.test/v1",
+                "api_key": "saved-secret",
+            }])
+
+            resolved = webapp._resolve_connector_key(RunConfig(
+                connector_id="saved-connector",
+                provider="openai",
+                model="stale-browser-model",
+                api_url="https://stale.example.test/v1",
+                api_key="stale-browser-secret",
+            ))
+
+            assert resolved.connector_id == "saved-connector"
+            assert resolved.provider == "anthropic"
+            assert resolved.model == "claude-test"
+            assert resolved.api_url == "https://proxy.example.test/v1"
+            assert resolved.api_key == "saved-secret"
+        finally:
+            storage.CONNECTOR_INDEX = original_index

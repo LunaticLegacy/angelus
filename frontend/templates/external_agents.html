@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Angelus · 导入外部 Agent 工作</title>
+    <link rel="stylesheet" href="/static/app.css?v=external-agent-import-1" />
+  </head>
+  <body class="external-hub-page">
+    <main class="external-hub external-import-hub">
+      <header class="external-hub-header">
+        <div><p class="eyebrow">CONTINUE WORK, SAFELY</p><h1>导入外部 Agent 工作</h1><p>把已完成或中断的外部会话变成一个独立、可继续的 Angelus 工作空间。</p></div>
+        <button id="refresh-providers" type="button">刷新来源</button>
+      </header>
+      <p id="hub-feedback" class="external-hub-feedback" aria-live="polite"></p>
+      <ol class="external-import-steps" aria-label="导入步骤"><li class="active">1. 选择来源</li><li>2. 审阅上下文</li><li>3. 在 Angelus 继续</li></ol>
+      <section aria-labelledby="provider-heading"><div class="external-section-heading"><div><p class="eyebrow">SOURCES</p><h2 id="provider-heading">选择来源</h2></div><button id="auto-detect-providers" type="button">检测本机 Agent</button></div><div id="provider-list" class="external-provider-grid"><p class="empty">正在读取来源…</p></div></section>
+      <section id="source-detail" class="external-detail" hidden aria-labelledby="source-title"><div class="external-section-heading"><div><p class="eyebrow">READ-ONLY DISCOVERY</p><h2 id="source-title">可导入的会话</h2><p id="source-help" class="external-help"></p></div><button id="discover-sessions" type="button">读取会话</button></div><div id="external-session-list" class="external-session-list"><p class="empty">选择一个来源后读取其会话。</p></div></section>
+      <section class="external-detail" aria-labelledby="file-import-title"><div class="external-section-heading"><div><p class="eyebrow">PORTABLE IMPORT</p><h2 id="file-import-title">导入导出的 transcript</h2><p class="external-help">适用于暂不能直接读取的 Agent。仅接受 JSON 或 JSONL 会话记录；不会执行其中任何工具调用。</p></div></div><label class="external-import-field">Transcript 文件<input id="transcript-file" type="file" accept="application/json,.json,.jsonl,text/plain" /></label><button id="preview-file-import" type="button">审阅导入内容</button></section>
+      <section id="import-review" class="external-detail" hidden aria-labelledby="review-title"><div><p class="eyebrow">IMPORT REVIEW</p><h2 id="review-title">创建可继续的工作空间</h2><p id="review-summary" class="external-help"></p></div><div id="conversion-report" class="external-conversion-report"></div><label class="external-import-field">工作空间名称<input id="import-name" maxlength="120" placeholder="例如：认证问题 · Claude 接手" /></label><label class="external-import-field">项目目录<span class="external-path-picker"><input id="import-project-path" placeholder="/absolute/path/to/project" /><button id="choose-import-directory" type="button" aria-label="从文件资源管理器选择项目目录">选择目录</button></span></label><p class="external-security-note">会话会被复制为新的 Angelus 工作空间。原始历史保留为只读证据；工具调用、密钥、审批和外部进程都不会被迁移或重放。</p><div class="external-actions"><button id="commit-import" type="button">创建工作空间并继续</button><button id="cancel-import" type="button">取消</button></div></section>
+    </main>
+    <script type="module" src="/static/external-agents.js?v=external-agent-import-1"></script>
+  </body>
+</html>

@@ -215,7 +215,9 @@ class PluginManager:
         Workspace-tier plugins shadow global-tier plugins with the same
         manifest name.  Lifecycle state is preserved for records whose
         directory is unchanged, so re-discovery never tears down active
-        plugins.
+        plugins.  Records whose directory has disappeared are torn down
+        (if they were loaded) and pruned, so a deleted plugin directory is
+        reflected immediately.
         """
         loader = self._manifest_loader()
         found: dict[str, PluginRecord] = {}
@@ -267,6 +269,15 @@ class PluginManager:
                 record.runtime = existing.runtime
                 record.error = existing.error
             self._records[name] = record
+
+        # Prune records whose directory no longer exists.  Loaded plugins are
+        # torn down first so their registrations and modules never leak; a
+        # merely discovered record is dropped silently.
+        for name in [name for name in self._records if name not in found]:
+            record = self._records[name]
+            if record.state in (PluginState.ACTIVE, PluginState.BLOCKED):
+                self._teardown_locked(name)
+            del self._records[name]
 
         self._discovered = True
         return list(self._records.values())
@@ -404,6 +415,59 @@ class PluginManager:
                     continue
                 loaded.append(self.load(name))
             return loaded
+
+    def rescan(self) -> dict[str, Any]:
+        """Re-scan the plugin directories and reconcile live plugins.
+
+        This is the hot-reload entry point used by ``POST /api/plugins/rescan``
+        and the optional auto-watch thread.  It:
+
+        * re-discovers the plugin directories, so a plugin folder dropped in
+          while the backend is running becomes visible immediately;
+        * tears down plugins whose directory was removed while they were
+          loaded (their registrations are unpublished and modules purged);
+        * loads newly discovered plugins that are **already registered and
+          enabled** in the registry.
+
+        The security boundary is unchanged: a plugin that is merely dropped
+        into the directory is *discovered* but never imported.  It must first
+        be registered (``angelus plugin install`` or the workbench "加入工作台"
+        action) and enabled before :meth:`rescan` will execute its code.
+
+        Returns a summary dict with ``added`` / ``removed`` / ``loaded`` name
+        lists.  Idempotent and safe to call repeatedly (a no-op when nothing
+        changed).
+        """
+        with self._lock:
+            previous = dict(self._records)
+            previous_states = {
+                name: record.state for name, record in previous.items()
+            }
+            self.discover()
+
+            # discover() already tore down and pruned plugins whose directory
+            # disappeared; report the ones that were actually loaded.
+            removed: list[str] = [
+                name
+                for name, state in previous_states.items()
+                if name not in self._records
+                and state in (PluginState.ACTIVE, PluginState.BLOCKED)
+            ]
+
+            # Load newly discovered plugins that are registered + enabled.
+            added: list[str] = []
+            loaded: list[str] = []
+            for name, record in list(self._records.items()):
+                if name in previous or record.manifest is None:
+                    continue
+                item = self._registry_lookup(name)
+                if item is None or not item.get("enabled"):
+                    continue
+                added.append(name)
+                self.load(name)
+                loaded.append(name)
+
+            return {"added": added, "removed": removed, "loaded": loaded}
 
     # ------------------------------------------------------------------
     # live registration tables (consumed by the S4–S7 bridges)

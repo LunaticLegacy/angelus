@@ -282,8 +282,13 @@ def create_task_planning_tools(
             ``"plan:set"`` or ``"plan:status"``.
 
     Returns:
-        ``set_task_plan`` and ``update_task_status`` Tool instances.
+        ``read_task_plan``, ``set_task_plan`` and ``update_task_status`` Tool
+        instances.
     """
+    def read_task_plan() -> dict[str, Any]:
+        """Return the current persisted task plan (goal, summary, nested tasks)."""
+        return {"ok": True, "plan": store.read()}
+
     def set_task_plan(goal: str, summary: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
         """Persist a complete plan supplied by the model in structured arguments."""
         plan = store.replace(goal=goal, summary=summary, tasks=tasks)
@@ -299,6 +304,7 @@ def create_task_planning_tools(
         return {"ok": True, "plan": plan}
 
     return [
+        Tool(name="read_task_plan", description="Read the current persisted task plan (goal, summary and nested tasks) without modifying it.", schemas=ToolSchema(properties=[]), handler=read_task_plan),
         Tool(name="set_task_plan", description="Create or replace the user's nested task plan. Use it for multi-step goals before executing work.", schemas=ToolSchema(properties=[ToolParameter(name="goal", description="User goal", required=True), ToolParameter(name="summary", description="Planning summary", required=True), ToolParameter(name="tasks", type="array", description="Nested tasks with title, optional stable id (or task_id), description, priority, estimated_minutes and subtasks", required=True)]), handler=set_task_plan),
         Tool(name="update_task_status", description="Update a planned task as work progresses.", schemas=ToolSchema(properties=[ToolParameter(name="task_id", description="Task ID from the current plan", required=True), ToolParameter(name="status", description="not_started, in_progress, completed or blocked", enum=sorted(_STATUSES), required=True)]), handler=update_task_status),
     ]
