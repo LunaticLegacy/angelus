@@ -3,7 +3,7 @@
 from pathlib import Path
 import tempfile
 
-from angelus.task_planning import TaskPlanStore
+from angelus.task_planning import TaskPlanStore, create_task_planning_tools
 from angelus import runtime, storage
 
 
@@ -88,3 +88,51 @@ def test_agent_plan_stores_are_isolated_and_keep_legacy_coordinator_path(
     assert worker.path.parent.name == "plans"
     assert coordinator.read()["goal"] == "主计划"
     assert worker.read()["goal"] == "子任务"
+
+
+def test_read_task_plan_tool_returns_persisted_plan() -> None:
+    """The read_task_plan Agent tool returns the current plan without mutation."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        tools = {tool.name: tool for tool in create_task_planning_tools(store)}
+        assert "read_task_plan" in tools
+        # No plan yet -> empty plan, still ok.
+        empty = tools["read_task_plan"].handler()
+        assert empty["ok"] is True
+        assert empty["plan"] == {"goal": "", "summary": "", "tasks": [], "updated_at": None}
+
+        store.replace(goal="Ship", summary="Verify", tasks=[
+            {"id": "a", "title": "Build", "status": "in_progress"},
+            {"id": "b", "title": "Test", "status": "not_started"},
+        ])
+        result = tools["read_task_plan"].handler()
+        assert result["ok"] is True
+        plan = result["plan"]
+        assert plan["goal"] == "Ship"
+        assert plan["summary"] == "Verify"
+        assert [t["id"] for t in plan["tasks"]] == ["a", "b"]
+        # Reading must not change the persisted file.
+        assert store.read()["goal"] == "Ship"
+
+
+def test_read_task_plan_tool_handles_malformed_plan_file() -> None:
+    """A corrupt plan file yields the empty plan instead of raising."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "plan.json"
+        path.write_text("{not valid json", encoding="utf-8")
+        store = TaskPlanStore(path)
+        tools = {tool.name: tool for tool in create_task_planning_tools(store)}
+        result = tools["read_task_plan"].handler()
+        assert result["ok"] is True
+        assert result["plan"] == {"goal": "", "summary": "", "tasks": [], "updated_at": None}
+
+
+def test_read_task_plan_tool_has_no_required_parameters() -> None:
+    """The read tool exposes an empty schema so models can call it freely."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = TaskPlanStore(Path(directory) / "plan.json")
+        tools = {tool.name: tool for tool in create_task_planning_tools(store)}
+        schema = tools["read_task_plan"].schemas.to_dict()
+        assert schema["type"] == "object"
+        assert schema["properties"] == {}
+        assert "required" not in schema
