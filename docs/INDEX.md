@@ -7,19 +7,14 @@
 | File | Purpose |
 |---|---|
 | `semantic-map.md` | 架构、模块 API、类层级与函数职责的代码语义参考。 |
-| `context-stats-unification-spec.md` | 上下文长度统计统一口径、字段契约与迁移验收规格。 |
-| `context-stats-change-notes.md` | 上下文统计统一工作的实现变更与验证记录。 |
 | `graph_context_design.md` | 线性上下文、压缩归档、图检索与持久化设计。 |
 | `decisions.md` | 架构与插件系统的设计决策记录。 |
 | `security.md` | 连接器、Shell、运行控制、插件与数据边界的安全设计。 |
 | `plugin-api.md` | 插件 manifest、运行时注册、权限与 REST 契约。 |
 | `plugin-guide.md` | 插件开发、安装、启用与示例使用指南。 |
 | `plugin-swarm-execution.md` | 插件系统分阶段执行规格与验收标准。 |
-| `v0.5.0-adr.md` | v0.5.0 架构决策记录（Q1 外部产品接入、Q2 前端性能修复范围）。 |
-| `product-adapter.md` | 插件 v2 扩展点 `register_external_product(adapter)` 契约（Spike 已验证）。 |
-| `v0.5.0-spec.md` | v0.5.0 分阶段规格（Phase 0 观察 / Phase 1 控制 / Phase 2 上下文历史 + 性能修复）。 |
 | `mnavrag-arxiv-draft.md` | MNavRAG：层级知识检索方法的学术论文草稿。 |
-|  `assets/angelus-hero.png` · `assets/qq-group.png` | README 使用的多 Agent 执行图横幅；`qq-group.png` 为 README 底部社区 QQ 群二维码；标题图标复用 `src-tauri/icons/icon.png`。 |
+| `assets/angelus-hero.png` | README 使用的多 Agent 执行图横幅；标题图标复用 `src-tauri/icons/icon.png`。 |
 
 ## Intent Routing
 
@@ -29,19 +24,3 @@
 - **安全边界** → `security.md`
 - **开发或审核插件** → `plugin-guide.md`、`plugin-api.md`、`plugin-swarm-execution.md`
 - **RAG 研究材料** → `mnavrag-arxiv-draft.md`
-
-<!-- BEGIN GENERATED SYMBOL MAP -->
-
-## Function Map
-
-| Source | Function / method | Input types | Output type | Semantics |
-|---|---|---|---|---|
-| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
-
-## Class Map
-
-| Source | Class | Constructor / field input types | Base(s) | Semantics |
-|---|---|---|---|---|
-| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
-
-<!-- END GENERATED SYMBOL MAP -->

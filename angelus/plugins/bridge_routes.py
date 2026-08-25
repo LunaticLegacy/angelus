@@ -179,7 +179,6 @@ class PluginBridge:
         api = APIRouter()
         api.get("/api/plugins", tags=["plugins"])(self._list_plugins)
         api.get("/api/plugins/status", tags=["plugins"])(self._plugin_status)
-        api.post("/api/plugins/rescan", tags=["plugins"])(self._rescan_plugins)
         api.post("/api/plugins/discovered/{name}/register", tags=["plugins"])(
             self._register_discovered_plugin
         )
@@ -259,37 +258,6 @@ class PluginBridge:
                 for record in self.manager.plugins() or []
             ]
         }
-
-    def rescan(self) -> dict[str, Any]:
-        """Re-scan the plugin directories and reconcile live plugins.
-
-        Hot-discovery entry point shared by ``POST /api/plugins/rescan`` and
-        the optional auto-watch thread (``ANGELUS_PLUGIN_AUTORELOAD``).  The
-        manager re-scans the persistent plugin directory, tears down plugins
-        whose directory was removed and loads newly discovered plugins that
-        are already registered and enabled in the registry.
-
-        Security boundary is unchanged: a plugin merely dropped into the
-        directory is *discovered* but never imported; it must be registered
-        and enabled before rescan executes its code.  Settings are never
-        hot-reloaded here — only discovery/lifecycle is reconciled.
-
-        Returns the manager's summary dict (``added``/``removed``/``loaded``).
-        """
-        summary = self.manager.rescan()
-        # Newly loaded plugins may publish routes; mount them so their
-        # /plugins/<name>/api/* surface is live immediately.
-        if summary.get("loaded") and self._app is not None:
-            self._mount_plugin_routers(self._app)
-        return summary
-
-    def _rescan_plugins(self) -> dict[str, Any]:
-        """HTTP handler for ``POST /api/plugins/rescan``."""
-        try:
-            return self.rescan()
-        except Exception as exc:
-            logger.warning("plugin rescan failed: %s", exc)
-            raise HTTPException(status_code=409, detail=f"plugin rescan failed: {exc}") from exc
 
     @staticmethod
     def _requested_permissions(manifest: dict[str, Any]) -> list[str]:

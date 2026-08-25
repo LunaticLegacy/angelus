@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from llmfetcher import AgentRunStopped
@@ -17,66 +18,22 @@ from llmfetcher.swarm_module import AgentFailure
 
 from ..classes import ActiveRun, BrowserRunControl, RunRequest, SteerRequest
 from .. import connectors, runtime, storage
-from ..mcp_registry import resolve_session_servers
 from ..history import render_markdown
-from ..event_stream import (
-    EventBroker,
-    historical_event_stream,
-    live_event_stream,
-    publish_durable_event,
-)
 from ..provider_adapters import effective_temperature
 from ..storage import (
     _append_conversation_turn,
+    _append_session_event,
     _deleting_workspaces,
     _get_session,
     _persist_json,
-    _project_path,
+    _read_session_event_log,
     _run_state_path,
     _safe_id,
-    _session_event_offset_after,
-    _session_event_log_size,
     _session_path,
     _sessions_lock,
-    _validate_project_path,
 )
 
 router = APIRouter()
-
-
-def _event_resume_offset(
-    request: Request,
-    workspace_id: str,
-    session_id: str,
-    *,
-    after: int,
-    cursor: int | None,
-) -> int:
-    """Resolve an SSE durable cursor with compatibility precedence.
-
-    Args:
-        request: Incoming request that may carry ``Last-Event-ID``.
-        workspace_id: Storage partition owning the durable event log.
-        session_id: Browser-stable session identity.
-        after: Legacy count of already-rendered durable records.
-        cursor: Explicit durable byte offset from the browser.
-
-    Returns:
-        Valid byte offset no greater than the current event-log size. An
-        out-of-range modern cursor restarts safely from zero; otherwise the
-        legacy record count is converted by scanning once.
-    """
-    last_event_id = request.headers.get("last-event-id", "").strip()
-    for candidate in (last_event_id, cursor):
-        if candidate in (None, ""):
-            continue
-        try:
-            resolved = max(0, int(candidate))
-        except (TypeError, ValueError):
-            continue
-        log_size = _session_event_log_size(workspace_id, session_id)
-        return resolved if resolved <= log_size else 0
-    return _session_event_offset_after(workspace_id, session_id, after)
 
 
 
@@ -103,10 +60,6 @@ def start_run(request: RunRequest) -> dict[str, str]:
     workspace_id = _safe_id(request.workspace_id, "workspace")
     if not storage._workspace_exists(workspace_id):
         raise HTTPException(status_code=404, detail="Workspace not found")
-    try:
-        _validate_project_path(str(_project_path(workspace_id, session_id)))
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail="The selected project directory is unavailable") from exc
     with _sessions_lock:
         if workspace_id in _deleting_workspaces:
             raise HTTPException(status_code=409, detail="Workspace is being deleted")
@@ -114,26 +67,17 @@ def start_run(request: RunRequest) -> dict[str, str]:
     if not config.model.strip():
         raise HTTPException(status_code=422, detail="Model is required")
     session = _get_session(workspace_id, session_id)
-    event_log_size = _session_event_log_size(workspace_id, session_id)
     with session.lock:
         if session.active and not session.active.done.is_set():
             raise HTTPException(status_code=409, detail="This chat already has an active run")
-        if (
-            config.enable_swarm
-            and session.active
-            and session.active.swarm is not None
-            and not session.active.mcp_servers
-        ):
+        if config.enable_swarm and session.active and session.active.swarm is not None:
             # Keep the in-process execution graph and every Agent instance
             # alive between user turns. Tool closures retain this ActiveRun,
             # so reset it in place rather than replacing its identity.
             active = session.active
-            active.reset_for_next_turn(event_log_size)
+            active.reset_for_next_turn()
         else:
-            active = ActiveRun(
-                control=BrowserRunControl(),
-                event_broker=EventBroker(durable_offset=event_log_size),
-            )
+            active = ActiveRun(control=BrowserRunControl())
             # A restarted backend has no in-memory BrowserSession. Recreate a
             # completed Swarm from its credential-free local blueprint before
             # falling back to a brand-new graph on the first resumed turn.
@@ -141,14 +85,9 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 active.swarm = runtime._restore_swarm(
                     config, workspace_id, session_id, active,
                 )
-        # MCP configuration is resolved exclusively from the global registry
-        # and this session's authorization policy at the run boundary.
-        active.mcp_servers = resolve_session_servers(
-            session_id, _project_path(workspace_id, session_id)
-        )
         session.active = active
     started_at = time.time()
-    runtime_profile = runtime._runtime_profile_snapshot(config, active.mcp_servers)
+    runtime_profile = runtime._runtime_profile_snapshot(config)
     _persist_json(_run_state_path(workspace_id, session_id), {
         "status": "running", "run_id": session_id, "started_at": started_at,
         "runtime_profile": runtime_profile,
@@ -156,7 +95,7 @@ def start_run(request: RunRequest) -> dict[str, str]:
     _append_conversation_turn(workspace_id, session_id, {
         "role": "user", "content": request.message, "reasoning": "", "tools": [],
     })
-    publish_durable_event(active, workspace_id, session_id, {
+    _append_session_event(workspace_id, session_id, {
         "event": "run_started",
         "run_id": session_id,
         "timestamp": started_at,
@@ -165,7 +104,6 @@ def start_run(request: RunRequest) -> dict[str, str]:
     })
 
     def execute() -> None:
-        """Run the configured Agent graph and persist one terminal outcome."""
         started = time.time()
         terminal_status = "completed"
         error_message = ""
@@ -178,9 +116,9 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 if swarm is None:
                     swarm = runtime._build_swarm(config, workspace_id, session_id, active)
                     active.swarm = swarm
-                # Settings are browser-local drafts until this boundary. Keep
-                # the selected threshold in memory so each Agent reapplies it
-                # after loading its checkpoint during ``swarm.run``.
+                # Settings are browser-local drafts until this boundary. Make
+                # the selected threshold durable before every Agent reloads
+                # its old checkpoint during ``swarm.run``.
                 runtime._synchronize_swarm_context_threshold(swarm, config)
                 outputs = swarm.run(request.message, control=active.control)
                 output = outputs.get("coordinator")
@@ -199,8 +137,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 usage = swarm.total_usage()
             else:
                 agent = runtime._build_agent(config, workspace_id, session_id, active=active)
-                # Single-Agent sessions load their checkpoint inside ``run``;
-                # the in-memory selection is reapplied immediately afterward.
+                # Single-Agent sessions load their checkpoint inside ``run``
+                # too, so persist the current setting before that load.
                 runtime._synchronize_context_threshold(
                     [agent], config.max_context_threshold,
                 )
@@ -222,7 +160,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
                     if event.event_type == "agent:stream_delta":
                         active.publish_ephemeral_event(payload)
                         return
-                    publish_durable_event(active, workspace_id, session_id, payload)
+                    _append_session_event(workspace_id, session_id, payload)
+                    active.events.put(payload)
                 agent.add_hook(capture)
                 output = agent.run(
                     request.message,
@@ -253,7 +192,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 "reasoning": output.reasoning_content,
                 "tools": [],
             })
-            publish_durable_event(active, workspace_id, session_id, result_payload)
+            _append_session_event(workspace_id, session_id, result_payload)
+            active.events.put(result_payload)
         except AgentRunStopped as exc:
             terminal_status = "stopped"
             # The Agent saves only completed boundaries before raising. Mirror
@@ -272,7 +212,8 @@ def start_run(request: RunRequest) -> dict[str, str]:
                 "message": "Run stopped after the current step.",
                 "timestamp": time.time(),
             }
-            publish_durable_event(active, workspace_id, session_id, stopped_payload)
+            _append_session_event(workspace_id, session_id, stopped_payload)
+            active.events.put(stopped_payload)
         except Exception as exc:
             terminal_status = "error"
             error_message = f"{type(exc).__name__}: {exc}"
@@ -283,9 +224,10 @@ def start_run(request: RunRequest) -> dict[str, str]:
             }
             # Persist terminal failures before notifying SSE clients so a
             # browser refresh can explain a run that is no longer live.
-            publish_durable_event(active, workspace_id, session_id, error_payload)
+            _append_session_event(workspace_id, session_id, error_payload)
+            active.events.put(error_payload)
         finally:
-            if active.mcp_bridge is not None:
+            if active.mcp_bridge is not None and active.swarm is None:
                 try:
                     active.mcp_bridge.close()
                 except Exception:
@@ -312,7 +254,9 @@ def start_run(request: RunRequest) -> dict[str, str]:
                             "message": cleanup_error,
                             "timestamp": time.time(),
                         }
-                        publish_durable_event(active, workspace_id, session_id, error_payload)
+                        _append_session_event(workspace_id, session_id, error_payload)
+                        active.events.put(error_payload)
+            active.done.set()
             run_state = {
                 "status": terminal_status, "run_id": session_id,
                 "started_at": started_at, "finished_at": time.time(),
@@ -320,15 +264,10 @@ def start_run(request: RunRequest) -> dict[str, str]:
             }
             if error_message:
                 run_state["error"] = error_message
-            try:
-                _persist_json(_run_state_path(workspace_id, session_id), run_state)
-                done_payload = {"event": "done", "timestamp": time.time()}
-                publish_durable_event(active, workspace_id, session_id, done_payload)
-            finally:
-                # Even a terminal metadata I/O failure must release status,
-                # deletion, and SSE waiters instead of orphaning a live run.
-                active.event_broker.close()
-                active.done.set()
+            _persist_json(_run_state_path(workspace_id, session_id), run_state)
+            done_payload = {"event": "done", "timestamp": time.time()}
+            _append_session_event(workspace_id, session_id, done_payload)
+            active.events.put(done_payload)
 
     threading.Thread(target=execute, name=f"llmfetcher-{session_id}", daemon=True).start()
     return {"run_id": session_id, "workspace_id": workspace_id}
@@ -383,140 +322,94 @@ def get_run_status(workspace_id: str, session_id: str) -> dict[str, Any]:
     }
 
 @router.get("/api/workspaces/{workspace_id}/runs/{session_id}/events")
-def stream_events(
-    workspace_id: str,
-    session_id: str,
-    request: Request,
-    after: int = 0,
-    cursor: int | None = None,
-) -> StreamingResponse:
+def stream_events(workspace_id: str, session_id: str, after: int = 0) -> StreamingResponse:
     """Stream durable session events after a chronological log offset.
 
     Args:
         workspace_id: Browser session storage partition.
         session_id: Browser-visible session identity.
-        request: Incoming request whose ``Last-Event-ID`` resumes a live SSE.
         after: Number of already-rendered event-log records. New connections
             replay only later records, so a refresh cannot lose events that an
             earlier SSE consumer removed from its in-memory queue.
-        cursor: Preferred durable byte offset for explicit browser reconnects.
 
     Returns:
-        An SSE response that replays durable history once, then consumes the
-        process-local broadcast ring until the active run ends.
+        An SSE response that tails ``events.ndjson`` until the active run ends.
     """
     workspace_id = _safe_id(workspace_id, "workspace")
     session_id = _safe_id(session_id, "session")
     session = _get_session(workspace_id, session_id)
     active = session.active
-
-    resume_offset = _event_resume_offset(
-        request,
-        workspace_id,
-        session_id,
-        after=after,
-        cursor=cursor,
-    )
-
     if active is None:
         # No live worker (e.g. the run finished between a status check and the
         # SSE reconnect): replay the durable tail once and close instead of
         # letting the browser retry a 404 connection forever.
+        def replay_historical():
+            events = _read_session_event_log(workspace_id, session_id)
+            for index, payload in enumerate(events):
+                if index >= max(0, after):
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
         return StreamingResponse(
-            historical_event_stream(
-                workspace_id, session_id, resume_offset,
-            ),
+            replay_historical(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache"},
         )
 
-    return StreamingResponse(
-        live_event_stream(
-            workspace_id, session_id, active, resume_offset,
-        ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache"},
-    )
+    def generate():
+        """Tail durable audit events and relay non-durable stream fragments."""
+        def ephemeral_events():
+            """Yield only live-only queue entries; durable entries use the log."""
+            while True:
+                try:
+                    payload = active.events.get_nowait()
+                except queue.Empty:
+                    return
+                if payload.get("ephemeral"):
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-def _control_target(active: ActiveRun, requested: Any) -> tuple[str, dict[str, str]]:
-    """Validate one control target and snapshot current Agent states.
+        next_index = max(0, after)
+        while True:
+            events = _read_session_event_log(workspace_id, session_id)
+            while next_index < len(events):
+                payload = events[next_index]
+                next_index += 1
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            if active.done.is_set():
+                yield from ephemeral_events()
+                break
+            # The queue remains a local wake-up/compatibility buffer. Drain it
+            # after reading the durable log so abandoned SSE clients cannot
+            # retain an unbounded copy of events.
+            yield from ephemeral_events()
+            yield ": keepalive\n\n"
+            time.sleep(0.25)
 
-    Args:
-        active: Live run that owns the control registry and optional Swarm.
-        requested: JSON body containing an optional ``agent`` field.
-
-    Returns:
-        Normalized target and current per-Agent canonical states.
-
-    Raises:
-        HTTPException: If a concrete Agent does not exist in this run.
-    """
-    target = str(requested.get("agent", "all") if isinstance(requested, dict) else "all").strip() or "all"
-    states: dict[str, str] = {}
-    if active.swarm is not None:
-        snapshot = active.swarm.view_snapshot()
-        states = {
-            str(node["id"]): str(snapshot.get("node_states", {}).get(node["id"], {}).get("state", "queued"))
-            for node in snapshot.get("nodes", [])
-            if node.get("kind") == "agent"
-        }
-    else:
-        states = {"coordinator": "running"}
-    if target != "all" and target not in states:
-        raise HTTPException(status_code=404, detail=f"Unknown Agent: {target}")
-    if target != "all" and states.get(target) in {"completed", "failed", "interrupted", "cancelled"}:
-        raise HTTPException(status_code=409, detail=f"Agent {target!r} is already terminal")
-    return target, states
-
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 @router.post("/api/workspaces/{workspace_id}/runs/{session_id}/stop")
-def stop_run(
-    workspace_id: str,
-    session_id: str,
-    payload: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    """Request a cooperative stop for all work or one selected Agent.
-
-    Args:
-        workspace_id: Browser storage partition.
-        session_id: Active run identifier.
-        payload: JSON object whose ``agent`` defaults to ``all``.
-    """
+def stop_run(workspace_id: str, session_id: str) -> dict[str, bool]:
+    """Request a stop at the next completed model-and-tool boundary."""
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
-    target, states = _control_target(session.active, payload)
-    session.active.control.stop(target)
-    if target == "all" and session.active.swarm is not None:
+    session.active.control.stop()
+    if session.active.swarm is not None:
         session.active.swarm.request_shutdown()
-    return {"ok": True, "accepted": True, "target": target, "agent_states": states}
+    return {"ok": True}
 
 @router.post("/api/workspaces/{workspace_id}/runs/{session_id}/force-stop")
-def force_stop_run(
-    workspace_id: str,
-    session_id: str,
-    payload: dict[str, Any] = Body(default_factory=dict),
-) -> dict[str, Any]:
-    """Force-stop model and tool I/O for all work or one Agent.
-
-    Args:
-        workspace_id: Browser storage partition.
-        session_id: Active run identifier.
-        payload: JSON object whose ``agent`` defaults to ``all``.
-    """
+def force_stop_run(workspace_id: str, session_id: str) -> dict[str, bool]:
+    """Interrupt an in-flight model request and kill registered tool processes."""
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
-    target, states = _control_target(session.active, payload)
-    session.active.force_stop(target)
-    if target == "all" and session.active.swarm is not None:
+    session.active.force_stop()
+    if session.active.swarm is not None:
         session.active.swarm.request_shutdown()
-    if target == "all":
-        _persist_json(_run_state_path(workspace_id, session_id), {
-            "status": "force_stopping", "run_id": session_id,
-            "requested_at": time.time(),
-        })
-    return {"ok": True, "accepted": True, "target": target, "agent_states": states}
+    _persist_json(_run_state_path(workspace_id, session_id), {
+        "status": "force_stopping", "run_id": session_id,
+        "requested_at": time.time(),
+    })
+    return {"ok": True}
 
 @router.post("/api/workspaces/{workspace_id}/runs/{session_id}/steer")
 def steer_run(workspace_id: str, session_id: str, request: SteerRequest) -> dict[str, bool]:
@@ -527,36 +420,4 @@ def steer_run(workspace_id: str, session_id: str, request: SteerRequest) -> dict
     session.active.control.steer(request.message)
     return {"ok": True}
 
-
-@router.post("/api/workspaces/{workspace_id}/runs/{session_id}/mcp-approvals/{approval_id}")
-def resolve_mcp_approval(
-    workspace_id: str,
-    session_id: str,
-    approval_id: str,
-    payload: dict[str, Any] = Body(...),
-) -> dict[str, Any]:
-    """Resolve sampling or elicitation without logging submitted values.
-
-    Args:
-        workspace_id: Browser storage partition.
-        session_id: Active run identifier.
-        approval_id: Opaque pending approval identifier from SSE.
-        payload: ``decision``, optional ``remember``, and elicitation content.
-    """
-    safe_workspace = _safe_id(workspace_id, "workspace")
-    safe_session = _safe_id(session_id, "session")
-    session = _get_session(safe_workspace, safe_session)
-    if not session.active or session.active.done.is_set():
-        raise HTTPException(status_code=409, detail="No active run")
-    if payload.get("decision") not in {"allow", "reject"}:
-        raise HTTPException(status_code=422, detail="decision must be allow or reject")
-    try:
-        audit = session.active.resolve_mcp_approval(approval_id, payload)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="MCP approval not found") from exc
-    publish_durable_event(session.active, safe_workspace, safe_session, {
-        "event": "mcp_approval_resolved", "timestamp": time.time(), **audit,
-    })
-    return {"ok": True, **audit}
-
-__all__ = ["start_run", "get_run_status", "stream_events", "stop_run", "force_stop_run", "steer_run", "resolve_mcp_approval", "router"]
+__all__ = ["start_run", "get_run_status", "stream_events", "stop_run", "force_stop_run", "steer_run", "router"]

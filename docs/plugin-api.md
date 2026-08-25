@@ -204,7 +204,6 @@ class AngelusPlugin:
 GET /api/plugins                     → {"plugins": [{"id","name","version","api_version","enabled","checksum","source","installed_at"}]}
 GET /api/plugins/{id}                → 上条目 + {"permissions_granted": [...]}（不含 manifest 全文）
 GET /api/plugins/status              → 发现到的完整状态（含 disabled/blocked/error、已声明/已授予权限；不含 settings）
-POST /api/plugins/rescan            → 重新扫描插件目录并协调生命周期：发现新放入的目录、卸载目录已被删除的已加载插件、加载已登记且已启用的新插件；返回 {"added","removed","loaded"} 名称列表；失败 → 409
 POST /api/plugins/discovered/{name}/register → 需 {"confirm": true}；仅登记已发现的本地目录，不执行代码
 POST /api/plugins/{id}/load          → 需 {"confirm": true}；缺少已声明权限时还需 {"grant_permissions": true}
 POST /api/plugins/{id}/unload        → 需 {"confirm": true}；teardown、停用并移除插件路由，不删除文件
@@ -215,10 +214,6 @@ GET  /plugins/{name}/static/{asset}  → 白名单静态资源；穿越/未启�
 ```
 
 工作台“设置 → 插件”中的已发现项均可选中。尚未登记的本地目录可先“加入工作台”：该操作只计算完整性校验并写入本机注册表，不接收任意路径/URL，也不执行插件代码。随后可在确认后运行时加载或卸载插件：加载会展示并要求确认尚未授予的 manifest 权限，只能授予插件自己声明的能力；卸载会执行 teardown、撤销前端面板/命令/资源和插件路由，但保留插件文件、注册记录与设置。安装任意新来源和删除插件文件仍通过 `angelus plugin ...` CLI 完成。设置保存不会热重载 Python 插件；新值会在下一次插件加载时作为 `PluginRuntime.settings` 提供。
-
-**热发现（hot discovery）**：工作台“设置 → 插件”的刷新按钮会先 `POST /api/plugins/rescan` 再拉取状态，因此后端运行期间放入插件目录的新插件无需重启即可被发现；若该插件已登记且已启用，还会被自动加载（其 `/plugins/<name>/api/*` 路由随即挂载）。目录被删除的已加载插件会被自动卸载并撤销其注册。安全边界不变：仅放入目录的插件只会被“发现”，**不会**被导入执行——必须先登记（`angelus plugin install` 或“加入工作台”）并启用，rescan 才会运行其代码。设置不会热重载。
-
-可选后台自动轮询：设置环境变量 `ANGELUS_PLUGIN_AUTORELOAD=1`（默认关闭）后，控制台会启动一个守护线程，按固定间隔（默认 5 秒）调用与刷新按钮相同的 `bridge.rescan()`，实现无需点击的自动热发现。
 
 ---
 

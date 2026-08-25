@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from angelus.webapp import _agent_turns_from_events, _agent_turns_page, _append_session_event
+from angelus.webapp import _agent_turns_from_events, _append_session_event
 
 
 class AgentTurnsFromEventsTests(unittest.TestCase):
@@ -180,49 +180,6 @@ class AgentTurnsFromEventsTests(unittest.TestCase):
                          f"Worker-1 should see [user, assistant] but got: {roles}")
         self.assertEqual(turns[0]["content"], "Do task X")
         self.assertEqual(turns[1]["content"], "Task X done")
-
-
-    def test_agent_turns_page_returns_newest_limit_and_next_before(self):
-        """Pagination returns the newest page with an exclusive next cursor."""
-        events = []
-        # 3 user prompts + 3 assistant rounds = 6 turns.
-        for i in range(1, 4):
-            events.append({"event": "lifecycle", "type": "agent:start",
-                           "agent": "coordinator", "message": f"Q{i}",
-                           "timestamp": i})
-            events.append({"event": "lifecycle", "type": "agent:round",
-                           "agent": "coordinator",
-                           "data": {"round": i, "assistant_content": f"A{i}",
-                                    "reasoning_content": ""},
-                           "timestamp": i + 10})
-        self._write_events(events)
-        with patch("angelus.storage._session_path", return_value=self.workspace / self.session):
-            page = _agent_turns_page(str(self.workspace), self.session, "coordinator",
-                                     limit=4)
-        self.assertEqual(page["total"], 6)
-        self.assertEqual(len(page["messages"]), 4)
-        # Newest 4 turns: Q2, A2, Q3, A3.
-        self.assertEqual([t["content"] for t in page["messages"]],
-                         ["Q2", "A2", "Q3", "A3"])
-        self.assertEqual(page["next_before"], 2)
-
-        with patch("angelus.storage._session_path", return_value=self.workspace / self.session):
-            older = _agent_turns_page(str(self.workspace), self.session, "coordinator",
-                                      before=page["next_before"], limit=4)
-        self.assertEqual(older["total"], 6)
-        self.assertEqual([t["content"] for t in older["messages"]], ["Q1", "A1"])
-        self.assertIsNone(older["next_before"])
-
-    def test_agent_turns_page_clamps_limit_and_handles_empty(self):
-        """Limit is clamped to 1..500 and empty logs fall back cleanly."""
-        self._write_events([])
-        with patch("angelus.storage._session_path", return_value=self.workspace / self.session), \
-             patch("angelus.history._session_path", return_value=self.workspace / self.session):
-            page = _agent_turns_page(str(self.workspace), self.session, "coordinator",
-                                     limit=0)
-        self.assertEqual(page["total"], 0)
-        self.assertEqual(page["messages"], [])
-        self.assertIsNone(page["next_before"])
 
 
 if __name__ == "__main__":
