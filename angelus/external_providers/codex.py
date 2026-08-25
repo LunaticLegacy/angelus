@@ -701,11 +701,17 @@ class CodexAppServerProvider(ExternalAgentProvider):
 
     @property
     def capabilities(self) -> set[ProviderCapability]:
-        """Return the fixed action set available through the Codex App Server."""
+        """Return fixed controls plus read-only local history import capability."""
         return {ProviderCapability(item) for item in CODEX_CAPABILITIES}
 
     def available(self) -> bool:
-        """Return whether the configured local Codex executable can be launched."""
+        """Return whether either local history or App Server controls are usable.
+
+        A user can import Codex CLI history without a currently working App
+        Server, so an existing local ``sessions`` directory counts as usable.
+        """
+        if (self._history_root / "sessions").is_dir():
+            return True
         executable = self._config.command[0] if self._config.command else ""
         return bool(executable and (os.path.isabs(executable) and os.access(executable, os.X_OK) or shutil.which(executable)))
 
@@ -722,21 +728,37 @@ class CodexAppServerProvider(ExternalAgentProvider):
         return _object(self._runtime.call(lambda client: client.initialize()))
 
     def discover(self, *, project_path: str | None = None) -> list[ExternalSession]:
-        """Discover readable Codex threads, optionally filtering by public project path.
+        """Discover local Codex CLI histories before attempting App Server access.
 
         Args:
-            project_path: Optional workspace path used only as a list filter.
+            project_path: Optional workspace path used only to filter session
+                metadata that exposes a matching working directory.
+
+        Returns:
+            Read-only local transcript sessions when present.  App Server
+            discovery remains a fallback for control-only sessions with no
+            persisted local rollout.
         """
+        local_sessions = self._discover_history(project_path=project_path)
+        if local_sessions:
+            return local_sessions
         result = self._rpc("thread/list", _without_none({"cwd": project_path, "limit": 100}))
         records = _records(result)
         return [_session_from_codex(record) for record in records]
 
     def read(self, session_id: str) -> ExternalSession:
-        """Read one Codex thread metadata snapshot without starting a turn.
+        """Read one local Codex transcript snapshot without starting a turn.
 
         Args:
             session_id: Opaque Codex thread id.
+
+        Returns:
+            Local transcript metadata when available; otherwise the App Server
+            thread snapshot for the existing runtime-control workflow.
         """
+        local = next((item for item in self._discover_history() if item.id == _required_id(session_id)), None)
+        if local is not None:
+            return local
         return _session_from_codex(_object(self._rpc("thread/read", {"threadId": _required_id(session_id)})))
 
     def export_history(self, session_id: str) -> list[dict[str, Any]]:
@@ -797,14 +819,47 @@ class CodexAppServerProvider(ExternalAgentProvider):
             raise ProviderError("Codex local history directory was not found", code="not_found")
 
         # Codex stores each thread as a date-nested rollout-<thread-id>.jsonl.
-        for candidate in root.rglob(f"rollout-{safe_id}.jsonl"):
+        # Compare the resolved filename exactly: session IDs are opaque and
+        # must never be interpreted as glob syntax supplied by a browser path.
+        for candidate in root.rglob("rollout-*.jsonl"):
             try:
                 resolved = candidate.resolve()
             except OSError:
                 continue
-            if root in resolved.parents and resolved.is_file():
+            if resolved.name == f"rollout-{safe_id}.jsonl" and root in resolved.parents and resolved.is_file():
                 return resolved
         raise ProviderError("Codex transcript was not found in local history", code="not_found")
+
+    def _discover_history(self, *, project_path: str | None = None) -> list[ExternalSession]:
+        """Scan Codex CLI rollouts without launching or contacting App Server.
+
+        Args:
+            project_path: Optional public working-directory filter.
+
+        Returns:
+            Newest-first read-only session descriptors derived solely from
+            safe paths below the configured Codex history directory.
+        """
+        sessions_root = self._history_root / "sessions"
+        try:
+            root = sessions_root.resolve()
+        except OSError:
+            return []
+        if not root.is_dir():
+            return []
+        sessions: dict[str, ExternalSession] = {}
+        for candidate in root.rglob("rollout-*.jsonl"):
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if root not in resolved.parents or not resolved.is_file():
+                continue
+            snapshot = _history_session(resolved)
+            if snapshot is None or (project_path and snapshot.project_path != project_path):
+                continue
+            sessions.setdefault(snapshot.id, snapshot)
+        return sorted(sessions.values(), key=lambda item: str(item.metadata.get("updated_at", "")), reverse=True)
 
     def start(self, prompt: str, *, project_path: str, model: str | None = None) -> ExternalSession:
         """Create an Angelus-owned Codex thread then send the initial user prompt.
@@ -991,6 +1046,62 @@ def _history_message(raw: Any, session_id: str, index: int) -> dict[str, Any] | 
         "content": content,
         "timestamp": raw.get("timestamp"),
     }
+
+
+def _history_session(transcript: Path) -> ExternalSession | None:
+    """Derive one credential-free session descriptor from a Codex rollout.
+
+    Args:
+        transcript: Resolved rollout JSONL path already constrained below the
+            configured local Codex sessions directory.
+
+    Returns:
+        A read-only session descriptor, or ``None`` for unreadable/malformed
+        filenames.  At most the initial metadata and first visible user text
+        are inspected; no tool payload is retained.
+    """
+    prefix, suffix = "rollout-", ".jsonl"
+    if not transcript.name.startswith(prefix) or not transcript.name.endswith(suffix):
+        return None
+    session_id = transcript.name[len(prefix):-len(suffix)]
+    if not session_id:
+        return None
+    cwd: str | None = None
+    title = "Codex thread"
+    try:
+        with transcript.open("r", encoding="utf-8", errors="replace") as handle:
+            for index, line in enumerate(handle):
+                if index >= 100:
+                    break
+                raw = json.loads(line)
+                if not isinstance(raw, Mapping):
+                    continue
+                payload = raw.get("payload")
+                if isinstance(payload, Mapping):
+                    cwd = cwd or _optional_text(payload.get("cwd"))
+                    message = _history_message(raw, session_id, index)
+                    if message is not None and message["role"] == "user":
+                        title = message["content"].replace("\n", " ")[:96] or title
+                        break
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        updated_at = str(int(transcript.stat().st_mtime_ns))
+    except OSError:
+        updated_at = ""
+    return ExternalSession(
+        id=session_id,
+        provider="codex",
+        title=title,
+        status="completed",
+        project_path=cwd,
+        metadata={"transcript_path": str(transcript), "updated_at": updated_at},
+    )
+
+
+def _optional_text(value: Any) -> str | None:
+    """Return a stripped non-empty string from optional transcript metadata."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _codex_content_text(content: Any) -> str:

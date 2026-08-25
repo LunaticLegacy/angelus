@@ -123,3 +123,27 @@ def test_codex_export_history_reads_only_rollout_messages(tmp_path: Path) -> Non
         ("user", "Investigate login"),
         ("assistant", "The parser rejects empty tokens."),
     ]
+
+
+def test_codex_local_history_discovery_does_not_require_app_server(tmp_path: Path) -> None:
+    """Allow CLI transcript import even when the App Server cannot start.
+
+    Args:
+        tmp_path: Temporary Codex home with a persisted rollout transcript.
+    """
+    transcript = tmp_path / "sessions" / "2026" / "08" / "25" / "rollout-thread-local.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {"type": "message", "role": "user", "cwd": "/project", "content": [{"type": "input_text", "text": "Repair login"}]},
+    }), encoding="utf-8")
+    runtime = _FakeRuntime()
+    provider = CodexAppServerProvider(runtime=runtime, history_root=tmp_path)  # type: ignore[arg-type]
+
+    sessions = provider.discover()
+
+    assert provider.available()
+    assert [(item.id, item.title, item.project_path) for item in sessions] == [
+        ("thread-local", "Repair login", "/project"),
+    ]
+    assert runtime.calls == []

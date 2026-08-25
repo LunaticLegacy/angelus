@@ -96,7 +96,7 @@ def provider_catalog() -> list[dict[str, Any]]:
     """
     saved = {str(item.get("id")): item for item in _private_read(EXTERNAL_PROVIDERS_PATH)}
     builtins = {
-        "codex": {"label": "Codex", "capabilities": ["discover", "read", "start", "resume", "fork", "send", "steer", "interrupt", "diff", "usage", "approval"]},
+        "codex": {"label": "Codex", "capabilities": ["discover", "read", "import_history", "start", "resume", "fork", "send", "steer", "interrupt", "diff", "usage", "approval"]},
         "claude-code": {"label": "Claude Code", "capabilities": ["discover", "read", "start", "resume", "fork", "send", "interrupt", "approval"]},
         "opencode": {"label": "OpenCode", "capabilities": ["discover", "read", "start", "fork", "send", "interrupt", "diff", "revert", "approval"]},
         "codebuddy": {"label": "CodeBuddy", "capabilities": []},
