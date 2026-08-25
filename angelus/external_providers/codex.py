@@ -780,6 +780,7 @@ class CodexAppServerProvider(ExternalAgentProvider):
         session = self.read(session_id)
         transcript = self._history_path(session.id)
         records: list[dict[str, Any]] = []
+        previous: tuple[str, str] | None = None
         try:
             with transcript.open("r", encoding="utf-8", errors="replace") as handle:
                 for index, line in enumerate(handle):
@@ -788,7 +789,14 @@ class CodexAppServerProvider(ExternalAgentProvider):
                     raw = json.loads(line)
                     record = _history_message(raw, session.id, index)
                     if record is not None:
+                        fingerprint = (str(record["role"]), str(record["content"]))
+                        # Codex persists live agent_message notifications and
+                        # final response_item messages for the same answer.
+                        # Keep one display turn, never two apparent replies.
+                        if fingerprint == previous:
+                            continue
                         records.append(record)
+                        previous = fingerprint
         except (OSError, json.JSONDecodeError) as exc:
             raise ProviderError("Codex transcript could not be read", code="invalid_transcript") from exc
         if not records:
@@ -818,15 +826,16 @@ class CodexAppServerProvider(ExternalAgentProvider):
         if not root.is_dir():
             raise ProviderError("Codex local history directory was not found", code="not_found")
 
-        # Codex stores each thread as a date-nested rollout-<thread-id>.jsonl.
-        # Compare the resolved filename exactly: session IDs are opaque and
-        # must never be interpreted as glob syntax supplied by a browser path.
+        # Codex stores each thread as a date-nested rollout-*.jsonl.  Its
+        # current filenames include a timestamp before the real session ID, so
+        # resolve identity from the session_meta record rather than its name.
         for candidate in root.rglob("rollout-*.jsonl"):
             try:
                 resolved = candidate.resolve()
             except OSError:
                 continue
-            if resolved.name == f"rollout-{safe_id}.jsonl" and root in resolved.parents and resolved.is_file():
+            snapshot = _history_session(resolved)
+            if snapshot is not None and snapshot.id == safe_id and root in resolved.parents:
                 return resolved
         raise ProviderError("Codex transcript was not found in local history", code="not_found")
 
@@ -1063,9 +1072,10 @@ def _history_session(transcript: Path) -> ExternalSession | None:
     prefix, suffix = "rollout-", ".jsonl"
     if not transcript.name.startswith(prefix) or not transcript.name.endswith(suffix):
         return None
-    session_id = transcript.name[len(prefix):-len(suffix)]
-    if not session_id:
+    filename_id = transcript.name[len(prefix):-len(suffix)]
+    if not filename_id:
         return None
+    session_id = filename_id
     cwd: str | None = None
     title = "Codex thread"
     try:
@@ -1078,6 +1088,11 @@ def _history_session(transcript: Path) -> ExternalSession | None:
                     continue
                 payload = raw.get("payload")
                 if isinstance(payload, Mapping):
+                    # session_meta is the authoritative thread ID.  Modern
+                    # Codex filenames prepend a start timestamp, so they are
+                    # not a stable API/session identifier by themselves.
+                    if raw.get("type") == "session_meta":
+                        session_id = _optional_text(payload.get("id")) or session_id
                     cwd = cwd or _optional_text(payload.get("cwd"))
                     message = _history_message(raw, session_id, index)
                     if message is not None and message["role"] == "user":

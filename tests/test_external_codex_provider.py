@@ -147,3 +147,29 @@ def test_codex_local_history_discovery_does_not_require_app_server(tmp_path: Pat
         ("thread-local", "Repair login", "/project"),
     ]
     assert runtime.calls == []
+
+
+def test_codex_history_uses_session_metadata_and_deduplicates_live_events(tmp_path: Path) -> None:
+    """Rebuild a CLI conversation from Codex's current rollout layout.
+
+    Args:
+        tmp_path: Temporary Codex home with a timestamped rollout filename.
+    """
+    transcript = tmp_path / "sessions" / "2026" / "08" / "25" / "rollout-2026-08-25T10-00-00-thread-real.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("\n".join([
+        json.dumps({"type": "session_meta", "payload": {"id": "thread-real", "cwd": "/project"}}),
+        json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Repair login"}]}}),
+        json.dumps({"type": "event_msg", "payload": {"type": "agent_message", "message": "I found the parser problem."}}),
+        json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I found the parser problem."}]}}),
+    ]), encoding="utf-8")
+    provider = CodexAppServerProvider(runtime=_FakeRuntime(), history_root=tmp_path)  # type: ignore[arg-type]
+
+    sessions = provider.discover()
+    history = provider.export_history("thread-real")
+
+    assert [(item.id, item.project_path) for item in sessions] == [("thread-real", "/project")]
+    assert [(item["role"], item["content"]) for item in history] == [
+        ("user", "Repair login"),
+        ("assistant", "I found the parser problem."),
+    ]
