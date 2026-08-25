@@ -23,6 +23,10 @@ class SwarmRestartRecoveryTests(unittest.TestCase):
             storage.WORKSPACE_ROOT = Path(directory)
             config = RunConfig(
                 model="test-model", api_key="ephemeral-key", enable_swarm=True,
+                tool_permissions={
+                    "categories": {"swarm": True},
+                    "tools": {"report_task": True},
+                },
             )
             first_active = ActiveRun(control=BrowserRunControl())
             try:
