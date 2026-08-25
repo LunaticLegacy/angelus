@@ -599,19 +599,18 @@ class CodexAppServerRuntime:
             loop.close()
 
     async def _bootstrap(self) -> None:
-        """Launch the App Server child and perform the initialize handshake.
+        """Launch the App Server child and complete the initialize handshake.
 
-        The handshake mirrors :meth:`CodexAsyncAppServerProvider.probe` so the
-        synchronous runtime is initialized before any thread RPC is issued.
+        The client's :meth:`CodexAppServerClient.initialize` sends the ordered
+        ``initialize`` request plus ``initialized`` notification and records the
+        negotiated state, so later thread RPCs never re-negotiate and are not
+        rejected with ``Already initialized``.
         """
         client = self._client
         assert client is not None
         await client.start()
         try:
-            await client.request(
-                "initialize",
-                {"clientInfo": {"name": "angelus", "version": "1"}, "capabilities": {}},
-            )
+            await client.initialize()
         except CodexProtocolError:
             # Older App Servers may not implement initialize; the child is still
             # running and discovery will surface any real protocol requirement.
