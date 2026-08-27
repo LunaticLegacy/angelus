@@ -1,0 +1,236 @@
+% ----------------------------------------------------------------------
+% Angelus paper — reference skeleton (Phase 1 literature verification)
+% Generated 2026-08-26 by literature_review worker (assignment p1-lit).
+% Grouping follows outline.md §6 (framework / durable / observability /
+% memory / precedent). Each entry carries a stable URL + note with
+% retrieval date, primary-source judgement, and (where available) the
+% CONFIRMED verbatim quote used in phase1-lit-verification.md §1/§3.1.
+% READMEs are NOT treated as capability evidence.
+% ----------------------------------------------------------------------
+
+% ======================================================================
+% 6.1 Framework / runtime
+% ======================================================================
+
+@misc{langgraph,
+  title        = {LangGraph Documentation: Checkpointers, Interrupts, Time-Travel},
+  howpublished = {\url{https://docs.langchain.com/oss/python/langgraph}},
+  note         = {Retrieved 2026-08-26. Primary docs; checkpointers/interrupts/time-travel are LangGraph-engine-level primitives (Q3 YES within engine). README not used as evidence.},
+  year         = {2026}
+}
+
+@misc{langsmith_agent_server,
+  title        = {LangSmith Agent Server Overview},
+  howpublished = {\url{https://docs.langchain.com/langsmith/agent-server-overview}},
+  note         = {Retrieved 2026-08-26. CONFIRMED (Q3): assistants/threads/runs primitives, ``pause for human review'', checkpointer backends (PostgreSQL/MongoDB). Companion page: \url{https://docs.langchain.com/langsmith/add-human-in-the-loop} (LangGraph interrupt + Command(resume=...)).},
+  year         = {2026}
+}
+
+@misc{autogen,
+  title        = {AutoGen v0.4 Architecture (Agent Runtime Environments) and AG2 Documentation},
+  howpublished = {\url{https://docs.ag2.ai}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). Primary docs; AutoGen runtime registration as partial runtime agent creation — re-verify per-cell at writing time (MED per landscape).},
+  year         = {2026}
+}
+
+@misc{crewai,
+  title        = {CrewAI Documentation: Flows Persistence, Human-in-the-Loop, Structured Task Outputs},
+  howpublished = {\url{https://docs.crewai.com}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). Primary docs; per-cell re-verify at writing time (MED per landscape).},
+  year         = {2026}
+}
+
+@misc{openai_agents_sdk,
+  title        = {OpenAI Agents SDK Documentation: Handoffs, Sessions, Human-in-the-Loop},
+  howpublished = {\url{https://openai.github.io/openai-agents-python}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). Primary docs; agents-as-tools partial spawn, single-session resume (RunResult.to_input_list()) — per-cell re-verify at writing time.},
+  year         = {2026}
+}
+
+@misc{semantic_kernel,
+  title        = {Semantic Kernel Documentation (Microsoft Learn)},
+  howpublished = {\url{https://learn.microsoft.com/en-us/semantic-kernel}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). Primary docs; per-cell re-verify at writing time (MED per landscape).},
+  year         = {2026}
+}
+
+@misc{mastra_suspend_resume,
+  title        = {Mastra Documentation: Suspend and Resume (Workflows)},
+  howpublished = {\url{https://mastra.ai/docs/workflows/suspend-and-resume}},
+  note         = {Retrieved 2026-08-26. CONFIRMED (Q3): ``Workflows can be paused at any step to collect additional data or wait for API callbacks... When a workflow is suspended, its current execution state is saved as a snapshot. You can later resume the workflow from a specific step ID''; snapshots persist across deployments and application restarts. Agents-side HITL: \url{https://mastra.ai/docs/agents/human-in-the-loop} — ``you can suspend a tool call before it executes so a human can approve or decline it, or let tools suspend themselves to request additional context from the user'' (pre-execution approval + runtime suspension).},
+  year         = {2026}
+}
+
+@misc{mastra_memory,
+  title        = {Mastra Documentation: Memory (Overview)},
+  howpublished = {\url{https://mastra.ai/docs/memory/overview}},
+  note         = {Retrieved 2026-08-26. CONFIRMED (Q5): ``Memory enables your agent to remember user messages and agent replies, and tool results across interactions...''; layers: message history, observational memory, working memory, semantic recall, multi-user threads.},
+  year         = {2026}
+}
+
+@misc{dagent,
+  title        = {dagent — no unique primary repository for mid-run create\_agent / spawn (PARTIAL)},
+  howpublished = {\url{https://github.com/search?q=dagent&type=repositories}},
+  note         = {Retrieved 2026-08-26. GitHub search total=143; no repo substantiates the landscape claim ``agents spawning sub-agents''. Closest candidate RobotSe7en/dagent (6 stars) does runtime registration + delegation (runner.add\_agent + ToolAgent(agents=[...]), examples/agent\_delegation.py) — registered-subagent delegation, NOT runtime spawn. Other candidates: mz0in/DAGent (1 star, static DecisionNode/FunctionNode DAG), qpiai/dagent (9 stars, static multi-agent DAG orchestration), svdh2/dagent (1 star, deterministic DSL, early dev; README grep: no spawn/sub-agent hits), d-agent/dagent-api (0 stars, routing platform). block/go-dagent = 404. Tab.1 Q1 downgraded to PARTIAL; drop the differential claim.},
+  year         = {2026}
+}
+
+% ======================================================================
+% 6.2 Durable execution
+% ======================================================================
+
+@misc{temporal,
+  title        = {Temporal Documentation: Workflow Execution},
+  howpublished = {\url{https://docs.temporal.io/workflow-execution}},
+  note         = {Retrieved 2026-08-26. CONFIRMED (Q6): ``A Temporal Workflow Execution is a durable, reliable, and scalable function execution and the main unit of execution of a Temporal Application''; ``fully recoverable after a failure... resumes execution from the latest state''. Recovery unit = Workflow Execution (not org-level). Also: Pause/Unpause, Signals, AI cookbook.},
+  year         = {2026}
+}
+
+@misc{restate,
+  title        = {Restate Documentation: AI Agents Use Case},
+  howpublished = {\url{https://docs.restate.dev/use-cases/ai-agents}},
+  note         = {Retrieved 2026-08-26. CONFIRMED (Q6/Q3): ``Persist steps (LLM calls, tools) and recover previous progress after failures''; ``Suspend long-running agents when idle to save costs''. Step-level persistence + agent suspend.},
+  year         = {2026}
+}
+
+@misc{dbos,
+  title        = {DBOS Documentation: AI Quickstart},
+  howpublished = {\url{https://docs.dbos.dev/ai/ai-quickstart}},
+  note         = {Retrieved 2026-08-26. CONFIRMED (Q6): ``DBOS workflows give you one consistent model for ensuring your agents can recover from any failure from exactly where they left off''; ``Automatically recover your agents from server restarts, process crashes''. Workflow-level recovery (not org-level).},
+  year         = {2026}
+}
+
+@misc{julep,
+  title        = {Julep — AI Agent Platform},
+  howpublished = {\url{https://github.com/julep-ai/julep}},
+  note         = {Retrieved 2026-08-26. Primary repo; README not treated as capability evidence — per-cell re-verify at writing time.},
+  year         = {2026}
+}
+
+% ======================================================================
+% 6.3 Observability / control plane
+% ======================================================================
+
+@misc{langfuse,
+  title        = {Langfuse Documentation},
+  howpublished = {\url{https://langfuse.com/docs}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). Observe-only classification per landscape — re-verify per-cell at writing time.},
+  year         = {2026}
+}
+
+@misc{agentops,
+  title        = {AgentOps Documentation},
+  howpublished = {\url{https://docs.agentops.ai}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). Observe-only classification per landscape — re-verify per-cell at writing time.},
+  year         = {2026}
+}
+
+@misc{braintrust,
+  title        = {Braintrust Documentation},
+  howpublished = {\url{https://braintrust.dev/docs}},
+  note         = {Retrieved 2026-08-26 (URL listed in outline §6.3; reachability not re-confirmed in this pass — UNVERIFIED, verify at writing time).},
+  year         = {2026}
+}
+
+@misc{arize_phoenix,
+  title        = {Arize Phoenix Documentation},
+  howpublished = {\url{https://docs.arize.com/phoenix}},
+  note         = {Retrieved 2026-08-26 (URL listed in outline §6.3; reachability not re-confirmed in this pass — UNVERIFIED, verify at writing time).},
+  year         = {2026}
+}
+
+@misc{acp,
+  title        = {Anthropic Agent Client Protocol (ACP)},
+  howpublished = {\url{https://github.com/anthropics/agent-control-protocol}},
+  note         = {Retrieved 2026-08-26. Primary repo; README not treated as capability evidence — re-verify protocol-level claims at writing time.},
+  year         = {2026}
+}
+
+@misc{claude_code_router,
+  title        = {claude-code-router},
+  howpublished = {\url{https://github.com/musistudio/claude-code-router}},
+  note         = {Retrieved 2026-08-26. Primary repo; README not treated as capability evidence — re-verify at writing time.},
+  year         = {2026}
+}
+
+@misc{nexusops,
+  title        = {NexusOps},
+  howpublished = {\url{https://github.com/SiWarlock/NexusOps}},
+  note         = {Retrieved 2026-08-26. Primary repo; README not treated as capability evidence — re-verify at writing time.},
+  year         = {2026}
+}
+
+% ======================================================================
+% 6.4 Memory / context (arXiv metadata verified 2026-08-26 via
+%     export.arxiv.org/api; titles/authors below match the API records)
+% ======================================================================
+
+@misc{graphrag,
+  author       = {Edge, Darren and Trinh, Ha and Cheng, Newman and Bradley, Joshua and Chao, Alex and Mody, Apurva and Truitt, Steven and Metropolitansky, Dasha and Ness, Robert Osazuwa and Larson, Jonathan},
+  title        = {From Local to Global: A Graph RAG Approach to Query-Focused Summarization},
+  howpublished = {arXiv:2404.16130},
+  url          = {https://arxiv.org/abs/2404.16130},
+  note         = {Retrieved 2026-08-26; metadata verified via export.arxiv.org API (v2). Microsoft GraphRAG.},
+  year         = {2024}
+}
+
+@misc{lightrag,
+  author       = {Guo, Zirui and Xia, Lianghao and Yu, Yanhua and Ao, Tu and Huang, Chao},
+  title        = {LightRAG: Simple and Fast Retrieval-Augmented Generation},
+  howpublished = {arXiv:2410.05779},
+  url          = {https://arxiv.org/abs/2410.05779},
+  note         = {Retrieved 2026-08-26; metadata verified via export.arxiv.org API (v3).},
+  year         = {2024}
+}
+
+@misc{zep_graphiti,
+  author       = {Rasmussen, Preston and Paliychuk, Pavlo and Beauvais, Travis and Ryan, Jack and Chalef, Daniel},
+  title        = {Zep: A Temporal Knowledge Graph Architecture for Agent Memory},
+  howpublished = {arXiv:2501.13956},
+  url          = {https://arxiv.org/abs/2501.13956},
+  note         = {Retrieved 2026-08-26; metadata verified via export.arxiv.org API. NAMING CAUTION: official paper title is ``Zep'' (Graphiti is Zep's library); cite as Zep (Graphiti) so readers can find it. Bib key kept as zep\_graphiti for continuity with outline §6.4.},
+  year         = {2025}
+}
+
+@misc{hipporag,
+  author       = {Guti{\'e}rrez, Bernal Jim{\'e}nez and Shu, Yiheng and Gu, Yu and Yasunaga, Michihiro and Su, Yu},
+  title        = {HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models},
+  howpublished = {arXiv:2405.14831},
+  url          = {https://arxiv.org/abs/2405.14831},
+  note         = {Retrieved 2026-08-26; metadata verified via export.arxiv.org API (v3).},
+  year         = {2024}
+}
+
+@misc{hipporag2,
+  author       = {Guti{\'e}rrez, Bernal Jim{\'e}nez and Shu, Yiheng and Qi, Weijian and Zhou, Sizhe and Su, Yu},
+  title        = {From RAG to Memory: Non-Parametric Continual Learning for Large Language Models},
+  howpublished = {arXiv:2502.14802},
+  url          = {https://arxiv.org/abs/2502.14802},
+  note         = {Retrieved 2026-08-26; metadata verified via export.arxiv.org API (v2). HippoRAG 2.},
+  year         = {2025}
+}
+
+@misc{letta_memfs,
+  title        = {Letta Documentation: MemFS — Git-Versioned Memory},
+  howpublished = {\url{https://docs.letta.com/concepts/memfs}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). CONFIRMED (Q5): ``memory itself is part of the agent's state, held in a git repository... Edits are local until committed and pushed, at which point they become the agent's memory everywhere''.},
+  year         = {2026}
+}
+
+@misc{letta_subagents,
+  title        = {Letta Documentation: Configuration — Subagents},
+  howpublished = {\url{https://docs.letta.com/configuration/subagents}},
+  note         = {Retrieved 2026-08-26 (HTTP 200). CONFIRMED (Q1, partial): ``Your main agent can launch subagents using a specialized subagent tool... launches a new subagent in a subprocess. The subagent runs autonomously with its own system prompt, tools, and model. The final message from the subagent is returned to the main agent''. Runtime spawn of subagents; still single-agent+subagent model, no org topology/edges.},
+  year         = {2026}
+}
+
+% ======================================================================
+% 6.5 Paper precedent / format
+% ======================================================================
+
+@misc{mnavrag,
+  title        = {Repo Precedent Draft: docs/mnavrag-arxiv-draft.md (full 264-line draft; References format template at lines 181-264)},
+  howpublished = {internal path: docs/mnavrag-arxiv-draft.md},
+  note         = {Retrieved 2026-08-26. Internal precedent for paper structure and BibTeX/References formatting; not an external citation.},
+  year         = {2026}
+}

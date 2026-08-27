@@ -8,6 +8,7 @@
 | `example-tool/` | Tool example | 演示网络搜索工具和 `tool.before` / `tool.after` 钩子。 |
 | `angelus/` | Skin plugin example | 演示工作台皮肤插件的清单、后端入口与前端样式/脚本。 |
 | `angelus-control-plane-ui/` | Control-plane UI example | 演示更完整的控制平面 UI 插件，并附设计、变更和使用文档。 |
+| `token-burner/` | Visual example | 把 token 消耗速率可视化为火焰的独立浮动窗口插件（纯前端，读 /api/sessions/{id}/usage）。 |
 | `*.zip` | Distribution snapshots | 插件示例的手工分发快照；可编辑权威内容仍是同名目录。 |
 
 每个示例目录的 `manifest.json` 是声明式入口；`main.py` 是 Python 实现，`plugin.js` / `plugin.css`（如存在）是被清单白名单允许的前端资源。

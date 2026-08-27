@@ -503,8 +503,11 @@ def stop_run(
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
+    
     target, states = _control_target(session.active, payload)
+
     session.active.control.stop(target)
+
     if target == "all" and session.active.swarm is not None:
         session.active.swarm.request_shutdown()
     return {"ok": True, "accepted": True, "target": target, "agent_states": states}
@@ -525,8 +528,11 @@ def force_stop_run(
     session = _get_session(_safe_id(workspace_id, "workspace"), _safe_id(session_id, "session"))
     if not session.active or session.active.done.is_set():
         raise HTTPException(status_code=409, detail="No active run")
+    
     target, states = _control_target(session.active, payload)
+
     session.active.force_stop(target)
+    
     if target == "all" and session.active.swarm is not None:
         session.active.swarm.request_shutdown()
     if target == "all":
