@@ -487,6 +487,10 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 .recent-session-action { width:24px; height:24px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font-size:13px; line-height:1; }
 .recent-session-action:hover,.recent-session-action:focus-visible { border-color:var(--line2); background:var(--surface-raised); color:var(--text); }
 .recent-session-select:focus-visible,.recent-session-action:focus-visible { outline:2px solid var(--purple); outline-offset:1px; }
+
+/* Use a real trash glyph: the previous backspace character resembled mail. */
+.session-icon-button svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.8; vertical-align:middle; }
+.session-icon-button.danger:hover { border-color:#8b4a58; background:#291923; color:var(--red); }
 /* Session labels sit close to their status dot; action buttons never widen the sidebar. */
 .sidebar { overflow-x:hidden; overflow-y:auto; }
 .sidebar .side-block,.recent-sessions,.recent-session { min-width:0; max-width:100%; }

@@ -8,7 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Angelus · Agent Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-81" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-82" />
   </head>
   <body>
     <dialog id="mcp-approval-dialog" class="session-dialog" aria-labelledby="mcp-approval-title">
@@ -20,7 +20,7 @@
         <label for="new-session-name">会话名称</label>
         <input id="new-session-name" name="name" maxlength="80" required autocomplete="off" placeholder="例如：资料检索" />
         <label for="new-session-path">已有项目目录</label>
-        <div class="session-path-picker"><input id="new-session-path" name="project_path" readonly required placeholder="请选择项目目录" /><button id="choose-session-directory" type="button">选择目录</button></div>
+        <div class="session-path-picker"><input id="new-session-path" name="project_path" required placeholder="/absolute/path/to/project" /><button id="choose-session-directory" type="button" title="选择已有项目目录">选择目录</button></div>
         <p id="new-session-feedback" class="session-dialog-feedback" aria-live="polite"></p>
         <div class="session-dialog-actions"><button id="cancel-new-session" type="button">取消</button><button type="submit">创建并进入</button></div>
       </form>
@@ -55,8 +55,8 @@
         </section>
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>Agent 执行</h3><p id="profile-status"><b>会话 Coordinator</b> · 正在加载持久化运行档案。</p></div><label>编辑<select id="profile-scope" aria-label="运行档案编辑范围"><option value="agent">当前会话 Coordinator</option><option value="global">全局默认</option></select></label><button id="restore-profile-inheritance" class="mini-button" type="button" title="恢复继承全局默认">↺</button></div>
-          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="4096" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
-          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="12" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
+          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="16384" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
+          <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="0" /></label><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
         </section>
         <section data-settings-panel="permissions" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>工具权限</h3><p>类别与单工具均须开启；新档案默认全部关闭。变更仅用于下一次运行。</p></div></div>
@@ -95,13 +95,13 @@
     </dialog>
     <dialog id="external-agent-hub-dialog" class="external-hub-dialog" aria-label="External Agent Hub">
       <header><div><p class="eyebrow">EXTERNAL AGENTS</p><h2>External Agent Hub</h2></div><button id="close-external-agent-hub" class="dialog-close" type="button" aria-label="关闭 External Agent Hub">×</button></header>
-      <iframe id="external-agent-hub-frame" title="External Agent Hub" src="/external-agents"></iframe>
+      <iframe id="external-agent-hub-frame" title="External Agent Hub" src="about:blank"></iframe>
     </dialog>
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark">A</span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
 
       <section class="side-block">
-        <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button" type="button" title="删除当前会话" aria-label="删除当前会话">⌫</button></div></div>
+        <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button danger" type="button" title="删除当前会话" aria-label="删除当前会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg></button></div></div>
         <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div></div>
         <p id="workspace-open-hint" class="workspace-open-hint" aria-live="polite"></p>
         <div id="recent-sessions" class="recent-sessions"></div>
@@ -141,6 +141,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=workbench-82"></script>
+    <script type="module" src="/static/app.js?v=settings-transaction-1"></script>
   </body>
 </html>

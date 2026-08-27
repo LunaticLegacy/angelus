@@ -1,26 +1,10 @@
-# frontend/templates/ — HTML Templates INDEX
+# frontend/templates/ — SPA Shell INDEX
 
-Single-page application shell for the Angelus workbench, including the Angelus product identity, mission-control information hierarchy, native project-directory chooser, current-session project rebinding controls, and the Kimi Code connector option with its explanatory key hint.
+| File | Responsibility |
+|---|---|
+| `index.html` | Workbench structure: Session sidebar, transcript/composer, stop controls, inspector and settings dialogs. Loads versioned `static/app.js`. |
+| `external_agents.html` | Historic External Agent Hub shell; its backend route is not mounted in Phase 1. |
 
-## Route Map — Leaf Files
-
-| File | Purpose |
-|------|---------|
-| `index.html` | Full Angelus SPA shell with project/session navigation, Agent roster/transcript/composer, Inspector, scoped stop controls, and settings pages for global connectors, session Agent options, managed global MCP servers with session grants, and plugins. |
-| `external_agents.html` | Standalone `/external-agents` hub with a quick-start tutorial, selected-Provider-specific setup/probe, session discovery/linking, lease status and capability-gated controls, without changing the main Workbench shell. |
-
-<!-- BEGIN GENERATED SYMBOL MAP -->
-
-## Function Map
-
-| Source | Function / method | Input types | Output type | Semantics |
-|---|---|---|---|---|
-| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
-
-## Class Map
-
-| Source | Class | Constructor / field input types | Base(s) | Semantics |
-|---|---|---|---|---|
-| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
-
-<!-- END GENERATED SYMBOL MAP -->
+The IDs in `index.html` are the contract consumed by `static/app.js`. A cache
+version change on the script reference is required whenever controller behavior
+changes incompatibly with a previously served browser copy.
