@@ -1,84 +1,69 @@
-"""Daemon-backed, session-scoped execution boundary."""
+"""Session-owned boundary that serializes replaceable execution attempts."""
 
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Generic, TypeVar
 
-from .execution_control import ExecutionControl
-from .state import ExecutionSnapshot, ExecutionState
+from llmfetcher.execution import ExecutionController
+
+from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
 
 
 ResultT = TypeVar("ResultT")
 
 
 class SessionExecutor(Generic[ResultT]):
-    """Run one session operation with a stable cancellation control object.
+    """Allocate replaceable attempts for one logical Session.
 
-    One executor allows one live operation. The operation receives an
-    ``ExecutionControl`` and must pass it into each child execution boundary.
-    This class owns lifecycle state and exception capture, not domain work.
+    Despite its historical module location, this is not a swarm registry and
+    never owns another Session.  ``Session.execution`` owns exactly one of
+    these objects, which retains the latest attempt for inspection/replay.
     """
 
-    def __init__(self, session_id: str) -> None:
-        """Create an idle executor for one non-empty session identifier."""
+    def __init__(self, session_id: str, root: Path) -> None:
+        """Create an idle execution owner rooted in one Session directory.
+
+        Args:
+            session_id: Stable logical Session identifier written to attempts.
+            root: Parent directory where attempt directories are created.
+        """
         normalized = session_id.strip()
         if not normalized:
             raise ValueError("session_id must not be blank")
+        # Normalized identity shared by synthetic idle snapshots and attempts.
         self.session_id = normalized
-        self.control = ExecutionControl()
-        self._state = ExecutionState.IDLE
-        self._started_at: float | None = None
-        self._finished_at: float | None = None
-        self._result: ResultT | None = None
-        self._error: str | None = None
-        self._done = threading.Event()
+        # Session-owned durable parent; each attempt adds executions/<uuid>.
+        self.root = root
+        # Monotonic number that distinguishes retries within this process.
+        self._attempt_number = 0
+        # Latest attempt; retained after terminal completion for inspection.
+        self._attempt: ExecutionAttempt[ResultT] | None = None
+        # Serializes start/stop/snapshot against concurrent API callers.
         self._lock = threading.RLock()
 
-    def start(self, operation: Callable[[ExecutionControl], ResultT]) -> None:
-        """Start one operation in a daemon thread.
+    def start(self, operation: Callable[[ExecutionController], ResultT]) -> ExecutionAttempt[ResultT]:
+        """Start one operation in its attempt's non-daemon worker thread.
 
         Args:
-            operation: Callable receiving this executor's stable control.
+            operation: Callable receiving this attempt's unique controller.
 
         Raises:
-            RuntimeError: If this executor is no longer idle.
+            RuntimeError: If a prior attempt remains live.
         """
         with self._lock:
-            if self._state is not ExecutionState.IDLE:
-                raise RuntimeError(f"Executor {self.session_id!r} is not idle")
-            self._state = ExecutionState.RUNNING
-            self._started_at = time.time()
-            self._done.clear()
-        # The executor boundary must not block API control calls. The
-        # operation is responsible for propagating the control into its work.
-        threading.Thread(
-            target=self._run_operation,
-            args=(operation,),
-            name=f"angelus-session-{self.session_id}",
-            daemon=True,
-        ).start()
+            if self._attempt is not None and self._attempt.snapshot().state in {
+                ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING,
+            }:
+                raise RuntimeError(f"Executor {self.session_id!r} already has a live attempt")
+            self._attempt_number += 1
+            self._attempt = ExecutionAttempt(self.session_id, self._attempt_number, self.root)
+            self._attempt.start(operation)
+            return self._attempt
 
-    def _run_operation(self, operation: Callable[[ExecutionControl], ResultT]) -> None:
-        """Capture terminal result/state without leaking worker exceptions."""
-        try:
-            result = operation(self.control)
-        except BaseException as exc:
-            with self._lock:
-                self._error = f"{type(exc).__name__}: {exc}"
-                self._state = ExecutionState.STOPPED if self.control.should_stop() else ExecutionState.FAILED
-        else:
-            with self._lock:
-                self._result = result
-                self._state = ExecutionState.STOPPED if self.control.should_stop() else ExecutionState.COMPLETED
-        finally:
-            with self._lock:
-                self._finished_at = time.time()
-            self._done.set()
-
-    def request_stop(self, *, force: bool = False) -> ExecutionSnapshot:
+    def request_stop(self, *, force: bool = False, reason: str = "user_requested") -> ExecutionSnapshot:
         """Signal cancellation and return the immediately visible state.
 
         Args:
@@ -88,33 +73,36 @@ class SessionExecutor(Generic[ResultT]):
             Updated execution snapshot. Terminal executors are unchanged.
         """
         with self._lock:
-            if self._state is not ExecutionState.RUNNING:
-                return self.snapshot()
-            if force:
-                self.control.request_force_stop()
-                self._state = ExecutionState.FORCE_STOPPING
-            else:
-                self.control.request_stop()
-                self._state = ExecutionState.STOPPING
-        return self.snapshot()
+            return self._attempt.request_stop(force=force, reason=reason) if self._attempt else self.snapshot()
 
     def wait(self, timeout: float | None = None) -> bool:
-        """Wait for operation exit without joining or blocking cancellation callers."""
-        return self._done.wait(timeout)
+        """Wait for operation exit without joining its worker thread.
+
+        Args:
+            timeout: Maximum seconds to wait; ``None`` waits indefinitely.
+
+        Returns:
+            ``True`` when no attempt exists or the current attempt is terminal.
+        """
+        with self._lock:
+            return self._attempt.wait(timeout) if self._attempt else True
 
     def snapshot(self) -> ExecutionSnapshot:
-        """Return a consistent read-only status projection for this executor."""
+        """Return current attempt snapshot or a synthetic Session-idle snapshot."""
         with self._lock:
-            return ExecutionSnapshot(
-                session_id=self.session_id,
-                state=self._state,
-                started_at=self._started_at,
-                finished_at=self._finished_at,
-                error=self._error,
+            return self._attempt.snapshot() if self._attempt else ExecutionSnapshot(
+                self.session_id, None, self._attempt_number, ExecutionState.IDLE, None, None, None,
             )
 
     @property
     def result(self) -> ResultT | None:
+        """Return only the successful worker result of the latest attempt."""
         """Return the completed operation result, or ``None`` before success."""
         with self._lock:
-            return self._result
+            return self._attempt.result if self._attempt else None
+
+    @property
+    def attempt(self) -> ExecutionAttempt[ResultT] | None:
+        """Return current/latest attempt identity without creating a new one."""
+        with self._lock:
+            return self._attempt

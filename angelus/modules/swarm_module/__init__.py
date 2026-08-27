@@ -1,15 +1,7 @@
-"""Public imports for session-scoped execution primitives."""
+"""Angelus-side swarm adapters will live here when Session execution uses them.
 
-from .execution_control import ExecutionControl
-from .session_executor import SessionExecutor
-from .state import ExecutionSnapshot, ExecutionState
-from .swarm_handler import SwarmHandler
+The executable llmfetcher ``AgentSwarm`` already belongs to ``Session.swarm``.
+There is intentionally no process-global Angelus swarm registry.
+"""
 
-
-__all__ = [
-    "ExecutionControl",
-    "ExecutionSnapshot",
-    "ExecutionState",
-    "SessionExecutor",
-    "SwarmHandler",
-]
+__all__: list[str] = []

@@ -52,6 +52,7 @@ docs/_build/
 
 # Local browser sessions, connectors, and migration backups.
 workspace/
+.angelus-state/
 .llmfetcher/
 .dsh-ref/
 
