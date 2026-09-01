@@ -92,6 +92,36 @@
 | [example-tool/main.py](example-tool/main.py#L153) | `ExampleToolPlugin._on_tool_before` | `event: Any` | `None` | tool.before 钩子：把事件快照写入 state_dir/events.jsonl。 |
 | [example-tool/main.py](example-tool/main.py#L157) | `ExampleToolPlugin._on_tool_after` | `event: Any` | `None` | tool.after 钩子：把事件快照写入 state_dir/events.jsonl。 |
 | [example-tool/main.py](example-tool/main.py#L161) | `ExampleToolPlugin._record_event` | `kind: str, event: Any, payload: dict[str, Any] \| None` | `None` | 追加一行 JSON 事件到 ``<state_dir>/events.jsonl``。 |
+| [token-burner/main.py](token-burner/main.py#L22) | `TokenBurnerPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `TokenBurnerPlugin.setup`. |
+| [token-burner/main.py](token-burner/main.py#L26) | `TokenBurnerPlugin.teardown` | `None` | `None` | Implement `TokenBurnerPlugin.teardown`. |
+| [token-burner/plugin.js](token-burner/plugin.js#L40) | `readPrefs` | `None` | `unknown` | Perform the browser runtime operation: read prefs. |
+| [token-burner/plugin.js](token-burner/plugin.js#L56) | `currentSessionId` | `None` | `unknown` | Perform the browser runtime operation: current session id. |
+| [token-burner/plugin.js](token-burner/plugin.js#L65) | `fmt` | `n: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
+| [token-burner/plugin.js](token-burner/plugin.js#L83) | `onUsageDelta` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: on usage delta. |
+| [token-burner/plugin.js](token-burner/plugin.js#L91) | `pushSample` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: push sample. |
+| [token-burner/plugin.js](token-burner/plugin.js#L97) | `windowRate` | `now: unknown` | `unknown` | Perform the browser runtime operation: window rate. |
+| [token-burner/plugin.js](token-burner/plugin.js#L111) | `pollUsage` | `None` | `Promise<unknown>` | Perform the browser runtime operation: poll usage. |
+| [token-burner/plugin.js](token-burner/plugin.js#L136) | `refreshActivity` | `sid: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh activity. |
+| [token-burner/plugin.js](token-burner/plugin.js#L159) | `targetIntensity` | `None` | `unknown` | Perform the browser runtime operation: target intensity. |
+| [token-burner/plugin.js](token-burner/plugin.js#L184) | `buildSprites` | `None` | `unknown` | Perform the browser runtime operation: build sprites. |
+| [token-burner/plugin.js](token-burner/plugin.js#L200) | `resize` | `None` | `unknown` | Perform the browser runtime operation: resize. |
+| [token-burner/plugin.js](token-burner/plugin.js#L213) | `spawnParticle` | `intensity: unknown` | `unknown` | Perform the browser runtime operation: spawn particle. |
+| [token-burner/plugin.js](token-burner/plugin.js#L234) | `spawnSpark` | `intensity: unknown` | `unknown` | Perform the browser runtime operation: spawn spark. |
+| [token-burner/plugin.js](token-burner/plugin.js#L247) | `flamePath` | `cx: unknown, baseY: unknown, w: unknown, h: unknown, tSec: unknown, phase: unknown, lean: unknown, pinch: unknown` | `unknown` | Perform the browser runtime operation: flame path. |
+| [token-burner/plugin.js](token-burner/plugin.js#L274) | `drawTongue` | `cx: unknown, baseY: unknown, w: unknown, h: unknown, tSec: unknown, phase: unknown, alpha: unknown, rgb: unknown` | `unknown` | Perform the browser runtime operation: draw tongue. |
+| [token-burner/plugin.js](token-burner/plugin.js#L285) | `drawFlame` | `intensity: unknown, tSec: unknown` | `unknown` | Perform the browser runtime operation: draw flame. |
+| [token-burner/plugin.js](token-burner/plugin.js#L383) | `drawParticles` | `intensity: unknown, tSec: unknown` | `unknown` | Perform the browser runtime operation: draw particles. |
+| [token-burner/plugin.js](token-burner/plugin.js#L404) | `drawSparks` | `None` | `unknown` | Perform the browser runtime operation: draw sparks. |
+| [token-burner/plugin.js](token-burner/plugin.js#L426) | `updateReadout` | `None` | `unknown` | Perform the browser runtime operation: update readout. |
+| [token-burner/plugin.js](token-burner/plugin.js#L433) | `frame` | `now: unknown` | `unknown` | Perform the browser runtime operation: frame. |
+| [token-burner/plugin.js](token-burner/plugin.js#L466) | `initFlame` | `canvasEl: unknown, readoutElArg: unknown` | `unknown` | Perform the browser runtime operation: init flame. |
+| [token-burner/plugin.js](token-burner/plugin.js#L482) | `createFloatingWindow` | `None` | `unknown` | Perform the browser runtime operation: create floating window. |
+| [token-burner/plugin.js](token-burner/plugin.js#L518) | `move` | `ev: unknown` | `unknown` | Perform the browser runtime operation: move. |
+| [token-burner/plugin.js](token-burner/plugin.js#L522) | `up` | `None` | `unknown` | Perform the browser runtime operation: up. |
+| [token-burner/plugin.js](token-burner/plugin.js#L547) | `ensureWindow` | `None` | `unknown` | Perform the browser runtime operation: ensure window. |
+| [token-burner/plugin.js](token-burner/plugin.js#L552) | `toggleWindow` | `force: unknown` | `unknown` | Perform the browser runtime operation: toggle window. |
+| [token-burner/plugin.js](token-burner/plugin.js#L559) | `openPopout` | `None` | `unknown` | Perform the browser runtime operation: open popout. |
+| [token-burner/plugin.js](token-burner/plugin.js#L566) | `startPolling` | `None` | `unknown` | Perform the browser runtime operation: start polling. |
 
 ## Class Map
 
@@ -101,5 +131,6 @@
 | [angelus/main.py](angelus/main.py#L10) | `AngelusSkinPlugin` | `None` | `AngelusPlugin` | Provide `AngelusSkinPlugin` behavior. |
 | [demo-hello/main.py](demo-hello/main.py#L24) | `DemoHelloPlugin` | `None` | `AngelusPlugin` | Provide `DemoHelloPlugin` behavior. |
 | [example-tool/main.py](example-tool/main.py#L48) | `ExampleToolPlugin` | `None` | `AngelusPlugin` | 网络搜索工具示例：``web_search`` 工具 + ``tool.before``/``tool.after`` 钩子。 |
+| [token-burner/main.py](token-burner/main.py#L18) | `TokenBurnerPlugin` | `None` | `AngelusPlugin` | Provide `TokenBurnerPlugin` behavior. |
 
 <!-- END GENERATED SYMBOL MAP -->

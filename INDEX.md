@@ -57,17 +57,14 @@ AngelusCore
 
 ## Function Map
 
-| Source | Function / method | Semantics |
-|---|---|---|
-| [`angelus/core.py`](angelus/core.py) | `AngelusCore` lifecycle | Compose stores/services, rehydrate Sessions, and coordinate SIGINT shutdown. |
-| [`angelus/api/__init__.py`](angelus/api/__init__.py) | `include_api_routes` | Mount the new API surface and SPA assets. |
-| [`angelus/modules/`](angelus/modules/INDEX.md) | Domain/application services | Own Session lifecycle, attempts, settings and durable state. |
+| Source | Function / method | Input types | Output type | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
 
 ## Class Map
 
-| Source | Class | Semantics |
-|---|---|---|
-| [`angelus/core.py`](angelus/core.py) | `AngelusCore` | Process composition root; not Session/swarm owner. |
-| [`angelus/modules/session_module/`](angelus/modules/session_module/INDEX.md) | `Session` | Aggregate owner for one logical Agent session. |
+| Source | Class | Constructor / field input types | Base(s) | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
 
 <!-- END GENERATED SYMBOL MAP -->
