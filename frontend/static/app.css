@@ -355,6 +355,7 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 /* Keep the graph canvas stable while the lower inspector cards fill the
    remaining dialog height rather than leaving a dead region below them. */
 #context-panel-graph { display:grid; grid-template-rows:auto 270px minmax(190px,1fr); gap:13px; overflow:hidden; }
+#context-panel-graph[hidden] { display:none; }
 #context-panel-graph .context-graph-details { min-height:0; height:100%; }
 #context-panel-graph .context-graph-details section { display:flex; min-height:0; flex-direction:column; }
 #context-panel-graph .context-graph-nodes,#context-panel-graph .context-graph-detail { flex:1 1 auto; min-height:0; max-height:none; overflow:auto; scrollbar-gutter:stable; }
