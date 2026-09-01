@@ -26,6 +26,7 @@ node --check frontend/static/app.js
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
+| [test_agent_defaults.py](test_agent_defaults.py#L16) | `AgentDefaultTests.test_agents_stream_by_default` | `None` | `None` | The factory opts every Session-created Agent into streaming. |
 | [test_conversation_store.py](test_conversation_store.py#L16) | `ConversationStoreTests.test_pages_legacy_conversation_in_chronological_order` | `None` | `None` | The first page is newest but remains ordered for chat rendering. |
 | [test_execution_attempt.py](test_execution_attempt.py#L19) | `ExecutionAttemptTests.test_force_stop_is_journaled_and_reaches_stopped` | `None` | `None` | A forced request is one event before the cooperative worker exits. |
 | [test_execution_attempt.py](test_execution_attempt.py#L39) | `ExecutionAttemptTests.test_checkpoint_is_retained_when_execution_reaches_terminal_state` | `None` | `None` | Terminal manifest updates preserve the last journal-committed generation. |
@@ -37,6 +38,9 @@ node --check frontend/static/app.js
 | [test_execution_service.py](test_execution_service.py#L45) | `_FailingSwarm.run` | `_message: str, control: object` | `dict[str, object]` | Return the graph's normal non-fatal root failure marker. |
 | [test_execution_service.py](test_execution_service.py#L61) | `ExecutionServiceTests.test_root_agent_failure_marks_attempt_failed_and_removes_hook` | `None` | `None` | A coordinator AgentFailure cannot be recorded as completed output. |
 | [test_paged_context_storage.py](test_paged_context_storage.py#L19) | `PagedContextStorageTests.test_save_load_and_page_without_full_context` | `None` | `None` | Store 205 entries then restore and page the newest 200 entries. |
+| [test_plugin_manager.py](test_plugin_manager.py#L17) | `PluginManagerTests.test_theme_pack_registers_settings_and_serves_only_whitelisted_css` | `None` | `None` | A theme pack exposes multiple skins without executable entry code. |
+| [test_plugin_manager.py](test_plugin_manager.py#L55) | `PluginManagerTests.test_tool_plugin_registers_only_namespaced_provider_after_explicit_load` | `None` | `None` | A tool plugin executes only at load and publishes host namespaced tools. |
+| [test_plugin_manager.py](test_plugin_manager.py#L90) | `_json` | `path: Path, value: object` | `None` | Write a test fixture manifest. |
 | [test_session_console.py](test_session_console.py#L18) | `_Journal.append` | `event_type: str, data: dict[str, object], **_kwargs: object` | `None` | Implement `_Journal.append`. |
 | [test_session_console.py](test_session_console.py#L33) | `_Swarm.dynamic_add_connection` | `source: str, target: str` | `str` | Implement `_Swarm.dynamic_add_connection`. |
 | [test_session_console.py](test_session_console.py#L34) | `_Swarm.dynamic_remove_connection` | `source: str, target: str` | `str` | Implement `_Swarm.dynamic_remove_connection`. |
@@ -61,12 +65,14 @@ node --check frontend/static/app.js
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
+| [test_agent_defaults.py](test_agent_defaults.py#L13) | `AgentDefaultTests` | `None` | `unittest.TestCase` | Ensure product defaults reach llmfetcher instead of remaining UI-only. |
 | [test_conversation_store.py](test_conversation_store.py#L13) | `ConversationStoreTests` | `None` | `unittest.TestCase` | Ensure session selection can recover its historical messages. |
 | [test_execution_attempt.py](test_execution_attempt.py#L16) | `ExecutionAttemptTests` | `None` | `unittest.TestCase` | Verify one controller, journal, and committed checkpoint generation. |
 | [test_execution_service.py](test_execution_service.py#L13) | `_FailingSwarm` | `None` | `object` | Minimal graph facade that reports an unsuccessful root Agent. |
 | [test_execution_service.py](test_execution_service.py#L58) | `ExecutionServiceTests` | `None` | `unittest.TestCase` | Ensure graph-level root failures become terminal attempt failures. |
 | [test_paged_context_storage.py](test_paged_context_storage.py#L12) | `_NoopCompactor` | `None` | `object` | Minimal compactor placeholder because this test does not compact. |
 | [test_paged_context_storage.py](test_paged_context_storage.py#L16) | `PagedContextStorageTests` | `None` | `unittest.TestCase` | Verify the durable reader returns bounded newest-first windows. |
+| [test_plugin_manager.py](test_plugin_manager.py#L14) | `PluginManagerTests` | `None` | `unittest.TestCase` | Assert discovery never executes code and loaded packages stay bounded. |
 | [test_session_console.py](test_session_console.py#L15) | `_Journal` | `None` | `object` | Capture secret-free console events emitted by a test tool call. |
 | [test_session_console.py](test_session_console.py#L21) | `_Attempt` | `None` | `object` | Minimal attempt façade exposing the journal used by console tools. |
 | [test_session_console.py](test_session_console.py#L26) | `_Execution` | `None` | `object` | Minimal execution façade retaining the current attempt. |

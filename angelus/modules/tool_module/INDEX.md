@@ -36,11 +36,13 @@ Coordinator and Worker tools from the effective Session `ToolPolicy`.
 | [tool_policy.py](tool_policy.py#L55) | `ToolPolicy.allows` | `category_id: str, tool_id: str` | `bool` | Return whether both grants needed to expose a Tool are present. |
 | [tool_policy.py](tool_policy.py#L67) | `ToolPolicy.fingerprint` | `None` | `tuple[tuple[str, ...], tuple[str, ...]]` | Return a deterministic configuration identity for Agent rebuilding. |
 | [tool_registry.py](tool_registry.py#L20) | `ToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str` | `list[Tool]` | Build only Tools this provider can safely expose. |
-| [tool_registry.py](tool_registry.py#L59) | `ToolRegistry.register` | `registration: ToolProviderRegistration` | `None` | Register one complete provider atomically after uniqueness checks. |
-| [tool_registry.py](tool_registry.py#L90) | `ToolRegistry.materialize` | `session: 'Session', policy: ToolPolicy, role: str` | `list[Tool]` | Build all authorized concrete Tools for one Agent role. |
-| [tool_registry.py](tool_registry.py#L110) | `ToolRegistry.definitions` | `None` | `tuple[ToolDefinition, ...]` | Return all registered Tool definitions in stable registration order. |
-| [tool_registry.py](tool_registry.py#L118) | `ToolRegistry.categories` | `None` | `tuple[ToolCategory, ...]` | Return registered user-visible categories in registration order. |
-| [tool_registry.py](tool_registry.py#L126) | `ToolRegistry.catalog` | `None` | `ToolCatalog` | Build a typed public catalog from actual registrations only. |
+| [tool_registry.py](tool_registry.py#L60) | `ToolRegistry.register` | `registration: ToolProviderRegistration` | `None` | Register one complete provider atomically after uniqueness checks. |
+| [tool_registry.py](tool_registry.py#L92) | `ToolRegistry.materialize` | `session: 'Session', policy: ToolPolicy, role: str` | `list[Tool]` | Build all authorized concrete Tools for one Agent role. |
+| [tool_registry.py](tool_registry.py#L112) | `ToolRegistry.unregister` | `provider_id: str` | `None` | Remove one dynamically loaded provider and all of its metadata. |
+| [tool_registry.py](tool_registry.py#L133) | `ToolRegistry.revision` | `None` | `int` | Return the monotonic materialization revision of this registry. |
+| [tool_registry.py](tool_registry.py#L143) | `ToolRegistry.definitions` | `None` | `tuple[ToolDefinition, ...]` | Return all registered Tool definitions in stable registration order. |
+| [tool_registry.py](tool_registry.py#L151) | `ToolRegistry.categories` | `None` | `tuple[ToolCategory, ...]` | Return registered user-visible categories in registration order. |
+| [tool_registry.py](tool_registry.py#L159) | `ToolRegistry.catalog` | `None` | `ToolCatalog` | Build a typed public catalog from actual registrations only. |
 
 ## Class Map
 

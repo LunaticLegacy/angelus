@@ -13,6 +13,7 @@ by storing mutable runtime state in an API adapter.
 | Workspace | [`workspace_module/INDEX.md`](workspace_module/INDEX.md) | Durable Session metadata catalog and legacy import marker. |
 | Conversation | [`conversation_module/INDEX.md`](conversation_module/INDEX.md) | Legacy transcript read/delete bridge during migration. |
 | Swarm adapter | [`swarm_module/INDEX.md`](swarm_module/INDEX.md) | Session-local execution boundary; no global swarm registry. |
+| Plugins | [`plugin_module/INDEX.md`](plugin_module/INDEX.md) | Controlled global package discovery, typed settings, and ToolRegistry-backed loading. |
 | Session console | [`console_module/INDEX.md`](console_module/INDEX.md) | Persisted task-plan/topology blueprints and Session projections. |
 | Unified tools | [`tool_module/INDEX.md`](tool_module/INDEX.md) | Canonical Tool identities, authorization policy and future runtime registry. |
 

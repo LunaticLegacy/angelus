@@ -25,7 +25,7 @@ def create_agent(
     default_max_rounds: int = 30,
     default_max_tokens: int = 32768,
     enable_stop_turn: bool = False,
-    default_stream: bool = False,
+    default_stream: bool = True,
 ) -> Agent:
     """Build one configured Agent without assigning it to a session or run.
 

@@ -16,6 +16,7 @@ from .modules.console_module.tool_provider import console_tool_registration
 from .modules.connector_module import ConnectorStore, ProviderCatalog
 from .modules.settings_module import RunProfileStore
 from .modules.tool_module import ToolRegistry, runtime_tool_registration
+from .modules.plugin_module import PluginManager
 
 
 class AngelusCore:
@@ -72,6 +73,9 @@ class AngelusCore:
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(console_tool_registration())
         self.tool_registry.register(runtime_tool_registration(self))
+        # Plugins can only extend the application through this same ToolRegistry.
+        self.plugin_manager = PluginManager(self.state_root, self.tool_registry)
+        self.plugin_manager.restore_enabled()
         # Legacy transcript reader/remover during the conversation migration.
         self.conversations = ConversationStore(Path.cwd() / "workspace")
         for workspace in self.workspaces.list():

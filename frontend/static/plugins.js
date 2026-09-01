@@ -123,6 +123,9 @@ function _pluginAssetUrl(pluginName, asset) {
 }
 
 async function _loadPluginAssets(plugin) {
+  // Theme packs are CSS-only declarative bundles. Their selected skin is
+  // loaded by the Settings UI; never probe them for executable plugin.js.
+  if (plugin.kind === "theme_pack") return;
   for (const asset of ENTRY_SCRIPTS) {
     const ok = await _injectScript(_pluginAssetUrl(plugin.name, asset), plugin.name);
     if (!ok) {

@@ -55,6 +55,7 @@ class ToolRegistry:
         self._providers: dict[str, ToolProviderRegistration] = {}
         self._categories: dict[str, ToolCategory] = {}
         self._definitions: dict[str, ToolDefinition] = {}
+        self._revision = 0
 
     def register(self, registration: ToolProviderRegistration) -> None:
         """Register one complete provider atomically after uniqueness checks.
@@ -86,6 +87,7 @@ class ToolRegistry:
         self._providers[registration.id] = registration
         self._categories.update({category.id: category for category in registration.categories})
         self._definitions.update({definition.id: definition for definition in registration.definitions})
+        self._revision += 1
 
     def materialize(self, session: "Session", policy: ToolPolicy, role: str) -> list[Tool]:
         """Build all authorized concrete Tools for one Agent role.
@@ -106,6 +108,37 @@ class ToolRegistry:
                     tools.append(tool)
                     seen.add(tool.name)
         return tools
+
+    def unregister(self, provider_id: str) -> None:
+        """Remove one dynamically loaded provider and all of its metadata.
+
+        Args:
+            provider_id: Stable registration identity previously passed to
+                :meth:`register`.
+
+        Returns:
+            None. Missing providers are accepted so plugin teardown is
+            idempotent after a partially failed load.
+        """
+        registration = self._providers.pop(provider_id, None)
+        if registration is None:
+            return
+        for category in registration.categories:
+            self._categories.pop(category.id, None)
+        for definition in registration.definitions:
+            self._definitions.pop(definition.id, None)
+        self._revision += 1
+
+    @property
+    def revision(self) -> int:
+        """Return the monotonic materialization revision of this registry.
+
+        Returns:
+            Integer changed whenever provider registrations are added or removed.
+            Agent factory fingerprints include it so plugin lifecycle changes
+            cannot leave a future run with stale tools.
+        """
+        return self._revision
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
         """Return all registered Tool definitions in stable registration order.

@@ -14,6 +14,7 @@ from .providers import router as providers_router
 from .workspace_directory import router as workspace_directory_router
 from .settings import router as settings_router
 from .session_console import router as session_console_router
+from .plugins import router as plugins_router
 
 
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
@@ -55,6 +56,7 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     app.include_router(workspace_directory_router)
     app.include_router(settings_router)
     app.include_router(session_console_router)
+    app.include_router(plugins_router)
     app.mount("/static", StaticFiles(directory=frontend_root / "static"), name="static")
 
 

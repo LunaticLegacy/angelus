@@ -92,7 +92,7 @@ class SessionService:
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
             profile["provider"], profile["model"], profile["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
-            profile["max_retries"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(),
+            profile["max_retries"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
         )
         if session.coordinator_matches(fingerprint):
             return

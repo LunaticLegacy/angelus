@@ -49,7 +49,7 @@ replaced solely by `settings.py`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [__init__.py](__init__.py#L19) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
+| [__init__.py](__init__.py#L20) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
 | [compact.py](compact.py#L29) | `_stage` | `stage: str, detail: str, kind: str, error: str \| None, raw_content: str \| None` | `str` | Serialize one compaction progress record as an NDJSON line. |
 | [compact.py](compact.py#L63) | `_build_compactor_fetcher` | `config: Any` | `LLMFetcher` | Create a throwaway LLM fetcher for the manual compaction call. |
 | [compact.py](compact.py#L84) | `compact_session` | `session_id: str, request: CompactRequest` | `StreamingResponse` | Compress one Agent's linear context into a single summary abstract. |
@@ -85,6 +85,16 @@ replaced solely by `settings.py`.
 | [mcp.py](mcp.py#L268) | `refresh_mcp_oauth` | `server_id: str` | `dict[str, Any]` | Refresh one server's OAuth access token without exposing it. |
 | [mcp.py](mcp.py#L298) | `get_mcp_bindings` | `session_id: str` | `dict[str, Any]` | Return server/role/tool grants for one browser session. |
 | [mcp.py](mcp.py#L305) | `put_mcp_bindings` | `session_id: str, payload: dict[str, Any]` | `dict[str, Any]` | Replace MCP grants for one browser session. |
+| [plugins.py](plugins.py#L30) | `_core` | `request: Request` | `AngelusCore` | Resolve the host's only plugin manager ownership graph. |
+| [plugins.py](plugins.py#L49) | `active_plugins` | `request: Request` | `dict[str, object]` | Return only currently active browser-loadable plugin packages. |
+| [plugins.py](plugins.py#L62) | `plugin_status` | `request: Request` | `dict[str, object]` | Return discovered, registered, inactive, and active plugin status. |
+| [plugins.py](plugins.py#L75) | `rescan_plugins` | `request: Request` | `dict[str, object]` | Refresh declarative package discovery without executing plugin code. |
+| [plugins.py](plugins.py#L89) | `register_plugin` | `name: str, payload: PluginConfirmation, request: Request` | `dict[str, object]` | Register one validated discovered package without importing it. |
+| [plugins.py](plugins.py#L109) | `load_plugin` | `plugin_id: str, payload: PluginConfirmation, request: Request` | `dict[str, object]` | Load one registered plugin after confirmation and permission approval. |
+| [plugins.py](plugins.py#L133) | `unload_plugin` | `plugin_id: str, payload: PluginConfirmation, request: Request` | `dict[str, object]` | Unload one plugin while retaining its package, grants, and settings. |
+| [plugins.py](plugins.py#L153) | `get_plugin_settings` | `plugin_id: str, request: Request` | `dict[str, object]` | Read typed non-secret settings and schema for one plugin. |
+| [plugins.py](plugins.py#L170) | `put_plugin_settings` | `plugin_id: str, request: Request, values: object` | `dict[str, object]` | Validate and persist one plugin's non-secret scalar settings. |
+| [plugins.py](plugins.py#L192) | `plugin_static` | `name: str, asset: str, request: Request` | `FileResponse` | Serve one active plugin's manifest-whitelisted static asset. |
 | [providers.py](providers.py#L13) | `_core` | `request: Request` | `AngelusCore` | Resolve the application-owned core and its provider catalog. |
 | [providers.py](providers.py#L22) | `list_providers` | `request: Request` | `dict[str, list[str]]` | Return providers available from the installed LLMFetcher handlers. |
 | [runs.py](runs.py#L35) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without constructing a fallback instance. |
@@ -136,6 +146,7 @@ replaced solely by `settings.py`.
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
+| [plugins.py](plugins.py#L17) | `PluginConfirmation` | `confirm: bool, grant_permissions: bool` | `BaseModel` | Explicit browser confirmation required for executable plugin actions. |
 | [runs.py](runs.py#L22) | `RunRequest` | `session_id: str, message: str` | `BaseModel` | HTTP input for one configured Session execution. |
 | [runs.py](runs.py#L29) | `StopRequest` | `reason: str` | `BaseModel` | HTTP input for either graceful or forced stop. |
 | [session_console.py](session_console.py#L12) | `AgentEdit` | `name: str, system_prompt: str` | `object` | Typed input for an idle graph worker edit. |
