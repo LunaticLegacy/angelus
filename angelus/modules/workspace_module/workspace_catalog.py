@@ -39,6 +39,25 @@ class WorkspaceCatalog:
             records[workspace.session_id] = workspace
             self._write(records)
 
+    def replace(self, workspace: Workspace) -> None:
+        """Replace one existing workspace binding without changing its identity.
+
+        Args:
+            workspace: Updated durable workspace record with the same Session ID.
+
+        Returns:
+            ``None`` after atomically committing the replacement.
+
+        Raises:
+            KeyError: If no current workspace has the supplied Session ID.
+        """
+        with self._lock:
+            records = self._read()
+            if workspace.session_id not in records:
+                raise KeyError(workspace.session_id)
+            records[workspace.session_id] = workspace
+            self._write(records)
+
     def remove(self, session_id: str) -> Workspace:
         """Remove one durable workspace identity from the authoritative catalog."""
         with self._lock:
