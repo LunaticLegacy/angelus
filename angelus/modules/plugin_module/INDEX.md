@@ -10,11 +10,14 @@ namespaced `ToolProviderRegistration` values to `tool_module.ToolRegistry`.
 | `models.py` | Dataclass contracts for manifests, settings, skins, records, and tool contributions. |
 | `manifest.py` | No-import JSON manifest validator for tool, UI, and theme-pack packages. |
 | `store.py` | Atomic global plugin registry and scalar settings persistence. |
-| `manager.py` | Discover/register/load/unload lifecycle, settings validation, static whitelist, and ToolRegistry bridge. |
+| `manager.py` | Managed/local discovery, register/load/unload lifecycle, settings validation, static whitelist, and ToolRegistry bridge. |
 
 ## Runtime Boundaries
 
-- Discovery reads only `manifest.json`; it does not import plugin code.
+- Discovery reads only `manifest.json`; it does not import plugin code. It
+  scans both managed packages in `.angelus-state/plugins/packages/` and the
+  repository-local `plugins/` development source root. Local packages remain
+  inert until they are explicitly registered and loaded.
 - A registered tool plugin executes only after a confirmed load and granted
   declared permissions.
 - Theme packs never declare Python entrypoints and expose only active,

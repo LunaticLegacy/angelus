@@ -1,17 +1,17 @@
 # plugins/ — Plugin Examples INDEX
 
-开发期插件示例，也是桌面发布包的默认 starter plugins。首次启动时会被复制到与 `workspace/` 并列的持久 `plugins/` 目录；仅供发现，不会自动加载或覆盖用户文件。生产插件由 `angelus/plugins/` 的运行时发现、校验与加载；具体格式见 [`../docs/plugin-guide.md`](../docs/plugin-guide.md)。
+开发期插件示例。Angelus 在启动时将本目录作为本地开发发现源，并同时扫描持久化的 `.angelus-state/plugins/packages/`。发现只读取 `manifest.json`；插件不会被复制、导入或执行，直到用户在设置页明确“加入工作台”并启用。具体格式见 [`../docs/plugin-guide.md`](../docs/plugin-guide.md)。
 
 | Entry | Type | Purpose |
 |---|---|---|
-| `demo-hello/` | End-to-end example | 演示面板、命令、工具、钩子、路由以及可选 CSS 前端资产。 |
-| `example-tool/` | Tool example | 演示网络搜索工具和 `tool.before` / `tool.after` 钩子。 |
-| `angelus/` | Skin plugin example | 演示工作台皮肤插件的清单、后端入口与前端样式/脚本。 |
+| `demo-hello/` | Tool + UI example | 演示受控、命名空间化工具和可选 CSS 前端资产。 |
+| `example-tool/` | Tool example | 演示离线文档搜索 Tool provider。 |
+| `angelus/` | UI skin example | 演示工作台皮肤插件的清单与前端样式/脚本。 |
 | `angelus-control-plane-ui/` | Control-plane UI example | 演示更完整的控制平面 UI 插件，并附设计、变更和使用文档。 |
 | `token-burner/` | Visual example | 把 token 消耗速率可视化为火焰的独立浮动窗口插件（纯前端，读 /api/sessions/{id}/usage）。 |
 | `*.zip` | Distribution snapshots | 插件示例的手工分发快照；可编辑权威内容仍是同名目录。 |
 
-每个示例目录的 `manifest.json` 是声明式入口；`main.py` 是 Python 实现，`plugin.js` / `plugin.css`（如存在）是被清单白名单允许的前端资源。
+每个示例目录的 `manifest.json` 是声明式入口；仅 `kind: "tool"` 插件可以有 Python `main.py`。`plugin.js` / `plugin.css`（如存在）必须被清单白名单允许的前端资源。
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 

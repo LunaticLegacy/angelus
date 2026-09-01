@@ -1,0 +1,135 @@
+/* ============================================================
+ * Token Burner 🔥 — plugin.css
+ * Floating window chrome + flame scene. All dynamic flame
+ * rendering happens on <canvas>; this file only styles the
+ * window frame, title bar and readouts.
+ * ============================================================ */
+
+/* ---- floating window (host workbench mode) ---- */
+.tb-root {
+  position: fixed;
+  z-index: 2147483000;             /* above workbench UI, below none */
+  width: 264px;
+  height: 316px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(110% 95% at 50% 108%, rgba(255, 116, 24, 0.18), transparent 54%),
+    radial-gradient(80% 60% at 50% 70%, rgba(255, 72, 18, 0.055), transparent 72%),
+    linear-gradient(180deg, rgba(28, 19, 14, 0.975), rgba(10, 7, 6, 0.992));
+  border: 1px solid rgba(255, 150, 60, 0.28);
+  box-shadow:
+    0 14px 42px rgba(0, 0, 0, 0.58),
+    0 0 34px rgba(255, 90, 20, 0.14),
+    inset 0 1px 0 rgba(255, 230, 200, 0.10),
+    inset 0 -18px 42px rgba(255, 72, 18, 0.035);
+  user-select: none;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: #f5e9dd;
+  animation: tb-appear 0.18s ease-out;
+}
+@keyframes tb-appear {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+.tb-root.tb-hidden { display: none; }
+
+/* ---- title bar (drag handle) ---- */
+.tb-titlebar {
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  cursor: move;
+  background: linear-gradient(180deg, rgba(255, 160, 70, 0.10), transparent);
+  border-bottom: 1px solid rgba(255, 160, 80, 0.14);
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  color: #ffd9ae;
+  text-shadow: 0 0 8px rgba(255, 120, 30, 0.5);
+}
+.tb-titlebar .tb-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-titlebar button {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 220, 190, 0.75);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 6px;
+}
+.tb-titlebar button:hover { background: rgba(255, 160, 70, 0.18); color: #ffe6c8; }
+
+/* ---- flame stage ---- */
+.tb-stage {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 50% 88%, rgba(255, 126, 34, 0.09), transparent 34%),
+    radial-gradient(ellipse at 50% 58%, rgba(255, 66, 18, 0.035), transparent 55%);
+}
+.tb-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 16%),
+    radial-gradient(ellipse at center, transparent 52%, rgba(0,0,0,0.18) 100%);
+  mix-blend-mode: screen;
+}
+.tb-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 1;
+}
+
+/* ---- readout overlay ---- */
+.tb-readout {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  font-size: 11px;
+  color: rgba(255, 226, 200, 0.9);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.82), 0 0 12px rgba(255, 116, 30, 0.42);
+  z-index: 3;
+  pointer-events: none;
+}
+.tb-readout b { color: #ffd9a8; font-weight: 600; }
+
+/* ---- popout mode: fill the whole browser window ---- */
+body.tb-popout {
+  margin: 0;
+  background: #0b0705;
+  overflow: hidden;
+}
+body.tb-popout .tb-popout-stage {
+  position: fixed;
+  inset: 0;
+}
+body.tb-popout .tb-popout-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+body.tb-popout .tb-readout {
+  bottom: 18px;
+  font-size: 13px;
+}

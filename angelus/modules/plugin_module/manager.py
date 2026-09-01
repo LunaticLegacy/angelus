@@ -88,33 +88,55 @@ class LoadedPlugin:
 class PluginManager:
     """Single process authority for plugin package lifecycle and settings."""
 
-    def __init__(self, state_root: Path, tool_registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        state_root: Path,
+        tool_registry: ToolRegistry,
+        development_root: Path | None = None,
+    ) -> None:
         """Create an initially unloaded plugin manager.
 
         Args:
             state_root: Angelus-owned root for registry and managed packages.
             tool_registry: Existing global tool registry receiving loaded tools.
+            development_root: Optional read-only source package directory. When
+                omitted, Angelus discovers repository ``plugins/`` packages.
         """
         self.store = PluginStore(state_root)
         self._tool_registry = tool_registry
+        source_root = development_root if development_root is not None else Path.cwd() / "plugins"
+        self._discovery_roots = (
+            self.store.package_root.resolve(),
+            source_root.resolve(),
+        )
         self._loaded: dict[str, LoadedPlugin] = {}
         self._lock = threading.RLock()
 
     def rescan(self) -> tuple[DiscoveredPlugin, ...]:
-        """Discover all managed package manifests without importing code.
+        """Discover managed and local development manifests without imports.
 
         Returns:
             Every package directory with its validated manifest or safe error.
         """
         self.store.package_root.mkdir(parents=True, exist_ok=True)
         discoveries: list[DiscoveredPlugin] = []
-        for path in sorted(self.store.package_root.iterdir()):
-            if not path.is_dir() or path.is_symlink():
+        names: set[str] = set()
+        for root in self._discovery_roots:
+            if not root.exists():
                 continue
-            try:
-                discoveries.append(DiscoveredPlugin(load_manifest(path), path.resolve()))
-            except ManifestError as exc:
-                discoveries.append(DiscoveredPlugin(None, path.resolve(), str(exc)))
+            for path in sorted(root.iterdir()):
+                if not path.is_dir() or path.is_symlink():
+                    continue
+                resolved = path.resolve()
+                try:
+                    manifest = load_manifest(resolved)
+                    if manifest.name in names:
+                        discoveries.append(DiscoveredPlugin(None, resolved, f"duplicate plugin name: {manifest.name}"))
+                        continue
+                    names.add(manifest.name)
+                    discoveries.append(DiscoveredPlugin(manifest, resolved))
+                except ManifestError as exc:
+                    discoveries.append(DiscoveredPlugin(None, resolved, str(exc)))
         return tuple(discoveries)
 
     def statuses(self) -> tuple[dict[str, object], ...]:
@@ -355,9 +377,21 @@ class PluginManager:
             manifest = load_manifest(path)
         except ManifestError as exc:
             raise KeyError(record.id) from exc
-        if manifest.name != record.name or self.store.package_root.resolve() not in path.parents:
+        if manifest.name != record.name or not self._is_discovery_package(path):
             raise KeyError(record.id)
         return manifest
+
+    def _is_discovery_package(self, package_path: Path) -> bool:
+        """Return whether a record points at a direct child of a trusted root.
+
+        Args:
+            package_path: Resolved package directory from a durable record.
+
+        Returns:
+            ``True`` only for a direct non-symlink package inside a configured
+            managed or local development discovery root.
+        """
+        return any(package_path.parent == root for root in self._discovery_roots)
 
     def _load(self, manifest: PluginManifest, record: PluginRecord) -> LoadedPlugin:
         """Execute one approved tool plugin and atomically publish providers.
@@ -386,7 +420,7 @@ class PluginManager:
         try:
             spec.loader.exec_module(module)
             entrypoint = _entrypoint(module)
-            runtime = PluginRuntime(manifest, record.settings, str(Path(record.package_path) / "data"))
+            runtime = PluginRuntime(manifest, record.settings, str(self.store.data_root / record.id))
             Path(runtime.state_path).mkdir(parents=True, exist_ok=True)
             entrypoint.setup(runtime)
             provider_ids = self._publish(manifest, runtime.contributions)

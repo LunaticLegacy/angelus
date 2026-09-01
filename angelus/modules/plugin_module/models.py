@@ -126,7 +126,8 @@ class PluginRecord:
     Attributes:
         id: Stable local plugin identity, currently equal to manifest name.
         name: Manifest name used for URL and module namespaces.
-        package_path: Resolved package directory under the managed plugin root.
+        package_path: Resolved package directory below an approved managed or
+            local development discovery root.
         enabled: Whether the package is approved for automatic restoration.
         permissions_granted: Explicit user-approved requested permissions.
         settings: Persisted non-secret scalar settings.
@@ -212,7 +213,8 @@ class PluginRuntime:
     Attributes:
         plugin: Manifest defining the executing plugin.
         settings: Persisted settings validated by the host.
-        state_path: Plugin-private state directory under Angelus state.
+        state_path: Plugin-private state directory under Angelus state rather
+            than the source or managed package directory.
         contributions: Tool providers accumulated before the host publishes them.
     """
 

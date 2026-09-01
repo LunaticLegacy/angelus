@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Token Burner 🔥</title>
+<link rel="stylesheet" href="plugin.css" />
+</head>
+<body class="tb-popout">
+  <!--
+    Standalone window for Token Burner (popout mode).
+    Served from /plugins/token-burner/static/window.html (whitelisted in
+    manifest.frontend.assets). plugin.js detects this page by the
+    .tb-popout class / window.opener and renders a full-window flame that
+    reads the same /api/sessions/{id}/usage data as the host floating
+    window — a genuinely detached, OS-managed window.
+  -->
+  <div class="tb-popout-stage" id="tb-popout-stage">
+    <canvas id="tb-canvas"></canvas>
+    <div class="tb-readout" id="tb-readout"></div>
+  </div>
+  <script src="plugin.js"></script>
+</body>
+</html>

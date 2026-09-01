@@ -74,7 +74,8 @@ class AngelusCore:
         self.tool_registry.register(console_tool_registration(self))
         self.tool_registry.register(runtime_tool_registration(self))
         # Plugins can only extend the application through this same ToolRegistry.
-        self.plugin_manager = PluginManager(self.state_root, self.tool_registry)
+        bundled_plugins = Path(__file__).resolve().parent.parent / "plugins"
+        self.plugin_manager = PluginManager(self.state_root, self.tool_registry, bundled_plugins)
         self.plugin_manager.restore_enabled()
         # Legacy transcript reader/remover during the conversation migration.
         self.conversations = ConversationStore(Path.cwd() / "workspace")

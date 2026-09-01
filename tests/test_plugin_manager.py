@@ -86,6 +86,48 @@ class PluginManagerTests(unittest.TestCase):
             manager.unload("echo-tools")
             self.assertEqual((), registry.definitions())
 
+    def test_development_packages_are_discovered_and_can_be_loaded(self) -> None:
+        """Repository-style development packages remain inert until enabled.
+
+        Returns:
+            ``None`` after verifying discovery and explicit tool publication.
+        """
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source-plugins" / "hello"
+            source.mkdir(parents=True)
+            _json(source / "manifest.json", {
+                "name": "hello", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
+                "frontend": {"assets": [], "settings": False},
+            })
+            (source / "main.py").write_text(
+                "from angelus.modules.plugin_module import PluginToolCategory, PluginToolContribution, PluginToolDefinition\n"
+                "class Provider:\n"
+                "    def materialize(self, session_id, policy, role): return []\n"
+                "class Plugin:\n"
+                "    def setup(self, runtime): runtime.register_tool_provider(PluginToolContribution(Provider(), (PluginToolCategory('utility', 'Utility', 'Helpers'),), (PluginToolDefinition('hello', 'utility', 'Hello', 'Hello helper', frozenset({'coordinator'})),)))\n"
+                "    def teardown(self): pass\n"
+                "angelus_plugin = Plugin()\n",
+                encoding="utf-8",
+            )
+            manager = PluginManager(root, ToolRegistry(), source.parent)
+            self.assertEqual("discovered", manager.statuses()[0]["state"])
+            manager.register("hello")
+            manager.load("hello", grant_permissions=False)
+            self.assertEqual(["plugin.hello.hello"], [item.id for item in manager._tool_registry.definitions()])
+
+    def test_repository_plugin_manifests_match_current_contract(self) -> None:
+        """Every bundled source plugin is discoverable through the v1 schema.
+
+        Returns:
+            ``None`` after asserting no bundled manifest reports a validation error.
+        """
+        with TemporaryDirectory() as directory:
+            manager = PluginManager(Path(directory), ToolRegistry(), Path.cwd() / "plugins")
+            statuses = manager.statuses()
+            self.assertEqual(5, len(statuses))
+            self.assertFalse(any(item["state"] == "error" for item in statuses))
+
 
 def _json(path: Path, value: object) -> None:
     """Write a test fixture manifest.

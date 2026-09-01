@@ -1,0 +1,17 @@
+{
+  "name": "token-burner",
+  "display_name": "Token Burner 🔥",
+  "version": "0.1.1",
+  "api_version": "1",
+  "kind": "ui",
+  "description": "把 Angelus 的 token 消耗速率可视化成一团更自然的动态火焰：多层不对称焰体、侧舌、白热核心、地面光晕、余烬与火星会随 burn rate 平滑变化。独立浮动小窗口，也可弹出脱离主界面的独立窗口。纯前端、只读 session usage。",
+  "permissions": [],
+  "frontend": {
+    "assets": [
+      "plugin.js",
+      "plugin.css",
+      "window.html"
+    ],
+    "settings": false
+  }
+}

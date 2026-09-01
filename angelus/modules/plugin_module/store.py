@@ -20,6 +20,7 @@ class PluginStore:
             state_root: Angelus-owned durable state root.
         """
         self.package_root = state_root / "plugins" / "packages"
+        self.data_root = state_root / "plugins" / "data"
         self._path = state_root / "plugins" / "registry.json"
         self._lock = threading.RLock()
 
