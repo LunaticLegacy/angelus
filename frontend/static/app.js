@@ -404,9 +404,8 @@ function renderContextPrompt(payload) { const metadata=Array.isArray(payload.met
 async function loadContextPrompt(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context`)); try { const preview=await apiPost(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/request-preview`),{message:$("context-preview-message").value}); payload.request=preview.request; payload.stats=preview.stats; } catch(error) { payload.preview_error=error.message; } renderContextPrompt(payload); }
 /** Render one Agent's live compaction-input preview in the dialog's third tab. */
 function renderCompactionInput(payload) {
-  const text=String(payload.text||""), characters=Number(payload.characters||0), threshold=Number(payload.threshold||0), round=Number(payload.round||0), messages=Number(payload.messages||0), omitted=Number(payload.omitted||0), estimatedTokens=Number(payload.estimated_tokens||0), preview=$("context-compaction-preview"), requestPreview=$("context-compaction-request-preview"), request=payload.request&&typeof payload.request==="object"?payload.request:null;
-  preview.textContent=text || "此 Agent 尚无持久化上下文，压缩器没有可发送的输入。";
-  requestPreview.textContent=request?readablePromptValue(request):"压缩请求尚不可用。";
+  const text=String(payload.text||""), characters=Number(payload.characters||0), threshold=Number(payload.threshold||0), round=Number(payload.round||0), messages=Number(payload.messages||0), omitted=Number(payload.omitted||0), estimatedTokens=Number(payload.estimated_tokens||0), preview=$("context-compaction-preview"), request=payload.request&&typeof payload.request==="object"?payload.request:null;
+  preview.textContent=request?readablePromptValue(request):"压缩请求尚不可用。";
   $("context-compaction-note").textContent=text ? "压缩触发时，这段文本会作为摘要请求发送给压缩模型；下方完整请求同样只在内存中拼接，绝不发送。" : "压缩触发时，这段文本会作为摘要请求发送给压缩模型；当前 checkpoint 为空。";
   $("context-compaction-status").textContent=text ? `${messages} 条消息` : "无输入";
   const ratio=threshold>0 ? `${Math.round(Math.min(1,characters/threshold)*100)}%` : "—";
@@ -427,7 +426,7 @@ async function openAgentContextInspector(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   contextDialogAgent=agentId;
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
-  selectContextDialogTab("graph");$("context-preview-message").value=$("message").value;$("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在读取压缩器输入…";$("context-compaction-request-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
+  selectContextDialogTab("graph");$("context-preview-message").value=$("message").value;$("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
   if(!dialog.open) dialog.showModal();
   const [graph,prompt,compaction]=await Promise.allSettled([
     apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)),
