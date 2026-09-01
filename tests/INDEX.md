@@ -57,6 +57,7 @@ node --check frontend/static/app.js
 | [test_settings_service.py](test_settings_service.py#L16) | `SettingsServiceTests.test_connector_secret_never_appears_in_public_catalog` | `None` | `None` | Connector metadata is readable while its API key stays separate. |
 | [test_settings_service.py](test_settings_service.py#L32) | `SettingsServiceTests.test_session_profile_is_session_owned_and_can_restore_inheritance` | `None` | `None` | A full Session override survives global changes until explicitly cleared. |
 | [test_settings_service.py](test_settings_service.py#L55) | `SettingsServiceTests.test_saved_connector_materializes_required_coordinator_before_run` | `None` | `None` | Every Session reserves coordinator and builds it from saved profile state. |
+| [test_tool_result_prompt_budget.py](test_tool_result_prompt_budget.py#L13) | `ToolResultPromptBudgetTests.test_newest_tool_result_survives_historical_budget_exhaustion` | `None` | `None` | Keep the latest result visible while marking older output omitted. |
 | [test_workspace_service.py](test_workspace_service.py#L16) | `WorkspaceServiceTests.test_create_is_durable_and_core_rehydrates_empty_session` | `None` | `None` | A subsequent host sees the workspace and can address its session. |
 | [test_workspace_service.py](test_workspace_service.py#L31) | `WorkspaceServiceTests.test_legacy_session_index_is_imported_without_inventing_project_paths` | `None` | `None` | Old session identities remain selectable after the storage redesign. |
 | [test_workspace_service.py](test_workspace_service.py#L60) | `WorkspaceServiceTests.test_delete_removes_session_registry_and_durable_state` | `None` | `None` | A confirmed deletion cannot be rehydrated by a later core instance. |
@@ -80,6 +81,7 @@ node --check frontend/static/app.js
 | [test_session_console.py](test_session_console.py#L39) | `_PreviewHandler` | `None` | `object` | Minimal provider facade proving request composition performs no I/O. |
 | [test_session_console.py](test_session_console.py#L54) | `SessionConsoleTests` | `None` | `unittest.TestCase` | Verify state recovery, validation, and Agent-owned mutation writes. |
 | [test_settings_service.py](test_settings_service.py#L13) | `SettingsServiceTests` | `None` | `unittest.TestCase` | Verify the new settings path has one durable authority per concern. |
+| [test_tool_result_prompt_budget.py](test_tool_result_prompt_budget.py#L10) | `ToolResultPromptBudgetTests` | `None` | `unittest.TestCase` | Ensure immediate tool feedback wins over historical output. |
 | [test_workspace_service.py](test_workspace_service.py#L13) | `WorkspaceServiceTests` | `None` | `unittest.TestCase` | Ensure durable workspace records do not create a second session owner. |
 
 <!-- END GENERATED SYMBOL MAP -->
