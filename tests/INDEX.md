@@ -13,6 +13,7 @@ real API credentials or mutate the repository's `.angelus-state` directory.
 | `test_session_console.py` | Typed console persistence, cycle rejection, controlled plan/topology tools, permission filtering, journal mutation evidence, secret exclusion, and restart-safe persisted Agent context chat projection. |
 | `test_paged_context_storage.py` | SQLite context pointer save/load, newest-200 recovery and older-page cursor semantics. |
 | `test_external_agent_hub.py` | External Agent definition persistence, protocol adapter base, and phase-one Hub route projections. |
+| `test_external_agent_hub_read_only_adapters.py` | Coze, OpenCode, and WorkBuddy typed read-only facade adapter tests. |
 
 Run from repository root:
 
