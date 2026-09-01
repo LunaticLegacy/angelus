@@ -592,7 +592,7 @@ async function loadOlderMessages() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if(source && sourceSessionId !== selected){source.close();source=null;sourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0; await loadWorkspaces(selected); await loadHistory(); setStatus("准备就绪"); }
+async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if(source && sourceSessionId !== selected){source.close();source=null;sourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
 
 async function start(message) {
   let runConfig;
@@ -603,7 +603,7 @@ async function start(message) {
   try {
     const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, message})});
     const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
-    setWorkspaceIndicator(sessionId,"running"); connectRunEvents();
+    setWorkspaceIndicator(sessionId,"running"); await loadAgents(); connectRunEvents();
   } catch(error) { const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("请先设置连接器", message); setStatus("请求失败", "error"); setRunning(false); }
 }
 let compactStatusTimer=null;
@@ -867,7 +867,7 @@ async function initializeConsole() {
   await loadProviders();
   await loadToolRegistry();
   await loadWorkspaces();
-  if(hasSelectedSession()) await loadHistory();
+  if(hasSelectedSession()) { await loadAgents(); await loadHistory(); }
   applyProviderPreset();
   updateModelSummary();
 }

@@ -51,6 +51,10 @@ class SessionConsoleTests(unittest.TestCase):
                 service.add_connection("demo", "worker", "coordinator")
             restored = AngelusCore(state_root=root / "state")
             self.assertEqual(restored.console_service.graph("demo")["edges"], [{"source": "coordinator", "target": "worker", "kind": "dependency"}])
+            self.assertEqual(
+                [agent["id"] for agent in restored.console_service.agents("demo")["agents"]],
+                ["coordinator", "worker"],
+            )
 
     def test_worker_removal_cleans_router_targets(self) -> None:
         """Removing a worker leaves no invalid persisted router target behind."""
