@@ -3,6 +3,7 @@ import { $, escapeHtml } from "./components/dom.js";
 import { createChatView } from "./components/chat-view.js?v=history-pagination-2";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
+import { createExternalAgentHubView } from "./components/external-agent-hub-view.js";
 import { loadPlugins, unloadPlugin } from "./plugins.js";
 
 /* ================================================================
@@ -53,6 +54,10 @@ let durableEventOffset = 0;
 let sseCursor = 0;
 let sseStatusCheckPending = false;
 const legacyIntegrationApisAvailable = true;
+const externalAgentHubView = createExternalAgentHubView(
+  $("external-agent-hub-dialog"),
+  $("external-agent-hub-root"),
+);
 let renderedSteerEvents = new Set();
 let renderedRoundEvents = new Set();
 let currentAgents = [];
@@ -882,10 +887,8 @@ $("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profi
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
-$("open-external-agent-hub").addEventListener("click", () => { const dialog=$("external-agent-hub-dialog"); if (!dialog.open) dialog.showModal(); });
-$("close-external-agent-hub").addEventListener("click", () => $("external-agent-hub-dialog").close());
-// The same-origin import iframe returns only its newly created session ID.
-window.addEventListener("message", (event) => { if (event.origin !== window.location.origin || event.data?.type !== "angelus:imported-session" || !event.data.sessionId) return; $("external-agent-hub-dialog").close(); switchSession(String(event.data.sessionId)).catch((error) => trace("导入工作空间打开失败", error.message)); });
+$("open-external-agent-hub").addEventListener("click", () => externalAgentHubView.open().catch((error) => trace("External Agent Hub 加载失败", error.message)));
+$("close-external-agent-hub").addEventListener("click", () => externalAgentHubView.close());
 document.querySelectorAll("[data-settings-section]").forEach(button=>button.addEventListener("click",()=>showSettingsSection(button.dataset.settingsSection)));
 $("refresh-plugins").addEventListener("click",async()=>{const button=$("refresh-plugins");if(button)button.disabled=true;try{const summary=await apiPost("/api/plugins/rescan");await loadPlugins();await loadPluginStatuses();const parts=[];if(summary?.added?.length)parts.push(`新发现 ${summary.added.length} 个`);if(summary?.loaded?.length)parts.push(`新加载 ${summary.loaded.length} 个`);if(summary?.removed?.length)parts.push(`移除 ${summary.removed.length} 个`);setPluginFeedback(parts.length?`已重新扫描：${parts.join("，")}。`:"已重新扫描，无变化。","success");}catch(error){setPluginFeedback(`重新扫描失败：${error.message}`,"error");}finally{if(button)button.disabled=false;}});
 $("mcp-transport").addEventListener("change",updateMcpTransportFields);

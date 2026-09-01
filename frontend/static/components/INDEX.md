@@ -9,6 +9,7 @@
 | `markdown-renderer.js` | Marked/DOMPurify-backed single Markdown projection for restored and streaming Agent output. |
 | `trace-view.js` | 可展开的 Agent 生命周期与 Trace 卡片。 |
 | `task-plan-view.js` | 递归任务计划标记和状态展示。 |
+| `external-agent-hub-view.js` | 全局 External Agent Hub：定义配置、健康检查、能力和外部会话只读检查。 |
 
 ## Intent Routing
 
@@ -17,6 +18,7 @@
 - **安全 Markdown 解析与流式投影** → `markdown-renderer.js`
 - **Trace 呈现** → `trace-view.js`
 - **任务计划呈现** → `task-plan-view.js`
+- **外部 Agent 配置与只读检查** → `external-agent-hub-view.js`
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
@@ -24,6 +26,7 @@
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
+| [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: HTMLDialogElement, root: HTMLElement` | `object` | Creates the global Hub controller for durable definition management and read-only external inspection. |
 | [chat-view.js](chat-view.js#L14) | `createChatView` | `options: object` | `unknown` | Perform the browser runtime operation: create chat view. |
 | [chat-view.js](chat-view.js#L24) | `isAtLatest` | `None` | `unknown` | Perform the browser runtime operation: is at latest. |
 | [chat-view.js](chat-view.js#L35) | `updateFollowState` | `None` | `unknown` | Perform the browser runtime operation: update follow state. |

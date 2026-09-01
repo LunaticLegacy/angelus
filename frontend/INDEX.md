@@ -17,6 +17,11 @@ run-profile writes target Phase-1 APIs. Inspector, MCP, plugin and graph UI
 code still contains legacy requests and is intentionally not a reliable
 capability surface until Session projections replace it.
 
+The global External Agent Hub dialog uses `/api/external-agents` to configure
+adapter definitions and inspect their health, declared capabilities and remote
+session summaries. It intentionally does not offer context import or export
+until the audited context-exchange API exists.
+
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
 ## Function Map
