@@ -143,8 +143,9 @@ class ExecutionService:
             # to select it, while its per-Agent control view does not exist
             # yet.  Pre-registration lets a stop or steering instruction
             # target every Agent that was present when this attempt began.
-            topology = session.swarm.view_snapshot()
-            nodes = topology.get("nodes", [])
+            snapshotter = getattr(session.swarm, "view_snapshot", None)
+            topology = snapshotter() if callable(snapshotter) else {"nodes": []}
+            nodes = topology.get("nodes", []) if isinstance(topology, dict) else []
             if isinstance(nodes, list):
                 for node in nodes:
                     if not isinstance(node, dict):
