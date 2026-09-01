@@ -16,3 +16,19 @@ Session selection, creation/deletion, message reads, connector settings and
 run-profile writes target Phase-1 APIs. Inspector, MCP, plugin and graph UI
 code still contains legacy requests and is intentionally not a reliable
 capability surface until Session projections replace it.
+
+<!-- BEGIN GENERATED SYMBOL MAP -->
+
+## Function Map
+
+| Source | Function / method | Input types | Output type | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
+
+## Class Map
+
+| Source | Class | Constructor / field input types | Base(s) | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
+
+<!-- END GENERATED SYMBOL MAP -->

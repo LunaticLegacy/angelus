@@ -29,15 +29,14 @@ function initTheme() {
 }
 initTheme();
 
-const storedSessionId = localStorage.llmfetcherSession || localStorage.llmfetcherWorkspace || null;
+const storedSessionId = localStorage.llmfetcherSession || null;
 let sessionId = storedSessionId || null;
-let workspaceId = sessionId;
 let connectorId = "";
 let currentProfile = null;
 // Settings may target a sidebar session without changing the visible chat.
 let profileWorkspaceId = "";
 let source = null;
-let sourceWorkspaceId = "";
+let sourceSessionId = "";
 let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
@@ -50,6 +49,9 @@ let traceEvents = [];
 let traceEventIndex = new Map();
 let durableEventCount = 0;
 let durableEventOffset = 0;
+let sseCursor = 0;
+let sseStatusCheckPending = false;
+const legacyIntegrationApisAvailable = false;
 let renderedSteerEvents = new Set();
 let renderedRoundEvents = new Set();
 let currentAgents = [];
@@ -99,10 +101,10 @@ function profileSettings(overrides={}) { return {
   ...overrides,
 }; }
 function profilePayload(overrides={}) { return {settings: profileSettings(overrides)}; }
-function profileUrl() { const target=profileWorkspaceId||workspaceId; return $("profile-scope")?.value==="global"?"/api/settings/run-profile":`/api/sessions/${encodeURIComponent(target)}/run-profile`; }
-function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||workspaceId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); }
-async function restoreSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||workspaceId))return; const profile=await apiJson(profileUrl()); applyProfile(profile); }
-async function persistSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||workspaceId))return; const profile=await apiPut(profileUrl(),profilePayload()); applyProfile(profile); }
+function profileUrl() { const target=profileWorkspaceId||sessionId; return $("profile-scope")?.value==="global"?"/api/settings/run-profile":`/api/sessions/${encodeURIComponent(target)}/run-profile`; }
+function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||sessionId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); }
+async function restoreSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiJson(profileUrl()); applyProfile(profile); }
+async function persistSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiPut(profileUrl(),profilePayload()); applyProfile(profile); }
 function bindSettingsPersistence() {
   /** Persist only completed field changes, leaving live typing responsive. */
   [...agentSettingsIds, ...connectionDraftIds].forEach((id) => {
@@ -113,17 +115,19 @@ function bindSettingsPersistence() {
     });
   });
 }
-const TOOL_GROUPS = [
-  { id:"planning", icon:"✓", title:"计划与任务", note:"让 Agent 规划、读取并更新任务进度。", tools:[["set_task_plan","创建任务计划","把复杂目标拆成可执行步骤"],["update_task_status","更新任务状态","标记步骤进行中、完成或受阻"],["read_task_plan","读取任务计划","查看当前保存的计划，不会修改它"]] },
-  { id:"file_discovery", icon:"⌕", title:"文件检索", note:"在当前项目中查找代码与资料。", tools:[["tlb_rag","项目检索","从项目文件中检索相关上下文"]] },
-  { id:"session_memory", icon:"◫", title:"会话记忆与证据", note:"跨会话查询已授权的记忆与产物。", tools:[["search_session_memory","搜索会话记忆","查找已授权会话的结论"],["read_session_memory","读取会话记忆","打开一条已保存的记忆"],["search_session_artifacts","搜索会话产物","查找文件、证据和交付物"],["open_session_artifact","打开会话产物","读取一个已授权的产物"]] },
-  { id:"handoff", icon:"↗", title:"会话交接", note:"创建或读取可继续执行的会话交接。", tools:[["handoff_session","交接到会话","把当前工作移交给目标会话"],["create_session_handoff","创建交接记录","保存后续 Agent 可读取的交接摘要"]] },
-  { id:"context", icon:"◌", title:"上下文管理", note:"查看、编辑或恢复 Agent 的持久化上下文。", tools:[["read_context","读取上下文","查看当前 Agent 上下文"],["edit_context","编辑上下文","修改保存的上下文内容"],["restore_context","恢复上下文","从一个历史版本恢复上下文"]] },
-  { id:"shell", icon:"›_", title:"Shell", note:"允许在绑定项目目录中执行命令。", tools:[["shell","执行 Shell 命令","可读取或修改项目文件，请谨慎开启"]] },
-  { id:"swarm", icon:"✦", title:"Swarm 协作", note:"创建、调度和管理多个协作 Agent。", tools:[["dispatch_subagent","派发子 Agent","创建一个带目标的协作任务"],["dispatch_subagents","批量派发","一次派发多个协作任务"],["revive_agent","重新启用 Agent","为完成的 Worker 分配新任务"],["wait_for_reports","等待报告","等待 Worker 返回结果"],["report_task","提交任务报告","Worker 向协调者提交结论"],["dynamic_add_agent","添加 Agent","编辑协作拓扑"],["dynamic_add_connection","添加连接","编辑调度关系"],["dynamic_remove_agent","移除 Agent","删除动态 Agent"],["dynamic_remove_connection","移除连接","删除调度关系"],["dynamic_set_mapper","设置聚合器","配置输入汇总方式"],["dynamic_set_router","设置路由","配置后续执行目标"],["dynamic_get_info","读取协作信息","查看当前协作图"]] },
-  { id:"mcp", icon:"◇", title:"MCP", note:"挂载已在 MCP 页面授权的外部工具。", tools:[["mcp","已授权 MCP 工具","仍需通过服务器、角色和工具三级授权"]] },
-  { id:"turn_control", icon:"■", title:"回合控制", note:"允许 Agent 主动结束当前执行回合。", tools:[["stop_turn","结束当前回合","在安全边界停止继续调用工具"]] },
-];
+let toolRegistryGroups = [];
+const TOOL_ICONS = { planning:"✓", file_discovery:"⌕", shell:"›_", swarm:"✦", turn_control:"■" };
+
+async function loadToolRegistry() {
+  /** Load backend-registered capabilities instead of maintaining UI-only tools. */
+  const catalog = await apiJson("/api/tool-registry");
+  toolRegistryGroups = (catalog.categories || []).map((category) => ({
+    id: category.id, icon: TOOL_ICONS[category.id] || "◇", title: category.title,
+    note: category.description,
+    tools: (category.tools || []).map((tool) => [tool.id, tool.title, tool.description]),
+  }));
+  if (currentProfile) renderToolPermissions(currentProfile.effective?.tool_permissions || {});
+}
 
 function renderToolPermissions(policy) {
   /** Render readable category cards while retaining the category-and-tool policy contract. */
@@ -132,7 +136,8 @@ function renderToolPermissions(policy) {
   const categories = policy.categories || {};
   const tools = policy.tools || {};
   target.className = "permission-cards";
-  target.innerHTML = `<aside class="permission-summary"><span>权限规则</span><p>类别和单工具必须同时开启。关闭类别会让该类所有工具对 Agent 不可见。</p></aside>${TOOL_GROUPS.map((group) => {
+  const availableGroups = toolRegistryGroups;
+  target.innerHTML = `<aside class="permission-summary"><span>权限规则</span><p>类别和单工具必须同时开启。此列表只显示当前后端已注册的工具。</p></aside>${availableGroups.map((group) => {
     const enabled = categories[group.id] === true;
     return `<section class="permission-card ${enabled ? "is-enabled" : "is-disabled"}"><header><span class="permission-icon">${group.icon}</span><div><h4>${group.title}</h4><p>${group.note}</p></div><label class="permission-master"><input type="checkbox" data-permission-category="${group.id}" ${enabled ? "checked" : ""}/><span>启用类别</span></label></header><div class="permission-tool-list">${group.tools.map(([id, title, note]) => `<label class="permission-tool"><span><strong>${title}</strong><small>${note}</small></span><input type="checkbox" data-permission-tool="${id}" ${tools[id] === true ? "checked" : ""} aria-label="${title}"/></label>`).join("")}</div></section>`;
   }).join("")}`;
@@ -143,7 +148,7 @@ function renderToolPermissions(policy) {
       next.categories[category] = input.checked;
       // A category checkbox is an intentional bulk choice: keep every
       // contained tool aligned so the next rendered profile is unambiguous.
-      const group = TOOL_GROUPS.find((item) => item.id === category);
+      const group = toolRegistryGroups.find((item) => item.id === category);
       for (const [toolId] of group?.tools || []) next.tools[toolId] = input.checked;
     } else next.tools[input.dataset.permissionTool] = input.checked;
     const profile = await apiPut(profileUrl(), profilePayload({ tool_permissions: next }));
@@ -184,19 +189,19 @@ function tracePayload(event, position="prepend") { traceView.appendEvent(event, 
 /** Present one server-initiated sampling or elicitation request for approval. */
 function openMcpApproval(event) { $("mcp-approval-id").value=event.id; $("mcp-approval-remember").checked=false; const details=event.details||{}; $("mcp-approval-summary").textContent=`${event.server} 请求 ${event.capability} · Agent ${event.agent}${details.max_tokens?` · 最多 ${details.max_tokens} tokens`:""}`; const fields=Array.isArray(details.fields)?details.fields:[]; $("mcp-approval-fields").innerHTML=fields.map(name=>`<label>${escapeHtml(name)}<input data-mcp-elicit-field="${escapeHtml(name)}" autocomplete="off" /></label>`).join(""); $("mcp-approval-dialog").showModal(); }
 /** Submit a decision; elicited values travel only in this response body. */
-async function answerMcpApproval(decision) { const id=$("mcp-approval-id").value;if(!id)return;const content=Object.fromEntries([...document.querySelectorAll("[data-mcp-elicit-field]")].map(input=>[input.dataset.mcpElicitField,input.value]));await apiPost(`/api/workspaces/${workspaceId}/runs/${sessionId}/mcp-approvals/${id}`,{decision,remember:$("mcp-approval-remember").checked,content});$("mcp-approval-dialog").close();trace("MCP 审批",`${decision==="allow"?"已允许":"已拒绝"} ${id.slice(0,8)}`); }
+async function answerMcpApproval() { throw new Error("MCP approval is not available in the Session console"); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
 function setRunning(running) { runActive=running; updateStopAvailability(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? "调整正在执行的 Agent…" : "给 Agent 一个任务… （/ 开头为指令，/help 查看）"; if(running){ resizeComposer(); setSteerStatus("运行中 — 指令会在安全的轮次边界生效"); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
 let steerStatusTimer = null;
 const steerHintText = "运行中 — 指令会在安全的轮次边界生效";
 function setSteerStatus(text, state="") { const el=$("steer-status"); if(!el) return; const hint=el.closest(".steer-hint"); el.textContent=text; el.className=state ? `steer-status ${state}` : "steer-status"; if(hint) hint.className=`steer-hint ${state || ""}`.trim(); clearTimeout(steerStatusTimer); if(state) steerStatusTimer=setTimeout(()=>{ el.textContent=steerHintText; el.className="steer-status"; if(hint) hint.className="steer-hint"; }, 6000); }
-async function sendSteer(message) { const send=$("send"), input=$("message"); send.disabled=true; setSteerStatus("正在加入队列…","sending"); try { const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/steer`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message})}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`); input.value=""; resizeComposer(); setSteerStatus("指令已加入队列，将在安全的轮次边界应用 ✓","queued"); } catch(error) { setSteerStatus(`发送失败：${error.message}`,"error"); trace("调整指令发送失败", error.message); } finally { send.disabled=false; input.focus(); } }
+async function sendSteer() { setSteerStatus("当前 Session API 不支持运行中调整指令", "error"); }
 async function apiJson(path) { const response=await fetch(path); if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${path})`); return response.json(); }
 async function apiPost(path, body={}) { const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 async function apiPut(path, body={}) { const response=await fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
-async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){workspaceId=null;sessionId=null;localStorage.removeItem("llmfetcherWorkspace");localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); workspaceId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; sessionId=workspaceId; if(!profileWorkspaceId)profileWorkspaceId=workspaceId; select.value=workspaceId; localStorage.llmfetcherWorkspace=workspaceId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===workspaceId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===workspaceId?"active":""}" data-workspace-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
 function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
 async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
@@ -210,7 +215,7 @@ async function saveSelectedConnector() { if(!connectorId){openConnectorDialog();
 function openConnectorDialog() { const dialog=$("new-connector-dialog"); const input=$("new-connector-name"); input.value=""; dialog.showModal(); input.focus(); }
 function openSettings(section="connection") { const dialog=$("settings-dialog"); showSettingsSection(section); if(!dialog.open) dialog.showModal(); restoreSettings().then(()=>loadConnectors(connectorId)).catch(error=>trace("加载设置失败",error.message)); }
 async function openAgentProfile(targetSessionId) { profileWorkspaceId=targetSessionId; $("profile-scope").value="agent"; await restoreSettings(); await loadConnectors(connectorId); openSettings("agent"); }
-function showSettingsSection(section) { document.querySelectorAll("[data-settings-panel]").forEach(panel=>panel.classList.toggle("active",panel.dataset.settingsPanel===section)); document.querySelectorAll("[data-settings-section]").forEach(button=>{const active=button.dataset.settingsSection===section; button.classList.toggle("active",active); button.setAttribute("aria-selected",String(active));}); if(section==="plugins") loadPluginStatuses().catch(error=>setPluginFeedback(`加载插件状态失败：${error.message}`,"error")); if(section==="mcp") loadMcpConsole().catch(error=>setMcpFeedback(`加载失败：${error.message}`,"error")); }
+function showSettingsSection(section) { document.querySelectorAll("[data-settings-panel]").forEach(panel=>panel.classList.toggle("active",panel.dataset.settingsPanel===section)); document.querySelectorAll("[data-settings-section]").forEach(button=>{const active=button.dataset.settingsSection===section; button.classList.toggle("active",active); button.setAttribute("aria-selected",String(active));}); if(!legacyIntegrationApisAvailable && (section==="plugins" || section==="mcp")){ const panel=document.querySelector(`[data-settings-panel="${section}"]`); panel?.querySelectorAll("button,input,select,textarea").forEach(control=>{control.disabled=true;}); if(section==="plugins") setPluginFeedback("插件 API 尚未接入当前 Session 后端。","error"); else setMcpFeedback("MCP API 尚未接入当前 Session 后端。","error"); return; } if(section==="plugins") loadPluginStatuses().catch(error=>setPluginFeedback(`加载插件状态失败：${error.message}`,"error")); if(section==="mcp") loadMcpConsole().catch(error=>setMcpFeedback(`加载失败：${error.message}`,"error")); }
 function setPluginFeedback(text="", state="") { const el=$("plugin-settings-feedback"); if(!el)return; el.textContent=text; el.className=state ? `plugin-settings-feedback ${state}` : "plugin-settings-feedback"; }
 function pluginStateLabel(state) { return ({active:"已加载", discovered:"已发现", blocked:"已阻塞", error:"错误", inactive:"未加载"})[state] || state || "未知"; }
 function pluginSettingsRegistration(name) { return window.Angelus?.getRegisteredSettings?.().find(item=>item?.plugin===name) || null; }
@@ -242,7 +247,7 @@ async function saveMcpBinding(serverId) { const roles=[];if($("mcp-role-coordina
 async function saveMcpServer(event) { event.preventDefault();const id=$("mcp-server-id").value;const payload={name:value("mcp-name"),transport:value("mcp-transport"),command:value("mcp-command"),args:$("mcp-args").value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),cwd:value("mcp-cwd"),url:value("mcp-url"),headers:mcpKeyValues("mcp-headers"),env:mcpKeyValues("mcp-env"),auth_type:value("mcp-auth-type"),bearer_token:$("mcp-bearer").value,oauth_authorize_url:value("mcp-oauth-authorize-url"),oauth_token_url:value("mcp-oauth-token-url"),oauth_client_id:value("mcp-oauth-client-id"),oauth_client_secret:$("mcp-oauth-client-secret").value,oauth_scopes:value("mcp-oauth-scopes")};const response=await fetch(id?`/api/mcp/servers/${id}`:"/api/mcp/servers",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const server=await response.json().catch(()=>({}));if(!response.ok)throw new Error(server.detail||response.statusText);await saveMcpBinding(server.id);await loadMcpConsole();selectMcpServer(server.id);setMcpFeedback(`${server.name} 已安全保存。`,"success"); }
 function sessionApi(path, selectedSession=sessionId) { if(!selectedSession) throw new Error("尚未选择会话"); return `/api/sessions/${encodeURIComponent(selectedSession)}${path}`; }
 function planUrl() { return `${sessionApi("/plan")}?agent=${encodeURIComponent(selectedPlanAgent)}`; }
-function messagesUrl(cursor=null, selectedSession=sessionId, agent=selectedAgent) { const params=new URLSearchParams({agent,limit:"200"}); if(cursor!=null) params.set("cursor",String(cursor)); return `${sessionApi("/messages",selectedSession)}?${params.toString()}`; }
+function messagesUrl(before=null, selectedSession=sessionId, agent=selectedAgent) { const params=new URLSearchParams({agent,limit:"200"}); if(before!=null) params.set("before",String(before)); return `${sessionApi("/messages",selectedSession)}?${params.toString()}`; }
 function graphUrl() { return sessionApi("/graph"); }
 function agentIcon(agent) { if(agent.id === "all") return ["purple", "✦"]; if(agent.id === "coordinator") return ["purple", "♛"]; if(agent.dynamic) return ["amber", "↳"]; return ["blue", "&lt;/&gt;"]; }
 function acknowledgementKey() { return `llmfetcherAcknowledgedAgents:${sessionId}`; }
@@ -479,7 +484,7 @@ async function graphRemoveAgent() {
   if(!name) return;
   if(name==="coordinator"){ graphEditFeedback("协调者节点不能删除","error"); return; }
   if(!confirm(`删除 Agent「${name}」及其所有连接？`)) return;
-  const response=await fetch(`${graphEditUrl()}/agents?name=${encodeURIComponent(name)}`,{method:"DELETE"});
+  const response=await fetch(`${graphEditUrl()}/agents/${encodeURIComponent(name)}`,{method:"DELETE"});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
   graphEditFeedback(payload.status||`Agent ${name} 已删除`,"success");
@@ -490,7 +495,7 @@ async function graphDisconnect() {
   if(!source) return;
   const target=(prompt("连接终点（target）：")||"").trim();
   if(!target) return;
-  const response=await fetch(`${graphEditUrl()}/connections?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`,{method:"DELETE"});
+  const response=await fetch(`${graphEditUrl()}/connections`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({source,target})});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
   graphEditFeedback(payload.status||`已断开 ${source} → ${target}`,"success");
@@ -587,18 +592,18 @@ async function loadOlderMessages() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if(source && sourceWorkspaceId !== selected){source.close();source=null;sourceWorkspaceId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; await loadWorkspaces(selected); await loadHistory(); setStatus("准备就绪"); }
+async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if(source && sourceSessionId !== selected){source.close();source=null;sourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0; await loadWorkspaces(selected); await loadHistory(); setStatus("准备就绪"); }
 
 async function start(message) {
   let runConfig;
   try { runConfig=config(); } catch(error) { setStatus("MCP 配置无效", "error"); trace("MCP 配置无效", error.message); alert(error.message); return; }
   // Show the submitted prompt immediately in every filter; the durable reload
   // after a result will replace this optimistic turn with canonical history.
-  setRunning(true); runRetryCount = 0; setStatus("正在执行", "running"); appendMessage("user", message);
+  sseCursor = 0; setRunning(true); runRetryCount = 0; setStatus("正在执行", "running"); appendMessage("user", message);
   try {
-    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, workspace_id:workspaceId, message, config:runConfig})});
+    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, message})});
     const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
-    setWorkspaceIndicator(workspaceId,"running"); connectRunEvents(payload.run_id);
+    setWorkspaceIndicator(sessionId,"running"); connectRunEvents();
   } catch(error) { const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("请先设置连接器", message); setStatus("请求失败", "error"); setRunning(false); }
 }
 let compactStatusTimer=null;
@@ -661,11 +666,11 @@ function handleEvent(event) {
   if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
   if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundContentHtml=String(roundData.assistant_content_html||""); const roundReasoningHtml=String(roundData.reasoning_content_html||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundContentHtml, roundReasoningHtml, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
   if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
-  if(event.event === "error") { setWorkspaceIndicator(workspaceId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); return; }
-  if(event.event === "stopped") { setWorkspaceIndicator(workspaceId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }
-  if(event.event === "done") { setWorkspaceIndicator(workspaceId,"done"); finish(); scheduleGraphPlanReload(); }
+  if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); return; }
+  if(event.event === "stopped") { setWorkspaceIndicator(sessionId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }
+  if(event.event === "done") { setWorkspaceIndicator(sessionId,"done"); finish(); scheduleGraphPlanReload(); }
 }
-function finish() { clearCompactStatus(); source?.close(); source=null; sourceWorkspaceId=""; setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
+function finish() { clearCompactStatus(); source?.close(); source=null; sourceSessionId=""; setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
 /* ---- Slash commands -------------------------------------------------- */
 function showSlashHelp() {
   chatView.removeWelcome();
@@ -691,10 +696,13 @@ function showSlashHelp() {
 function sessionByName(name) { return availableSessions.find(item=>item.name===name || item.id===name); }
 async function switchSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } await switchSession(target.id); trace("已切换会话", target.name); }
 async function deleteSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } if(!confirm(`删除会话「${target.name}」？此操作不可撤销。`)) return; const response=await fetch(`/api/sessions/${encodeURIComponent(target.id)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:target.id})}); if(!response.ok){ const payload=await response.json().catch(()=>({})); throw new Error(payload.detail||"删除失败"); } await loadWorkspaces(); if(hasSelectedSession()) await loadHistory(); setStatus(`已删除会话「${target.name}」`); trace("已删除会话", target.name); }
-async function runStop() { const target=selectedAgent; const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/stop`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:target})}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||response.statusText);} $("stop").disabled=true; setStatus(target==="all"?"等待安全停止":`等待停止 ${target}`, "running"); }
-async function runForceStop() { const target=selectedAgent; const label=target==="all"?"整个运行":` Agent “${target}”`; if(!confirm(`强行停止${label}？这会中断其当前模型请求，并立即终止其 Shell 与 MCP 调用。`)) return; $("force-stop").disabled=true; $("stop").disabled=true; setStatus(target==="all"?"正在强行停止":`正在强行停止 ${target}`, "running"); const response=await fetch(`/api/workspaces/${workspaceId}/runs/${sessionId}/force-stop`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:target})}); if(!response.ok){const payload=await response.json().catch(()=>({}));const message=payload.detail||`${response.status} ${response.statusText}`;trace("强行停止失败",message);appendRunErrorBlock("强行停止失败",message);setStatus("停止失败","error"); updateStopAvailability(); return;} trace("强行停止",`已请求中断${label}的模型与工具调用。`); }
+async function runStop() { const response=await fetch(`/api/runs/${encodeURIComponent(sessionId)}/stop`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason:"user_requested"})}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||response.statusText);} $("stop").disabled=true; setStatus("等待安全停止", "running"); }
+async function runForceStop() { if(!confirm("强行停止整个运行？")) return; $("force-stop").disabled=true; $("stop").disabled=true; const response=await fetch(`/api/runs/${encodeURIComponent(sessionId)}/force-stop`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason:"user_requested"})}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||response.statusText);} }
 let compacting=false;
 async function runCompact(agent="coordinator") {
+  setStatus("手动压缩 API 尚未接入当前 Session 后端", "error");
+  trace("上下文压缩不可用", `Agent ${agent} 的手动压缩端点尚未挂载。`);
+  return;
   if(compacting){ setStatus("压缩已在进行中…", "running"); return; }
   if($("composer").hidden){ setStatus("运行结束后才能压缩上下文", "error"); return; }
   compacting=true; $("message").disabled=true;
@@ -741,8 +749,8 @@ function dispatchSlashCommand(parsed) {
 
 /** Resize the composer to its content, restoring the compact size when empty. */
 function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,170)}px`; }
-function connectRunEvents(runId, after=durableEventCount) { source?.close(); const resume=durableEventOffset > 0 ? `cursor=${durableEventOffset}` : `after=${after}`; const eventSource=new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events?${resume}`); source=eventSource; sourceWorkspaceId=workspaceId; eventSource.onmessage=(event)=>{ if(workspaceId === sourceWorkspaceId){ const offset=Number(event.lastEventId); if(Number.isSafeInteger(offset) && offset >= 0) durableEventOffset=offset; handleEvent(JSON.parse(event.data)); } }; eventSource.onerror=()=>{ if(eventSource.readyState===EventSource.CLOSED && source===eventSource) finish(); else if(eventSource.readyState===EventSource.CONNECTING && source===eventSource) setStatus("连接中断，正在重连…", "running"); }; }
-async function restoreRunState() { if(!hasSelectedSession() || !workspaceId) return; try { const state=await apiJson(`/api/workspaces/${workspaceId}/runs/${sessionId}/status`); if(state.active && state.run_id){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(state.run_id, durableEventCount); return; } if(state.status === "error" || state.status === "interrupted"){ const title=state.status === "interrupted" ? "执行已中断" : "上次运行失败"; setStatus(title,"error"); appendRunErrorBlock(title,state.error); trace(title,state.error); return; } if(state.status === "completed") setStatus("已完成"); else if(state.status === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
+function connectRunEvents() { source?.close(); const resume=sseCursor > 0 ? `?cursor=${sseCursor}` : ""; const eventSource=new EventSource(`/api/runs/${encodeURIComponent(sessionId)}/events${resume}`); source=eventSource; sourceSessionId=sessionId; eventSource.onmessage=(event)=>{ if(sessionId === sourceSessionId){ const cursor=Number(event.lastEventId); if(Number.isSafeInteger(cursor) && cursor >= 0) sseCursor=cursor; handleEvent(JSON.parse(event.data)); } }; eventSource.onerror=()=>{ if(source!==eventSource) return; if(eventSource.readyState===EventSource.CLOSED){ finish(); return; } if(eventSource.readyState!==EventSource.CONNECTING) return; if(sseStatusCheckPending) return; sseStatusCheckPending=true; apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`).then(state=>{ if(source!==eventSource) return; if(["running","stopping","force_stopping"].includes(state.state)) setStatus("连接中断，正在重连…", "running"); else finish(); }).catch(()=>{ if(source===eventSource) setStatus("连接中断，正在重连…", "running"); }).finally(()=>{sseStatusCheckPending=false;}); }; }
+async function restoreRunState() { if(!hasSelectedSession()) return; try { const state=await apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`); if(["running","stopping","force_stopping"].includes(state.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(); return; } if(["failed","interrupted"].includes(state.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",state.error||""); } else if(state.state === "completed") setStatus("已完成"); else if(state.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
 $("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; if(runActive){ sendSteer(message); return; } $("message").value=""; resizeComposer(); const parsed=parseSlashCommand(message); if(parsed){ dispatchSlashCommand(parsed); return; } start(message);});
 $("message").addEventListener("keydown", (event)=>{
   // Plain Enter submits; Shift/Alt+Enter insert a newline in the textarea.
@@ -757,8 +765,6 @@ $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace(
 $("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
 document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
-async function changeWorkspaceDirectory(targetSessionId) { try{const projectPath=await pickWorkspaceDirectory();if(!projectPath)return;const response=await fetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/project-path`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_path:projectPath})});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.detail||"无法更改项目目录");await loadWorkspaces(sessionId);trace("已更改项目目录",payload.project_path);}catch(error){trace("更改项目目录失败",error.message);alert(`无法更改项目目录：${error.message}`);} }
-async function openWorkspaceFolder(targetSessionId) { try{const response=await fetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/open-folder`,{method:"POST"});const payload=await response.json();if(!response.ok)throw new Error(payload.detail||"无法打开工作空间目录");trace("已打开工作空间目录",payload.path||targetSessionId);}catch(error){trace("打开工作空间目录失败",error.message);alert(`无法打开工作空间目录：${error.message}`);} }
 /** Ask the loopback backend to show the host operating system's folder picker. */
 async function pickWorkspaceDirectory() { const payload=await apiPost("/api/workspace-directory/pick"); return payload.cancelled ? null : String(payload.path||""); }
 async function createAndSwitchSession(name, projectPath=null) {
@@ -811,7 +817,7 @@ $("connector").addEventListener("change", event=>{connectorId=event.target.value
 // is loaded. Optional profile controls must not prevent every later event
 // binding in that mixed-version window.
 $("profile-scope")?.addEventListener("change",()=>restoreSettings().then(()=>loadConnectors(connectorId)).catch(error=>trace("加载运行档案失败",error.message)));
-$("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profile-scope")?.value==="global")return;try{const target=profileWorkspaceId||workspaceId;const response=await fetch(`/api/sessions/${encodeURIComponent(target)}/run-profile`,{method:"DELETE"});const profile=await response.json();if(!response.ok)throw new Error(profile.detail||response.statusText);applyProfile(profile);await loadConnectors(connectorId);}catch(error){trace("恢复默认档案失败",error.message);}});
+$("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profile-scope")?.value==="global")return;try{const target=profileWorkspaceId||sessionId;const response=await fetch(`/api/sessions/${encodeURIComponent(target)}/run-profile`,{method:"DELETE"});const profile=await response.json();if(!response.ok)throw new Error(profile.detail||response.statusText);applyProfile(profile);await loadConnectors(connectorId);}catch(error){trace("恢复默认档案失败",error.message);}});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
@@ -859,6 +865,7 @@ async function initializeConsole() {
   // session identity. Plugins, connectors, profiles, graph inspection, and
   // transcript projections are not mounted until their new services exist.
   await loadProviders();
+  await loadToolRegistry();
   await loadWorkspaces();
   if(hasSelectedSession()) await loadHistory();
   applyProviderPreset();
