@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..core import AngelusCore
+from ..modules.console_module import ConsoleDomainError
 
 
 router = APIRouter()
@@ -40,15 +41,16 @@ def _core(request: Request) -> AngelusCore:
 @router.get("/api/sessions")
 def list_sessions(request: Request) -> dict[str, list[dict[str, Any]]]:
     """List durable workspace identities, not process-local execution state."""
+    core = _core(request)
     return {
         "sessions": [
             {
                 "id": item.session_id,
                 "name": item.name,
                 "project_path": str(item.project_path) if item.project_path is not None else None,
-                "state": _core(request).execution_service.status(item.session_id).state,
+                "state": core.execution_service.status(item.session_id).state if core.sessions.exists(item.session_id) else "unknown",
             }
-            for item in _core(request).session_service.list()
+            for item in core.session_service.list()
         ]
     }
 
@@ -92,17 +94,34 @@ def get_session_messages(
     request: Request,
     before: int | None = Query(default=None, ge=0),
     limit: int = Query(default=200, ge=1, le=200),
+    agent: str | None = Query(default=None, max_length=64),
 ) -> dict[str, Any]:
-    """Return the selected Session's persisted transcript page.
+    """Return one Agent's durable context as a chronological chat page.
 
-    ``agent`` remains an accepted client query parameter for compatibility;
-    legacy transcripts predate per-Agent attribution and are returned as the
-    aggregate conversation until the new conversation writer is introduced.
+    Args:
+        session_id: Stable Session identity whose transcript is requested.
+        request: Incoming request carrying the application composition root.
+        before: Exclusive older-than context timeline cursor.
+        limit: Maximum number of context entries to return.
+        agent: Optional Agent identity; ``all`` resolves to coordinator.
+
+    Returns:
+        Persisted context entries formatted for the chat view and a cursor for
+        the next older page.
+
+    Raises:
+        HTTPException: If the Session or Agent does not exist, or its durable
+            context cannot be read.
     """
     core = _core(request)
     if not core.sessions.exists(session_id):
         raise HTTPException(status_code=404, detail="Unknown session")
-    return core.conversations.page(session_id, before=before, limit=limit)
+    try:
+        return core.console_service.messages(session_id, agent, before, limit)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
+    except ConsoleDomainError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 __all__ = ["router"]

@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 
 from ..workspace_module import Workspace
 from ..execution_module import ExecutionState
-from ..session_module import create_agent
-from llmfetcher import LLMBackendConfig
+from ..session_module import create_agent, validate_session_id
+from ..tool_module import ToolPolicy
+from llmfetcher import Agent, LLMBackendConfig
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -35,8 +36,7 @@ class SessionService:
         Agent configuration is deliberately a separate use case: a workspace
         may exist before the user selects backends, tools, or a swarm graph.
         """
-        if not session_id or session_id.strip() != session_id:
-            raise ValueError("session_id must be non-empty and must not have surrounding whitespace")
+        validate_session_id(session_id)
         if not name.strip():
             raise ValueError("name must not be blank")
         resolved_project = project_path.expanduser().resolve()
@@ -80,6 +80,7 @@ class SessionService:
         """
         session = self._core.sessions.get(session_id)
         profile = self._core.run_profiles.effective(session_id)
+        permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
         connector_id = profile.get("connector_id")
         if not isinstance(connector_id, str) or not connector_id:
             raise RuntimeError("Session coordinator requires a saved connector")
@@ -91,7 +92,7 @@ class SessionService:
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
             profile["provider"], profile["model"], profile["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
-            profile["max_retries"], profile["max_context_threshold"], profile["max_swarm_agents"],
+            profile["max_retries"], profile["max_context_threshold"], profile["max_swarm_agents"], permissions.fingerprint(),
         )
         if session.coordinator_matches(fingerprint):
             return
@@ -105,15 +106,52 @@ class SessionService:
                 api_url=profile["api_url"] or None,
                 max_retries=profile["max_retries"],
             )],
-            [],
+            self._core.tool_registry.materialize(session, permissions, "coordinator"),
             system_prompt=profile["system_prompt"],
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
             context_path=workspace.state_path / "agents" / session.coordinator_name / "context.json",
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
+            enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
         )
         session.set_coordinator(coordinator, fingerprint)
+        # Unit-test and alternate-host factories may supply a sentinel role;
+        # only a concrete llmfetcher Agent is valid for graph registration.
+        if isinstance(coordinator, Agent):
+            self.rebuild_swarm(session_id)
+
+    def rebuild_swarm(self, session_id: str) -> None:
+        """Materialize the safe console blueprint into the Session's one swarm.
+
+        Workers inherit the effective profile; their persisted blueprint has
+        only a name and instructions, never a connector secret.
+        """
+        from llmfetcher import AgentSwarm
+        session = self._core.sessions.get(session_id)
+        if session.coordinator is None or session.console is None:
+            return
+        profile = self._core.run_profiles.effective(session_id)
+        permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
+        api_key = self._core.connectors.api_key(profile["connector_id"])
+        workspace = self._core.workspaces.get(session_id)
+        swarm = AgentSwarm(max_concurrency_agents=profile["max_swarm_agents"])
+        swarm.add_agent(session.coordinator_name, session.coordinator)
+        blueprint = session.console.blueprint()
+        workers = []
+        for name, worker in blueprint.workers.items():
+            agent = create_agent(
+                [LLMBackendConfig(name=name, provider=profile["provider"], model=profile["model"], api_key=api_key, api_url=profile["api_url"] or None, max_retries=profile["max_retries"])], self._core.tool_registry.materialize(session, permissions, "worker"),
+                system_prompt=worker.system_prompt or profile["system_prompt"], max_concurrency=profile["max_swarm_agents"], max_context_threshold=profile["max_context_threshold"],
+                context_path=workspace.state_path / "agents" / name / "context.json", default_max_rounds=profile["max_rounds"], default_max_tokens=profile["max_tokens"], enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
+            )
+            swarm.add_agent(name, agent); workers.append(agent)
+        for connection in blueprint.connections:
+            swarm.add_connection(connection.source, connection.target)
+        for agent, mode in blueprint.mappers.items(): swarm.dynamic_set_mapper(agent, mode)
+        for agent, targets in blueprint.routers.items(): swarm.dynamic_set_router(agent, targets)
+        session.agents = [session.coordinator, *workers]
+        session.swarm = swarm
 
     def delete(self, session_id: str, *, confirmation: str, wait_timeout: float = 5.0) -> Workspace:
         """Force-stop, durably remove, and unregister one confirmed Session.

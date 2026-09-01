@@ -9,6 +9,7 @@ from typing import Optional, List
 from pathlib import Path
 
 from llmfetcher import Agent, LLMBackendConfig, LLMFetcher, Tool
+from llmfetcher.graph_memory import GraphContextHandler
 from llmfetcher.context_handlers import ContextHandler
 
 def create_agent(
@@ -54,8 +55,21 @@ def create_agent(
         ValueError: If either default execution budget is negative or the
             token budget is not positive.
 
+    Side Effects:
+        Creates the parent directory of ``context_path`` when persistence is
+        enabled, before the Agent can write its first checkpoint.
+
     """
     fetcher = LLMFetcher(configs)
+    # GraphContextHandler is the standard persistent context implementation.
+    # Passing an explicit handler remains supported for specialised hosts.
+    if context_handler is None:
+        context_handler = GraphContextHandler(
+            compacting_fetcher=fetcher,
+            max_context_threshold=max_context_threshold,
+        )
+    if context_path:
+        Path(context_path).parent.mkdir(parents=True, exist_ok=True)
     agent = Agent(
         fetcher,
         system_prompt=system_prompt,
@@ -72,7 +86,4 @@ def create_agent(
     # established later by SessionHandler.
     agent.add_tools(tools=tools)
     return agent
-
-
-
 

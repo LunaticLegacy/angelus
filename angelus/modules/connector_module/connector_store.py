@@ -145,10 +145,17 @@ class ConnectorStore:
 
     def _validate(self, values: dict[str, Any]) -> tuple[dict[str, str], str]:
         """Return normalized public fields plus write-only API key separately."""
+        if not isinstance(values, dict):
+            raise ValueError("connector fields must be an object")
         allowed = {"name", "provider", "model", "api_url", "api_key"}
         if set(values) - allowed:
             raise ValueError("unknown connector fields")
-        normalized = {key: str(values.get(key, "")).strip() for key in allowed}
+        normalized: dict[str, str] = {}
+        for key in allowed:
+            value = values.get(key, "")
+            if not isinstance(value, str):
+                raise ValueError(f"connector field {key} must be a string")
+            normalized[key] = value.strip()
         if not normalized["name"]:
             raise ValueError("connector name must not be blank")
         if not normalized["provider"]:

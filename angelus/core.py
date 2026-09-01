@@ -11,8 +11,11 @@ from .modules.execution_module import SigintSupervisor
 from .modules.workspace_module import WorkspaceCatalog
 from .modules.conversation_module import ConversationStore
 from .modules.application_module import ExecutionService, SessionService, SettingsService
+from .modules.console_module import ConsoleProjectionService
+from .modules.console_module.tool_provider import console_tool_registration
 from .modules.connector_module import ConnectorStore, ProviderCatalog
 from .modules.settings_module import RunProfileStore
+from .modules.tool_module import ToolRegistry, runtime_tool_registration
 
 
 class AngelusCore:
@@ -64,6 +67,11 @@ class AngelusCore:
         self.connectors = ConnectorStore(self.state_root)
         # Global defaults plus Session-local future-run profile overrides.
         self.run_profiles = RunProfileStore(self.state_root)
+        # Sole process-wide directory of capability definitions and runtime
+        # materializers. Domain modules register providers once at startup.
+        self.tool_registry = ToolRegistry()
+        self.tool_registry.register(console_tool_registration())
+        self.tool_registry.register(runtime_tool_registration(self))
         # Legacy transcript reader/remover during the conversation migration.
         self.conversations = ConversationStore(Path.cwd() / "workspace")
         for workspace in self.workspaces.list():
@@ -77,6 +85,7 @@ class AngelusCore:
         self.session_service = SessionService(self)
         self.execution_service = ExecutionService(self)
         self.settings_service = SettingsService(self)
+        self.console_service = ConsoleProjectionService(self)
         # SIGINT coordinator obtains live attempts from Session ownership.
         self.sigint = SigintSupervisor(self.sessions.live_attempts)
         # Event used to stop the helper thread that drains signal requests.

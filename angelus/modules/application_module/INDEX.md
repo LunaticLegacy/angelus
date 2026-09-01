@@ -15,8 +15,10 @@ or terminal presentation logic.
 |---|---|---|
 | `SessionService.create` | Register Session/execution boundary then durable Workspace, with rollback on catalog failure. |
 | `SessionService.ensure_coordinator` | Build/update coordinator from effective Profile and write-only connector secret. |
+| `SessionService.rebuild_swarm` | Materialize the typed, secret-free console graph blueprint using the effective Session profile. |
+| `ToolRegistry.materialize` | Attach only profile-authorized registered Tools to the coordinator and every restored worker. |
 | `SessionService.delete` | Force-stop, remove Angelus state/legacy archive/catalog/aggregate in safe order. |
-| `ExecutionService.start` | Confirm coordinator then schedule one Session attempt. |
+| `ExecutionService.start` | Confirm coordinator, subscribe one attempt-scoped journal hook, run the complete AgentSwarm, and turn a failed coordinator marker into a failed attempt. Hook cleanup is compatibility-safe and cannot overwrite the run result. |
 | `ExecutionService.stop` | Apply graceful/forced strategy to same Session controller. |
 | `SettingsService.*profile` | Read/replace/clear future-run global or Session profile. |
 | `SettingsService.*connector` | CRUD connector and reject deletion while effective profiles reference it. |
@@ -29,3 +31,44 @@ or terminal presentation logic.
 | `execution_service.py` | `ExecutionService` | Session execution lifecycle facade. |
 | `settings_service.py` | `SettingsService` | Cross-store settings transaction boundary. |
 | `execution_service.py` | `UnknownSession` | Uniform missing-Session use-case error. |
+
+<!-- BEGIN GENERATED SYMBOL MAP -->
+
+## Function Map
+
+| Source | Function / method | Input types | Output type | Semantics |
+|---|---|---|---|---|
+| [execution_service.py](execution_service.py#L31) | `_remove_journal_hook` | `swarm: object, hook: object` | `None` | Best-effort remove an attempt-local hook across supported swarm builds. |
+| [execution_service.py](execution_service.py#L81) | `ExecutionService.start` | `session_id: str, message: str` | `ExecutionSnapshot` | Start the temporary coordinator adapter under a fresh attempt. |
+| [execution_service.py](execution_service.py#L150) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
+| [execution_service.py](execution_service.py#L163) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
+| [execution_service.py](execution_service.py#L175) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
+| [execution_service.py](execution_service.py#L189) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
+| [session_service.py](session_service.py#L33) | `SessionService.create` | `session_id: str, name: str, project_path: Path` | `Workspace` | Register an empty Session and its durable workspace metadata. |
+| [session_service.py](session_service.py#L59) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
+| [session_service.py](session_service.py#L67) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |
+| [session_service.py](session_service.py#L124) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
+| [session_service.py](session_service.py#L156) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
+| [settings_service.py](settings_service.py#L32) | `SettingsService.global_profile` | `None` | `dict[str, Any]` | Read future-attempt defaults shared by all Sessions. |
+| [settings_service.py](settings_service.py#L40) | `SettingsService.replace_global_profile` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate connector ownership then atomically replace global defaults. |
+| [settings_service.py](settings_service.py#L49) | `SettingsService.session_profile` | `session_id: str` | `dict[str, Any]` | Read effective future-attempt settings for an existing Session. |
+| [settings_service.py](settings_service.py#L54) | `SettingsService.replace_session_profile` | `session_id: str, values: Mapping[str, Any]` | `dict[str, Any]` | Store a Session override used only by future execution attempts. |
+| [settings_service.py](settings_service.py#L64) | `SettingsService.clear_session_profile` | `session_id: str` | `dict[str, Any]` | Delete a Session override and restore global-default inheritance. |
+| [settings_service.py](settings_service.py#L69) | `SettingsService.list_connectors` | `None` | `tuple[dict[str, Any], ...]` | List safe connector projections; secrets never cross this boundary. |
+| [settings_service.py](settings_service.py#L73) | `SettingsService.create_connector` | `values: dict[str, Any]` | `dict[str, Any]` | Create one global connector with its optional API key stored separately. |
+| [settings_service.py](settings_service.py#L77) | `SettingsService.replace_connector` | `connector_id: str, values: dict[str, Any]` | `dict[str, Any]` | Replace metadata without returning or erasing an omitted API key. |
+| [settings_service.py](settings_service.py#L81) | `SettingsService.delete_connector` | `connector_id: str` | `None` | Delete an unreferenced connector or reject with every retaining scope. |
+| [settings_service.py](settings_service.py#L94) | `SettingsService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before a Session-scoped settings operation. |
+| [settings_service.py](settings_service.py#L99) | `SettingsService._require_connector` | `values: Mapping[str, Any]` | `None` | Reject a non-empty profile connector ID absent from the global store. |
+
+## Class Map
+
+| Source | Class | Constructor / field input types | Base(s) | Semantics |
+|---|---|---|---|---|
+| [execution_service.py](execution_service.py#L16) | `UnknownSession` | `None` | `LookupError` | Raised when a lifecycle request does not name a registered session. |
+| [execution_service.py](execution_service.py#L21) | `_JournalBinding` | `attempt: ExecutionAttempt[object] \| None` | `object` | Attempt-scoped target used by a swarm hook before worker scheduling. |
+| [execution_service.py](execution_service.py#L64) | `ExecutionService` | `core: 'AngelusCore'` | `object` | Perform Session execution lifecycle use cases without transport code. |
+| [session_service.py](session_service.py#L20) | `SessionService` | `core: 'AngelusCore'` | `object` | Create Sessions and materialize their required coordinator when runnable. |
+| [settings_service.py](settings_service.py#L14) | `SettingsService` | `core: 'AngelusCore'` | `object` | Apply settings transactions without letting HTTP handlers own policy. |
+
+<!-- END GENERATED SYMBOL MAP -->

@@ -13,21 +13,21 @@ by storing mutable runtime state in an API adapter.
 | Workspace | [`workspace_module/INDEX.md`](workspace_module/INDEX.md) | Durable Session metadata catalog and legacy import marker. |
 | Conversation | [`conversation_module/INDEX.md`](conversation_module/INDEX.md) | Legacy transcript read/delete bridge during migration. |
 | Swarm adapter | [`swarm_module/INDEX.md`](swarm_module/INDEX.md) | Session-local execution boundary; no global swarm registry. |
+| Session console | [`console_module/INDEX.md`](console_module/INDEX.md) | Persisted task-plan/topology blueprints and Session projections. |
+| Unified tools | [`tool_module/INDEX.md`](tool_module/INDEX.md) | Canonical Tool identities, authorization policy and future runtime registry. |
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
 ## Function Map
 
-| Source | Function / method | Semantics |
-|---|---|---|
-| `__init__.py` | module exports | Expose only Session and execution primitives required by package consumers. |
+| Source | Function / method | Input types | Output type | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
 
 ## Class Map
 
-| Source | Class | Semantics |
-|---|---|---|
-| `session_module/session_handler.py` | `Session`, `SessionHandler` | Aggregate and process-local registry. |
-| `execution_module/execution_attempt.py` | `ExecutionAttempt` | One controller/journal/checkpoint/worker lifecycle. |
-| `application_module/*` | services | Transport-neutral use cases. |
+| Source | Class | Constructor / field input types | Base(s) | Semantics |
+|---|---|---|---|---|
+| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
 
 <!-- END GENERATED SYMBOL MAP -->

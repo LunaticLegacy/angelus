@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
+from llmfetcher.swarm_module import AgentFailure
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -13,6 +15,50 @@ if TYPE_CHECKING:
 
 class UnknownSession(LookupError):
     """Raised when a lifecycle request does not name a registered session."""
+
+
+@dataclass
+class _JournalBinding:
+    """Attempt-scoped target used by a swarm hook before worker scheduling.
+
+    Attributes:
+        attempt: Durable attempt receiving normalized swarm events.
+    """
+
+    attempt: ExecutionAttempt[object] | None = None
+
+
+def _remove_journal_hook(swarm: object, hook: object) -> None:
+    """Best-effort remove an attempt-local hook across supported swarm builds.
+
+    Args:
+        swarm: Session-owned swarm that received the hook.
+        hook: Exact callback object registered for the current Attempt.
+
+    Returns:
+        None. Cleanup failures are intentionally ignored so they cannot turn a
+        successful model result into an execution failure.
+    """
+    remover = getattr(swarm, "remove_hook", None)
+    if callable(remover):
+        try:
+            remover(hook)
+        except (AttributeError, RuntimeError, ValueError):
+            pass
+        return
+    graph = getattr(swarm, "_graph", None)
+    hooks = getattr(graph, "hooks", None)
+    if not isinstance(hooks, list):
+        return
+    lock = getattr(graph, "_hooks_lock", None)
+    try:
+        if lock is None:
+            hooks.remove(hook)
+        else:
+            with lock:
+                hooks.remove(hook)
+    except (ValueError, RuntimeError):
+        pass
 
 
 class ExecutionService:
@@ -58,8 +104,47 @@ class ExecutionService:
         executor = session.execution
         if executor is None:
             raise RuntimeError("Session has no execution boundary")
-        coordinator = session.agents[0]
-        attempt = executor.start(lambda controller: coordinator.run(message, control=controller))
+        # Hooks are attached inside the attempt operation, before the swarm
+        # scheduler starts, so even a very fast root Agent cannot outrun the
+        # durable trace subscription.
+        binding = _JournalBinding()
+        def journal_hook(event: Any) -> None:
+            attempt = binding.attempt
+            if attempt is None:
+                return
+            data = event.data if isinstance(event.data, dict) else {"event_data": event.data}
+            data = {**data, "agent": event.agent_name, "message": event.message}
+            usage = data.get("usage") or data.get("round_usage") or {}
+            attempt.journal.append(
+                event.event_type or "swarm_event", data, agent=event.agent_name,
+                message=event.message, usage=usage if isinstance(usage, dict) else {},
+                duration_ms=data.get("duration_ms") or data.get("model_duration_ms"),
+            )
+        def install_hook(attempt: Any) -> None:
+            binding.attempt = attempt
+            session.swarm.add_hook(journal_hook)
+        def run_swarm(controller: object) -> object:
+            """Run the current swarm and convert root-agent failures to attempts.
+
+            Args:
+                controller: Attempt cancellation controller forwarded to Agents.
+
+            Returns:
+                The swarm output map when the root coordinator succeeded.
+
+            Raises:
+                RuntimeError: If the coordinator returned an ``AgentFailure``.
+            """
+            try:
+                output = session.swarm.run(message, control=controller)
+                root = output.get(session.coordinator_name) if isinstance(output, dict) else None
+                if isinstance(root, AgentFailure):
+                    raise RuntimeError(f"{root.agent_name} failed: {root.error}")
+                return output
+            finally:
+                _remove_journal_hook(session.swarm, journal_hook)
+
+        attempt = executor.start(run_swarm, before_start=install_hook)
         return attempt.snapshot()
 
     def status(self, session_id: str) -> ExecutionSnapshot:

@@ -32,7 +32,11 @@ class ExecutionJournal:
         # Serializes append/write/fsync and the offset observed after commit.
         self._lock = threading.Lock()
 
-    def append(self, event_type: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    def append(
+        self, event_type: str, data: dict[str, Any] | None = None, *,
+        agent: str = "", message: str = "", usage: dict[str, int] | None = None,
+        duration_ms: float | None = None,
+    ) -> dict[str, Any]:
         """Commit one event before any caller publishes it to observers.
 
         Args:
@@ -47,6 +51,12 @@ class ExecutionJournal:
             "execution_id": self.execution_id,
             "type": event_type,
             "timestamp": time.time(),
+            # Stable console envelope.  Lifecycle callers may leave these
+            # blank; swarm hooks populate them from real ExecutionEvents.
+            "agent": agent,
+            "message": message,
+            "usage": usage or {"input": 0, "output": 0, "total": 0, "cached": 0, "reasoning": 0},
+            "duration_ms": duration_ms,
             "data": data or {},
         }
         encoded = json.dumps(event, ensure_ascii=False, separators=(",", ":"), default=str) + "\n"

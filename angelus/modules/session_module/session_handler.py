@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, List
 import threading
 from collections.abc import Iterable
@@ -10,6 +11,28 @@ from collections.abc import Iterable
 from llmfetcher import Agent, AgentSwarm
 from ..swarm_module.session_executor import SessionExecutor
 from ..execution_module import ExecutionAttempt, ExecutionState
+from ..console_module import ConsoleState
+
+
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+
+
+def validate_session_id(session_id: str) -> str:
+    """Validate and return one filesystem-safe durable Session identity.
+
+    Args:
+        session_id: Proposed Session identifier from an API or catalog record.
+
+    Returns:
+        The unchanged validated Session identifier.
+
+    Raises:
+        ValueError: If the identifier is blank, padded, too long, or unsafe
+            for use as one directory-name component.
+    """
+    if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id):
+        raise ValueError("session_id must use 1-80 letters, numbers, underscores, or hyphens and cannot start with punctuation")
+    return session_id
 
 class Session:
     """One logical session and all state that has Session ownership.
@@ -39,6 +62,9 @@ class Session:
         # owns the current execution attempt, its controller, and its durable
         # attempt directory for this logical session.
         self.execution: SessionExecutor[Any] | None = None
+        # Durable console-only state (plans and safe graph blueprints).  It is
+        # attached when the session receives its durable state root.
+        self.console: ConsoleState | None = None
 
     def add_agent(self, agent: Agent) -> None:
         """Append one fully configured Agent to this session.
@@ -61,6 +87,7 @@ class Session:
         if self.execution is not None:
             raise RuntimeError("Session execution is already configured")
         self.execution = SessionExecutor(session_id, root)
+        self.console = ConsoleState(root)
 
     def set_coordinator(self, agent: Agent, fingerprint: tuple[object, ...]) -> None:
         """Install the required coordinator and retain it as ``agents[0]``.
@@ -120,9 +147,7 @@ class SessionHandler:
         Raises:
             ValueError: If the ID is blank or already registered.
         """
-        normalized = session_id.strip()
-        if not normalized:
-            raise ValueError("session_id must not be blank")
+        normalized = validate_session_id(session_id)
         with self._lock:
             if normalized in self._sessions:
                 raise ValueError(f"Session already exists: {normalized}")

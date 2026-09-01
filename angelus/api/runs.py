@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -47,6 +48,8 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
         snapshot = core.execution_service.start(payload.session_id, payload.message)
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
@@ -101,13 +104,37 @@ def force_stop_run(session_id: str, payload: StopRequest, request: Request) -> d
 
 
 @router.get("/api/runs/{session_id}/events")
-def run_events(session_id: str, request: Request) -> StreamingResponse:
-    """Replay durable attempt events; EventHub live fan-out comes later."""
+def run_events(session_id: str, request: Request, cursor: int = 0) -> StreamingResponse:
+    """Replay and follow unified journal events for one Session attempt.
+
+    Args:
+        session_id: Stable Session identity whose latest attempt is streamed.
+        request: FastAPI request providing the application composition root.
+        cursor: Zero-based event index already delivered to the client.
+
+    Returns:
+        SSE response that replays after ``cursor`` and follows until terminal.
+    """
     def stream() -> Iterator[str]:
         try:
-            events = _core(request).execution_service.events(session_id)
-            for event in events:
-                yield f"id: {event.get('offset', '')}\nevent: {event.get('type', 'message')}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            core = _core(request)
+            next_index = max(0, cursor)
+            while True:
+                page = core.console_service.events(session_id, cursor=next_index, limit=500)
+                events = page["events"]
+                for event in events:
+                    next_index += 1
+                    # Leave the SSE event type as the browser default
+                    # ``message``.  Trace types are payload data and may be
+                    # arbitrary (for example ``agent:round``); named SSE
+                    # events would bypass the client's ``onmessage`` handler.
+                    yield f"id: {next_index}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                snapshot = core.execution_service.status(session_id)
+                if snapshot.state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
+                    return
+                if not events:
+                    yield ": keep-alive\n\n"
+                    time.sleep(0.25)
         except UnknownSession:
             return
         except LookupError:
