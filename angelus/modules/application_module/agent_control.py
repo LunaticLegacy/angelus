@@ -74,7 +74,26 @@ class AgentControlView:
         Returns:
             ``True`` when the Agent must stop at its next safe boundary.
         """
-        return self._owner.global_control.should_stop() or self._local.should_stop()
+        return self.stop_request is not None
+
+    @property
+    def stop_request(self) -> StopRequest | None:
+        """Return the effective global-or-local stop request for this Agent.
+
+        A force request always wins over a graceful request so downstream
+        LLMFetcher code can reliably decide whether to cancel active provider
+        I/O.  This mirrors :class:`ExecutionController`'s control contract.
+
+        Returns:
+            The effective request, or ``None`` while this Agent may continue.
+        """
+        global_request = self._owner.global_control.stop_request
+        local_request = self._local.stop_request
+        if global_request is not None and global_request.mode is StopMode.FORCE:
+            return global_request
+        if local_request is not None and local_request.mode is StopMode.FORCE:
+            return local_request
+        return global_request or local_request
 
     def drain_steers(self) -> list[str]:
         """Return targeted and broadcast steering messages in FIFO order.

@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from angelus.modules.application_module.agent_control import SessionRunControl
-from llmfetcher.execution import ExecutionController
+from llmfetcher.execution import ExecutionController, StopMode
 
 
 class AgentControlTests(unittest.TestCase):
@@ -52,3 +52,18 @@ class AgentControlTests(unittest.TestCase):
         self.assertEqual(cancelled, ["worker"])
         self.assertFalse(coordinator.force_stopped.is_set())
         self.assertTrue(worker.force_stopped.is_set())
+        self.assertIsNotNone(worker.stop_request)
+        self.assertIs(worker.stop_request.mode, StopMode.FORCE)
+        self.assertIsNone(coordinator.stop_request)
+
+    def test_effective_stop_request_prefers_force_across_scopes(self) -> None:
+        """Expose the force request required by LLMFetcher cancellation checks."""
+        global_control = ExecutionController()
+        control = SessionRunControl(global_control)
+        worker = control.for_agent("worker")
+
+        global_control.request_stop(StopMode.GRACEFUL, reason="session completed")
+        control.stop("worker", True, "worker must terminate")
+
+        self.assertIsNotNone(worker.stop_request)
+        self.assertIs(worker.stop_request.mode, StopMode.FORCE)

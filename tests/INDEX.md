@@ -29,6 +29,7 @@ node --check frontend/static/app.js
 | [test_agent_control.py](test_agent_control.py#L13) | `AgentControlTests.test_targeted_steer_and_stop_do_not_affect_other_agents` | `None` | `None` | Deliver commands only to the selected Agent control view. |
 | [test_agent_control.py](test_agent_control.py#L27) | `AgentControlTests.test_all_scope_broadcasts_and_stops_every_agent` | `None` | `None` | Broadcast steering and global stop to every active Agent view. |
 | [test_agent_control.py](test_agent_control.py#L41) | `AgentControlTests.test_targeted_force_stop_cancels_only_target_resources` | `None` | `None` | Invoke only the selected Agent's registered resource canceller. |
+| [test_agent_control.py](test_agent_control.py#L59) | `AgentControlTests.test_effective_stop_request_prefers_force_across_scopes` | `None` | `None` | Expose the force request required by LLMFetcher cancellation checks. |
 | [test_agent_defaults.py](test_agent_defaults.py#L16) | `AgentDefaultTests.test_agents_stream_by_default` | `None` | `None` | The factory opts every Session-created Agent into streaming. |
 | [test_conversation_store.py](test_conversation_store.py#L16) | `ConversationStoreTests.test_pages_legacy_conversation_in_chronological_order` | `None` | `None` | The first page is newest but remains ordered for chat rendering. |
 | [test_execution_attempt.py](test_execution_attempt.py#L19) | `ExecutionAttemptTests.test_force_stop_is_journaled_and_reaches_stopped` | `None` | `None` | A forced request is one event before the cooperative worker exits. |
