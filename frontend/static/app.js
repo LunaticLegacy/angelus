@@ -390,15 +390,24 @@ function selectContextDialogTab(tab) {
 function decodePromptText(value) { let text=String(value??""); for(let depth=0;depth<3;depth+=1){const trimmed=text.trim();if(!(trimmed.startsWith('"')&&trimmed.endsWith('"')))break;try{const parsed=JSON.parse(trimmed);if(typeof parsed!=="string")break;text=parsed;}catch(_error){break;}} return text; }
 /** Render one provider-neutral value without JSON escaping its human-readable strings. */
 function readablePromptValue(value,indent="") { if(value===null)return "null"; if(Array.isArray(value))return value.map((item,index)=>`${indent}- [${index}] ${readablePromptValue(item,`${indent}  `)}`).join("\n"); if(typeof value==="object")return Object.entries(value).map(([key,item])=>`${indent}${key}: ${typeof item==="object"&&item!==null?`\n${readablePromptValue(item,`${indent}  `)}`:decodePromptText(item)}`).join("\n"); return decodePromptText(value); }
-/** Render one selected Agent's metadata table and complete raw prompt in one context panel. */
-function renderContextPrompt(payload) { const metadata=Array.isArray(payload.metadata)?payload.metadata:[], request=payload.request&&typeof payload.request==="object"?payload.request:null, stats=payload.stats&&typeof payload.stats==="object"?payload.stats:null, preview=$("context-prompt-preview"), rows=$("context-metadata-list"); preview.textContent=request?readablePromptValue(request):"此 Agent 尚未捕获完整远程请求。持久化 checkpoint 及其历史 tool_calls 不能替代真实请求，因此不会在这里伪装成远程 payload。请重启到当前版本后发起一次新的模型请求。"; $("context-request-note").textContent=request?"最近一次实际远程请求的完整内容；不保存 API key 或 endpoint。":"未捕获远程请求快照；下方仅保留当前 checkpoint 的元数据，不能代表远程请求。"; $("context-prompt-status").textContent=request?`${Number((request.messages||[]).length)} 条请求消息`:"快照缺失"; $("context-request-stats").innerHTML=stats?`<span>消息 <b>${Number(stats.messages)}</b></span><span>请求 <b>${Number(stats.characters).toLocaleString()}</b> 字符</span><span>工具 <b>${Number(stats.tool_schemas)}</b></span><span>Schema <b>${Number(stats.tool_schema_characters).toLocaleString()}</b> 字符</span><span>估算 <b>≈${Number(stats.estimated_tokens).toLocaleString()}</b> tokens</span>`:""; rows.innerHTML=metadata.length?metadata.map(item=>`<tr><td>${Number(item.index||0)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.type)}</td><td>${Number(item.length||0).toLocaleString()}</td><td>${escapeHtml(item.timeline)}</td></tr>`).join(""):'<tr><td colspan="5">没有可显示的上下文元数据。</td></tr>'; }
-/** Fetch the complete persisted checkpoint once for the dialog's context tab. */
-async function loadContextPrompt(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context`));renderContextPrompt(payload); }
+/** Render one Agent's detached next-request preview and durable metadata. */
+function renderContextPrompt(payload) { const metadata=Array.isArray(payload.metadata)?payload.metadata:[], request=payload.request&&typeof payload.request==="object"?payload.request:null, stats=payload.stats&&typeof payload.stats==="object"?payload.stats:null, preview=$("context-prompt-preview"), rows=$("context-metadata-list"), error=String(payload.preview_error||""); preview.textContent=request?readablePromptValue(request):`无法拼接下一次模型请求：${error||"预览不可用。"}`; $("context-request-note").textContent=request?"当前 Session 配置、持久化上下文和输入框草稿已在临时副本中拼接；未发送、未写入 checkpoint 或 journal。":`上下文记录仍可查看；请求预览失败：${error||"未知错误"}`; $("context-prompt-status").textContent=request?`${Number((request.messages||[]).length)} 条请求消息`:"预览失败"; $("context-request-stats").innerHTML=stats?`<span>消息 <b>${Number(stats.messages)}</b></span><span>请求 <b>${Number(stats.characters).toLocaleString()}</b> 字符</span><span>工具 <b>${Number(stats.tool_schemas)}</b></span><span>Schema <b>${Number(stats.tool_schema_characters).toLocaleString()}</b> 字符</span><span>估算 <b>≈${Math.floor(Number(stats.characters||0)/4).toLocaleString()}</b> tokens</span>`:""; rows.innerHTML=metadata.length?metadata.map(item=>`<tr><td>${Number(item.index||0)}</td><td>${escapeHtml(item.source)}</td><td>${escapeHtml(item.type)}</td><td>${Number(item.length||0).toLocaleString()}</td><td>${escapeHtml(item.timeline)}</td></tr>`).join(""):'<tr><td colspan="5">没有可显示的上下文元数据。</td></tr>'; }
+/**
+ * Load durable context metadata and compose a detached next-request preview.
+ *
+ * Args:
+ *   agentId: Stable Agent identity selected in the context inspector.
+ *
+ * Returns:
+ *   Promise that resolves after the context panel has rendered both results.
+ */
+async function loadContextPrompt(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context`)); try { const preview=await apiPost(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/request-preview`),{message:$("context-preview-message").value}); payload.request=preview.request; payload.stats=preview.stats; } catch(error) { payload.preview_error=error.message; } renderContextPrompt(payload); }
 /** Render one Agent's live compaction-input preview in the dialog's third tab. */
 function renderCompactionInput(payload) {
-  const text=String(payload.text||""), characters=Number(payload.characters||0), threshold=Number(payload.threshold||0), round=Number(payload.round||0), messages=Number(payload.messages||0), omitted=Number(payload.omitted||0), estimatedTokens=Number(payload.estimated_tokens||0), preview=$("context-compaction-preview");
+  const text=String(payload.text||""), characters=Number(payload.characters||0), threshold=Number(payload.threshold||0), round=Number(payload.round||0), messages=Number(payload.messages||0), omitted=Number(payload.omitted||0), estimatedTokens=Number(payload.estimated_tokens||0), preview=$("context-compaction-preview"), requestPreview=$("context-compaction-request-preview"), request=payload.request&&typeof payload.request==="object"?payload.request:null;
   preview.textContent=text || "此 Agent 尚无持久化上下文，压缩器没有可发送的输入。";
-  $("context-compaction-note").textContent=text ? "压缩触发时，这段文本会作为摘要请求发送给压缩模型；实时从当前 checkpoint 重建，不调用模型。" : "压缩触发时，这段文本会作为摘要请求发送给压缩模型；当前 checkpoint 为空。";
+  requestPreview.textContent=request?readablePromptValue(request):"压缩请求尚不可用。";
+  $("context-compaction-note").textContent=text ? "压缩触发时，这段文本会作为摘要请求发送给压缩模型；下方完整请求同样只在内存中拼接，绝不发送。" : "压缩触发时，这段文本会作为摘要请求发送给压缩模型；当前 checkpoint 为空。";
   $("context-compaction-status").textContent=text ? `${messages} 条消息` : "无输入";
   const ratio=threshold>0 ? `${Math.round(Math.min(1,characters/threshold)*100)}%` : "—";
   $("context-compaction-stats").innerHTML=`<span>输入 <b>${characters.toLocaleString()}</b> 字符</span><span>预算 <b>${threshold.toLocaleString()}</b> 字符</span><span>占用 <b>${ratio}</b></span><span>省略 <b>${omitted}</b> 条</span><span>估算 <b>≈${estimatedTokens.toLocaleString()}</b> tokens</span><span>轮次 <b>${round}</b></span>`;
@@ -418,7 +427,7 @@ async function openAgentContextInspector(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   contextDialogAgent=agentId;
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
-  selectContextDialogTab("graph");$("context-prompt-preview").textContent="正在读取当前上下文…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在读取压缩器输入…";$("context-compaction-status").textContent="读取中…";
+  selectContextDialogTab("graph");$("context-preview-message").value=$("message").value;$("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在读取压缩器输入…";$("context-compaction-request-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
   if(!dialog.open) dialog.showModal();
   const [graph,prompt,compaction]=await Promise.allSettled([
     apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)),
@@ -810,6 +819,7 @@ $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失�
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
 $("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
 document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
+$("refresh-context-preview").addEventListener("click",()=>{if(contextDialogAgent)loadContextPrompt(contextDialogAgent).catch(error=>trace("下一次请求预览加载失败",error.message));});
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 /** Ask the loopback backend to show the host operating system's folder picker. */
 async function pickWorkspaceDirectory() { const payload=await apiPost("/api/workspace-directory/pick"); return payload.cancelled ? null : String(payload.path||""); }

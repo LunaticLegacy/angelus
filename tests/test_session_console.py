@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from angelus.core import AngelusCore
 from angelus.modules.console_module import ConsoleDomainError, SessionConsoleTools, ToolPermissionPolicy
@@ -33,6 +34,21 @@ class _Swarm:
     def dynamic_remove_connection(self, source: str, target: str) -> str: return f"Disconnected: {source} -> {target}"
     def dynamic_set_mapper(self, agent: str, mode: str) -> str: return f"Mapper {mode}: {agent}"
     def dynamic_set_router(self, agent: str, targets: list[str]) -> str: return f"Router {agent}: {targets}"
+
+
+class _PreviewHandler:
+    """Minimal provider facade proving request composition performs no I/O."""
+
+    def prepare_tools(self, _tools: object) -> list[object]:
+        """Return an empty schema list for the isolated preview test.
+
+        Args:
+            _tools: Model-visible tools that would be provider-prepared.
+
+        Returns:
+            Empty schema list because this test does not exercise providers.
+        """
+        return []
 
 
 class SessionConsoleTests(unittest.TestCase):
@@ -138,6 +154,42 @@ class SessionConsoleTests(unittest.TestCase):
                 "coordinator",
             )
             self.assertEqual(["shell"], [tool.name for tool in tools])
+
+    def test_detached_previews_restore_context_without_dispatch_or_writes(self) -> None:
+        """Both previews compose from checkpoint state without saving the draft.
+
+        Returns:
+            ``None`` after asserting preview-only draft isolation.
+        """
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            core.session_service.create("demo", "Demo", project)
+            connector = core.settings_service.create_connector({
+                "name": "Test", "provider": "openai", "model": "preview-model",
+                "api_url": "", "api_key": "preview-secret",
+            })
+            profile = core.settings_service.session_profile("demo")["effective"]
+            profile["connector_id"] = connector["id"]
+            core.settings_service.replace_session_profile("demo", profile)
+            with patch(
+                "llmfetcher.llm_fetcher.LLMBackendHandler.create_for_backend",
+                return_value=_PreviewHandler(),
+            ):
+                seeded = core.session_service.preview_agent("demo", "coordinator")
+                seeded.context_handler.add_user_message("persisted evidence")
+                self.assertTrue(seeded.context_handler.save(seeded.context_path))
+                seeded.close()
+                preview = core.console_service.request_preview("demo", "coordinator", "draft only")
+                compact = core.console_service.compaction_input("demo", "coordinator")
+            metadata = core.console_service.context("demo", "coordinator")
+
+            self.assertIn("draft only", str(preview["request"]))
+            self.assertNotIn("preview-secret", str(preview))
+            self.assertIn("persisted evidence", str(compact["text"]))
+            self.assertNotIn("draft only", str(metadata["metadata"]))
 
 
 if __name__ == "__main__":

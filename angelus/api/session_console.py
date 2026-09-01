@@ -52,6 +52,18 @@ class RouterEdit:
     agent: str
     targets: list[str] = field(default_factory=list)
 
+
+@dataclass
+class RequestPreviewInput:
+    """Typed input for one no-send next-request composition.
+
+    Args:
+        message: Hypothetical next user message added only to a detached
+            in-memory context copy.
+    """
+
+    message: str
+
 def _service(request: Request):
     """Resolve the installed console projection service.
 
@@ -165,6 +177,20 @@ def context(session_id: str, agent: str, request: Request, before: int | None = 
     return _call(lambda:_service(request).context(session_id, agent, before, limit))
 @router.get("/agents/{agent}/context-graph")
 def context_graph(session_id: str, agent: str, request: Request): return _call(lambda:_service(request).context_graph(session_id,agent))
+@router.post("/agents/{agent}/context/request-preview")
+def request_preview(session_id: str, agent: str, body: RequestPreviewInput, request: Request):
+    """Compose the next dispatch-ready model request without sending it.
+
+    Args:
+        session_id: Stable Session identity owning the Agent context.
+        agent: Valid coordinator or Worker identity.
+        body: Hypothetical next user message for the detached preview.
+        request: Incoming request carrying the application core.
+
+    Returns:
+        Credential-free model request snapshot and composition statistics.
+    """
+    return _call(lambda:_service(request).request_preview(session_id, agent, body.message))
 @router.get("/agents/{agent}/context/compaction-input")
 def compaction_input(session_id: str, agent: str, request: Request): return _call(lambda:_service(request).compaction_input(session_id,agent))
 

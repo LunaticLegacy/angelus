@@ -48,7 +48,8 @@ or terminal presentation logic.
 | [session_service.py](session_service.py#L59) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
 | [session_service.py](session_service.py#L67) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |
 | [session_service.py](session_service.py#L124) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
-| [session_service.py](session_service.py#L156) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
+| [session_service.py](session_service.py#L156) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
+| [session_service.py](session_service.py#L207) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
 | [settings_service.py](settings_service.py#L32) | `SettingsService.global_profile` | `None` | `dict[str, Any]` | Read future-attempt defaults shared by all Sessions. |
 | [settings_service.py](settings_service.py#L40) | `SettingsService.replace_global_profile` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate connector ownership then atomically replace global defaults. |
 | [settings_service.py](settings_service.py#L49) | `SettingsService.session_profile` | `session_id: str` | `dict[str, Any]` | Read effective future-attempt settings for an existing Session. |

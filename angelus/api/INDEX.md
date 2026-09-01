@@ -94,24 +94,25 @@ replaced solely by `settings.py`.
 | [runs.py](runs.py#L95) | `stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Request graceful stop through the attempt's only controller. |
 | [runs.py](runs.py#L101) | `force_stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Escalate the same request and close every registered live resource. |
 | [runs.py](runs.py#L107) | `run_events` | `session_id: str, request: Request, cursor: int` | `StreamingResponse` | Replay and follow unified journal events for one Session attempt. |
-| [session_console.py](session_console.py#L55) | `_service` | `request: Request` | `Any` | Resolve the installed console projection service. |
-| [session_console.py](session_console.py#L70) | `_call` | `fn: Any` | `Any` | Map console-domain failures raised by one deferred route action. |
-| [session_console.py](session_console.py#L85) | `agents` | `session_id: str, request: Request` | `Any` | Return safe metadata for all Session Agents. |
-| [session_console.py](session_console.py#L97) | `graph` | `session_id: str, request: Request` | `Any` | Return the Session graph projection. |
-| [session_console.py](session_console.py#L109) | `graph_info` | `session_id: str, request: Request` | `Any` | Return compact graph counts and editability. |
-| [session_console.py](session_console.py#L121) | `add_agent` | `session_id: str, body: AgentEdit, request: Request` | `Any` | Persist one worker and rebuild the idle graph. |
-| [session_console.py](session_console.py#L134) | `delete_agent` | `session_id: str, name: str, request: Request` | `Any` | Implement `delete_agent`. |
-| [session_console.py](session_console.py#L136) | `delete_agent_body` | `session_id: str, body: AgentEdit, request: Request` | `Any` | Implement `delete_agent_body`. |
-| [session_console.py](session_console.py#L138) | `add_connection` | `session_id: str, body: ConnectionEdit, request: Request` | `Any` | Implement `add_connection`. |
-| [session_console.py](session_console.py#L140) | `delete_connection` | `session_id: str, body: ConnectionEdit, request: Request` | `Any` | Implement `delete_connection`. |
-| [session_console.py](session_console.py#L142) | `mapper` | `session_id: str, body: MapperEdit, request: Request` | `Any` | Implement `mapper`. |
-| [session_console.py](session_console.py#L144) | `router_edit` | `session_id: str, body: RouterEdit, request: Request` | `Any` | Implement `router_edit`. |
-| [session_console.py](session_console.py#L146) | `plan` | `session_id: str, request: Request, agent: str \| None` | `Any` | Implement `plan`. |
-| [session_console.py](session_console.py#L148) | `events` | `session_id: str, request: Request, cursor: int, limit: int` | `Any` | Implement `events`. |
-| [session_console.py](session_console.py#L150) | `usage` | `session_id: str, request: Request` | `Any` | Implement `usage`. |
-| [session_console.py](session_console.py#L152) | `context` | `session_id: str, agent: str, request: Request, before: int \| None, limit: int` | `Any` | Return the newest context page or one older cursor page. |
-| [session_console.py](session_console.py#L167) | `context_graph` | `session_id: str, agent: str, request: Request` | `Any` | Implement `context_graph`. |
-| [session_console.py](session_console.py#L169) | `compaction_input` | `session_id: str, agent: str, request: Request` | `Any` | Implement `compaction_input`. |
+| [session_console.py](session_console.py#L67) | `_service` | `request: Request` | `Any` | Resolve the installed console projection service. |
+| [session_console.py](session_console.py#L82) | `_call` | `fn: Any` | `Any` | Map console-domain failures raised by one deferred route action. |
+| [session_console.py](session_console.py#L97) | `agents` | `session_id: str, request: Request` | `Any` | Return safe metadata for all Session Agents. |
+| [session_console.py](session_console.py#L109) | `graph` | `session_id: str, request: Request` | `Any` | Return the Session graph projection. |
+| [session_console.py](session_console.py#L121) | `graph_info` | `session_id: str, request: Request` | `Any` | Return compact graph counts and editability. |
+| [session_console.py](session_console.py#L133) | `add_agent` | `session_id: str, body: AgentEdit, request: Request` | `Any` | Persist one worker and rebuild the idle graph. |
+| [session_console.py](session_console.py#L146) | `delete_agent` | `session_id: str, name: str, request: Request` | `Any` | Implement `delete_agent`. |
+| [session_console.py](session_console.py#L148) | `delete_agent_body` | `session_id: str, body: AgentEdit, request: Request` | `Any` | Implement `delete_agent_body`. |
+| [session_console.py](session_console.py#L150) | `add_connection` | `session_id: str, body: ConnectionEdit, request: Request` | `Any` | Implement `add_connection`. |
+| [session_console.py](session_console.py#L152) | `delete_connection` | `session_id: str, body: ConnectionEdit, request: Request` | `Any` | Implement `delete_connection`. |
+| [session_console.py](session_console.py#L154) | `mapper` | `session_id: str, body: MapperEdit, request: Request` | `Any` | Implement `mapper`. |
+| [session_console.py](session_console.py#L156) | `router_edit` | `session_id: str, body: RouterEdit, request: Request` | `Any` | Implement `router_edit`. |
+| [session_console.py](session_console.py#L158) | `plan` | `session_id: str, request: Request, agent: str \| None` | `Any` | Implement `plan`. |
+| [session_console.py](session_console.py#L160) | `events` | `session_id: str, request: Request, cursor: int, limit: int` | `Any` | Implement `events`. |
+| [session_console.py](session_console.py#L162) | `usage` | `session_id: str, request: Request` | `Any` | Implement `usage`. |
+| [session_console.py](session_console.py#L164) | `context` | `session_id: str, agent: str, request: Request, before: int \| None, limit: int` | `Any` | Return the newest context page or one older cursor page. |
+| [session_console.py](session_console.py#L179) | `context_graph` | `session_id: str, agent: str, request: Request` | `Any` | Implement `context_graph`. |
+| [session_console.py](session_console.py#L181) | `request_preview` | `session_id: str, agent: str, body: RequestPreviewInput, request: Request` | `Any` | Compose the next dispatch-ready model request without sending it. |
+| [session_console.py](session_console.py#L195) | `compaction_input` | `session_id: str, agent: str, request: Request` | `Any` | Implement `compaction_input`. |
 | [sessions.py](sessions.py#L33) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without manufacturing application state. |
 | [sessions.py](sessions.py#L42) | `list_sessions` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List durable workspace identities, not process-local execution state. |
 | [sessions.py](sessions.py#L59) | `create_session` | `payload: CreateSessionRequest, request: Request` | `dict[str, Any]` | Create an empty session; Agent and graph configuration come afterwards. |
@@ -141,6 +142,7 @@ replaced solely by `settings.py`.
 | [session_console.py](session_console.py#L23) | `ConnectionEdit` | `source: str, target: str` | `object` | Typed input for a directed dependency mutation. |
 | [session_console.py](session_console.py#L34) | `MapperEdit` | `agent: str, mode: str` | `object` | Typed input for a declarative input mapper. |
 | [session_console.py](session_console.py#L45) | `RouterEdit` | `agent: str, targets: list[str]` | `object` | Typed input for a declarative dynamic router. |
+| [session_console.py](session_console.py#L57) | `RequestPreviewInput` | `message: str` | `object` | Typed input for one no-send next-request composition. |
 | [sessions.py](sessions.py#L19) | `CreateSessionRequest` | `session_id: str \| None, name: str, project_path: str` | `BaseModel` | HTTP input for an empty logical Session and its workspace. |
 | [sessions.py](sessions.py#L27) | `DeleteSessionRequest` | `confirmation: str` | `BaseModel` | Explicit confirmation for an irreversible session-data deletion. |
 | [settings.py](settings.py#L19) | `ConnectorPayload` | `name: str, provider: str, model: str, api_url: str, api_key: str` | `BaseModel` | Public connector metadata plus an optional write-only API key. |

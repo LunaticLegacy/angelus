@@ -153,6 +153,57 @@ class SessionService:
         session.agents = [session.coordinator, *workers]
         session.swarm = swarm
 
+    def preview_agent(self, session_id: str, name: str) -> Agent:
+        """Build one detached Agent for a no-I/O request preview.
+
+        Args:
+            session_id: Stable Session identity providing profile and tools.
+            name: Coordinator or persisted Worker identity to preview.
+
+        Returns:
+            Fresh Agent with the Session's effective profile, tools, and
+            context path. The caller owns it and must not add it to a swarm.
+
+        Raises:
+            KeyError: If the Session or requested persisted role is missing.
+            RuntimeError: If the effective profile lacks a usable connector.
+        """
+        session = self._core.sessions.get(session_id)
+        blueprint = session.console.blueprint()
+        if name != session.coordinator_name and name not in blueprint.workers:
+            raise KeyError(name)
+        profile = self._core.run_profiles.effective(session_id)
+        permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
+        connector_id = profile.get("connector_id")
+        if not isinstance(connector_id, str) or not connector_id:
+            raise RuntimeError("Session preview requires a saved connector")
+        try:
+            api_key = self._core.connectors.api_key(connector_id)
+        except KeyError as exc:
+            raise RuntimeError("Session preview connector has no saved API key") from exc
+        workspace = self._core.workspaces.get(session_id)
+        worker = blueprint.workers.get(name)
+        role = "coordinator" if name == session.coordinator_name else "worker"
+        system_prompt = profile["system_prompt"] if worker is None else worker.system_prompt or profile["system_prompt"]
+        return create_agent(
+            [LLMBackendConfig(
+                name=name,
+                provider=profile["provider"],
+                model=profile["model"],
+                api_key=api_key,
+                api_url=profile["api_url"] or None,
+                max_retries=profile["max_retries"],
+            )],
+            self._core.tool_registry.materialize(session, permissions, role),
+            system_prompt=system_prompt,
+            max_concurrency=profile["max_swarm_agents"],
+            max_context_threshold=profile["max_context_threshold"],
+            context_path=workspace.state_path / "agents" / name / "context.json",
+            default_max_rounds=profile["max_rounds"],
+            default_max_tokens=profile["max_tokens"],
+            enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
+        )
+
     def delete(self, session_id: str, *, confirmation: str, wait_timeout: float = 5.0) -> Workspace:
         """Force-stop, durably remove, and unregister one confirmed Session.
 

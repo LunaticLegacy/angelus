@@ -305,17 +305,110 @@ class ConsoleProjectionService:
         community_count=len(communities) if isinstance(communities,(dict,list)) else 0
         return {"agent":name,"context":self._context_stats(agent),"graph":{"available":bool(nodes),"nodes":nodes,"edges":edges,"node_count":len(nodes),"edge_count":len(edges),"community_count":community_count,"stale":False}}
     def compaction_input(self, session_id: str, name: str) -> dict[str, object]:
-        """Reconstruct the current compaction input without a remote request.
+        """Reconstruct the next compaction request without provider I/O.
 
         Args:
             session_id: Stable identity of the owning Session.
             name: Agent role identity whose context is inspected.
 
         Returns:
-            Current locally reconstructed compaction input and size metadata.
+            Exact locally composed compaction input, request snapshot, and
+            eligibility metadata without a provider call or durable write.
         """
-        agent=self._agent(session_id,name); handler=getattr(agent,"context_handler",None); linear=getattr(handler,"linear",handler); messages=getattr(linear,"messages",[]) or []; text="\n".join(str(x) for x in messages)
-        return {"agent":name,"text":text,"characters":len(text),"threshold":getattr(linear,"compress_threshold",0),"messages":len(messages),"omitted":0,"estimated_tokens":len(text)//4,"round":getattr(linear,"_round",0)}
+        agent = self._detached_preview_agent(session_id, name)
+        try:
+            handler = agent.context_handler
+            linear = getattr(handler, "linear", handler)
+            build_preview = getattr(linear, "compaction_request_preview", None)
+            if not callable(build_preview):
+                raise ConsoleDomainError("agent context does not support compaction previews")
+            plan = build_preview()
+            snapshot = agent.llm_fetcher.prepare_request(
+                plan.text,
+                system_prompt=plan.system_prompt,
+                temperature=plan.temperature,
+                max_tokens=plan.max_tokens,
+                tools=[],
+            )
+            context_size = linear._estimate_context_size()
+            return {
+                "agent": name,
+                "text": plan.text,
+                "characters": len(plan.text),
+                "threshold": plan.threshold,
+                "messages": plan.messages,
+                "omitted": plan.omitted,
+                "estimated_tokens": len(plan.text) // 4,
+                "round": plan.round,
+                "eligible": context_size > plan.threshold,
+                "request": snapshot.to_dict(),
+            }
+        finally:
+            agent.close()
+
+    def request_preview(self, session_id: str, name: str, message: str) -> dict[str, object]:
+        """Compose one possible next Agent request without dispatching it.
+
+        Args:
+            session_id: Stable identity of the owning Session.
+            name: Agent role identity whose next request is composed.
+            message: Hypothetical next user message added only to a detached
+                in-memory context copy.
+
+        Returns:
+            Credential-free dispatch-ready request and composition statistics.
+
+        Raises:
+            ConsoleDomainError: If the persisted checkpoint cannot be loaded.
+        """
+        agent = self._detached_preview_agent(session_id, name)
+        try:
+            agent.context_handler.add_user_message(message)
+            snapshot = agent.llm_fetcher.prepare_request(
+                "",
+                system_prompt=agent.system_prompt,
+                temperature=0.4,
+                max_tokens=agent.default_max_tokens,
+                context_handler=agent.context_handler,
+                tools=agent.tool_handler.get_all_tools(),
+                stream=agent.default_stream,
+            )
+            request = snapshot.to_dict()
+            messages = request["messages"]
+            characters = len(json.dumps(messages, ensure_ascii=False))
+            return {
+                "agent": name,
+                "request": request,
+                "stats": {
+                    "messages": len(messages),
+                    "characters": characters,
+                    "tool_schemas": len(snapshot.tools),
+                    "tool_schema_characters": len(json.dumps(snapshot.tools, ensure_ascii=False)),
+                },
+            }
+        finally:
+            agent.close()
+
+    def _detached_preview_agent(self, session_id: str, name: str):
+        """Create and hydrate an Agent copy that cannot mutate Session state.
+
+        Args:
+            session_id: Stable identity of the Session owning the checkpoint.
+            name: Valid coordinator or persisted Worker identity.
+
+        Returns:
+            Detached configured Agent with its context loaded when available.
+
+        Raises:
+            ConsoleDomainError: If the checkpoint exists but is invalid.
+        """
+        self._agent(session_id, name)
+        agent = self._core.session_service.preview_agent(session_id, name)
+        path = self._context_path(session_id, name)
+        if path.is_file() and not agent.context_handler.load(path):
+            agent.close()
+            raise ConsoleDomainError("cannot load persisted context for preview")
+        return agent
     def _agent(self, session_id: str, name: str):
         """Resolve a concrete Agent, allowing unmaterialized persisted roles."""
         session = self._session(session_id)

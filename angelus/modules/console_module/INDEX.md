@@ -81,9 +81,11 @@ It never creates a second AgentSwarm, executor, or credential store.
 | [projection_service.py](projection_service.py#L237) | `ConsoleProjectionService.context` | `session_id: str, name: str, before: int \| None, limit: int` | `dict[str, object]` | Return persisted linear-context metadata for one valid Agent role. |
 | [projection_service.py](projection_service.py#L260) | `ConsoleProjectionService.messages` | `session_id: str, name: str \| None, before: int \| None, limit: int` | `dict[str, object]` | Project one Agent's durable context page into chat-message cards. |
 | [projection_service.py](projection_service.py#L289) | `ConsoleProjectionService.context_graph` | `session_id: str, name: str` | `dict[str, object]` | Return the actual GraphContextHandler entity graph projection. |
-| [projection_service.py](projection_service.py#L307) | `ConsoleProjectionService.compaction_input` | `session_id: str, name: str` | `dict[str, object]` | Reconstruct the current compaction input without a remote request. |
-| [projection_service.py](projection_service.py#L319) | `ConsoleProjectionService._agent` | `session_id: str, name: str` | `Any` | Resolve a concrete Agent, allowing unmaterialized persisted roles. |
-| [projection_service.py](projection_service.py#L330) | `ConsoleProjectionService._context_path` | `session_id: str, name: str` | `Path` | Return the single durable checkpoint path for one valid role. |
+| [projection_service.py](projection_service.py#L307) | `ConsoleProjectionService.compaction_input` | `session_id: str, name: str` | `dict[str, object]` | Reconstruct the next compaction request without provider I/O. |
+| [projection_service.py](projection_service.py#L349) | `ConsoleProjectionService.request_preview` | `session_id: str, name: str, message: str` | `dict[str, object]` | Compose one possible next Agent request without dispatching it. |
+| [projection_service.py](projection_service.py#L392) | `ConsoleProjectionService._detached_preview_agent` | `session_id: str, name: str` | `Any` | Create and hydrate an Agent copy that cannot mutate Session state. |
+| [projection_service.py](projection_service.py#L412) | `ConsoleProjectionService._agent` | `session_id: str, name: str` | `Any` | Resolve a concrete Agent, allowing unmaterialized persisted roles. |
+| [projection_service.py](projection_service.py#L423) | `ConsoleProjectionService._context_path` | `session_id: str, name: str` | `Path` | Return the single durable checkpoint path for one valid role. |
 | [tool_provider.py](tool_provider.py#L14) | `ConsoleToolProvider.materialize` | `session: object, policy: ToolPolicy, role: str` | `list[Tool]` | Build Console Tools authorized for the requested Agent role. |
 | [tool_provider.py](tool_provider.py#L33) | `console_tool_registration` | `None` | `ToolProviderRegistration` | Return Console's complete, single registration with the Tool Registry. |
 
