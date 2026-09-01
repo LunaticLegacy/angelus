@@ -1,4 +1,5 @@
 import { $, escapeHtml } from "./dom.js";
+import { createMarkdownStream, renderMarkdownInto } from "./markdown-renderer.js";
 
 /**
  * Create the transcript view for the Workbench chat panel.
@@ -11,6 +12,44 @@ import { $, escapeHtml } from "./dom.js";
  *   owned by the Workbench controller.
  */
 export function createChatView({ getAgentLabel }) {
+  const followTolerancePixels = 8;
+  let followsLatest = true;
+
+  /**
+   * Return whether the viewport is effectively resting at the transcript end.
+   *
+   * Returns:
+   *   Whether a newly appended message may move the viewport downward.
+   */
+  function isAtLatest() {
+    const chat = $("chat");
+    return chat.scrollHeight - chat.clientHeight - chat.scrollTop <= followTolerancePixels;
+  }
+
+  /**
+   * Keep the follow state in sync with deliberate user scrolling.
+   *
+   * Returns:
+   *   None. Moving even slightly above the latest content stops auto-scroll.
+   */
+  function updateFollowState() {
+    followsLatest = isAtLatest();
+  }
+
+  /**
+   * Scroll only when the reader had already chosen to follow the latest turn.
+   *
+   * Returns:
+   *   None. Historical reading position is otherwise preserved exactly.
+   */
+  function scrollToLatestIfFollowing() {
+    if (!followsLatest) return;
+    const chat = $("chat");
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  $("chat").addEventListener("scroll", updateFollowState, { passive: true });
+
   function removeWelcome() {
     $("chat").querySelector(".welcome")?.remove();
   }
@@ -234,23 +273,29 @@ export function createChatView({ getAgentLabel }) {
 
   /** Build one transcript card without inserting it into the document. */
   function buildMessage(message, agentName = "") {
-    const { role, content, reasoning = "", content_html: contentHtml = "",
-      reasoning_html: reasoningHtml = "", tools = [], usage = null,
+    const { role, content, reasoning = "", tools = [], usage = null,
       model_duration_ms = null, timestamp = null, duration_ms = null } = message;
     if (role === "steer") return buildSteer(content);
 
     const element = document.createElement("article");
     element.className = `message ${role}`;
-    const body = contentHtml || escapeHtml(content);
-    const thought = reasoningHtml || escapeHtml(reasoning);
     const isUser = role === "user";
+    const isAgentReply = role === "assistant";
     const speaker = isUser ? "你" : (agentName || getAgentLabel() || "Coordinator");
     const copy = role === "assistant" && content
       ? '<button class="copy-result" type="button">复制结果</button>' : "";
 
     // Reasoning is visible before the formal answer in both live and restored
     // transcript cards, so readers see the model's working context first.
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? `<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown">${thought}</div></section>` : ""}${content ? `<div class="bubble ${contentHtml ? "markdown" : "plain-text"}">${body}</div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, timestamp, duration_ms) : ""}`;
+    const contentClass = isAgentReply ? "markdown" : "plain-text";
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown" data-message-reasoning></div></section>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, timestamp, duration_ms) : ""}`;
+    const contentTarget = element.querySelector("[data-message-content]");
+    if (contentTarget) {
+      if (isAgentReply) renderMarkdownInto(contentTarget, content);
+      else contentTarget.textContent = content;
+    }
+    const reasoningTarget = element.querySelector("[data-message-reasoning]");
+    if (reasoningTarget) renderMarkdownInto(reasoningTarget, reasoning);
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));
     return element;
@@ -267,7 +312,7 @@ export function createChatView({ getAgentLabel }) {
     removeWelcome();
     const chat = $("chat");
     chat.append(buildMessage(message, agentName));
-    chat.scrollTop = chat.scrollHeight;
+    scrollToLatestIfFollowing();
   }
 
   function beginStream(agentName = "") {
@@ -276,17 +321,20 @@ export function createChatView({ getAgentLabel }) {
     const element = document.createElement("article");
     const speaker = agentName || getAgentLabel() || "Coordinator";
     element.className = "message assistant streaming";
-    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><section class="reasoning" aria-label="思考过程" hidden><h4>思考过程</h4><div class="markdown plain-text"></div></section><div class="bubble plain-text"></div>`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><section class="reasoning" aria-label="思考过程" hidden><h4>思考过程</h4><div class="markdown"></div></section><div class="bubble markdown"></div>`;
     $("chat").append(element);
+    scrollToLatestIfFollowing();
+    const reasoningRenderer = createMarkdownStream(element.querySelector(".reasoning .markdown"), scrollToLatestIfFollowing);
+    const contentRenderer = createMarkdownStream(element.querySelector(".bubble"), scrollToLatestIfFollowing);
     return {
       update(content, reasoning) {
         const reasoningSection = element.querySelector(".reasoning");
         reasoningSection.hidden = !reasoning;
-        reasoningSection.querySelector(".markdown").textContent = reasoning;
-        element.querySelector(".bubble").textContent = content;
-        $("chat").scrollTop = $("chat").scrollHeight;
+        reasoningRenderer.update(reasoning);
+        contentRenderer.update(content);
       },
-      remove() { element.remove(); },
+      flush() { reasoningRenderer.flush(); contentRenderer.flush(); },
+      remove() { reasoningRenderer.dispose(); contentRenderer.dispose(); element.remove(); },
     };
   }
 
@@ -300,7 +348,7 @@ export function createChatView({ getAgentLabel }) {
       : "";
     element.innerHTML = `<strong>⚠ ${escapeHtml(title)}</strong><p>${escapeHtml(message || "未提供错误详情。")}</p>${raw}`;
     $("chat").append(element);
-    $("chat").scrollTop = $("chat").scrollHeight;
+    scrollToLatestIfFollowing();
   }
 
   function render(messages, assistantLabel = "coordinator") {
@@ -323,6 +371,9 @@ export function createChatView({ getAgentLabel }) {
       fragment.append(buildMessage(message, message.role === "assistant" ? assistantLabel : ""));
     }
     loadMore.after(fragment);
+    // Rehydration is an explicit view replacement, so start it at the latest
+    // message and re-enable follow behaviour for the subsequent live stream.
+    followsLatest = true;
     chat.scrollTop = chat.scrollHeight;
   }
 

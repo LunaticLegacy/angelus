@@ -5,6 +5,7 @@
 | `app.js` | Main workbench state/controller: selected Session, history, settings, Session-run control and Session-console inspector calls. |
 | `app.css` | Workbench visual layout, dialogs, session controls and responsive styling. |
 | `components/` | DOM, chat transcript, task-plan and trace rendering helpers. |
+| `vendor/` | Pinned browser ESM copies of Marked and DOMPurify, including upstream licenses. |
 | `inspector/` | Historic inspector helpers; not all APIs are mounted in Phase 1. |
 | `api.js`, `sessions.js`, `settings.js`, `connectors.js`, etc. | Older modular client surface retained during migration; do not introduce a second route contract through them. |
 
@@ -36,6 +37,10 @@ therefore cannot emit misleading 404 requests.
 The Agent settings form persists reply `max_tokens` and the independent
 `compaction_output_max_tokens` separately; the latter controls only context
 summary responses and is applied when the next Agent lifecycle is materialized.
+Agent Markdown is parsed and sanitized only by `components/markdown-renderer.js`;
+the active `components/chat-view.js` uses it for both restored and streamed
+Agent output. `chat.js` and `main.js` are legacy, unmounted modules and must
+not introduce a second transcript renderer.
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
@@ -71,7 +76,7 @@ summary responses and is applied when the next Agent lifecycle is materialized.
 | [app.js](app.js#L166) | `selectedMemorySessions` | `None` | `unknown` | Perform the browser runtime operation: selected memory sessions. |
 | [app.js](app.js#L168) | `renderMemorySessionPicker` | `None` | `unknown` | Perform the browser runtime operation: render memory session picker. |
 | [app.js](app.js#L172) | `liveTools` | `data: unknown` | `unknown` | Perform the browser runtime operation: live tools. |
-| [app.js](app.js#L174) | `appendMessage` | `role: unknown, content: unknown, reasoning: unknown, contentHtml: unknown, reasoningHtml: unknown, tools: unknown, agentName: unknown, usage: unknown, modelDurationMs: unknown, timestamp: unknown` | `unknown` | Perform the browser runtime operation: append message. |
+| [app.js](app.js#L174) | `appendMessage` | `role: unknown, content: unknown, reasoning: unknown, tools: unknown, agentName: unknown, usage: unknown, modelDurationMs: unknown, timestamp: unknown` | `unknown` | Perform the browser runtime operation: append message. |
 | [app.js](app.js#L175) | `streamKey` | `agent: unknown, round: unknown` | `unknown` | Perform the browser runtime operation: stream key. |
 | [app.js](app.js#L176) | `renderStreamDelta` | `agent: unknown, data: unknown` | `unknown` | Perform the browser runtime operation: render stream delta. |
 | [app.js](app.js#L177) | `discardStream` | `agent: unknown, round: unknown` | `unknown` | Perform the browser runtime operation: discard stream. |

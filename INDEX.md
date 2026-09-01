@@ -46,12 +46,13 @@ AngelusCore
 
 ## Deliberate Phase-1 Boundaries
 
-- `ExecutionService.start()` currently runs the required coordinator; it does
-  not yet dispatch the Session's llmfetcher swarm graph.
-- The browser has retained legacy inspector/MCP/plugin handlers. They are not
-  backend capabilities until rebuilt Session projections replace them.
-- New conversation writes and graph/context safe-point capture remain the next
-  phase; current transcript reads use the legacy projection bridge.
+- `ExecutionService.start()` runs the Session-owned llmfetcher swarm graph;
+  the coordinator remains the root result used for lifecycle outcome.
+- The browser retains some historic modular files, but the mounted workbench is
+  `frontend/static/app.js`; its transcript renderer and Session-console routes
+  are the production authority.
+- Conversation context, graph checkpoints, and the Session-console projection
+  are durable; legacy `workspace/` transcript reading is migration-only.
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
