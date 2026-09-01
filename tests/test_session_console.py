@@ -173,6 +173,7 @@ class SessionConsoleTests(unittest.TestCase):
             })
             profile = core.settings_service.session_profile("demo")["effective"]
             profile["connector_id"] = connector["id"]
+            profile["compaction_output_max_tokens"] = 12000
             core.settings_service.replace_session_profile("demo", profile)
             with patch(
                 "llmfetcher.llm_fetcher.LLMBackendHandler.create_for_backend",
@@ -189,6 +190,7 @@ class SessionConsoleTests(unittest.TestCase):
             self.assertIn("draft only", str(preview["request"]))
             self.assertNotIn("preview-secret", str(preview))
             self.assertIn("persisted evidence", str(compact["text"]))
+            self.assertEqual(12000, compact["request"]["max_tokens"])
             self.assertNotIn("draft only", str(metadata["metadata"]))
 
 

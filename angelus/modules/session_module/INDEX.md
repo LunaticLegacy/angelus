@@ -11,6 +11,8 @@ is materialized only after a saved connector supplies usable credentials;
 `Session.set_coordinator` keeps it at `agents[0]` without discarding workers.
 `Session.console` is the durable console blueprint owner; it is configured
 alongside the Session execution root and never stores connector secrets.
+`create_agent` forwards the independently profiled compaction output budget
+into the graph-backed context handler; it does not reuse reply `max_tokens`.
 
 ## Function Map
 
@@ -36,7 +38,7 @@ alongside the Session execution root and never stores connector secrets.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [agent_handler.py](agent_handler.py#L15) | `create_agent` | `configs: List[LLMBackendConfig], tools: List[Tool], system_prompt: str, max_concurrency: int, max_context_threshold: int, context_path: Optional[str \| Path], context_handler: Optional[ContextHandler], default_max_rounds: int, default_max_tokens: int, enable_stop_turn: bool, default_stream: bool` | `Agent` | Build one configured Agent without assigning it to a session or run. |
+| [agent_handler.py](agent_handler.py#L15) | `create_agent` | `configs: List[LLMBackendConfig], tools: List[Tool], system_prompt: str, max_concurrency: int, max_context_threshold: int, compaction_output_max_tokens: int, context_path: Optional[str \| Path], context_handler: Optional[ContextHandler], default_max_rounds: int, default_max_tokens: int, enable_stop_turn: bool, default_stream: bool` | `Agent` | Build one configured Agent without assigning it to a session or run. |
 | [session_handler.py](session_handler.py#L20) | `validate_session_id` | `session_id: str` | `str` | Validate and return one filesystem-safe durable Session identity. |
 | [session_handler.py](session_handler.py#L69) | `Session.add_agent` | `agent: Agent` | `None` | Append one fully configured Agent to this session. |
 | [session_handler.py](session_handler.py#L77) | `Session.configure_execution` | `session_id: str, root: Path` | `None` | Attach this Session's single durable execution boundary exactly once. |

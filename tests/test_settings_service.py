@@ -64,15 +64,23 @@ class SettingsServiceTests(unittest.TestCase):
                 "name": "Test", "provider": "openai", "model": "test-model", "api_url": "", "api_key": "secret",
             })
             profile = core.settings_service.session_profile("alpha")["effective"]
-            profile.update({"connector_id": connector["id"], "model": "test-model"})
+            profile.update({
+                "connector_id": connector["id"],
+                "model": "test-model",
+                "compaction_output_max_tokens": 12000,
+            })
             core.settings_service.replace_session_profile("alpha", profile)
             sentinel = object()
 
-            with patch("angelus.modules.application_module.session_service.create_agent", return_value=sentinel):
+            with patch(
+                "angelus.modules.application_module.session_service.create_agent",
+                return_value=sentinel,
+            ) as factory:
                 core.session_service.ensure_coordinator("alpha")
 
             session = core.sessions.get("alpha")
             self.assertEqual(session.coordinator_name, "coordinator")
+            self.assertEqual(12000, factory.call_args.kwargs["compaction_output_max_tokens"])
             self.assertIs(session.coordinator, sentinel)
             self.assertIs(session.agents[0], sentinel)
 

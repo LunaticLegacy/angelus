@@ -92,7 +92,7 @@ class SessionService:
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
             profile["provider"], profile["model"], profile["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
-            profile["max_retries"], profile["max_context_threshold"], profile["max_swarm_agents"], permissions.fingerprint(),
+            profile["max_retries"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(),
         )
         if session.coordinator_matches(fingerprint):
             return
@@ -110,6 +110,7 @@ class SessionService:
             system_prompt=profile["system_prompt"],
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
+            compaction_output_max_tokens=profile["compaction_output_max_tokens"],
             context_path=workspace.state_path / "agents" / session.coordinator_name / "context.json",
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
@@ -142,7 +143,7 @@ class SessionService:
         for name, worker in blueprint.workers.items():
             agent = create_agent(
                 [LLMBackendConfig(name=name, provider=profile["provider"], model=profile["model"], api_key=api_key, api_url=profile["api_url"] or None, max_retries=profile["max_retries"])], self._core.tool_registry.materialize(session, permissions, "worker"),
-                system_prompt=worker.system_prompt or profile["system_prompt"], max_concurrency=profile["max_swarm_agents"], max_context_threshold=profile["max_context_threshold"],
+                system_prompt=worker.system_prompt or profile["system_prompt"], max_concurrency=profile["max_swarm_agents"], max_context_threshold=profile["max_context_threshold"], compaction_output_max_tokens=profile["compaction_output_max_tokens"],
                 context_path=workspace.state_path / "agents" / name / "context.json", default_max_rounds=profile["max_rounds"], default_max_tokens=profile["max_tokens"], enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             )
             swarm.add_agent(name, agent); workers.append(agent)
@@ -198,6 +199,7 @@ class SessionService:
             system_prompt=system_prompt,
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
+            compaction_output_max_tokens=profile["compaction_output_max_tokens"],
             context_path=workspace.state_path / "agents" / name / "context.json",
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],

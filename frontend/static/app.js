@@ -79,13 +79,14 @@ const config = () => ({
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), max_context_threshold: Number($("max-context-threshold").value),
+  compaction_output_max_tokens: Number($("compaction-output-max-tokens").value),
   // Shell and Swarm are enabled exclusively by their permission categories.
   enable_shell: Boolean(currentProfile?.effective?.enable_shell), enable_swarm: Boolean(currentProfile?.effective?.enable_swarm),
   max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "compaction-output-max-tokens", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
 function profileSettings(overrides={}) { return {
@@ -95,7 +96,7 @@ function profileSettings(overrides={}) { return {
   system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value),
-  max_context_threshold: Number($("max-context-threshold").value), max_swarm_agents: Number($("max-swarm-agents").value),
+  max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
   ...overrides,

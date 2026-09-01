@@ -22,6 +22,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "max_rounds": 0,
     "max_retries": 3,
     "max_context_threshold": 262144,
+    "compaction_output_max_tokens": 8192,
     "max_swarm_agents": 4,
     "session_memory_search_sessions": [],
     "session_memory_read_sessions": [],
@@ -173,11 +174,11 @@ class RunProfileStore:
                 if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
                     raise ValueError("temperature must be between 0 and 2")
                 result[key] = float(value)
-            elif key in {"max_tokens", "max_retries", "max_context_threshold", "max_swarm_agents", "max_rounds"}:
+            elif key in {"max_tokens", "max_retries", "max_context_threshold", "compaction_output_max_tokens", "max_swarm_agents", "max_rounds"}:
                 if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                     raise ValueError(f"{key} must be a non-negative integer")
-                if key == "max_tokens" and value < 1:
-                    raise ValueError("max_tokens must be at least 1")
+                if key in {"max_tokens", "compaction_output_max_tokens"} and value < 1:
+                    raise ValueError(f"{key} must be at least 1")
                 result[key] = value
             elif key.endswith("_sessions"):
                 if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):

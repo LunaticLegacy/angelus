@@ -19,6 +19,7 @@ def create_agent(
     system_prompt: str,
     max_concurrency: int = 3,
     max_context_threshold: int = 262144,
+    compaction_output_max_tokens: int = 8192,
     context_path: Optional[str | Path] = "",
     context_handler: Optional[ContextHandler] = None,
     default_max_rounds: int = 30,
@@ -35,6 +36,8 @@ def create_agent(
         system_prompt: Instructions supplied to the model.
         max_concurrency: Maximum concurrent tool handlers.
         max_context_threshold: Context size at which compaction starts.
+        compaction_output_max_tokens: Maximum generated tokens for one
+            compactor summary request.
         context_path: Optional persisted context file path.
         context_handler: Optional custom context implementation, such as
             ``RetrievedContextHandler``.
@@ -67,6 +70,7 @@ def create_agent(
         context_handler = GraphContextHandler(
             compacting_fetcher=fetcher,
             max_context_threshold=max_context_threshold,
+            compaction_output_max_tokens=compaction_output_max_tokens,
         )
     if context_path:
         Path(context_path).parent.mkdir(parents=True, exist_ok=True)
@@ -86,4 +90,3 @@ def create_agent(
     # established later by SessionHandler.
     agent.add_tools(tools=tools)
     return agent
-
