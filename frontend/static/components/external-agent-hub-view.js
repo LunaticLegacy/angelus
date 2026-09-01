@@ -198,7 +198,10 @@ export function createExternalAgentHubView(dialog, root) {
     const payload = await request(`/api/external-agents/${encodeURIComponent(agentId)}/capabilities`);
     const body = container.querySelector(".external-hub-section-body");
     const values = Array.isArray(payload.capabilities) ? payload.capabilities : [];
-    body.replaceChildren(values.length ? ...values.map((item) => element("p", "external-hub-row", `${item.title || item.id} · ${item.invocation_mode} — ${item.description || ""}`)) : message("该 adapter 尚未声明可用能力。", "empty"));
+    const rows = values.length
+      ? values.map((item) => element("p", "external-hub-row", `${item.title || item.id} · ${item.invocation_mode} — ${item.description || ""}`))
+      : [message("该 adapter 尚未声明可用能力。", "empty")];
+    body.replaceChildren(...rows);
   }
 
   /** Populate external session summaries without importing them into Angelus. */
@@ -206,7 +209,10 @@ export function createExternalAgentHubView(dialog, root) {
     const payload = await request(`/api/external-agents/${encodeURIComponent(agentId)}/sessions?limit=50`);
     const body = container.querySelector(".external-hub-section-body");
     const values = Array.isArray(payload.sessions) ? payload.sessions : [];
-    body.replaceChildren(values.length ? ...values.map((item) => element("p", "external-hub-row", `${item.title || item.external_id} · ${item.status || "—"} · ${item.external_id}`)) : message("尚未发现可读取的外部会话。", "empty"));
+    const rows = values.length
+      ? values.map((item) => element("p", "external-hub-row", `${item.title || item.external_id} · ${item.status || "—"} · ${item.external_id}`))
+      : [message("尚未发现可读取的外部会话。", "empty")];
+    body.replaceChildren(...rows);
   }
 
   return { open, close, refresh };
