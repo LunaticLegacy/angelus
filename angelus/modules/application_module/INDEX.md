@@ -55,12 +55,12 @@ that a future compactor request would use.
 | [agent_control.py](agent_control.py#L192) | `SessionRunControl.stop` | `agent_id: str, force: bool, reason: str` | `tuple[str, ...]` | Request stop for all Agents or one active Agent. |
 | [agent_control.py](agent_control.py#L216) | `SessionRunControl._drain_broadcast` | `agent_id: str` | `list[str]` | Return unseen broadcast steering messages for one Agent. |
 | [execution_service.py](execution_service.py#L32) | `_remove_journal_hook` | `swarm: object, hook: object` | `None` | Best-effort remove an attempt-local hook across supported swarm builds. |
-| [execution_service.py](execution_service.py#L82) | `ExecutionService.start` | `session_id: str, message: str` | `ExecutionSnapshot` | Start the temporary coordinator adapter under a fresh attempt. |
-| [execution_service.py](execution_service.py#L154) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
-| [execution_service.py](execution_service.py#L167) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
-| [execution_service.py](execution_service.py#L179) | `ExecutionService.control` | `session_id: str, agent_id: str, action: str, message: str, reason: str` | `AgentControlReceipt` | Route one typed browser command to all or one active Agent. |
-| [execution_service.py](execution_service.py#L231) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
-| [execution_service.py](execution_service.py#L245) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
+| [execution_service.py](execution_service.py#L82) | `ExecutionService.start` | `session_id: str, message: str` | `ExecutionSnapshot` | Start the configured Session AgentSwarm under a fresh attempt. |
+| [execution_service.py](execution_service.py#L169) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
+| [execution_service.py](execution_service.py#L182) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
+| [execution_service.py](execution_service.py#L194) | `ExecutionService.control` | `session_id: str, agent_id: str, action: str, message: str, reason: str` | `AgentControlReceipt` | Route one typed browser command to all or one active Agent. |
+| [execution_service.py](execution_service.py#L246) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
+| [execution_service.py](execution_service.py#L260) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
 | [session_service.py](session_service.py#L34) | `SessionService.create` | `session_id: str, name: str, project_path: Path` | `Workspace` | Register an empty Session and its durable workspace metadata. |
 | [session_service.py](session_service.py#L60) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
 | [session_service.py](session_service.py#L68) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |

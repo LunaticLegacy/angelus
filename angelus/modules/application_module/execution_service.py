@@ -66,8 +66,8 @@ class ExecutionService:
     """Perform Session execution lifecycle use cases without transport code.
 
     It never owns an executor: every lookup traverses ``Session.execution``.
-    The current coordinator-only start path is explicitly a temporary adapter,
-    not a hidden replacement for the Session's configured AgentSwarm.
+    Every execution starts the Session-owned ``AgentSwarm``; the coordinator
+    remains the root result used to determine the request outcome.
     """
 
     def __init__(self, core: "AngelusCore") -> None:
@@ -80,11 +80,12 @@ class ExecutionService:
         self._core = core
 
     def start(self, session_id: str, message: str) -> ExecutionSnapshot:
-        """Start the temporary coordinator adapter under a fresh attempt.
+        """Start the configured Session AgentSwarm under a fresh attempt.
 
         Args:
             session_id: Existing Session whose execution boundary is used.
-            message: Initial user instruction passed to the coordinator.
+            message: Initial user instruction submitted through the root
+                coordinator to the configured swarm.
 
         Returns:
             Snapshot immediately after the worker is scheduled.
