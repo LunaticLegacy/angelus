@@ -3,7 +3,7 @@
 from .claude_sdk import ClaudeSdkAdapter, ClaudeSdkAvailability, ClaudeSdkSessionRecord
 from .coze import CozeExternalAgentAdapter
 from .opencode import OpenCodeExternalAgentAdapter
-from .read_only import ExternalAgentFacadeError, ExternalAgentProbe, ExternalAgentReadOnlyFacade, RemoteSessionSummary
+from .read_only import ExternalAgentFacadeError, ExternalAgentProbe, ExternalAgentReadOnlyFacade, RemoteSessionSummary, UnavailableExternalAgentFacade
 from .workbuddy import WorkBuddyExternalAgentAdapter
 
 __all__ = [
@@ -16,5 +16,6 @@ __all__ = [
     "ExternalAgentReadOnlyFacade",
     "OpenCodeExternalAgentAdapter",
     "RemoteSessionSummary",
+    "UnavailableExternalAgentFacade",
     "WorkBuddyExternalAgentAdapter",
 ]

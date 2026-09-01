@@ -13,7 +13,7 @@ They do not own Session, Agent, execution, persistence or credentials.
 | `providers.py` | `/api/providers` | Read installed LLMFetcher provider capabilities. |
 | `workspace_directory.py` | `/api/workspace-directory/pick` | Optional local native directory chooser. |
 | `session_console.py` | `/api/sessions/{id}/agents`, graph, plan, events, usage and context routes | Typed Session-console projection and idle-only graph editing. |
-| `external_agent_hub.py` | `/api/external-agents` | External Agent definition CRUD plus non-executing health/capability inspection. |
+| `external_agent_hub.py` | `/api/external-agents` | External Agent definition CRUD plus read-only health/capability/session inspection. |
 
 ## Not Mounted in Phase 1
 
@@ -35,7 +35,7 @@ replaced solely by `settings.py`.
 | `settings.py` | connector/profile endpoints | Settings use cases over `SettingsService`. |
 | `providers.py` | `list_providers` | Runtime capability read. |
 | `workspace_directory.py` | directory picker endpoint | Desktop-only local directory selection. |
-| `external_agent_hub.py` | External Agent CRUD/health/capabilities | Phase-one Hub API; it stores no connector secrets and never starts a remote run. |
+| `external_agent_hub.py` | External Agent CRUD/health/capabilities/sessions | Phase-two Hub API; it stores no connector secrets and only performs bounded read-only inspection. |
 
 ## Class Map
 

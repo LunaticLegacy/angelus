@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..core import AngelusCore
-from ..modules.external_agent_hub_module import ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth
+from ..modules.external_agent_hub_module import ExternalAgentAdapterFailure, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
 
 
 router = APIRouter()
@@ -86,6 +86,8 @@ def get_external_agent(agent_id: str, request: Request) -> dict[str, object]:
         return {"agent": _definition(_core(request).external_agent_hub.get(agent_id))}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/api/external-agents", status_code=201)
@@ -192,6 +194,34 @@ def external_agent_capabilities(agent_id: str, request: Request) -> dict[str, ob
         return {"capabilities": [_capability(item) for item in capabilities]}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/api/external-agents/{agent_id}/sessions")
+def external_agent_sessions(agent_id: str, request: Request, limit: int = 50) -> dict[str, object]:
+    """List bounded remote session summaries without importing or running them.
+
+    Args:
+        agent_id: External Agent identifier whose runtime is inspected.
+        request: Incoming request carrying the composition root.
+        limit: Maximum newest-first session summaries, from 1 through 200.
+
+    Returns:
+        Credential-free remote session summaries.
+
+    Raises:
+        HTTPException: If the Agent is absent or the page size is invalid.
+    """
+    try:
+        sessions = _core(request).external_agent_hub.sessions(agent_id, limit)
+        return {"sessions": [_session(item) for item in sessions]}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 def _parse_input(payload: object) -> ExternalAgentDefinition:
@@ -292,6 +322,25 @@ def _capability(value: ExternalAgentCapability) -> dict[str, object]:
         "title": value.title,
         "description": value.description,
         "invocation_mode": value.invocation_mode,
+    }
+
+
+def _session(value: ExternalAgentSession) -> dict[str, object]:
+    """Serialize one remote session without treating references as local paths.
+
+    Args:
+        value: Typed external session summary returned by an adapter.
+
+    Returns:
+        JSON-safe remote session summary.
+    """
+    return {
+        "agent_id": value.agent_id,
+        "external_id": value.external_id,
+        "title": value.title,
+        "status": value.status,
+        "updated_at": value.updated_at,
+        "project_path": value.project_path,
     }
 
 

@@ -15,6 +15,7 @@ from angelus.modules.external_agent_hub_module import (
     ExternalAgentDefinition,
     ExternalAgentHealth,
     ExternalAgentHubService,
+    ExternalAgentSession,
     ExternalAgentHubStore,
 )
 
@@ -52,6 +53,20 @@ class FakeCodexAdapter:
             One test capability declaration.
         """
         return (ExternalAgentCapability("thread", "Thread inspection", "Read a remote thread without dispatching work.", "tool"),)
+
+    def discover_sessions(self, definition: ExternalAgentDefinition, limit: int) -> tuple[ExternalAgentSession, ...]:
+        """Return one bounded remote thread summary.
+
+        Args:
+            definition: Configured external Agent being inspected.
+            limit: Maximum requested summary count.
+
+        Returns:
+            One summary when the requested bound permits it.
+        """
+        if limit < 1:
+            return ()
+        return (ExternalAgentSession(definition.id, "thread-1", "First thread", "idle", 1_700_000_000_000),)
 
 
 @dataclass(frozen=True)
@@ -97,6 +112,7 @@ class ExternalAgentHubTests(unittest.TestCase):
             self.assertEqual("Local Codex", restored.get("codex-local").title)
             self.assertEqual("healthy", restored.health("codex-local").status)
             self.assertEqual("thread", restored.capabilities("codex-local")[0].id)
+            self.assertEqual("thread-1", restored.sessions("codex-local", 5)[0].external_id)
 
     def test_unimplemented_adapter_reports_unsupported_without_network_io(self) -> None:
         """Unregistered protocols have explicit non-success health states.
@@ -110,6 +126,19 @@ class ExternalAgentHubTests(unittest.TestCase):
             health = service.health("coze-bot")
             self.assertEqual("unsupported", health.status)
             self.assertEqual((), service.capabilities("coze-bot"))
+
+    def test_core_registers_inert_vendor_adapters_without_dispatching_work(self) -> None:
+        """Core exposes vendor adapter health without starting a remote run.
+
+        Returns:
+            ``None`` after confirming an unconfigured Coze adapter is explicit.
+        """
+        with TemporaryDirectory() as directory:
+            core = AngelusCore(state_root=Path(directory))
+            core.external_agent_hub.create(ExternalAgentDefinition("coze-local", "Coze", "coze"))
+            health = core.external_agent_hub.health("coze-local")
+            self.assertEqual("unavailable", health.status)
+            self.assertIn("not configured", health.message)
 
     def test_route_functions_project_crud_and_health_without_connector_secrets(self) -> None:
         """Route functions persist metadata and expose no secret field.
@@ -129,7 +158,7 @@ class ExternalAgentHubTests(unittest.TestCase):
             }
             response = create_external_agent(request, body)
             self.assertNotIn("api_key", str(response))
-            self.assertEqual("unsupported", external_agent_health("codex-local", request)["health"]["status"])
+            self.assertEqual("unavailable", external_agent_health("codex-local", request)["health"]["status"])
             delete_external_agent("codex-local", request)
             with self.assertRaises(Exception):
                 get_external_agent("codex-local", request)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from .adapter import ExternalAgentAdapterRegistry
-from .models import ExternalAgentAdapterKind, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth
+from .models import ExternalAgentAdapterKind, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
 from .store import ExternalAgentHubStore
 
 
@@ -134,6 +134,24 @@ class ExternalAgentHubService:
             KeyError: If no definition has the supplied identifier.
         """
         return self._adapters.capabilities(self.get(agent_id))
+
+    def sessions(self, agent_id: str, limit: int) -> tuple[ExternalAgentSession, ...]:
+        """Return bounded external session summaries without importing them.
+
+        Args:
+            agent_id: External Agent identifier to inspect.
+            limit: Maximum number of newest summaries to return, from 1 to 200.
+
+        Returns:
+            Immutable external session summaries.
+
+        Raises:
+            KeyError: If no definition has the supplied identifier.
+            ValueError: If the requested page size is out of bounds.
+        """
+        if not 1 <= limit <= 200:
+            raise ValueError("external session limit must be between 1 and 200")
+        return self._adapters.sessions(self.get(agent_id), limit)
 
     def _validate(self, definition: ExternalAgentDefinition) -> None:
         """Validate bounded public configuration before persistence.

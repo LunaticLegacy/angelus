@@ -83,6 +83,45 @@ class ExternalAgentReadOnlyFacade(Protocol):
         """
 
 
+@dataclass(frozen=True)
+class UnavailableExternalAgentFacade:
+    """Explicit inert facade used until a vendor transport is configured.
+
+    Attributes:
+        adapter_name: User-facing vendor name included in safe diagnostics.
+    """
+
+    adapter_name: str
+
+    def probe(self, definition: ExternalAgentDefinition) -> ExternalAgentProbe:
+        """Report that no vendor transport facade has been installed.
+
+        Args:
+            definition: Configured external Agent declaration; not contacted.
+
+        Returns:
+            Unavailable probe result without performing I/O.
+        """
+        del definition
+        return ExternalAgentProbe(False, f"{self.adapter_name} transport is not configured on this Angelus host.")
+
+    def discover_sessions(self, definition: ExternalAgentDefinition, limit: int) -> tuple[RemoteSessionSummary, ...]:
+        """Reject session discovery until a concrete vendor transport exists.
+
+        Args:
+            definition: Configured external Agent declaration; not contacted.
+            limit: Requested session summary bound; not used.
+
+        Returns:
+            This method does not return normally.
+
+        Raises:
+            ExternalAgentFacadeError: Always, because no transport exists.
+        """
+        del definition, limit
+        raise ExternalAgentFacadeError(f"{self.adapter_name} transport is not configured on this Angelus host.")
+
+
 class ReadOnlyExternalAgentAdapter:
     """Reusable normalization logic for vendor adapters using a typed facade.
 

@@ -17,7 +17,8 @@ from .modules.connector_module import ConnectorStore, ProviderCatalog
 from .modules.settings_module import RunProfileStore
 from .modules.tool_module import ToolRegistry, runtime_tool_registration
 from .modules.plugin_module import PluginManager
-from .modules.external_agent_hub_module import ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore
+from .modules.external_agent_hub_module import CodexAppServerAdapter, ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore
+from .modules.external_agent_hub_module.adapters import ClaudeSdkAdapter, CozeExternalAgentAdapter, OpenCodeExternalAgentAdapter, UnavailableExternalAgentFacade, WorkBuddyExternalAgentAdapter
 
 
 class AngelusCore:
@@ -78,13 +79,16 @@ class AngelusCore:
         bundled_plugins = Path(__file__).resolve().parent.parent / "plugins"
         self.plugin_manager = PluginManager(self.state_root, self.tool_registry, bundled_plugins)
         self.plugin_manager.restore_enabled()
-        # External Agent definitions are global durable metadata. Protocol
-        # adapters are intentionally empty until their concrete integrations
-        # are installed; the Hub returns an explicit unsupported health state.
-        self.external_agent_hub = ExternalAgentHubService(
-            ExternalAgentHubStore(self.state_root),
-            ExternalAgentAdapterRegistry(),
-        )
+        # External Agent definitions are global durable metadata. Phase-two
+        # adapters permit only health/capability/session inspection; their
+        # defaults never dispatch a remote run or read connector secrets.
+        external_adapters = ExternalAgentAdapterRegistry()
+        external_adapters.register(CodexAppServerAdapter())
+        external_adapters.register(ClaudeSdkAdapter())
+        external_adapters.register(CozeExternalAgentAdapter(UnavailableExternalAgentFacade("Coze")))
+        external_adapters.register(OpenCodeExternalAgentAdapter(UnavailableExternalAgentFacade("OpenCode")))
+        external_adapters.register(WorkBuddyExternalAgentAdapter(UnavailableExternalAgentFacade("WorkBuddy")))
+        self.external_agent_hub = ExternalAgentHubService(ExternalAgentHubStore(self.state_root), external_adapters)
         # Legacy transcript reader/remover during the conversation migration.
         self.conversations = ConversationStore(Path.cwd() / "workspace")
         for workspace in self.workspaces.list():

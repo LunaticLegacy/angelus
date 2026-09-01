@@ -73,3 +73,26 @@ class ExternalAgentCapability:
     title: str
     description: str
     invocation_mode: Literal["tool", "run"]
+
+
+@dataclass(frozen=True)
+class ExternalAgentSession:
+    """A read-only summary of a session held by an external Agent runtime.
+
+    Attributes:
+        agent_id: Hub definition that owns the remote session.
+        external_id: Stable identifier assigned by the remote runtime.
+        title: User-facing session title supplied by the remote runtime.
+        status: Remote lifecycle label shown without translating it into an
+            Angelus execution state.
+        updated_at: Optional remote Unix timestamp in milliseconds.
+        project_path: Optional remote project/workspace reference; never an
+            Angelus-local filesystem path unless the adapter proves it is one.
+    """
+
+    agent_id: str
+    external_id: str
+    title: str
+    status: str = ""
+    updated_at: int | None = None
+    project_path: str = ""

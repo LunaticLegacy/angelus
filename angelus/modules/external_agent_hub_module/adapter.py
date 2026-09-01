@@ -6,7 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .models import ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentAdapterKind
+from .models import ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentAdapterKind, ExternalAgentSession
+
+
+class ExternalAgentAdapterFailure(RuntimeError):
+    """Raised when a configured adapter cannot complete a read-only operation."""
 
 
 class ExternalAgentAdapter(Protocol):
@@ -41,6 +45,22 @@ class ExternalAgentAdapter(Protocol):
 
         Returns:
             Immutable capability declarations available from the remote Agent.
+        """
+
+    def discover_sessions(
+        self,
+        definition: ExternalAgentDefinition,
+        limit: int,
+    ) -> tuple[ExternalAgentSession, ...]:
+        """Read remote session summaries without starting or importing one.
+
+        Args:
+            definition: Credential-free configured external Agent declaration.
+            limit: Maximum number of newest session summaries to return.
+
+        Returns:
+            Immutable external session summaries in adapter-defined newest-first
+            order.
         """
 
 
@@ -88,7 +108,15 @@ class ExternalAgentAdapterRegistry:
                 "unsupported",
                 "The selected protocol adapter is not installed yet.",
             )
-        return adapter.health(definition)
+        try:
+            return adapter.health(definition)
+        except Exception:
+            return ExternalAgentHealth(
+                definition.id,
+                definition.adapter_kind,
+                "unavailable",
+                "The protocol adapter could not complete its health check.",
+            )
 
     def capabilities(self, definition: ExternalAgentDefinition) -> tuple[ExternalAgentCapability, ...]:
         """Return adapter capabilities or an empty result before implementation.
@@ -100,4 +128,27 @@ class ExternalAgentAdapterRegistry:
             Immutable capability declarations; empty when no adapter exists.
         """
         adapter = self.adapters.get(definition.adapter_kind)
-        return () if adapter is None else adapter.discover_capabilities(definition)
+        if adapter is None:
+            return ()
+        try:
+            return adapter.discover_capabilities(definition)
+        except Exception as exc:
+            raise ExternalAgentAdapterFailure("external Agent capability discovery failed") from exc
+
+    def sessions(self, definition: ExternalAgentDefinition, limit: int) -> tuple[ExternalAgentSession, ...]:
+        """Return remote sessions or an empty result before adapter installation.
+
+        Args:
+            definition: External Agent declaration selected by the caller.
+            limit: Maximum number of newest session summaries to return.
+
+        Returns:
+            Immutable session summaries; empty when no adapter exists.
+        """
+        adapter = self.adapters.get(definition.adapter_kind)
+        if adapter is None:
+            return ()
+        try:
+            return adapter.discover_sessions(definition, limit)
+        except Exception as exc:
+            raise ExternalAgentAdapterFailure("external Agent session discovery failed") from exc
