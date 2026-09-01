@@ -148,6 +148,15 @@ class SessionConsoleTests(unittest.TestCase):
             core.session_service.create("demo", "Demo", project)
             catalog = core.tool_registry.catalog()
             self.assertIn("shell", [category.id for category in catalog.categories])
+            swarm = next(category for category in catalog.categories if category.id == "swarm")
+            self.assertEqual(
+                {
+                    "swarm_connect", "swarm_disconnect", "swarm_set_mapper", "swarm_set_router",
+                    "swarm_add_worker", "swarm_remove_worker", "swarm_info", "dispatch_subagent",
+                    "dispatch_subagents", "revive_agent", "wait_for_reports",
+                },
+                {tool.id for tool in swarm.tools},
+            )
             tools = core.tool_registry.materialize(
                 core.sessions.get("demo"),
                 ToolPolicy(frozenset({"shell"}), frozenset({"shell"})),

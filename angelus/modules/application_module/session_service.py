@@ -15,6 +15,7 @@ from llmfetcher import Agent, LLMBackendConfig
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
+    from ..session_module.session_handler import Session
 
 
 class SessionService:
@@ -78,7 +79,7 @@ class SessionService:
             RuntimeError: If no saved connector/secret is available.
             KeyError: If the Session does not exist.
         """
-        session = self._core.sessions.get(session_id)
+        session: Session = self._core.sessions.get(session_id)
         profile = self._core.run_profiles.effective(session_id)
         permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
         connector_id = profile.get("connector_id")
@@ -141,11 +142,7 @@ class SessionService:
         blueprint = session.console.blueprint()
         workers = []
         for name, worker in blueprint.workers.items():
-            agent = create_agent(
-                [LLMBackendConfig(name=name, provider=profile["provider"], model=profile["model"], api_key=api_key, api_url=profile["api_url"] or None, max_retries=profile["max_retries"])], self._core.tool_registry.materialize(session, permissions, "worker"),
-                system_prompt=worker.system_prompt or profile["system_prompt"], max_concurrency=profile["max_swarm_agents"], max_context_threshold=profile["max_context_threshold"], compaction_output_max_tokens=profile["compaction_output_max_tokens"],
-                context_path=workspace.state_path / "agents" / name / "context.json", default_max_rounds=profile["max_rounds"], default_max_tokens=profile["max_tokens"], enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
-            )
+            agent = self.create_runtime_worker(session_id, name, worker.system_prompt)
             swarm.add_agent(name, agent); workers.append(agent)
         for connection in blueprint.connections:
             swarm.add_connection(connection.source, connection.target)
@@ -153,6 +150,50 @@ class SessionService:
         for agent, targets in blueprint.routers.items(): swarm.dynamic_set_router(agent, targets)
         session.agents = [session.coordinator, *workers]
         session.swarm = swarm
+
+    def create_runtime_worker(self, session_id: str, name: str, system_prompt: str) -> Agent:
+        """Build one worker using the effective Session profile and ToolRegistry.
+
+        This helper is the sole worker factory for both restored blueprint
+        nodes and Agent-authorized dynamic swarm additions. It reads connector
+        secrets only at construction time and never persists them.
+
+        Args:
+            session_id: Owning Session identity.
+            name: Valid graph-safe worker identity.
+            system_prompt: Worker-specific instructions; blank inherits the
+                Session profile prompt.
+
+        Returns:
+            Fresh persistent worker Agent with the current authorized tools.
+
+        Raises:
+            KeyError: If the Session or configured connector is missing.
+            RuntimeError: If the profile has no saved connector identity.
+        """
+        session = self._core.sessions.get(session_id)
+        profile = self._core.run_profiles.effective(session_id)
+        connector_id = profile.get("connector_id")
+        if not isinstance(connector_id, str) or not connector_id:
+            raise RuntimeError("Session worker requires a saved connector")
+        api_key = self._core.connectors.api_key(connector_id)
+        permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
+        workspace = self._core.workspaces.get(session_id)
+        return create_agent(
+            [LLMBackendConfig(
+                name=name, provider=profile["provider"], model=profile["model"], api_key=api_key,
+                api_url=profile["api_url"] or None, max_retries=profile["max_retries"],
+            )],
+            self._core.tool_registry.materialize(session, permissions, "worker"),
+            system_prompt=system_prompt or profile["system_prompt"],
+            max_concurrency=profile["max_swarm_agents"],
+            max_context_threshold=profile["max_context_threshold"],
+            compaction_output_max_tokens=profile["compaction_output_max_tokens"],
+            context_path=workspace.state_path / "agents" / name / "context.json",
+            default_max_rounds=profile["max_rounds"],
+            default_max_tokens=profile["max_tokens"],
+            enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
+        )
 
     def preview_agent(self, session_id: str, name: str) -> Agent:
         """Build one detached Agent for a no-I/O request preview.

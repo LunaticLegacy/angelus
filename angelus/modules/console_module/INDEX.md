@@ -48,18 +48,30 @@ It never creates a second AgentSwarm, executor, or credential store.
 | [console_state.py](console_state.py#L221) | `ConsoleState.plan` | `agent: str \| None` | `list[PlanItem]` | Return a typed plan snapshot optionally scoped to one Agent. |
 | [console_state.py](console_state.py#L232) | `ConsoleState.set_plan` | `items: list[PlanItem]` | `None` | Replace the plan with already-validated Agent-authored items. |
 | [console_state.py](console_state.py#L240) | `ConsoleState.upsert_plan_item` | `item: PlanItem` | `None` | Create or replace a durable task-plan item by identity. |
-| [console_tools.py](console_tools.py#L16) | `_schema` | `*parameters: ToolParameter` | `ToolSchema` | Create a compact first-party tool schema. |
-| [console_tools.py](console_tools.py#L41) | `ToolPermissionPolicy.from_profile` | `value: object` | `'ToolPermissionPolicy'` | Decode one persisted profile value without trusting its shape. |
-| [console_tools.py](console_tools.py#L64) | `ToolPermissionPolicy.allows` | `category: str, tool: str` | `bool` | Return whether a category and its individual tool are enabled. |
-| [console_tools.py](console_tools.py#L76) | `ToolPermissionPolicy.fingerprint` | `None` | `tuple[tuple[str, ...], tuple[str, ...]]` | Return a deterministic value suitable for Agent rebuild identity. |
-| [console_tools.py](console_tools.py#L104) | `SessionConsoleTools.build` | `None` | `list[Tool]` | Create the controlled tool set for a coordinator or worker. |
-| [console_tools.py](console_tools.py#L143) | `SessionConsoleTools._journal` | `event_type: str, message: str, data: dict[str, object]` | `None` | Append one mutation fact when an execution attempt exists. |
-| [console_tools.py](console_tools.py#L155) | `SessionConsoleTools.plan_upsert` | `id: str, status: str, title: str` | `str` | Persist a task item and record the mutation in the attempt journal. |
-| [console_tools.py](console_tools.py#L170) | `SessionConsoleTools.plan_read` | `None` | `list[dict[str, object]]` | Return the currently durable plan to the calling Agent. |
-| [console_tools.py](console_tools.py#L178) | `SessionConsoleTools.swarm_connect` | `source: str, target: str` | `str` | Persist and dynamically apply one safe dependency connection. |
-| [console_tools.py](console_tools.py#L193) | `SessionConsoleTools.swarm_disconnect` | `source: str, target: str` | `str` | Persist and dynamically remove one dependency connection. |
-| [console_tools.py](console_tools.py#L208) | `SessionConsoleTools.swarm_set_mapper` | `agent: str, mode: str` | `str` | Persist and dynamically configure a mapper. |
-| [console_tools.py](console_tools.py#L223) | `SessionConsoleTools.swarm_set_router` | `agent: str, targets: list[str]` | `str` | Persist and dynamically configure a fixed router. |
+| [console_tools.py](console_tools.py#L20) | `_schema` | `*parameters: ToolParameter` | `ToolSchema` | Create a compact first-party tool schema. |
+| [console_tools.py](console_tools.py#L45) | `ToolPermissionPolicy.from_profile` | `value: object` | `'ToolPermissionPolicy'` | Decode one persisted profile value without trusting its shape. |
+| [console_tools.py](console_tools.py#L68) | `ToolPermissionPolicy.allows` | `category: str, tool: str` | `bool` | Return whether a category and its individual tool are enabled. |
+| [console_tools.py](console_tools.py#L80) | `ToolPermissionPolicy.fingerprint` | `None` | `tuple[tuple[str, ...], tuple[str, ...]]` | Return a deterministic value suitable for Agent rebuild identity. |
+| [console_tools.py](console_tools.py#L111) | `SessionConsoleTools.build` | `None` | `list[Tool]` | Create the controlled tool set for a coordinator or worker. |
+| [console_tools.py](console_tools.py#L186) | `SessionConsoleTools._journal` | `event_type: str, message: str, data: dict[str, object]` | `None` | Append one mutation fact when an execution attempt exists. |
+| [console_tools.py](console_tools.py#L198) | `SessionConsoleTools.plan_upsert` | `id: str, status: str, title: str` | `str` | Persist a task item and record the mutation in the attempt journal. |
+| [console_tools.py](console_tools.py#L213) | `SessionConsoleTools.plan_read` | `None` | `list[dict[str, object]]` | Return the currently durable plan to the calling Agent. |
+| [console_tools.py](console_tools.py#L221) | `SessionConsoleTools.swarm_connect` | `source: str, target: str` | `str` | Persist and dynamically apply one safe dependency connection. |
+| [console_tools.py](console_tools.py#L236) | `SessionConsoleTools.swarm_disconnect` | `source: str, target: str` | `str` | Persist and dynamically remove one dependency connection. |
+| [console_tools.py](console_tools.py#L251) | `SessionConsoleTools.swarm_set_mapper` | `agent: str, mode: str` | `str` | Persist and dynamically configure a mapper. |
+| [console_tools.py](console_tools.py#L266) | `SessionConsoleTools.swarm_set_router` | `agent: str, targets: list[str]` | `str` | Persist and dynamically configure a fixed router. |
+| [console_tools.py](console_tools.py#L281) | `SessionConsoleTools.swarm_add_worker` | `name: str, system_prompt: str` | `str` | Create a profile-inheriting Worker in the live and durable swarm. |
+| [console_tools.py](console_tools.py#L308) | `SessionConsoleTools.swarm_remove_worker` | `name: str` | `str` | Remove one Worker from live and durable topology. |
+| [console_tools.py](console_tools.py#L329) | `SessionConsoleTools.swarm_info` | `None` | `str` | Return the current live graph and TaskBus state without mutation. |
+| [console_tools.py](console_tools.py#L337) | `SessionConsoleTools.dispatch_subagent` | `name: str, system_prompt: str, objective: str, handoff: str, reply_to: str, expected_artifacts: list[str] \| None, plan_task_id: str` | `str` | Create and independently schedule one reporting Worker. |
+| [console_tools.py](console_tools.py#L386) | `SessionConsoleTools.dispatch_subagents` | `assignments: list[dict[str, object]]` | `str` | Dispatch a validated independent group of reporting Workers. |
+| [console_tools.py](console_tools.py#L415) | `SessionConsoleTools.revive_agent` | `name: str, objective: str, handoff: str, reply_to: str, expected_artifacts: list[str] \| None, plan_task_id: str` | `str` | Assign a new task to one terminal TaskBus Worker. |
+| [console_tools.py](console_tools.py#L453) | `SessionConsoleTools.wait_for_reports` | `task_ids: list[str], timeout_seconds: float` | `str` | Wait for bounded structured reports from dispatched Workers. |
+| [console_tools.py](console_tools.py#L470) | `SessionConsoleTools._session_id` | `None` | `str` | Return the aggregate's durable execution Session identity. |
+| [console_tools.py](console_tools.py#L485) | `SessionConsoleTools._report_tool` | `name: str, worker: Agent` | `Tool` | Build the terminal structured-report Tool for one dispatched Worker. |
+| [console_tools.py](console_tools.py#L532) | `_required_text` | `value: dict[str, object], key: str` | `str` | Read one required non-empty text field from a batch assignment. |
+| [console_tools.py](console_tools.py#L551) | `_optional_text` | `value: dict[str, object], key: str` | `str` | Read one optional text field from a batch assignment. |
+| [console_tools.py](console_tools.py#L570) | `_string_list` | `value: object` | `list[str]` | Normalize one batch assignment artifact list. |
 | [projection_service.py](projection_service.py#L27) | `ConsoleProjectionService._session` | `session_id: str` | `Any` | Resolve a Session or translate its absence into a domain lookup. |
 | [projection_service.py](projection_service.py#L32) | `ConsoleProjectionService._state` | `session_id: str` | `Any` | Return the Session-owned typed console state. |
 | [projection_service.py](projection_service.py#L35) | `ConsoleProjectionService._idle` | `session_id: str` | `None` | Reject static graph edits while an attempt is live. |
@@ -86,8 +98,8 @@ It never creates a second AgentSwarm, executor, or credential store.
 | [projection_service.py](projection_service.py#L392) | `ConsoleProjectionService._detached_preview_agent` | `session_id: str, name: str` | `Any` | Create and hydrate an Agent copy that cannot mutate Session state. |
 | [projection_service.py](projection_service.py#L412) | `ConsoleProjectionService._agent` | `session_id: str, name: str` | `Any` | Resolve a concrete Agent, allowing unmaterialized persisted roles. |
 | [projection_service.py](projection_service.py#L423) | `ConsoleProjectionService._context_path` | `session_id: str, name: str` | `Path` | Return the single durable checkpoint path for one valid role. |
-| [tool_provider.py](tool_provider.py#L14) | `ConsoleToolProvider.materialize` | `session: object, policy: ToolPolicy, role: str` | `list[Tool]` | Build Console Tools authorized for the requested Agent role. |
-| [tool_provider.py](tool_provider.py#L33) | `console_tool_registration` | `None` | `ToolProviderRegistration` | Return Console's complete, single registration with the Tool Registry. |
+| [tool_provider.py](tool_provider.py#L27) | `ConsoleToolProvider.materialize` | `session: object, policy: ToolPolicy, role: str` | `list[Tool]` | Build Console Tools authorized for the requested Agent role. |
+| [tool_provider.py](tool_provider.py#L47) | `console_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Return Console's complete, single registration with the Tool Registry. |
 
 ## Class Map
 
@@ -99,9 +111,9 @@ It never creates a second AgentSwarm, executor, or credential store.
 | [console_state.py](console_state.py#L33) | `PlanItem` | `id: str, status: str, agent: str, title: str` | `object` | A durable Agent-authored task-plan item. |
 | [console_state.py](console_state.py#L42) | `ConsoleBlueprint` | `workers: dict[str, WorkerBlueprint], connections: list[ConnectionBlueprint], mappers: dict[str, str], routers: dict[str, list[str]], plan: list[PlanItem], schema_version: int` | `object` | Complete serializable console state owned by one Session. |
 | [console_state.py](console_state.py#L83) | `ConsoleState` | `root: Path` | `object` | Atomically persist one Session's typed topology and task plan. |
-| [console_tools.py](console_tools.py#L29) | `ToolPermissionPolicy` | `enabled_categories: frozenset[str], enabled_tools: frozenset[str]` | `object` | Validated effective allowlist for the tools this console provides. |
-| [console_tools.py](console_tools.py#L85) | `SessionConsoleTools` | `session: 'Session', permissions: ToolPermissionPolicy` | `object` | Build safe plan and dynamic-topology tools for a single Session. |
+| [console_tools.py](console_tools.py#L33) | `ToolPermissionPolicy` | `enabled_categories: frozenset[str], enabled_tools: frozenset[str]` | `object` | Validated effective allowlist for the tools this console provides. |
+| [console_tools.py](console_tools.py#L89) | `SessionConsoleTools` | `session: 'Session', permissions: ToolPermissionPolicy, worker_factory: WorkerFactory \| None` | `object` | Build safe plan and dynamic-topology tools for a single Session. |
 | [projection_service.py](projection_service.py#L18) | `ConsoleProjectionService` | `core: 'AngelusCore'` | `object` | Provide `ConsoleProjectionService` behavior. |
-| [tool_provider.py](tool_provider.py#L11) | `ConsoleToolProvider` | `None` | `object` | Materialize the Session-console plan and topology tools. |
+| [tool_provider.py](tool_provider.py#L16) | `ConsoleToolProvider` | `core: 'AngelusCore'` | `object` | Materialize the Session-console plan and topology tools. |
 
 <!-- END GENERATED SYMBOL MAP -->

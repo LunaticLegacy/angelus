@@ -71,7 +71,7 @@ class AngelusCore:
         # Sole process-wide directory of capability definitions and runtime
         # materializers. Domain modules register providers once at startup.
         self.tool_registry = ToolRegistry()
-        self.tool_registry.register(console_tool_registration())
+        self.tool_registry.register(console_tool_registration(self))
         self.tool_registry.register(runtime_tool_registration(self))
         # Plugins can only extend the application through this same ToolRegistry.
         self.plugin_manager = PluginManager(self.state_root, self.tool_registry)
