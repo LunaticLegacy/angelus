@@ -297,12 +297,12 @@ function agentRunState(agentId, agents=currentAgents) { return agentStateView(ag
 /** Enable controls only when the selected scope has live or queued work. */
 function updateStopAvailability() { const state=agentStateView(selectedAgent).canonical; const actionable=runActive && (selectedAgent==="all" || ["running","queued"].includes(state)); $("stop").disabled=!actionable; $("force-stop").disabled=!actionable; const label=selectedAgent==="all"?"整个运行":selectedAgent; $("stop").title=`停止 ${label}`; $("force-stop").title=`强行停止 ${label}`; }
 function acknowledgeAgent(agentId) { const acknowledged=acknowledgedAgents(); if(agentId === "all") currentAgents.filter(agent=>agent.id !== "all" && agentRunState(agent.id) === "completed").forEach(agent=>acknowledged.add(agent.id)); else acknowledged.add(agentId); localStorage.setItem(acknowledgementKey(),JSON.stringify([...acknowledged])); renderAgentSelector(currentAgents); }
-/** Render a secondary context-graph action without changing Agent-card selection. */
+/** Render a secondary Agent-context action without changing Agent-card selection. */
 function agentCard(agent, selected, tone, icon, subtitle, view, title) {
   if (agent.id === "all") return `<button class="agent-filter ${selected?"selected active":""}" type="button" data-agent="all" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="agent-state ${view.ui}" data-ack-agent="all" title="${escapeHtml(title)}"></i></button>`;
-  return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span></button><button class="agent-context-button" type="button" data-context-agent="${escapeHtml(agent.id)}" title="查看 ${escapeHtml(agent.name)} 的上下文图" aria-label="查看 ${escapeHtml(agent.name)} 的上下文图">◎</button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
+  return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span></button><button class="agent-context-button" type="button" data-context-agent="${escapeHtml(agent.id)}" title="查看 ${escapeHtml(agent.name)} 的上下文" aria-label="查看 ${escapeHtml(agent.name)} 的上下文">◎</button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
 }
-function renderAgentSelector(agents=[]) { const row=$("agent-row"); const visible=agents.length ? agents : [{id:"all",name:"全部",kind:"filter"}]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"当前会话":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openContextGraph(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
+function renderAgentSelector(agents=[]) { const row=$("agent-row"); const visible=agents.length ? agents : [{id:"all",name:"全部",kind:"filter"}]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"当前会话":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
 
 /** Map untrusted entity types to the finite visual palette used by the graph. */
 function contextNodeTone(type) { return ({file:"blue",tool:"amber",person:"pink",decision:"green",module:"purple",framework:"purple"})[String(type).toLowerCase()] || "slate"; }
@@ -320,8 +320,6 @@ function renderContextGraphDetail(graph, nodeId) {
 /** Build the bounded relationship view, then bind entity selections for the current graph. */
 function renderContextGraph(payload) {
   const graph=payload.graph||{}; const nodes=graph.nodes||[]; const edges=graph.edges||[];
-  $("context-graph-title").textContent=`${payload.agent} · 上下文图`;
-  $("context-graph-subtitle").textContent=graph.stale?"上下文已被版本化编辑；实体图等待下一次 Agent checkpoint 重建。":graph.available?"这是 Agent 最近一次持久化 checkpoint 的长期记忆索引。":"该 Agent 尚未生成可查看的上下文图。";
   const ctx=payload.context||{};
   $("context-graph-summary").innerHTML=`<span>实体 <b>${Number(graph.node_count||0)}</b></span><span>关系 <b>${Number(graph.edge_count||0)}</b></span><span>社区 <b>${Number(graph.community_count||0)}</b></span><span>上下文 <b>${Number(ctx.messages||0)}</b> 条</span>${graph.stale?'<small>图等待重建</small>':graph.truncated?'<small>仅显示最近的 60 个实体</small>':""}`;
   const canvas=$("context-graph-canvas"), list=$("context-graph-nodes");
@@ -343,8 +341,42 @@ function renderContextGraph(payload) {
   document.querySelectorAll("[data-context-node]").forEach(control=>control.addEventListener("click",()=>renderContextGraphDetail(graph,control.dataset.contextNode)));
   renderContextGraphDetail(graph,nodes[0].id);
 }
-/** Switch the context dialog between its graph, raw-context and compaction-input tabs. */
-function selectContextDialogTab(tab) { const selected=tab==="prompt"?"prompt":tab==="compaction"?"compaction":"graph"; document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>{const active=button.dataset.contextDialogTab===selected;button.setAttribute("aria-selected",String(active));button.classList.toggle("active",active);}); $("context-panel-graph").hidden=selected!=="graph"; $("context-panel-prompt").hidden=selected!=="prompt"; $("context-panel-compaction").hidden=selected!=="compaction"; }
+/**
+ * Return the page-specific chrome for the Agent context inspector.
+ *
+ * Args:
+ *   tab: Requested inspector tab identifier.
+ *
+ * Returns:
+ *   Normalized tab identifier plus its human-readable title and description.
+ */
+function contextDialogChrome(tab) {
+  const selected=tab==="prompt"?"prompt":tab==="compaction"?"compaction":"graph";
+  const pages={
+    graph:{title:"实体图",subtitle:"实体、关系与社区来自最近一次持久化 checkpoint 的长期记忆索引。"},
+    prompt:{title:"上下文",subtitle:"最近一次真实模型请求及其线性上下文记录；不包含实体图内容。"},
+    compaction:{title:"压缩输入",subtitle:"压缩触发时会发送给压缩模型的当前线性上下文输入。"},
+  };
+  return {selected,...pages[selected]};
+}
+/**
+ * Switch the inspector without allowing one panel's asynchronous data to alter another panel's chrome.
+ *
+ * Args:
+ *   tab: Requested graph, prompt, or compaction tab identifier.
+ *
+ * Returns:
+ *   None.
+ */
+function selectContextDialogTab(tab) {
+  const chrome=contextDialogChrome(tab);
+  document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>{const active=button.dataset.contextDialogTab===chrome.selected;button.setAttribute("aria-selected",String(active));button.classList.toggle("active",active);});
+  $("context-panel-graph").hidden=chrome.selected!=="graph";
+  $("context-panel-prompt").hidden=chrome.selected!=="prompt";
+  $("context-panel-compaction").hidden=chrome.selected!=="compaction";
+  $("context-dialog-title").textContent=`${contextDialogAgent || "Agent"} · ${chrome.title}`;
+  $("context-dialog-subtitle").textContent=chrome.subtitle;
+}
 /**
  * Decode complete JSON-string layers for the context preview without touching raw text.
  *
@@ -373,16 +405,30 @@ function renderCompactionInput(payload) {
 }
 /** Fetch the exact compaction input the compactor would send for one Agent. */
 async function loadCompactionInput(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/compaction-input`));renderCompactionInput(payload); }
-/** Fetch a single Agent's persisted graph and open it in the theme-aware dialog. */
-async function openContextGraph(agentId) {
+/**
+ * Open the Agent context inspector and request each independent panel in parallel.
+ *
+ * Args:
+ *   agentId: Stable identifier of the Agent whose context is inspected.
+ *
+ * Returns:
+ *   Promise that resolves after each available panel has rendered its own data or error.
+ */
+async function openAgentContextInspector(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   contextDialogAgent=agentId;
-  $("context-graph-title").textContent=`${agentId} · 上下文图`; $("context-graph-subtitle").textContent="正在读取最近一次持久化 checkpoint…";
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
   selectContextDialogTab("graph");$("context-prompt-preview").textContent="正在读取当前上下文…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在读取压缩器输入…";$("context-compaction-status").textContent="读取中…";
   if(!dialog.open) dialog.showModal();
-  try { const [graphPayload]=await Promise.all([apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)),loadContextPrompt(agentId),loadCompactionInput(agentId)]);renderContextGraph(graphPayload); }
-  catch(error) { $("context-graph-subtitle").textContent="无法读取上下文图。"; $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`;$("context-prompt-preview").textContent=error.message; }
+  const [graph,prompt,compaction]=await Promise.allSettled([
+    apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)),
+    loadContextPrompt(agentId),
+    loadCompactionInput(agentId),
+  ]);
+  if(graph.status==="fulfilled") renderContextGraph(graph.value);
+  else $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(graph.reason.message)}</p>`;
+  if(prompt.status==="rejected") { $("context-prompt-preview").textContent=prompt.reason.message; $("context-prompt-status").textContent="读取失败"; }
+  if(compaction.status==="rejected") { $("context-compaction-preview").textContent=compaction.reason.message; $("context-compaction-status").textContent="读取失败"; }
 }
 function hasSelectedSession() { return Boolean(sessionId); }
 function renderInspectorEmpty(message) { const target=$("trace"); if(target) target.innerHTML=`<p class="empty">${escapeHtml(message)}</p>`; }
@@ -433,11 +479,11 @@ function renderAgentTopology(agents, graph) {
   for(const edge of graph.edges||[]) if(edge.kind==="dispatch" && byId[edge.source] && byId[edge.target] && edge.source!==edge.target) parent[edge.target]=edge.source;
   for(const [child,leader] of Object.entries(parent)) (children[leader]??=[]).push(child);
   const taskByAgent={}; for(const [taskId,agentId] of Object.entries(graph.assignments||{})) (taskByAgent[agentId]??=[]).push(taskId);
-  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文图" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${agent.dynamic?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
+  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${agent.dynamic?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
   const roots=agents.filter(agent=>!parent[agent.id]).map(agent=>agent.id).sort((a,b)=>a==="coordinator"?-1:b==="coordinator"?1:a.localeCompare(b)); const html=roots.map(id=>render(id)).join("")+agents.filter(agent=>!rendered.has(agent.id)).map(agent=>render(agent.id)).join(""); target.innerHTML=html;
   target.querySelectorAll("[data-context-agent]").forEach(control=>{
-    control.addEventListener("click",()=>openContextGraph(control.dataset.contextAgent));
-    control.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openContextGraph(control.dataset.contextAgent);}});
+    control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent));
+    control.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openAgentContextInspector(control.dataset.contextAgent);}});
   });
 }
 async function loadInspectorAgents() { if(!hasSelectedSession()) { currentGraph={nodes:[],edges:[],assignments:{},task_states:{},node_states:{}}; renderAgentTopology([],currentGraph); renderAgentSelector(); return; } const [agentPayload,graphPayload]=await Promise.all([apiJson(sessionApi("/agents")),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,graphPayload);renderAgentSelector(agentPayload.agents); loadGraphEditInfo(); }
