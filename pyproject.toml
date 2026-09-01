@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "angelus"
-version = "0.5.0rc0"
+dynamic = ["version"]
 description = "Local observable Agent control plane built on LLMFetcher"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
-    "llmfetcher==0.4.0",
+    "llmfetcher>=0.4.0,<0.5.0",
     "markdown-it-py",
     "mcp>=2,<3",
     "pydantic",
@@ -27,3 +27,6 @@ angelus-web = "angelus.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["angelus*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "angelus._version.__version__"}

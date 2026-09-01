@@ -1,6 +1,6 @@
 [package]
 name = "angelus-desktop"
-version = "0.5.0-preview"
+version = "0.5.0-rc.0"
 description = "Desktop shell for the Angelus Agent workbench"
 authors = ["Angelus contributors"]
 edition = "2021"

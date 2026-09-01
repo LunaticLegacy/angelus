@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from ..core import AngelusCore
 from ..modules.application_module import UnknownSession
+from ..modules.tool_module import ToolCatalog
+from ..version import RuntimeVersions, runtime_versions
 
 
 router = APIRouter()
@@ -53,6 +55,29 @@ def _core(request: Request) -> AngelusCore:
     if not isinstance(core, AngelusCore):
         raise RuntimeError("AngelusCore is not installed on this application")
     return core
+
+
+@router.get("/api/tool-registry")
+def tool_registry(request: Request) -> ToolCatalog:
+    """Return categories and tools actually registered by backend providers.
+
+    Args:
+        request: Incoming request carrying the application composition root.
+
+    Returns:
+        Typed non-secret catalog used to render tool authorization controls.
+    """
+    return _core(request).tool_registry.catalog()
+
+
+@router.get("/api/version")
+def version() -> RuntimeVersions:
+    """Return independent Angelus and llmfetcher runtime versions.
+
+    Returns:
+        Immutable version metadata suitable for diagnostics and UI display.
+    """
+    return runtime_versions()
 
 
 @router.get("/api/connectors")
