@@ -17,6 +17,7 @@ from .modules.connector_module import ConnectorStore, ProviderCatalog
 from .modules.settings_module import RunProfileStore
 from .modules.tool_module import ToolRegistry, runtime_tool_registration
 from .modules.plugin_module import PluginManager
+from .modules.external_agent_hub_module import ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore
 
 
 class AngelusCore:
@@ -77,6 +78,13 @@ class AngelusCore:
         bundled_plugins = Path(__file__).resolve().parent.parent / "plugins"
         self.plugin_manager = PluginManager(self.state_root, self.tool_registry, bundled_plugins)
         self.plugin_manager.restore_enabled()
+        # External Agent definitions are global durable metadata. Protocol
+        # adapters are intentionally empty until their concrete integrations
+        # are installed; the Hub returns an explicit unsupported health state.
+        self.external_agent_hub = ExternalAgentHubService(
+            ExternalAgentHubStore(self.state_root),
+            ExternalAgentAdapterRegistry(),
+        )
         # Legacy transcript reader/remover during the conversation migration.
         self.conversations = ConversationStore(Path.cwd() / "workspace")
         for workspace in self.workspaces.list():

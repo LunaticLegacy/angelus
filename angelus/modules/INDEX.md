@@ -16,6 +16,7 @@ by storing mutable runtime state in an API adapter.
 | Plugins | [`plugin_module/INDEX.md`](plugin_module/INDEX.md) | Controlled global package discovery, typed settings, and ToolRegistry-backed loading. |
 | Session console | [`console_module/INDEX.md`](console_module/INDEX.md) | Persisted task-plan/topology blueprints and Session projections. |
 | Unified tools | [`tool_module/INDEX.md`](tool_module/INDEX.md) | Canonical Tool identities, authorization policy and future runtime registry. |
+| External Agent Hub | [`external_agent_hub_module/INDEX.md`](external_agent_hub_module/INDEX.md) | Credential-free external Agent definitions and protocol adapter boundary. |
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
