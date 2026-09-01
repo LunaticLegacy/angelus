@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
 from llmfetcher.swarm_module import AgentFailure
+from .agent_control import AgentControlReceipt, SessionRunControl
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -135,14 +136,31 @@ class ExecutionService:
             Raises:
                 RuntimeError: If the coordinator returned an ``AgentFailure``.
             """
+            run_control = SessionRunControl(controller)
+            # Register the persisted topology before scheduling begins.  A
+            # worker can otherwise remain queued long enough for the browser
+            # to select it, while its per-Agent control view does not exist
+            # yet.  Pre-registration lets a stop or steering instruction
+            # target every Agent that was present when this attempt began.
+            topology = session.swarm.view_snapshot()
+            nodes = topology.get("nodes", [])
+            if isinstance(nodes, list):
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    agent_name = node.get("id")
+                    if node.get("kind") == "agent" and isinstance(agent_name, str):
+                        run_control.for_agent(agent_name)
+            session.run_control = run_control
             try:
-                output = session.swarm.run(message, control=controller)
+                output = session.swarm.run(message, control=run_control)
                 root = output.get(session.coordinator_name) if isinstance(output, dict) else None
                 if isinstance(root, AgentFailure):
                     raise RuntimeError(f"{root.agent_name} failed: {root.error}")
                 return output
             finally:
                 _remove_journal_hook(session.swarm, journal_hook)
+                session.run_control = None
 
         attempt = executor.start(run_swarm, before_start=install_hook)
         return attempt.snapshot()
@@ -171,6 +189,58 @@ class ExecutionService:
         if executor is None:
             return self.status(session_id)
         return executor.request_stop(force=force, reason=reason)
+
+    def control(
+        self,
+        session_id: str,
+        agent_id: str,
+        action: str,
+        message: str,
+        reason: str,
+    ) -> AgentControlReceipt:
+        """Route one typed browser command to all or one active Agent.
+
+        Args:
+            session_id: Session owning the current execution attempt.
+            agent_id: ``all`` or one live graph Agent identity.
+            action: ``steer``, ``stop``, or ``force_stop``.
+            message: Required steering instruction; ignored by stop actions.
+            reason: Journal-safe explanation for a stop request.
+
+        Returns:
+            Receipt recording the resolved target Agent identities.
+
+        Raises:
+            UnknownSession: If the Session does not exist.
+            RuntimeError: If no active Session execution can accept control.
+            KeyError: If the requested targeted Agent is not active.
+            ValueError: If the action or required steering message is invalid.
+        """
+        self._require_session(session_id)
+        session = self._core.sessions.get(session_id)
+        executor = session.execution
+        snapshot = executor.snapshot() if executor is not None else None
+        control = session.run_control
+        if snapshot is None or snapshot.state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING} or control is None:
+            raise RuntimeError("Session has no active Agent control boundary")
+        if action == "steer":
+            targets = control.steer(agent_id, message)
+            queued = True
+        elif action == "stop":
+            targets = control.stop(agent_id, False, reason)
+            queued = True
+        elif action == "force_stop":
+            targets = control.stop(agent_id, True, reason)
+            queued = False
+        else:
+            raise ValueError("action must be steer, stop, or force_stop")
+        session.execution.attempt.journal.append(
+            "agent:control",
+            {"agent_id": agent_id, "action": action, "target_agents": list(targets), "reason": reason},
+            agent=agent_id,
+            message=message or reason,
+        )
+        return AgentControlReceipt(session_id, snapshot.execution_id or "", agent_id, action, targets, queued)
 
     def events(self, session_id: str) -> Iterator[dict[str, Any]]:
         """Yield durable events from the most recent in-process attempt.

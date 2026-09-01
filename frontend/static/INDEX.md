@@ -88,7 +88,7 @@ summary responses and is applied when the next Agent lifecycle is materialized.
 | [app.js](app.js#L195) | `updateHeaderMetrics` | `data: unknown` | `unknown` | Perform the browser runtime operation: update header metrics. |
 | [app.js](app.js#L196) | `setRunning` | `running: unknown` | `unknown` | Perform the browser runtime operation: set running. |
 | [app.js](app.js#L199) | `setSteerStatus` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set steer status. |
-| [app.js](app.js#L200) | `sendSteer` | `None` | `Promise<unknown>` | Perform the browser runtime operation: send steer. |
+| [app.js](app.js#L200) | `sendSteer` | `message: unknown` | `Promise<unknown>` | Perform the browser runtime operation: send steer. |
 | [app.js](app.js#L201) | `apiJson` | `path: unknown` | `Promise<unknown>` | Perform the browser runtime operation: api json. |
 | [app.js](app.js#L202) | `apiPost` | `path: unknown, body: unknown` | `Promise<unknown>` | Perform the browser runtime operation: api post. |
 | [app.js](app.js#L203) | `apiPut` | `path: unknown, body: unknown` | `Promise<unknown>` | Perform the browser runtime operation: api put. |

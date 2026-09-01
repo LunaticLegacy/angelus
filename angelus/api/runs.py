@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,6 +31,23 @@ class StopRequest(BaseModel):
     """HTTP input for either graceful or forced stop."""
 
     reason: str = Field(default="user_requested", min_length=1, max_length=512)
+
+
+@dataclass
+class AgentControlRequest:
+    """Typed input for an all-Agent or targeted runtime command.
+
+    Args:
+        agent_id: ``all`` for broadcast or one concrete live Agent identity.
+        action: ``steer``, ``stop``, or ``force_stop``.
+        message: Required non-empty instruction for ``steer``.
+        reason: Journal-safe reason for stop actions.
+    """
+
+    agent_id: str = "all"
+    action: str = "steer"
+    message: str = ""
+    reason: str = "user_requested"
 
 
 def _core(request: Request) -> AngelusCore:
@@ -101,6 +119,33 @@ def stop_run(session_id: str, payload: StopRequest, request: Request) -> dict[st
 def force_stop_run(session_id: str, payload: StopRequest, request: Request) -> dict[str, Any]:
     """Escalate the same request and close every registered live resource."""
     return _stop(session_id, payload, request, force=True)
+
+
+@router.post("/api/runs/{session_id}/control")
+def control_run(session_id: str, payload: AgentControlRequest, request: Request) -> dict[str, object]:
+    """Apply one control command to every Agent or one selected Agent.
+
+    Args:
+        session_id: Session owning the active execution.
+        payload: Validated control scope, action, and optional instruction.
+        request: Incoming request carrying the Angelus application core.
+
+    Returns:
+        Accepted command receipt including resolved target Agent identities.
+    """
+    try:
+        receipt = _core(request).execution_service.control(
+            session_id, payload.agent_id, payload.action, payload.message, payload.reason,
+        )
+    except UnknownSession as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown active agent") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return asdict(receipt)
 
 
 @router.get("/api/runs/{session_id}/events")

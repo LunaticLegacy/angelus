@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 import threading
 from collections.abc import Iterable
 
@@ -12,6 +12,9 @@ from llmfetcher import Agent, AgentSwarm
 from ..swarm_module.session_executor import SessionExecutor
 from ..execution_module import ExecutionAttempt, ExecutionState
 from ..console_module import ConsoleState
+
+if TYPE_CHECKING:
+    from ..application_module.agent_control import SessionRunControl
 
 
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
@@ -62,6 +65,10 @@ class Session:
         # owns the current execution attempt, its controller, and its durable
         # attempt directory for this logical session.
         self.execution: SessionExecutor[Any] | None = None
+        # Ephemeral control registry for the currently active execution. It is
+        # deliberately never persisted: only durable Agent context survives a
+        # process restart, not an in-flight provider request.
+        self.run_control: SessionRunControl | None = None
         # Durable console-only state (plans and safe graph blueprints).  It is
         # attached when the session receives its durable state root.
         self.console: ConsoleState | None = None

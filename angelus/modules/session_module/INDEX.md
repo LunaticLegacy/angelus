@@ -39,24 +39,24 @@ into the graph-backed context handler; it does not reuse reply `max_tokens`.
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [agent_handler.py](agent_handler.py#L15) | `create_agent` | `configs: List[LLMBackendConfig], tools: List[Tool], system_prompt: str, max_concurrency: int, max_context_threshold: int, compaction_output_max_tokens: int, context_path: Optional[str \| Path], context_handler: Optional[ContextHandler], default_max_rounds: int, default_max_tokens: int, enable_stop_turn: bool, default_stream: bool` | `Agent` | Build one configured Agent without assigning it to a session or run. |
-| [session_handler.py](session_handler.py#L20) | `validate_session_id` | `session_id: str` | `str` | Validate and return one filesystem-safe durable Session identity. |
-| [session_handler.py](session_handler.py#L69) | `Session.add_agent` | `agent: Agent` | `None` | Append one fully configured Agent to this session. |
-| [session_handler.py](session_handler.py#L77) | `Session.configure_execution` | `session_id: str, root: Path` | `None` | Attach this Session's single durable execution boundary exactly once. |
-| [session_handler.py](session_handler.py#L92) | `Session.set_coordinator` | `agent: Agent, fingerprint: tuple[object, ...]` | `None` | Install the required coordinator and retain it as ``agents[0]``. |
-| [session_handler.py](session_handler.py#L110) | `Session.coordinator_matches` | `fingerprint: tuple[object, ...]` | `bool` | Return whether this Session already has coordinator for ``fingerprint``. |
-| [session_handler.py](session_handler.py#L130) | `SessionHandler.create` | `session_id: str, agents: Iterable[Agent], execution_root: Path \| None` | `Session` | Create one session with an optional initial Agent collection. |
-| [session_handler.py](session_handler.py#L168) | `SessionHandler.add_agent` | `session_id: str, agent: Agent` | `None` | Attach one Agent definition to an existing session. |
-| [session_handler.py](session_handler.py#L181) | `SessionHandler.agents` | `session_id: str` | `tuple[Agent, ...]` | Return an immutable snapshot of a session's Agent definitions. |
-| [session_handler.py](session_handler.py#L193) | `SessionHandler.get` | `session_id: str` | `Session` | Return the Session aggregate owned by ``session_id``. |
-| [session_handler.py](session_handler.py#L205) | `SessionHandler.remove` | `session_id: str` | `Session` | Delete one session aggregate from this registry. |
-| [session_handler.py](session_handler.py#L220) | `SessionHandler.exists` | `session_id: str` | `bool` | Return whether a session is registered without mutating state. |
-| [session_handler.py](session_handler.py#L229) | `SessionHandler.live_attempts` | `None` | `tuple[ExecutionAttempt[Any], ...]` | Return live attempts owned by Sessions for coordinated shutdown. |
+| [session_handler.py](session_handler.py#L23) | `validate_session_id` | `session_id: str` | `str` | Validate and return one filesystem-safe durable Session identity. |
+| [session_handler.py](session_handler.py#L76) | `Session.add_agent` | `agent: Agent` | `None` | Append one fully configured Agent to this session. |
+| [session_handler.py](session_handler.py#L84) | `Session.configure_execution` | `session_id: str, root: Path` | `None` | Attach this Session's single durable execution boundary exactly once. |
+| [session_handler.py](session_handler.py#L99) | `Session.set_coordinator` | `agent: Agent, fingerprint: tuple[object, ...]` | `None` | Install the required coordinator and retain it as ``agents[0]``. |
+| [session_handler.py](session_handler.py#L117) | `Session.coordinator_matches` | `fingerprint: tuple[object, ...]` | `bool` | Return whether this Session already has coordinator for ``fingerprint``. |
+| [session_handler.py](session_handler.py#L137) | `SessionHandler.create` | `session_id: str, agents: Iterable[Agent], execution_root: Path \| None` | `Session` | Create one session with an optional initial Agent collection. |
+| [session_handler.py](session_handler.py#L175) | `SessionHandler.add_agent` | `session_id: str, agent: Agent` | `None` | Attach one Agent definition to an existing session. |
+| [session_handler.py](session_handler.py#L188) | `SessionHandler.agents` | `session_id: str` | `tuple[Agent, ...]` | Return an immutable snapshot of a session's Agent definitions. |
+| [session_handler.py](session_handler.py#L200) | `SessionHandler.get` | `session_id: str` | `Session` | Return the Session aggregate owned by ``session_id``. |
+| [session_handler.py](session_handler.py#L212) | `SessionHandler.remove` | `session_id: str` | `Session` | Delete one session aggregate from this registry. |
+| [session_handler.py](session_handler.py#L227) | `SessionHandler.exists` | `session_id: str` | `bool` | Return whether a session is registered without mutating state. |
+| [session_handler.py](session_handler.py#L236) | `SessionHandler.live_attempts` | `None` | `tuple[ExecutionAttempt[Any], ...]` | Return live attempts owned by Sessions for coordinated shutdown. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [session_handler.py](session_handler.py#L37) | `Session` | `None` | `object` | One logical session and all state that has Session ownership. |
-| [session_handler.py](session_handler.py#L114) | `SessionHandler` | `None` | `object` | Register and retrieve ``Session`` aggregates. |
+| [session_handler.py](session_handler.py#L40) | `Session` | `None` | `object` | One logical session and all state that has Session ownership. |
+| [session_handler.py](session_handler.py#L121) | `SessionHandler` | `None` | `object` | Register and retrieve ``Session`` aggregates. |
 
 <!-- END GENERATED SYMBOL MAP -->

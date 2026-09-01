@@ -97,13 +97,14 @@ replaced solely by `settings.py`.
 | [plugins.py](plugins.py#L192) | `plugin_static` | `name: str, asset: str, request: Request` | `FileResponse` | Serve one active plugin's manifest-whitelisted static asset. |
 | [providers.py](providers.py#L13) | `_core` | `request: Request` | `AngelusCore` | Resolve the application-owned core and its provider catalog. |
 | [providers.py](providers.py#L22) | `list_providers` | `request: Request` | `dict[str, list[str]]` | Return providers available from the installed LLMFetcher handlers. |
-| [runs.py](runs.py#L35) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without constructing a fallback instance. |
-| [runs.py](runs.py#L44) | `start_run` | `payload: RunRequest, request: Request` | `dict[str, Any]` | Start one attempt against the Session's configured coordinator. |
-| [runs.py](runs.py#L64) | `run_status` | `session_id: str, request: Request` | `dict[str, Any]` | Return current process state; manifest is the restart source. |
-| [runs.py](runs.py#L81) | `_stop` | `session_id: str, payload: StopRequest, request: Request, force: bool` | `dict[str, Any]` | Implement `_stop`. |
-| [runs.py](runs.py#L95) | `stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Request graceful stop through the attempt's only controller. |
-| [runs.py](runs.py#L101) | `force_stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Escalate the same request and close every registered live resource. |
-| [runs.py](runs.py#L107) | `run_events` | `session_id: str, request: Request, cursor: int` | `StreamingResponse` | Replay and follow unified journal events for one Session attempt. |
+| [runs.py](runs.py#L53) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without constructing a fallback instance. |
+| [runs.py](runs.py#L62) | `start_run` | `payload: RunRequest, request: Request` | `dict[str, Any]` | Start one attempt against the Session's configured coordinator. |
+| [runs.py](runs.py#L82) | `run_status` | `session_id: str, request: Request` | `dict[str, Any]` | Return current process state; manifest is the restart source. |
+| [runs.py](runs.py#L99) | `_stop` | `session_id: str, payload: StopRequest, request: Request, force: bool` | `dict[str, Any]` | Implement `_stop`. |
+| [runs.py](runs.py#L113) | `stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Request graceful stop through the attempt's only controller. |
+| [runs.py](runs.py#L119) | `force_stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Escalate the same request and close every registered live resource. |
+| [runs.py](runs.py#L125) | `control_run` | `session_id: str, payload: AgentControlRequest, request: Request` | `dict[str, object]` | Apply one control command to every Agent or one selected Agent. |
+| [runs.py](runs.py#L152) | `run_events` | `session_id: str, request: Request, cursor: int` | `StreamingResponse` | Replay and follow unified journal events for one Session attempt. |
 | [session_console.py](session_console.py#L67) | `_service` | `request: Request` | `Any` | Resolve the installed console projection service. |
 | [session_console.py](session_console.py#L82) | `_call` | `fn: Any` | `Any` | Map console-domain failures raised by one deferred route action. |
 | [session_console.py](session_console.py#L97) | `agents` | `session_id: str, request: Request` | `Any` | Return safe metadata for all Session Agents. |
@@ -147,8 +148,9 @@ replaced solely by `settings.py`.
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
 | [plugins.py](plugins.py#L17) | `PluginConfirmation` | `confirm: bool, grant_permissions: bool` | `BaseModel` | Explicit browser confirmation required for executable plugin actions. |
-| [runs.py](runs.py#L22) | `RunRequest` | `session_id: str, message: str` | `BaseModel` | HTTP input for one configured Session execution. |
-| [runs.py](runs.py#L29) | `StopRequest` | `reason: str` | `BaseModel` | HTTP input for either graceful or forced stop. |
+| [runs.py](runs.py#L23) | `RunRequest` | `session_id: str, message: str` | `BaseModel` | HTTP input for one configured Session execution. |
+| [runs.py](runs.py#L30) | `StopRequest` | `reason: str` | `BaseModel` | HTTP input for either graceful or forced stop. |
+| [runs.py](runs.py#L37) | `AgentControlRequest` | `agent_id: str, action: str, message: str, reason: str` | `object` | Typed input for an all-Agent or targeted runtime command. |
 | [session_console.py](session_console.py#L12) | `AgentEdit` | `name: str, system_prompt: str` | `object` | Typed input for an idle graph worker edit. |
 | [session_console.py](session_console.py#L23) | `ConnectionEdit` | `source: str, target: str` | `object` | Typed input for a directed dependency mutation. |
 | [session_console.py](session_console.py#L34) | `MapperEdit` | `agent: str, mode: str` | `object` | Typed input for a declarative input mapper. |
