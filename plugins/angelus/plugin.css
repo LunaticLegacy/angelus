@@ -1,0 +1,247 @@
+/* ========================================================================
+   Angelus Skin v0.1 — frontend skin for Angelus Workbench
+   Palette: silver-white / ice-blue / lavender / celestial indigo
+   This stylesheet intentionally rides on the host's existing semantic vars
+   and selectors so it remains light-weight and uninstallable.
+   ======================================================================== */
+
+/* ---------- Night mode (host default) ---------- */
+:root {
+  --bg:#07101f;
+  --panel:#0b1427;
+  --panel2:#111d36;
+  --line:#26385c;
+  --line2:#526b9c;
+  --text:#f4f7ff;
+  --muted:#8e9bbb;
+  --soft:#c9d2e8;
+  --purple:#9e8cff;
+  --green:#b8f467;
+  --amber:#ffc46b;
+  --red:#ff7184;
+  color-scheme:dark;
+}
+body {
+  background:
+    radial-gradient(circle at 52% 38%, rgba(114,104,255,.14), transparent 34%),
+    radial-gradient(ellipse at 52% -18%, #1a2a55 0, #07101f 52%),
+    #07101f;
+}
+.sidebar,.activity {
+  background:linear-gradient(180deg,rgba(13,23,46,.96),rgba(7,15,30,.98));
+  box-shadow:inset 0 0 36px rgba(126,111,255,.035);
+}
+.topbar,.agent-row,.composer { backdrop-filter:blur(14px); }
+.topbar { background:linear-gradient(180deg,rgba(12,21,42,.72),rgba(8,16,31,.48)); }
+.agent-row { background:rgba(8,16,31,.42); }
+.chat {
+  position:relative;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(135,120,255,.095), transparent 28%),
+    radial-gradient(ellipse at 50% 0,rgba(42,72,126,.34),transparent 68%);
+}
+.composer { background:rgba(7,15,30,.86); }
+.composer-box,.bubble,.agent-filter,.agent-card,.metrics div,.task-block,.graph-node,.trace-toggle,.inspector-agent,.usage-total div,.usage-agent,.agent-behavior,.agent-behavior-block {
+  border-color:rgba(102,126,179,.34);
+  background:linear-gradient(145deg,rgba(17,29,55,.91),rgba(9,18,36,.93));
+  box-shadow:0 10px 30px rgba(0,0,0,.12), inset 0 1px rgba(255,255,255,.025);
+}
+.agent-filter.selected,.agent-card.selected,.recent-session.selected {
+  border-color:#8877ef;
+  box-shadow:0 0 0 1px rgba(157,140,255,.28) inset,0 0 24px rgba(120,104,245,.12);
+}
+.recent-session.active { background:linear-gradient(90deg,rgba(105,93,215,.24),rgba(41,69,111,.20)); }
+.plus-button,.send-button {
+  background:linear-gradient(145deg,#baf477,#91d958);
+  color:#0b1b18;
+  box-shadow:0 7px 22px rgba(184,244,103,.18);
+}
+.brand span,.welcome-symbol { color:#c9f887; }
+.brand small,.title p,.eyebrow { color:#a999ff; }
+.welcome-symbol {
+  border-color:#8f7cf7;
+  box-shadow:0 0 36px rgba(127,109,255,.25),inset 0 0 18px rgba(139,126,255,.08);
+}
+.inspector-tabs button.active { color:#b7a9ff; }
+
+/* ---------- Day mode ---------- */
+:root[data-theme="light"] {
+  color-scheme:light;
+  --bg:#f7f9ff;
+  --panel:#ffffff;
+  --panel2:#f0f3ff;
+  --line:#dbe2f4;
+  --line2:#aebce0;
+  --text:#18233e;
+  --muted:#72809f;
+  --soft:#41506f;
+  --purple:#7467de;
+  --green:#4e9f72;
+  --amber:#d88729;
+  --red:#d95e70;
+}
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(circle at 50% 38%,rgba(159,145,255,.10),transparent 34%),
+    radial-gradient(ellipse at 52% -18%,#e8edff 0,#fafbff 52%),
+    #fafbff;
+}
+:root[data-theme="light"] .sidebar,
+:root[data-theme="light"] .activity {
+  background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(246,248,255,.98));
+  box-shadow:inset 0 0 36px rgba(130,111,220,.025);
+}
+:root[data-theme="light"] .topbar { background:linear-gradient(180deg,rgba(255,255,255,.84),rgba(249,250,255,.62)); }
+:root[data-theme="light"] .agent-row { background:rgba(250,251,255,.74); }
+:root[data-theme="light"] .chat {
+  background:
+    radial-gradient(circle at 50% 46%,rgba(146,130,240,.075),transparent 28%),
+    radial-gradient(ellipse at 50% 0,#eaf0ff 0,transparent 68%);
+}
+:root[data-theme="light"] .composer { background:rgba(246,248,255,.90); }
+:root[data-theme="light"] .composer-box,
+:root[data-theme="light"] .bubble,
+:root[data-theme="light"] .agent-filter,
+:root[data-theme="light"] .agent-card,
+:root[data-theme="light"] .metrics div,
+:root[data-theme="light"] .task-block,
+:root[data-theme="light"] .graph-node,
+:root[data-theme="light"] .trace-toggle,
+:root[data-theme="light"] .inspector-agent,
+:root[data-theme="light"] .usage-total div,
+:root[data-theme="light"] .usage-agent,
+:root[data-theme="light"] .agent-behavior,
+:root[data-theme="light"] .agent-behavior-block {
+  border-color:rgba(153,170,211,.42);
+  background:linear-gradient(145deg,rgba(255,255,255,.96),rgba(246,248,255,.95));
+  box-shadow:0 10px 28px rgba(72,86,132,.06),inset 0 1px #fff;
+}
+:root[data-theme="light"] .recent-session.active { background:linear-gradient(90deg,#eeeaff,#eef5ff); }
+:root[data-theme="light"] .plus-button,
+:root[data-theme="light"] .send-button {
+  background:linear-gradient(145deg,#8d82ef,#6f78dc);
+  color:white;
+  box-shadow:0 7px 20px rgba(112,100,220,.16);
+}
+:root[data-theme="light"] .brand span,
+:root[data-theme="light"] .welcome-symbol { color:#7768dc; }
+:root[data-theme="light"] .brand small,
+:root[data-theme="light"] .title p,
+:root[data-theme="light"] .eyebrow { color:#7567d5; }
+:root[data-theme="light"] .welcome-symbol {
+  border-color:#b3a9ef;
+  box-shadow:0 0 34px rgba(128,108,227,.14),inset 0 0 18px rgba(139,126,255,.05);
+}
+
+/* ---------- Celestial details ---------- */
+.brand::before {
+  content:"✦";
+  display:inline-grid;
+  place-items:center;
+  width:23px;height:23px;
+  margin-right:2px;
+  border:1px solid color-mix(in srgb,var(--purple) 54%,transparent);
+  border-radius:50%;
+  color:var(--purple);
+  box-shadow:0 0 16px color-mix(in srgb,var(--purple) 20%,transparent);
+  font-size:11px;
+}
+.title h1::before,.title h1::after { content:" 𓆩"; color:color-mix(in srgb,var(--purple) 72%,var(--muted)); font-size:12px; font-weight:400; }
+.title h1::after { content:"𓆪 "; }
+.agent-filter.selected::after,.agent-card.selected::after,.recent-session.selected::after {
+  content:"◜✦◞";
+  position:absolute;
+  right:7px;bottom:3px;
+  color:color-mix(in srgb,var(--purple) 72%,transparent);
+  font-size:7px;
+  letter-spacing:-1px;
+  pointer-events:none;
+}
+.composer-box { position:relative; overflow:visible; }
+.composer-box::before,.composer-box::after {
+  content:"✧";
+  position:absolute;
+  top:-9px;
+  color:var(--purple);
+  font-size:12px;
+  filter:drop-shadow(0 0 6px color-mix(in srgb,var(--purple) 35%,transparent));
+}
+.composer-box::before { left:-4px; }
+.composer-box::after { right:-4px; }
+
+/* ---------- Non-interactive ornament layer: three wing pairs + halo ---------- */
+.angelus-skin-ornaments {
+  position:fixed;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  overflow:hidden;
+  opacity:.74;
+}
+.sidebar,.main-panel,.activity { position:relative; z-index:1; }
+.angelus-skin-halo {
+  position:absolute;
+  left:calc(50% + 0px);
+  top:47%;
+  width:min(44vw,650px);
+  aspect-ratio:1;
+  transform:translate(-50%,-50%);
+  border:1px solid rgba(143,126,245,.10);
+  border-radius:50%;
+  box-shadow:0 0 0 38px rgba(143,126,245,.018),0 0 0 90px rgba(143,126,245,.012);
+}
+.angelus-skin-halo::before,.angelus-skin-halo::after {
+  content:"";
+  position:absolute;
+  inset:14%;
+  border:1px dashed rgba(128,113,231,.075);
+  border-radius:50%;
+}
+.angelus-skin-halo::after { inset:32%; border-style:solid; }
+.angelus-skin-wing {
+  position:absolute;
+  left:50%;
+  top:49%;
+  width:230px;
+  height:58px;
+  border-top:1px solid rgba(145,130,244,.12);
+  border-radius:70% 12% 70% 8%;
+  background:
+    repeating-linear-gradient(168deg,transparent 0 14px,rgba(152,139,255,.045) 15px 16px,transparent 17px 27px);
+  filter:drop-shadow(0 0 8px rgba(126,111,255,.05));
+  transform-origin:0 50%;
+}
+.angelus-skin-wing-l { margin-left:-34px; transform:translateX(-100%) rotate(180deg) scaleY(-1); }
+.angelus-skin-wing-r { margin-left:34px; }
+.angelus-skin-wing.wing-1 { top:44%; width:260px; transform-origin:0 50%; }
+.angelus-skin-wing-r.wing-1 { transform:rotate(-13deg); }
+.angelus-skin-wing-l.wing-1 { transform:translateX(-100%) rotate(193deg) scaleY(-1); }
+.angelus-skin-wing.wing-2 { top:49%; width:225px; opacity:.8; }
+.angelus-skin-wing-r.wing-2 { transform:rotate(2deg); }
+.angelus-skin-wing-l.wing-2 { transform:translateX(-100%) rotate(178deg) scaleY(-1); }
+.angelus-skin-wing.wing-3 { top:54%; width:185px; opacity:.62; }
+.angelus-skin-wing-r.wing-3 { transform:rotate(16deg); }
+.angelus-skin-wing-l.wing-3 { transform:translateX(-100%) rotate(164deg) scaleY(-1); }
+.angelus-skin-feathers::before,.angelus-skin-feathers::after {
+  content:"✧   ︵   ✦   ︵   ✧";
+  position:absolute;
+  left:50%;
+  color:rgba(150,137,248,.11);
+  font-size:16px;
+  letter-spacing:24px;
+  white-space:nowrap;
+}
+.angelus-skin-feathers::before { top:21%; transform:translateX(-50%); }
+.angelus-skin-feathers::after { bottom:17%; transform:translateX(-50%) rotate(180deg); }
+:root[data-theme="light"] .angelus-skin-ornaments { opacity:.50; }
+:root[data-theme="light"] .angelus-skin-wing { border-color:rgba(116,103,222,.10); background:repeating-linear-gradient(168deg,transparent 0 14px,rgba(116,103,222,.035) 15px 16px,transparent 17px 27px); }
+
+/* Respect reduced motion and narrow layouts. */
+@media (max-width:900px) {
+  .angelus-skin-wing { width:150px!important; opacity:.32!important; }
+  .angelus-skin-halo { width:56vw; opacity:.6; }
+}
+@media (prefers-reduced-motion:no-preference) {
+  .welcome-symbol,.status-dot { animation:angelus-pulse 4.8s ease-in-out infinite; }
+  @keyframes angelus-pulse { 0%,100%{filter:brightness(1)} 50%{filter:brightness(1.17)} }
+}

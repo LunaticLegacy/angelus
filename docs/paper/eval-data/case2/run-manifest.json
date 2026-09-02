@@ -1,0 +1,53 @@
+{
+  "env": {
+    "head": "ee369a2",
+    "date": "2026-08-26",
+    "model_profile": {
+      "provider": "openai",
+      "model": "<model-id-from-run-state.json runtime_profile>",
+      "max_context_threshold": 262144
+    },
+    "task_hash": "<sha256 of the frozen dispatch script, arxiv-workflow.md §6.2>",
+    "dispatch_script_sha256": "<sha256 of scripts/eval/dispatch/case2.py when frozen>"
+  },
+  "workspace_root": "workspace",
+  "workspace_id": "<case2-workspace-id>",
+  "session_id": "<case2-session-id>",
+  "snapshot": "workspace/<case2-workspace-id>/swarm-runtime.json.pre-kill",
+  "event_log": "workspace/<case2-workspace-id>/events.ndjson",
+  "context_hashes": {
+    "coordinator": "<sha256>",
+    "target_worker": "<sha256>",
+    "sibling_1": "<sha256>",
+    "sibling_2": "<sha256>"
+  },
+  "metrics": {
+    "t_restore": 0.0,
+    "t_redo": 0.0,
+    "tokens_restore": 0,
+    "tokens_redo": 0,
+    "continue_rounds": 0,
+    "final_status": "completed",
+    "snapshot_reload_ms": 0.0,
+    "rebuild_ms": 0.0
+  },
+  "intervention": {
+    "timestamp": 0.0,
+    "target_agent": "target_worker",
+    "reason": "case2 runtime intervention: corrective edit injected at <event-log timestamp>"
+  },
+  "sibling_probe": {
+    "pre_hashes": {
+      "sibling_1": "<sha256 pre-intervention>",
+      "sibling_2": "<sha256 pre-intervention>"
+    },
+    "post_hashes": {
+      "sibling_1": "<sha256 post-intervention>",
+      "sibling_2": "<sha256 post-intervention>"
+    },
+    "control_rounds": [1, 2, 3, 4],
+    "actual_rounds": [1, 2, 3, 4],
+    "error_rate_pre": 0.5,
+    "error_rate_post": 0.0
+  }
+}

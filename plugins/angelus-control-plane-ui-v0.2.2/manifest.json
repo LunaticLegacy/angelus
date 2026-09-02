@@ -1,0 +1,16 @@
+{
+  "name": "control-plane-ui",
+  "display_name": "Angelus Control Plane UI",
+  "version": "0.2.2",
+  "api_version": "1",
+  "kind": "ui",
+  "description": "Run-centric Control Plane skin for Angelus with per-Agent Transcript selection, Agent waterfall timeline, per-Agent telemetry filtering, slash console, and durable telemetry statistics.",
+  "permissions": [],
+  "frontend": {
+    "assets": [
+      "plugin.js",
+      "plugin.css"
+    ],
+    "settings": false
+  }
+}

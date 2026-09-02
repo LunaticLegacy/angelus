@@ -29,7 +29,7 @@
  *    plugin-settings API. The bridge remains the only plugin UI entry point.
  */
 
-import { apiJson } from "./api.js";
+import { apiJson, apiPost } from "./api.js";
 
 /* ================================================================
  * Constants
@@ -123,6 +123,9 @@ function _pluginAssetUrl(pluginName, asset) {
 }
 
 async function _loadPluginAssets(plugin) {
+  // Theme packs are CSS-only declarative bundles. Their selected skin is
+  // loaded by the Settings UI; never probe them for executable plugin.js.
+  if (plugin.kind === "theme_pack") return;
   for (const asset of ENTRY_SCRIPTS) {
     const ok = await _injectScript(_pluginAssetUrl(plugin.name, asset), plugin.name);
     if (!ok) {
@@ -225,6 +228,118 @@ function _renderPanel(registration) {
     }
     registration._rendered = true;
   }
+}
+
+/** Create one host-owned input control from a manifest-declared field. */
+function _panelFieldControl(field) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "plugin-panel-field";
+  const title = document.createElement("span");
+  title.textContent = field.title || field.key;
+  wrapper.appendChild(title);
+  if (field.description) {
+    const description = document.createElement("em");
+    description.textContent = field.description;
+    wrapper.appendChild(description);
+  }
+  let control;
+  if (field.type === "boolean") {
+    control = document.createElement("input");
+    control.type = "checkbox";
+    control.checked = field.default === true;
+  } else if (Array.isArray(field.enum) && field.enum.length) {
+    control = document.createElement("select");
+    for (const optionValue of field.enum) {
+      const option = document.createElement("option");
+      option.value = String(optionValue);
+      option.textContent = String(optionValue) || "全部";
+      option.selected = String(optionValue) === String(field.default ?? "");
+      control.appendChild(option);
+    }
+  } else if (field.type === "string" && field.format === "textarea") {
+    control = document.createElement("textarea");
+    control.rows = 4;
+    control.value = String(field.default ?? "");
+  } else {
+    control = document.createElement("input");
+    control.type = field.type === "string" ? (field.format === "uri" ? "url" : (field.format === "password" ? "password" : "text")) : "number";
+    if (field.format === "password") control.autocomplete = "current-password";
+    control.value = String(field.default ?? "");
+    if (field.type === "number") control.step = "any";
+    if (field.minimum !== null && field.minimum !== undefined) control.min = String(field.minimum);
+    if (field.maximum !== null && field.maximum !== undefined) control.max = String(field.maximum);
+  }
+  control.required = field.required === true;
+  control.placeholder = typeof field.placeholder === "string" ? field.placeholder : "";
+  control.dataset.pluginPanelField = field.key;
+  wrapper.appendChild(control);
+  return wrapper;
+}
+
+/** Convert one host-owned input control to its manifest scalar type. */
+function _panelFieldValue(field, control) {
+  if (field.type === "boolean") return control.checked;
+  if (field.type === "integer") return Number.parseInt(control.value, 10);
+  if (field.type === "number") return Number(control.value);
+  return control.value;
+}
+
+/** Register and render one backend-declared form panel without plugin DOM code. */
+function _registerDeclarativePanel(plugin, panel) {
+  if (!panel || typeof panel !== "object" || typeof panel.id !== "string" || typeof panel.title !== "string") return;
+  const fields = Array.isArray(panel.fields) ? panel.fields : [];
+  window.Angelus.registerPanel(plugin.name, {
+    id: `form-${panel.id}`,
+    title: panel.title,
+    render(body) {
+      const description = document.createElement("p");
+      description.className = "plugin-panel-description";
+      description.textContent = typeof panel.description === "string" ? panel.description : "";
+      if (description.textContent) body.appendChild(description);
+      const form = document.createElement("form");
+      form.className = "plugin-panel-form";
+      for (const field of fields) form.appendChild(_panelFieldControl(field));
+      const submit = document.createElement("button");
+      submit.type = "submit";
+      submit.textContent = typeof panel.submit_label === "string" && panel.submit_label ? panel.submit_label : "Run";
+      form.appendChild(submit);
+      const result = document.createElement("pre");
+      result.className = "plugin-panel-result";
+      result.hidden = true;
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const values = {};
+        for (const field of fields) {
+          const control = form.querySelector(`[data-plugin-panel-field="${CSS.escape(field.key)}"]`);
+          if (!control) continue;
+          const value = _panelFieldValue(field, control);
+          if ((field.type === "integer" || field.type === "number") && !Number.isFinite(value)) {
+            result.hidden = false;
+            result.dataset.tone = "error";
+            result.textContent = `${field.title || field.key} 必须是数字。`;
+            return;
+          }
+          values[field.key] = value;
+        }
+        submit.disabled = true;
+        result.hidden = false;
+        result.dataset.tone = "info";
+        result.textContent = "正在执行插件功能…";
+        try {
+          const payload = await apiPost(`/api/plugins/${encodeURIComponent(plugin.id)}/panels/${encodeURIComponent(panel.id)}/invoke`, values);
+          result.dataset.tone = payload.tone || "info";
+          result.textContent = [payload.title, payload.content].filter(Boolean).join("\n\n");
+        } catch (error) {
+          result.dataset.tone = "error";
+          result.textContent = error.message || "插件功能执行失败。";
+        } finally {
+          submit.disabled = false;
+        }
+      });
+      body.append(form, result);
+    },
+  });
 }
 
 /** Delegated tab switching so plugin-added tabs work without touching the
@@ -395,6 +510,9 @@ export async function loadPlugins() {
       // Mark as loaded BEFORE injecting so synchronous register* calls
       // inside the plugin script pass the enabled-only gate.
       _loadedPlugins.add(plugin.name);
+      for (const panel of (Array.isArray(plugin.panels) ? plugin.panels : [])) {
+        _registerDeclarativePanel(plugin, panel);
+      }
       await _loadPluginAssets(plugin);
     } catch (error) {
       _warn(plugin.name, `前端激活失败：${error.message}`);

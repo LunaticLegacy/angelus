@@ -1,28 +1,4 @@
-"""Angelus local-agent control plane built on the LLMFetcher core library.
+"""Angelus local Agent control-plane package."""
+from ._version import ANGELUS_VERSION, __version__
 
-The package owns durable sessions, observable Swarm execution, and the local
-web console. Model backends, core tool contracts, and RAG primitives remain
-provided by the pinned :mod:`llmfetcher` dependency.
-"""
-
-from llmfetcher import (
-    Agent,
-    AgentRunControl,
-    AgentRunStopped,
-    AgentSwarm,
-    ExecutionGraph,
-    TaskAssignment,
-    TaskBus,
-    TaskReport,
-)
-
-__all__ = [
-    "Agent",
-    "AgentRunControl",
-    "AgentRunStopped",
-    "AgentSwarm",
-    "ExecutionGraph",
-    "TaskAssignment",
-    "TaskBus",
-    "TaskReport",
-]
+__all__ = ["ANGELUS_VERSION", "__version__"]

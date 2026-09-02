@@ -1,16 +1,19 @@
 # plugins/ — Plugin Examples INDEX
 
-开发期插件示例，也是桌面发布包的默认 starter plugins。首次启动时会被复制到与 `workspace/` 并列的持久 `plugins/` 目录；仅供发现，不会自动加载或覆盖用户文件。生产插件由 `angelus/plugins/` 的运行时发现、校验与加载；具体格式见 [`../docs/plugin-guide.md`](../docs/plugin-guide.md)。
+开发期插件示例。Angelus 在启动时将本目录作为本地开发发现源，并同时扫描持久化的 `.angelus-state/plugins/packages/`。发现只读取 `manifest.json`；插件不会被复制、导入或执行，直到用户在设置页明确“加入工作台”并启用。具体格式见 [`../docs/plugin-guide.md`](../docs/plugin-guide.md)。
 
 | Entry | Type | Purpose |
 |---|---|---|
-| `demo-hello/` | End-to-end example | 演示面板、命令、工具、钩子、路由以及可选 CSS 前端资产。 |
-| `example-tool/` | Tool example | 演示网络搜索工具和 `tool.before` / `tool.after` 钩子。 |
-| `angelus/` | Skin plugin example | 演示工作台皮肤插件的清单、后端入口与前端样式/脚本。 |
+| `demo-hello/` | Tool + UI example | 演示受控、命名空间化工具和可选 CSS 前端资产。 |
+| `example-tool/` | Tool example | 演示离线文档搜索 Tool provider。 |
+| `pofp-ctf/` | Tool example | 迁移后的 POFP CTF Markdown 知识库搜索与文档读取 Tool provider，带可持久化知识库目录设置。 |
+| [`gzctf/`](gzctf/INDEX.md) | Tool example | 迁移后的 GZCTF v1 Provider：11 个命名空间 Agent 工具、插件私有 Cookie/下载/批量状态，以及宿主渲染的一次性密码登录面板。 |
+| `angelus/` | UI skin example | 演示工作台皮肤插件的清单与前端样式/脚本。 |
 | `angelus-control-plane-ui/` | Control-plane UI example | 演示更完整的控制平面 UI 插件，并附设计、变更和使用文档。 |
+| `token-burner/` | Visual example | 把 token 消耗速率可视化为火焰的独立浮动窗口插件（纯前端，读 /api/sessions/{id}/usage）。 |
 | `*.zip` | Distribution snapshots | 插件示例的手工分发快照；可编辑权威内容仍是同名目录。 |
 
-每个示例目录的 `manifest.json` 是声明式入口；`main.py` 是 Python 实现，`plugin.js` / `plugin.css`（如存在）是被清单白名单允许的前端资源。
+每个示例目录的 `manifest.json` 是声明式入口；仅 `kind: "tool"` 插件可以有 Python `main.py`。`plugin.js` / `plugin.css`（如存在）必须被清单白名单允许的前端资源。
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
@@ -91,6 +94,36 @@
 | [example-tool/main.py](example-tool/main.py#L153) | `ExampleToolPlugin._on_tool_before` | `event: Any` | `None` | tool.before 钩子：把事件快照写入 state_dir/events.jsonl。 |
 | [example-tool/main.py](example-tool/main.py#L157) | `ExampleToolPlugin._on_tool_after` | `event: Any` | `None` | tool.after 钩子：把事件快照写入 state_dir/events.jsonl。 |
 | [example-tool/main.py](example-tool/main.py#L161) | `ExampleToolPlugin._record_event` | `kind: str, event: Any, payload: dict[str, Any] \| None` | `None` | 追加一行 JSON 事件到 ``<state_dir>/events.jsonl``。 |
+| [token-burner/main.py](token-burner/main.py#L22) | `TokenBurnerPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `TokenBurnerPlugin.setup`. |
+| [token-burner/main.py](token-burner/main.py#L26) | `TokenBurnerPlugin.teardown` | `None` | `None` | Implement `TokenBurnerPlugin.teardown`. |
+| [token-burner/plugin.js](token-burner/plugin.js#L40) | `readPrefs` | `None` | `unknown` | Perform the browser runtime operation: read prefs. |
+| [token-burner/plugin.js](token-burner/plugin.js#L56) | `currentSessionId` | `None` | `unknown` | Perform the browser runtime operation: current session id. |
+| [token-burner/plugin.js](token-burner/plugin.js#L65) | `fmt` | `n: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
+| [token-burner/plugin.js](token-burner/plugin.js#L83) | `onUsageDelta` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: on usage delta. |
+| [token-burner/plugin.js](token-burner/plugin.js#L91) | `pushSample` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: push sample. |
+| [token-burner/plugin.js](token-burner/plugin.js#L97) | `windowRate` | `now: unknown` | `unknown` | Perform the browser runtime operation: window rate. |
+| [token-burner/plugin.js](token-burner/plugin.js#L111) | `pollUsage` | `None` | `Promise<unknown>` | Perform the browser runtime operation: poll usage. |
+| [token-burner/plugin.js](token-burner/plugin.js#L136) | `refreshActivity` | `sid: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh activity. |
+| [token-burner/plugin.js](token-burner/plugin.js#L159) | `targetIntensity` | `None` | `unknown` | Perform the browser runtime operation: target intensity. |
+| [token-burner/plugin.js](token-burner/plugin.js#L184) | `buildSprites` | `None` | `unknown` | Perform the browser runtime operation: build sprites. |
+| [token-burner/plugin.js](token-burner/plugin.js#L200) | `resize` | `None` | `unknown` | Perform the browser runtime operation: resize. |
+| [token-burner/plugin.js](token-burner/plugin.js#L213) | `spawnParticle` | `intensity: unknown` | `unknown` | Perform the browser runtime operation: spawn particle. |
+| [token-burner/plugin.js](token-burner/plugin.js#L234) | `spawnSpark` | `intensity: unknown` | `unknown` | Perform the browser runtime operation: spawn spark. |
+| [token-burner/plugin.js](token-burner/plugin.js#L247) | `flamePath` | `cx: unknown, baseY: unknown, w: unknown, h: unknown, tSec: unknown, phase: unknown, lean: unknown, pinch: unknown` | `unknown` | Perform the browser runtime operation: flame path. |
+| [token-burner/plugin.js](token-burner/plugin.js#L274) | `drawTongue` | `cx: unknown, baseY: unknown, w: unknown, h: unknown, tSec: unknown, phase: unknown, alpha: unknown, rgb: unknown` | `unknown` | Perform the browser runtime operation: draw tongue. |
+| [token-burner/plugin.js](token-burner/plugin.js#L285) | `drawFlame` | `intensity: unknown, tSec: unknown` | `unknown` | Perform the browser runtime operation: draw flame. |
+| [token-burner/plugin.js](token-burner/plugin.js#L383) | `drawParticles` | `intensity: unknown, tSec: unknown` | `unknown` | Perform the browser runtime operation: draw particles. |
+| [token-burner/plugin.js](token-burner/plugin.js#L404) | `drawSparks` | `None` | `unknown` | Perform the browser runtime operation: draw sparks. |
+| [token-burner/plugin.js](token-burner/plugin.js#L426) | `updateReadout` | `None` | `unknown` | Perform the browser runtime operation: update readout. |
+| [token-burner/plugin.js](token-burner/plugin.js#L433) | `frame` | `now: unknown` | `unknown` | Perform the browser runtime operation: frame. |
+| [token-burner/plugin.js](token-burner/plugin.js#L466) | `initFlame` | `canvasEl: unknown, readoutElArg: unknown` | `unknown` | Perform the browser runtime operation: init flame. |
+| [token-burner/plugin.js](token-burner/plugin.js#L482) | `createFloatingWindow` | `None` | `unknown` | Perform the browser runtime operation: create floating window. |
+| [token-burner/plugin.js](token-burner/plugin.js#L518) | `move` | `ev: unknown` | `unknown` | Perform the browser runtime operation: move. |
+| [token-burner/plugin.js](token-burner/plugin.js#L522) | `up` | `None` | `unknown` | Perform the browser runtime operation: up. |
+| [token-burner/plugin.js](token-burner/plugin.js#L547) | `ensureWindow` | `None` | `unknown` | Perform the browser runtime operation: ensure window. |
+| [token-burner/plugin.js](token-burner/plugin.js#L552) | `toggleWindow` | `force: unknown` | `unknown` | Perform the browser runtime operation: toggle window. |
+| [token-burner/plugin.js](token-burner/plugin.js#L559) | `openPopout` | `None` | `unknown` | Perform the browser runtime operation: open popout. |
+| [token-burner/plugin.js](token-burner/plugin.js#L566) | `startPolling` | `None` | `unknown` | Perform the browser runtime operation: start polling. |
 
 ## Class Map
 
@@ -100,5 +133,6 @@
 | [angelus/main.py](angelus/main.py#L10) | `AngelusSkinPlugin` | `None` | `AngelusPlugin` | Provide `AngelusSkinPlugin` behavior. |
 | [demo-hello/main.py](demo-hello/main.py#L24) | `DemoHelloPlugin` | `None` | `AngelusPlugin` | Provide `DemoHelloPlugin` behavior. |
 | [example-tool/main.py](example-tool/main.py#L48) | `ExampleToolPlugin` | `None` | `AngelusPlugin` | 网络搜索工具示例：``web_search`` 工具 + ``tool.before``/``tool.after`` 钩子。 |
+| [token-burner/main.py](token-burner/main.py#L18) | `TokenBurnerPlugin` | `None` | `AngelusPlugin` | Provide `TokenBurnerPlugin` behavior. |
 
 <!-- END GENERATED SYMBOL MAP -->

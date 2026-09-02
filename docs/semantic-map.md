@@ -124,8 +124,14 @@ projection concern and is indexed by `angelus/history/INDEX.md`.
 | Symbol | Responsibility | Calls / called by |
 | --- | --- | --- |
 | `ContextRecordRef` / `ContextEditOperation` / `ContextRevision` | Immutable dataclass schema for editable record identity, three allowed operations, and audit/recovery revisions. | Produced by `ContextEditStore.inspect/apply/restore`; serialized to revision snapshots and `context-edits.ndjson`. |
-| `ContextEditStore` | Owns one Agent's active checkpoint, atomically creates the first-edit baseline and every later full snapshot, checks optimistic revision IDs, writes append-only audit data, and restores only as a new forward revision. | Constructed by `runtime._build_agent`, `runtime._build_swarm` worker binder, and `api.sessions._editable_context_store`; invalidates the companion graph via `context_editing.graph_stale`. |
+| `ContextEditStore.inspect()` / `ContextEditStore` | Owns one Agent's active checkpoint, atomically creates the first-edit baseline and every later full snapshot, checks optimistic revision IDs, writes append-only audit data, and restores only as a new forward revision. `inspect()` reports active checkpoint and per-record content, reasoning, tool-call, tool-result, and serialized-record sizes without echoing bulky tool results. | Constructed by `runtime._build_agent`, `runtime._build_swarm` worker binder, and `api.sessions._editable_context_store`; invalidates the companion graph via `context_editing.graph_stale`. `inspect()` is called by the browser API and `inspect_agent_context`. |
 | `create_context_editing_tools(store, persist_context, reload_context)` | Exposes inspect/edit/restore tools scoped to the owning Agent. Persist/reload callbacks make a live Agent use a successful mutation immediately. | Added by `_build_agent` and the `create_swarm_tools` worker binder. |
+
+## `llmfetcher.context_handlers.linear`
+
+| Symbol | Responsibility | Calls / called by |
+| --- | --- | --- |
+| `ContextHandlerLinear._append_context_messages` / `_render_tool_result_for_model` | Converts durable tool results into bounded provider tool messages. Results at least 6,000 characters gain original/visible length and truncation metadata, allowing the next model turn to recognize a large result immediately; per-result and shared request budgets remain enforced without modifying persisted evidence. | `build_messages` calls `_append_context_messages`; `LLMFetcher.fetch` submits the resulting messages to the provider. |
 
 ## `angelus.runtime` — Swarm recovery
 

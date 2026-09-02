@@ -3,41 +3,14 @@
   "display_name": "Example Web Search Tool",
   "version": "0.1.0",
   "api_version": "1",
-  "description": "D4 示例插件：注册网络搜索工具 web_search，并订阅 tool.before/tool.after 事件钩子，演示安装→启用→工具调用→钩子触发全链路。",
-  "author": "Angelus",
-  "license": "MIT",
+  "kind": "tool",
+  "description": "离线搜索工具示例：查询受限的内置演示索引，不请求网络也不注册全局钩子。",
   "entry": "main",
-  "entry_type": "module",
-  "tools": [
-    "web_search"
-  ],
-  "permissions": [
-    {
-      "action": "network",
-      "scope": "*.example.com"
-    },
-    {
-      "action": "http",
-      "scope": "https://*.example.com/*"
-    },
-    {
-      "action": "event.subscribe",
-      "scope": "tool.before"
-    },
-    {
-      "action": "event.subscribe",
-      "scope": "tool.after"
-    }
-  ],
+  "permissions": [],
   "frontend": {
     "assets": [
       "plugin.js"
     ],
-    "panels": [],
-    "commands": [
-      "example-tool:search"
-    ],
     "settings": false
-  },
-  "checksum": "sha256:8bb51f4d905041f1c94761d7ce798052c8f60a5963b97e5aad414660382d2596"
+  }
 }

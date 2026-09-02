@@ -1,0 +1,16 @@
+{
+  "name": "angelus",
+  "display_name": "Angelus Skin",
+  "version": "0.1.0",
+  "api_version": "1",
+  "kind": "ui",
+  "description": "Angelus 官方风格皮肤：银白、冰蓝与薰衣草色的昼夜主题，带有羽翼、光环与星芒装饰。",
+  "permissions": [],
+  "frontend": {
+    "assets": [
+      "plugin.js",
+      "plugin.css"
+    ],
+    "settings": true
+  }
+}

@@ -52,6 +52,7 @@ docs/_build/
 
 # Local browser sessions, connectors, and migration backups.
 workspace/
+.angelus-state/
 .llmfetcher/
 .dsh-ref/
 
@@ -66,8 +67,29 @@ src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
 /*-backend.spec
 
-# Angelus-based plugin
-/plugins/
+# Angelus-based plugin packages are normally local, except the bundled source
+# examples kept under version control for development discovery and regression
+# coverage.
+/plugins/*
+!/plugins/INDEX.md
+!/plugins/angelus/
+!/plugins/angelus/**
+!/plugins/angelus-control-plane-ui-v0.2.2/
+!/plugins/angelus-control-plane-ui-v0.2.2/**
+!/plugins/demo-hello/
+!/plugins/demo-hello/**
+!/plugins/example-tool/
+!/plugins/example-tool/**
+!/plugins/pofp-ctf/
+!/plugins/pofp-ctf/**
+!/plugins/gzctf/
+!/plugins/gzctf/**
+/plugins/gzctf/cookies.txt
+/plugins/gzctf/__pycache__/
+/plugins/gzctf/data/
+!/plugins/token-burner/
+!/plugins/token-burner/**
+plugins/**/__pycache__/
 
 
 # Spike generated ledger (real transcript data, not part of the repo).

@@ -1,0 +1,540 @@
+"""HTTP adapters for phase-one External Agent Hub configuration and inspection."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from fastapi import APIRouter, Body, HTTPException, Request
+
+from ..core import AngelusCore
+from ..modules.external_agent_hub_module import ContextMessage, ContextPackage, ContextToolCall, ContextTransferResult, ExternalAgentAdapterFailure, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentContext, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from ..modules.external_agent_hub_module.context_codec import parse_context_package
+
+
+router = APIRouter()
+
+
+@dataclass(frozen=True)
+class ExternalAgentInput:
+    """Validated HTTP body fields for a complete external Agent definition.
+
+    Attributes:
+        id: Stable local external Agent identifier.
+        title: User-facing Agent title.
+        adapter_kind: Selected protocol adapter kind.
+        endpoint: Non-secret endpoint or local runtime address.
+        connector_id: Optional ConnectorStore reference; never a secret itself.
+        enabled: Whether future execution may select this definition.
+        description: Optional public description of the external Agent role.
+    """
+
+    id: str
+    title: str
+    adapter_kind: str
+    endpoint: str = ""
+    connector_id: str = ""
+    enabled: bool = True
+    description: str = ""
+
+
+def _core(request: Request) -> AngelusCore:
+    """Resolve the application composition root from FastAPI state.
+
+    Args:
+        request: Incoming request carrying application state.
+
+    Returns:
+        Installed Angelus composition root.
+
+    Raises:
+        RuntimeError: If no Angelus composition root is installed.
+    """
+    core = getattr(request.app.state, "angelus_core", None)
+    if not isinstance(core, AngelusCore):
+        raise RuntimeError("AngelusCore is not installed on this application")
+    return core
+
+
+@router.get("/api/external-agents")
+def list_external_agents(request: Request) -> dict[str, object]:
+    """List all durable external Agent definitions.
+
+    Args:
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Public, credential-free external Agent definitions.
+    """
+    return {"agents": [_definition(item) for item in _core(request).external_agent_hub.list()]}
+
+
+@router.post("/api/external-agents/discover")
+def discover_external_agent_processes(request: Request) -> dict[str, object]:
+    """Read local known Agent processes without attaching or persisting one.
+
+    Args:
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Ephemeral process candidates that a user may choose to turn into new
+        Hub definitions. The scan never starts, signals, or attaches to them.
+    """
+    candidates = _core(request).external_agent_hub.discover_local_processes()
+    return {"candidates": [_candidate(item) for item in candidates]}
+
+
+@router.get("/api/external-agents/{agent_id}/contexts")
+def external_agent_contexts(
+    agent_id: str,
+    request: Request,
+    cursor: str | None = None,
+    limit: int = 200,
+) -> dict[str, object]:
+    """List one bounded page of readable external context descriptors.
+
+    Args:
+        agent_id: Stable external Agent identifier to inspect.
+        request: Incoming request carrying the composition root.
+        cursor: Opaque continuation cursor supplied by the prior result.
+        limit: Maximum descriptors to return, from 1 through 200.
+
+    Returns:
+        Typed context descriptors and continuation information.
+
+    Raises:
+        HTTPException: If the Agent is absent, input is invalid, or its adapter
+            does not expose an audited readable-context protocol.
+    """
+    try:
+        page = _core(request).external_agent_hub.contexts(agent_id, cursor, limit)
+        return {"contexts": [_context(item) for item in page.items], "next_cursor": page.next_cursor, "has_more": page.has_more}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/external-agents/{agent_id}/contexts/{context_id}")
+def read_external_agent_context(agent_id: str, context_id: str, request: Request) -> dict[str, object]:
+    """Read one external context as a credential-redacted portable package.
+
+    Args:
+        agent_id: Stable external Agent identifier to inspect.
+        context_id: Adapter-local external context identifier.
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Portable context package without credential values.
+
+    Raises:
+        HTTPException: If the Agent/context is invalid or the adapter cannot
+            export the selected context through an audited protocol.
+    """
+    try:
+        return {"package": _package(_core(request).external_agent_hub.read_context(agent_id, context_id))}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/external-agents/{agent_id}/contexts/import")
+def write_external_agent_context(agent_id: str, request: Request, payload: object = Body(...)) -> dict[str, object]:
+    """Write a user-selected portable package through an audited adapter.
+
+    Args:
+        agent_id: Stable external Agent identifier selected as the destination.
+        request: Incoming request carrying the composition root.
+        payload: Strict portable context package with no credential fields.
+
+    Returns:
+        External adapter acknowledgement with accepted record counts.
+
+    Raises:
+        HTTPException: If package input is invalid, the Agent is absent, or the
+            adapter does not support an audited context-import operation.
+    """
+    try:
+        package = parse_context_package(payload)
+        result = _core(request).external_agent_hub.write_context(agent_id, package)
+        return {"result": _transfer_result(result)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/external-agents/{agent_id}")
+def get_external_agent(agent_id: str, request: Request) -> dict[str, object]:
+    """Read one durable external Agent definition.
+
+    Args:
+        agent_id: Stable external Agent identifier.
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Public, credential-free external Agent definition.
+
+    Raises:
+        HTTPException: If the requested Agent is absent.
+    """
+    try:
+        return {"agent": _definition(_core(request).external_agent_hub.get(agent_id))}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/api/external-agents", status_code=201)
+def create_external_agent(request: Request, payload: object = Body(...)) -> dict[str, object]:
+    """Create one external Agent definition without contacting it.
+
+    Args:
+        request: Incoming request carrying the composition root.
+        payload: Complete JSON definition with no credential values.
+
+    Returns:
+        Newly persisted public definition.
+
+    Raises:
+        HTTPException: If the body is invalid or the identifier exists.
+    """
+    try:
+        created = _core(request).external_agent_hub.create(_parse_input(payload))
+        return {"agent": _definition(created)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put("/api/external-agents/{agent_id}")
+def replace_external_agent(agent_id: str, request: Request, payload: object = Body(...)) -> dict[str, object]:
+    """Replace one external Agent definition without contacting it.
+
+    Args:
+        agent_id: Existing external Agent identifier.
+        request: Incoming request carrying the composition root.
+        payload: Complete JSON replacement with no credential values.
+
+    Returns:
+        Persisted public definition.
+
+    Raises:
+        HTTPException: If the Agent is absent or input is invalid.
+    """
+    try:
+        updated = _core(request).external_agent_hub.replace(agent_id, _parse_input(payload))
+        return {"agent": _definition(updated)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/api/external-agents/{agent_id}", status_code=204)
+def delete_external_agent(agent_id: str, request: Request) -> None:
+    """Remove one configuration definition without deleting its connector.
+
+    Args:
+        agent_id: External Agent identifier to remove.
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        None.
+
+    Raises:
+        HTTPException: If the requested definition is absent.
+    """
+    try:
+        _core(request).external_agent_hub.remove(agent_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+
+
+@router.post("/api/external-agents/{agent_id}/health")
+def external_agent_health(agent_id: str, request: Request) -> dict[str, object]:
+    """Perform a non-executing adapter health check.
+
+    Args:
+        agent_id: External Agent identifier to probe.
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        User-safe normalized health state.
+
+    Raises:
+        HTTPException: If the requested definition is absent.
+    """
+    try:
+        return {"health": _health(_core(request).external_agent_hub.health(agent_id))}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+
+
+@router.get("/api/external-agents/{agent_id}/capabilities")
+def external_agent_capabilities(agent_id: str, request: Request) -> dict[str, object]:
+    """Read capabilities advertised by an installed adapter without running it.
+
+    Args:
+        agent_id: External Agent identifier to inspect.
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Credential-free capability declarations.
+
+    Raises:
+        HTTPException: If the requested definition is absent.
+    """
+    try:
+        capabilities = _core(request).external_agent_hub.capabilities(agent_id)
+        return {"capabilities": [_capability(item) for item in capabilities]}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/api/external-agents/{agent_id}/sessions")
+def external_agent_sessions(agent_id: str, request: Request, limit: int = 50) -> dict[str, object]:
+    """List bounded remote session summaries without importing or running them.
+
+    Args:
+        agent_id: External Agent identifier whose runtime is inspected.
+        request: Incoming request carrying the composition root.
+        limit: Maximum newest-first session summaries, from 1 through 200.
+
+    Returns:
+        Credential-free remote session summaries.
+
+    Raises:
+        HTTPException: If the Agent is absent or the page size is invalid.
+    """
+    try:
+        sessions = _core(request).external_agent_hub.sessions(agent_id, limit)
+        return {"sessions": [_session(item) for item in sessions]}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _parse_input(payload: object) -> ExternalAgentDefinition:
+    """Decode a strict JSON request object into a typed definition.
+
+    Args:
+        payload: JSON body supplied by an API caller.
+
+    Returns:
+        Typed credential-free external Agent definition.
+
+    Raises:
+        ValueError: If fields are missing, unknown, or incorrectly typed.
+    """
+    if not isinstance(payload, Mapping):
+        raise ValueError("external Agent body must be an object")
+    allowed = {"id", "title", "adapter_kind", "endpoint", "connector_id", "enabled", "description"}
+    unknown = sorted(str(key) for key in payload if key not in allowed)
+    if unknown:
+        raise ValueError(f"unknown external Agent fields: {', '.join(unknown)}")
+    required = ("id", "title", "adapter_kind")
+    if any(not isinstance(payload.get(key), str) for key in required):
+        raise ValueError("external Agent id, title, and adapter_kind must be strings")
+    optional_text = ("endpoint", "connector_id", "description")
+    if any(key in payload and not isinstance(payload[key], str) for key in optional_text):
+        raise ValueError("external Agent text fields must be strings")
+    enabled = payload.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("external Agent enabled must be boolean")
+    parsed = ExternalAgentInput(
+        id=str(payload["id"]),
+        title=str(payload["title"]),
+        adapter_kind=str(payload["adapter_kind"]),
+        endpoint=str(payload.get("endpoint", "")),
+        connector_id=str(payload.get("connector_id", "")),
+        enabled=enabled,
+        description=str(payload.get("description", "")),
+    )
+    return ExternalAgentDefinition(
+        parsed.id,
+        parsed.title,
+        parsed.adapter_kind,
+        parsed.endpoint,
+        parsed.connector_id,
+        parsed.enabled,
+        parsed.description,
+    )
+
+
+def _definition(value: ExternalAgentDefinition) -> dict[str, object]:
+    """Serialize a definition without resolving connector credentials.
+
+    Args:
+        value: Typed external Agent definition.
+
+    Returns:
+        JSON-safe public definition object.
+    """
+    return {
+        "id": value.id,
+        "title": value.title,
+        "adapter_kind": value.adapter_kind,
+        "endpoint": value.endpoint,
+        "connector_id": value.connector_id,
+        "enabled": value.enabled,
+        "description": value.description,
+    }
+
+
+def _candidate(value: ExternalAgentCandidate) -> dict[str, object]:
+    """Serialize one ephemeral process observation without secrets.
+
+    Args:
+        value: Typed candidate returned by the read-only process scanner.
+
+    Returns:
+        JSON-safe candidate data; it contains no credential or control handle.
+    """
+    return {
+        "candidate_id": value.candidate_id,
+        "adapter_kind": value.adapter_kind,
+        "title": value.title,
+        "process_id": value.process_id,
+        "command": value.command,
+        "working_directory": value.working_directory,
+        "endpoint": value.endpoint,
+        "attachable": value.attachable,
+        "detail": value.detail,
+    }
+
+
+def _health(value: ExternalAgentHealth) -> dict[str, object]:
+    """Serialize a typed health observation for the HTTP response.
+
+    Args:
+        value: Typed health object returned by the Hub service.
+
+    Returns:
+        JSON-safe health response object.
+    """
+    return {
+        "agent_id": value.agent_id,
+        "adapter_kind": value.adapter_kind,
+        "status": value.status,
+        "message": value.message,
+    }
+
+
+def _capability(value: ExternalAgentCapability) -> dict[str, object]:
+    """Serialize one typed capability declaration for the HTTP response.
+
+    Args:
+        value: Typed capability returned by the Hub service.
+
+    Returns:
+        JSON-safe capability response object.
+    """
+    return {
+        "id": value.id,
+        "title": value.title,
+        "description": value.description,
+        "invocation_mode": value.invocation_mode,
+    }
+
+
+def _session(value: ExternalAgentSession) -> dict[str, object]:
+    """Serialize one remote session without treating references as local paths.
+
+    Args:
+        value: Typed external session summary returned by an adapter.
+
+    Returns:
+        JSON-safe remote session summary.
+    """
+    return {
+        "agent_id": value.agent_id,
+        "external_id": value.external_id,
+        "title": value.title,
+        "status": value.status,
+        "updated_at": value.updated_at,
+        "project_path": value.project_path,
+    }
+
+
+def _context(value: ExternalAgentContext) -> dict[str, object]:
+    """Serialize one external context descriptor for an HTTP response.
+
+    Args:
+        value: Typed context descriptor returned by an adapter.
+
+    Returns:
+        JSON-safe public context descriptor.
+    """
+    return {"agent_id": value.agent_id, "external_id": value.external_id, "title": value.title, "updated_at": value.updated_at, "message_count": value.message_count}
+
+
+def _package(value: ContextPackage) -> dict[str, object]:
+    """Serialize a credential-redacted portable context package.
+
+    Args:
+        value: Typed portable context package.
+
+    Returns:
+        JSON-safe context package representation.
+    """
+    return {
+        "format_version": value.format_version,
+        "source": value.source,
+        "source_session_id": value.source_session_id,
+        "source_agent": value.source_agent,
+        "messages": [_message(item) for item in value.messages],
+        "summary": value.summary,
+        "redactions": list(value.redactions),
+    }
+
+
+def _message(value: ContextMessage) -> dict[str, object]:
+    """Serialize one non-executable portable context record.
+
+    Args:
+        value: Typed portable context message.
+
+    Returns:
+        JSON-safe message representation.
+    """
+    return {"sequence": value.sequence, "role": value.role, "content": value.content, "reasoning": value.reasoning, "tool_calls": [_tool(item) for item in value.tool_calls], "created_at": value.created_at}
+
+
+def _tool(value: ContextToolCall) -> dict[str, object]:
+    """Serialize one historical tool call without an executable handle.
+
+    Args:
+        value: Typed non-executable tool-call record.
+
+    Returns:
+        JSON-safe tool-call representation.
+    """
+    return {"name": value.name, "arguments_json": value.arguments_json, "result": value.result}
+
+
+def _transfer_result(value: ContextTransferResult) -> dict[str, object]:
+    """Serialize a typed context write acknowledgement.
+
+    Args:
+        value: Typed result returned after an audited context transfer.
+
+    Returns:
+        JSON-safe result including accepted and rejected counts.
+    """
+    return {"direction": value.direction, "agent_id": value.agent_id, "context_id": value.context_id, "accepted_messages": value.accepted_messages, "rejected_messages": value.rejected_messages, "detail": value.detail}
+
+
+__all__ = ["router"]
