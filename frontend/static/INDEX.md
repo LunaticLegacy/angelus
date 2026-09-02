@@ -4,6 +4,7 @@
 |---|---|
 | `app.js` | Main workbench state/controller: selected Session, history, settings, Session-run control and Session-console inspector calls. |
 | `app.css` | Workbench visual layout, dialogs, session controls and responsive styling. |
+| `plugins.js` | Loads active plugin assets and renders manifest-declared, host-owned Inspector panels with validated action submissions. |
 | `components/` | DOM, chat transcript, task-plan, trace, and External Agent Hub rendering helpers. |
 | `vendor/` | Pinned browser ESM copies of Marked and DOMPurify, including upstream licenses. |
 | `inspector/` | Historic inspector helpers; not all APIs are mounted in Phase 1. |
@@ -34,6 +35,15 @@ browser stream once the attempt is terminal.
 The visible legacy Plugins, MCP and manual-compaction controls are explicitly
 disabled in this Session-only phase; their historic routes are not mounted and
 therefore cannot emit misleading 404 requests.
+Plugin discovery errors are terminal in the browser lifecycle UI: an invalid
+manifest can be inspected but is never offered a registration or load action.
+Plugin settings are manifest-declared user parameters. The mounted editor
+renders typed scalar controls, bounded choices, numeric ranges, URI fields,
+path hints, and multi-line text areas before the API persists them.
+Active tool plugins may also declare transient `frontend.panels`; `plugins.js`
+renders their fields and submit buttons inside the Inspector, posts only
+declared values to the active plugin action endpoint, and displays textual
+results without accepting plugin-supplied HTML.
 The Agent settings form persists reply `max_tokens` and the independent
 `compaction_output_max_tokens` separately; the latter controls only context
 summary responses and is applied when the next Agent lifecycle is materialized.

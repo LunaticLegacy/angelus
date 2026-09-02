@@ -80,6 +80,7 @@
   let smoothRate = 0;       // tokens/sec, EWMA
   let burst = 0;            // combustion pulse 0..1 (on usage deltas)
   let recentActivity = 0;   // 0..1 from recent round/complete events
+  let stopped = false;       // terminal run state -> flame fully out
 
   function onUsageDelta(total, now) {
     if (total > 0 && lastTotal > 0 && total > lastTotal) {
@@ -155,8 +156,56 @@
     recentActivity = Math.max(recentActivity * 0.6, act); // ~10 s decay
   }
 
+  /* Session run state: authoritative /api/runs/{id}/status drives the flame.
+   * Terminal states (completed/stopped/interrupted/failed) extinguish it
+   * completely; a new run (running/stopping) resurrects it automatically. */
+  const TERMINAL_STATES = new Set(["completed", "stopped", "interrupted", "failed"]);
+
+  async function pollStatus() {
+    const sid = currentSessionId();
+    try {
+      const res = await fetch(
+        "/api/runs/" + encodeURIComponent(sid) + "/status",
+        { cache: "no-store" }
+      );
+      if (!res.ok) return; // unknown session / transient — keep current state
+      const payload = await res.json();
+      const state = String(payload.state || "");
+      const terminal = TERMINAL_STATES.has(state);
+      if (terminal) {
+        if (!stopped) extinguish();
+      } else {
+        // Non-terminal (idle/running/stopping): keep usage polling alive,
+        // and revive the flame when a session that had stopped starts again.
+        if (stopped) resurrect(); else startPolling();
+      }
+    } catch (_) { /* network errors do not change the flame */ }
+  }
+
+  function extinguish() {
+    stopped = true;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    samples.length = 0;
+    lastTotal = 0;
+    lastPollAt = 0;
+    staleSince = 0;
+    smoothRate = 0;
+    recentActivity = 0;
+    burst = 0;
+  }
+
+  function resurrect() {
+    stopped = false;
+    samples.length = 0;
+    lastTotal = 0;
+    lastPollAt = 0;
+    staleSince = 0;
+    startPolling();
+  }
+
   /** Normalized flame intensity target (0..1, never fully 0 → embers). */
   function targetIntensity() {
+    if (stopped) return 0; // session stopped → truly out
     let inten = smoothRate / prefs.scaleTokensPerSec;
     inten = Math.max(inten, recentActivity * 0.35); // stay warm between rounds
     return Math.max(0.045, Math.min(1, inten));
@@ -443,6 +492,7 @@
     const I = Math.max(0.03, displayIntensity);
 
     ctx.clearRect(0, 0, W, H);
+    if (stopped) { updateReadout(); return; } // extinguished: no flame, no particles
 
     // Emission rate scales with intensity; embers keep a trickle alive
     const spawnN = I * dt * 78;
@@ -479,6 +529,7 @@
    * ================================================================ */
   let rootEl = null;
   let pollTimer = null;
+  let statusTimer = null;
 
   function createFloatingWindow() {
     const root = document.createElement("div");
@@ -570,6 +621,12 @@
     pollUsage().catch(function () { /* first poll may race page load */ });
   }
 
+  function startStatusPolling() {
+    if (statusTimer) return;
+    statusTimer = setInterval(pollStatus, 4000);
+    pollStatus().catch(function () {}); // first status gates usage polling
+  }
+
   /* ================================================================
    * Boot
    * ================================================================ */
@@ -579,7 +636,7 @@
     const popCanvas = document.getElementById("tb-canvas");
     const popReadout = document.getElementById("tb-readout");
     if (stage && popCanvas) initFlame(popCanvas, popReadout);
-    startPolling();
+    startStatusPolling();
     return;
   }
 
@@ -604,7 +661,7 @@
 
     const win = ensureWindow();
     initFlame(win.querySelector("canvas"), win.querySelector(".tb-readout"));
-    startPolling();
+    startStatusPolling();
 
     // Tidy up if the plugin is unloaded while the page stays open:
     // the loader removes our <script> tag — observe and release DOM/timers.
@@ -614,6 +671,7 @@
         if (scriptTag.isConnected) return;
         observer.disconnect();
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
         if (rootEl) { rootEl.remove(); rootEl = null; }
       });
       observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -622,6 +680,6 @@
     // No bridge (loaded in an unexpected context): still render a window.
     const win = ensureWindow();
     initFlame(win.querySelector("canvas"), win.querySelector(".tb-readout"));
-    startPolling();
+    startStatusPolling();
   }
 })();
