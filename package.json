@@ -1,7 +1,7 @@
 {
   "name": "angelus-desktop",
   "private": true,
-  "version": "0.5.0-rc.0",
+  "version": "0.5.0-rc.1",
   "description": "Tauri desktop shell for the Angelus local Agent workbench",
   "scripts": {
     "tauri": "tauri",

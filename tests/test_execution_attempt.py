@@ -82,7 +82,12 @@ class ExecutionAttemptTests(unittest.TestCase):
             self.assertEqual(attempt.snapshot().state, ExecutionState.STOPPED)
 
     def test_sigint_announces_and_requests_force_stop_before_host_shutdown(self) -> None:
-        """SIGINT's immediate phase stops work; host shutdown only awaits it."""
+        """SIGINT requests force-stop even when a worker exits immediately.
+
+        Returns:
+            ``None`` after proving the journal retains the force-stop request
+            and host shutdown observes the final stopped state.
+        """
         with TemporaryDirectory() as directory:
             state_root = Path(directory) / "state"
             core = AngelusCore(state_root=state_root)
@@ -96,7 +101,14 @@ class ExecutionAttemptTests(unittest.TestCase):
 
             core.receive_sigint()
 
-            self.assertEqual(attempt.snapshot().state, ExecutionState.FORCE_STOPPING)
+            self.assertIn(
+                attempt.snapshot().state,
+                {ExecutionState.FORCE_STOPPING, ExecutionState.STOPPED},
+            )
+            self.assertIn(
+                "stop_requested",
+                [event["type"] for event in attempt.journal.events()],
+            )
             core.shutdown()
             self.assertTrue(executor.wait(1))
             self.assertEqual(attempt.snapshot().state, ExecutionState.STOPPED)

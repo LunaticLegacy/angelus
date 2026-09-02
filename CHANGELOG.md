@@ -3,6 +3,13 @@
 本文件记录 Angelus 的面向用户发行说明，采用
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构。
 
+## [0.5.0-rc.1] - 2026-09-02
+
+### Fixed
+
+- 修正 SIGINT 竞态回归测试：当工作线程在强制停止请求后立即退出时，测试现在
+  校验持久化的停止请求事实，并接受合法的即时 `STOPPED` 终态。
+
 ## [0.5.0-rc.0] - 2026-09-02
 
 这是 `0.5.0` 的发布候选版。Angelus 与 llmfetcher 独立版本化；本版本要求
@@ -44,3 +51,4 @@
   `settings_schema` 与 `frontend.panels`。
 
 [0.5.0-rc.0]: https://github.com/LunaticLegacy/Angelus/releases/tag/v0.5.0-rc.0
+[0.5.0-rc.1]: https://github.com/LunaticLegacy/Angelus/releases/tag/v0.5.0-rc.1
