@@ -4,7 +4,7 @@
 |---|---|
 | `app.js` | Main workbench state/controller: selected Session, history, settings, Session-run control and Session-console inspector calls. |
 | `app.css` | Workbench visual layout, dialogs, session controls and responsive styling. |
-| `components/` | DOM, chat transcript, task-plan and trace rendering helpers. |
+| `components/` | DOM, chat transcript, task-plan, trace, and External Agent Hub rendering helpers. |
 | `vendor/` | Pinned browser ESM copies of Marked and DOMPurify, including upstream licenses. |
 | `inspector/` | Historic inspector helpers; not all APIs are mounted in Phase 1. |
 | `api.js`, `sessions.js`, `settings.js`, `connectors.js`, etc. | Older modular client surface retained during migration; do not introduce a second route contract through them. |

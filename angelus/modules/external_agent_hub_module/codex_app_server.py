@@ -16,7 +16,16 @@ from time import monotonic
 
 from angelus._version import ANGELUS_VERSION
 
-from .models import ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from .adapter import ExternalAgentAdapterFailure
+from .models import (
+    ContextPackage,
+    ContextPage,
+    ContextTransferResult,
+    ExternalAgentCapability,
+    ExternalAgentDefinition,
+    ExternalAgentHealth,
+    ExternalAgentSession,
+)
 
 
 class CodexAppServerError(RuntimeError):
@@ -297,6 +306,98 @@ class CodexAppServerAdapter:
             return _sessions(definition.id, result, limit)
         finally:
             transport.close()
+
+    def list_contexts(
+        self,
+        definition: ExternalAgentDefinition,
+        cursor: str | None,
+        limit: int,
+    ) -> ContextPage:
+        """Reject context listing until Codex publishes an audited protocol.
+
+        The constrained App Server transport currently uses only ``initialize``
+        and ``thread/list``.  A thread summary cannot be represented as a
+        portable message history, so this method must not guess at a history
+        endpoint, scrape local files, or return an empty successful page.
+
+        Args:
+            definition: Credential-free local Codex App Server declaration
+                selected for context inspection.
+            cursor: Opaque older-page cursor that would be used by a future
+                audited context-listing protocol.
+            limit: Requested context descriptor limit for that future protocol.
+
+        Returns:
+            This method does not return normally because the current Codex App
+            Server protocol adapter has no audited context-listing operation.
+
+        Raises:
+            ExternalAgentAdapterFailure: Always, without opening a transport or
+                inspecting Codex filesystem state.
+        """
+        del definition, cursor, limit
+        raise ExternalAgentAdapterFailure(
+            "Codex App Server context listing is not supported by the current audited protocol."
+        )
+
+    def read_context(
+        self,
+        definition: ExternalAgentDefinition,
+        context_id: str,
+    ) -> ContextPackage:
+        """Reject context export until Codex publishes an audited protocol.
+
+        ``thread/list`` yields only summaries.  It does not establish a stable
+        protocol method or message schema for a complete Codex thread, so
+        Angelus cannot safely build a portable context package from it.
+
+        Args:
+            definition: Credential-free local Codex App Server declaration
+                selected for context export.
+            context_id: Codex thread or context identifier requested by the
+                caller.
+
+        Returns:
+            This method does not return normally because the current Codex App
+            Server protocol adapter has no audited context-read operation.
+
+        Raises:
+            ExternalAgentAdapterFailure: Always, without opening a transport,
+                scraping local state, or synthesizing context messages.
+        """
+        del definition, context_id
+        raise ExternalAgentAdapterFailure(
+            "Codex App Server context reading is not supported by the current audited protocol."
+        )
+
+    def write_context(
+        self,
+        definition: ExternalAgentDefinition,
+        package: ContextPackage,
+    ) -> ContextTransferResult:
+        """Reject context import because Codex has no audited restore protocol.
+
+        Starting a Codex thread or submitting a new turn is not equivalent to
+        restoring history.  The adapter therefore performs no JSON-RPC write,
+        never opens a transport, and reports an explicit unsupported operation.
+
+        Args:
+            definition: Credential-free local Codex App Server declaration
+                selected as the requested destination.
+            package: Redacted portable context package requested for transfer.
+
+        Returns:
+            This method does not return normally because the current Codex App
+            Server protocol adapter has no audited context-write operation.
+
+        Raises:
+            ExternalAgentAdapterFailure: Always, without creating a Codex
+                thread, issuing a turn request, or writing any local data.
+        """
+        del definition, package
+        raise ExternalAgentAdapterFailure(
+            "Codex App Server context writing is not supported by the current audited protocol."
+        )
 
     def _handshake(self, definition: ExternalAgentDefinition) -> None:
         """Open, initialize, and close one read-only protocol connection.

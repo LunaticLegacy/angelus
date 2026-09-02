@@ -13,7 +13,25 @@ from importlib import import_module
 from importlib.util import find_spec
 from typing import Protocol
 
-from ..models import ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from ..adapter import ExternalAgentAdapterFailure
+from ..models import (
+    ContextPackage,
+    ContextPage,
+    ContextTransferResult,
+    ExternalAgentCapability,
+    ExternalAgentDefinition,
+    ExternalAgentHealth,
+    ExternalAgentSession,
+)
+
+
+class ClaudeSdkContextUnsupportedError(ExternalAgentAdapterFailure):
+    """Raised when callers request Claude context operations unsupported by its SDK.
+
+    The public local Claude Agent SDK integration used by Angelus currently
+    exposes session summaries only.  It does not provide a safe, documented
+    operation to read transcript payloads or append an imported transcript.
+    """
 
 
 @dataclass(frozen=True)
@@ -206,6 +224,100 @@ class ClaudeSdkAdapter:
             )
             for record in records[:limit]
             if record.session_id
+        )
+
+    def list_contexts(
+        self,
+        definition: ExternalAgentDefinition,
+        cursor: str | None = None,
+        limit: int = 200,
+    ) -> ContextPage:
+        """Reject transcript listing until Claude publishes a supported SDK API.
+
+        A Claude SDK session summary is not a transcript.  Returning an empty
+        page would incorrectly mean that the selected Claude runtime has no
+        context, so this operation reports a domain failure instead.
+
+        Args:
+            definition: Credential-free Claude Hub definition selected by the
+                caller. It is not contacted by this operation.
+            cursor: Opaque paging marker requested by the caller. It is not
+                consumed because transcript listing is unsupported.
+            limit: Requested maximum number of context summaries. It is not
+                consumed because transcript listing is unsupported.
+
+        Returns:
+            This method does not return normally because the installed Claude
+            SDK facade cannot list transcript contexts.
+
+        Raises:
+            ClaudeSdkContextUnsupportedError: Always, to distinguish an
+                unsupported transcript operation from a successful empty page.
+        """
+        del definition, cursor, limit
+        raise ClaudeSdkContextUnsupportedError(
+            "Claude Agent SDK session inspection does not expose a supported context listing API."
+        )
+
+    def read_context(
+        self,
+        definition: ExternalAgentDefinition,
+        context_id: str,
+    ) -> ContextPackage:
+        """Reject transcript reads until Claude publishes a supported SDK API.
+
+        The local SDK facade intentionally does not inspect Claude transcript
+        files, internal caches, or a running CLI process.  Those paths are not
+        a stable public protocol and could expose credentials or private data.
+
+        Args:
+            definition: Credential-free Claude Hub definition selected by the
+                caller. It is not contacted by this operation.
+            context_id: External context identifier requested by the caller.
+                It is not resolved because transcript reads are unsupported.
+
+        Returns:
+            This method does not return normally because the installed Claude
+            SDK facade cannot read transcript payloads.
+
+        Raises:
+            ClaudeSdkContextUnsupportedError: Always, to prevent callers from
+                mistaking missing transcript access for an empty conversation.
+        """
+        del definition, context_id
+        raise ClaudeSdkContextUnsupportedError(
+            "Claude Agent SDK session inspection does not expose a supported context read API."
+        )
+
+    def write_context(
+        self,
+        definition: ExternalAgentDefinition,
+        package: ContextPackage,
+    ) -> ContextTransferResult:
+        """Reject imports because Claude SDK exposes no safe transcript writer.
+
+        Angelus must not manufacture a Claude transcript by writing private
+        files, resuming a session, or issuing a model request.  Import support
+        can be added only when the target SDK provides a documented, auditable
+        write operation.
+
+        Args:
+            definition: Credential-free Claude Hub definition selected by the
+                caller. It is not contacted by this operation.
+            package: Validated normalized context package requested for import.
+                It is not inspected or persisted by this unsupported operation.
+
+        Returns:
+            This method does not return normally because the installed Claude
+            SDK facade cannot write transcript payloads.
+
+        Raises:
+            ClaudeSdkContextUnsupportedError: Always, to make the no-write
+                boundary explicit to the service and HTTP layers.
+        """
+        del definition, package
+        raise ClaudeSdkContextUnsupportedError(
+            "Claude Agent SDK session inspection does not expose a supported context write API."
         )
 
 

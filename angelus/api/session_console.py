@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from ..core import AngelusCore
 from ..modules.console_module import ConsoleDomainError
+from ..modules.external_agent_hub_module import ContextExchangeError, ContextPackage
+from ..modules.external_agent_hub_module.context_codec import parse_context_package
 
 router = APIRouter(prefix="/api/sessions/{session_id}")
 
@@ -175,6 +177,68 @@ def context(session_id: str, agent: str, request: Request, before: int | None = 
         Chronological context metadata page and older-page cursor.
     """
     return _call(lambda:_service(request).context(session_id, agent, before, limit))
+
+
+@router.get("/agents/{agent}/context/export")
+def export_context(
+    session_id: str,
+    agent: str,
+    request: Request,
+    before: int | None = None,
+    limit: int = 200,
+) -> dict[str, object]:
+    """Export one bounded durable context page without reading all history.
+
+    Args:
+        session_id: Stable Session identity owning the source Agent.
+        agent: Valid coordinator or worker identity whose history is exported.
+        request: Incoming request carrying the application core.
+        before: Exclusive older-than timeline cursor from a prior export page.
+        limit: Maximum records to export, from 1 through 200.
+
+    Returns:
+        Credential-redacted portable package and an older-page cursor.
+
+    Raises:
+        HTTPException: If the Session/Agent is unavailable or export input is
+            invalid.
+    """
+    try:
+        package, next_before, has_more = _core_context_exchange(request).export_page(session_id, agent, before, limit)
+        return {"package": _package(package), "next_before": next_before, "has_more": has_more}
+    except (KeyError, ConsoleDomainError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc) or "unknown Session or Agent") from exc
+    except ContextExchangeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/agents/{agent}/context/import")
+def import_context(session_id: str, agent: str, request: Request, payload: object = Body(...)):
+    """Append a selected portable package to one idle Session Agent.
+
+    Args:
+        session_id: Stable Session identity receiving historical context.
+        agent: Valid materialized coordinator or worker identity.
+        request: Incoming request carrying the application core.
+        payload: Strict portable context package selected by a user.
+
+    Returns:
+        Import acknowledgement including accepted and rejected record counts.
+
+    Raises:
+        HTTPException: If the package is invalid, the target is active, or the
+            checkpoint cannot be safely persisted.
+    """
+    try:
+        package = parse_context_package(payload)
+        result = _core_context_exchange(request).append_package(session_id, agent, package)
+        return {"result": {"direction": result.direction, "agent_id": result.agent_id, "context_id": result.context_id, "accepted_messages": result.accepted_messages, "rejected_messages": result.rejected_messages, "detail": result.detail}}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="unknown Session") from exc
+    except ContextExchangeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 @router.get("/agents/{agent}/context-graph")
 def context_graph(session_id: str, agent: str, request: Request): return _call(lambda:_service(request).context_graph(session_id,agent))
 @router.post("/agents/{agent}/context/request-preview")
@@ -193,5 +257,35 @@ def request_preview(session_id: str, agent: str, body: RequestPreviewInput, requ
     return _call(lambda:_service(request).request_preview(session_id, agent, body.message))
 @router.get("/agents/{agent}/context/compaction-input")
 def compaction_input(session_id: str, agent: str, request: Request): return _call(lambda:_service(request).compaction_input(session_id,agent))
+
+
+def _core_context_exchange(request: Request):
+    """Resolve the application-owned portable context exchange service.
+
+    Args:
+        request: Incoming request carrying application state.
+
+    Returns:
+        Context exchange service owned by the active Angelus core.
+
+    Raises:
+        RuntimeError: If the application has no installed Angelus core.
+    """
+    core = getattr(request.app.state, "angelus_core", None)
+    if not isinstance(core, AngelusCore):
+        raise RuntimeError("AngelusCore is not installed")
+    return core.context_exchange_service
+
+
+def _package(value: ContextPackage) -> dict[str, object]:
+    """Serialize one portable package without exposing executable tool data.
+
+    Args:
+        value: Typed portable context package.
+
+    Returns:
+        JSON-safe package representation.
+    """
+    return {"format_version": value.format_version, "source": value.source, "source_session_id": value.source_session_id, "source_agent": value.source_agent, "messages": [{"sequence": item.sequence, "role": item.role, "content": item.content, "reasoning": item.reasoning, "tool_calls": [{"name": tool.name, "arguments_json": tool.arguments_json, "result": tool.result} for tool in item.tool_calls], "created_at": item.created_at} for item in value.messages], "summary": value.summary, "redactions": list(value.redactions)}
 
 __all__=["router"]

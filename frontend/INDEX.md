@@ -18,9 +18,10 @@ code still contains legacy requests and is intentionally not a reliable
 capability surface until Session projections replace it.
 
 The global External Agent Hub dialog uses `/api/external-agents` to configure
-adapter definitions and inspect their health, declared capabilities and remote
-session summaries. It intentionally does not offer context import or export
-until the audited context-exchange API exists.
+adapter definitions and inspect health, declared capabilities, remote session
+summaries, and capability-gated readable context descriptors. A selected
+external context can be previewed as a credential-redacted portable package;
+unsupported adapters surface their domain error rather than an empty result.
 
 The Hub can explicitly scan local known Agent processes and show ephemeral
 candidate cards. Scanning neither attaches to nor persists a discovered

@@ -12,8 +12,8 @@ They do not own Session, Agent, execution, persistence or credentials.
 | `settings.py` | `/api/connectors`, `/api/settings/run-profile`, `/api/sessions/{id}/run-profile` | Connector CRUD and global/Session future-run settings. |
 | `providers.py` | `/api/providers` | Read installed LLMFetcher provider capabilities. |
 | `workspace_directory.py` | `/api/workspace-directory/pick` | Optional local native directory chooser. |
-| `session_console.py` | `/api/sessions/{id}/agents`, graph, plan, events, usage and context routes | Typed Session-console projection and idle-only graph editing. |
-| `external_agent_hub.py` | `/api/external-agents` | External Agent definition CRUD plus explicit local-process discovery and read-only health/capability/session inspection. |
+| `session_console.py` | `/api/sessions/{id}/agents`, graph, plan, events, usage and context routes | Typed Session-console projection, idle-only graph editing, and bounded portable context export/import. |
+| `external_agent_hub.py` | `/api/external-agents` | External Agent definition CRUD, explicit local-process discovery, inspection, and capability-gated portable-context reads/writes. |
 
 ## Not Mounted in Phase 1
 
@@ -31,11 +31,11 @@ replaced solely by `settings.py`.
 | `sessions.py` | `list_sessions`, `create_session`, `delete_session` | Session identity lifecycle over `SessionService`. |
 | `sessions.py` | `get_session_messages` | Bounded legacy conversation projection for selected Session. |
 | `runs.py` | `start_run`, `run_status`, stop endpoints | Execution lifecycle over `ExecutionService`. |
-| `session_console.py` | graph/plan/events/context endpoints | Console projection over the Session's swarm, journal and persisted contexts; each graph mutation has an explicit typed service method. |
+| `session_console.py` | graph/plan/events/context endpoints | Console projection over the Session's swarm, journal and persisted contexts; context export pages durable history and import appends only to idle Agents. |
 | `settings.py` | connector/profile endpoints | Settings use cases over `SettingsService`. |
 | `providers.py` | `list_providers` | Runtime capability read. |
 | `workspace_directory.py` | directory picker endpoint | Desktop-only local directory selection. |
-| `external_agent_hub.py` | External Agent CRUD/discovery/health/capabilities/sessions | Hub API; discovery is an explicit read-only scan and stores no connector secrets. |
+| `external_agent_hub.py` | External Agent CRUD/discovery/health/capabilities/sessions/contexts | Hub API; discovery is an explicit read-only scan and context exchange is capability-gated with no connector-secret serialization. |
 
 ## Class Map
 

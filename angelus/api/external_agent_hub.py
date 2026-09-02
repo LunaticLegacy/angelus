@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..core import AngelusCore
-from ..modules.external_agent_hub_module import ExternalAgentAdapterFailure, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from ..modules.external_agent_hub_module import ContextMessage, ContextPackage, ContextToolCall, ContextTransferResult, ExternalAgentAdapterFailure, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentContext, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from ..modules.external_agent_hub_module.context_codec import parse_context_package
 
 
 router = APIRouter()
@@ -81,6 +82,93 @@ def discover_external_agent_processes(request: Request) -> dict[str, object]:
     """
     candidates = _core(request).external_agent_hub.discover_local_processes()
     return {"candidates": [_candidate(item) for item in candidates]}
+
+
+@router.get("/api/external-agents/{agent_id}/contexts")
+def external_agent_contexts(
+    agent_id: str,
+    request: Request,
+    cursor: str | None = None,
+    limit: int = 200,
+) -> dict[str, object]:
+    """List one bounded page of readable external context descriptors.
+
+    Args:
+        agent_id: Stable external Agent identifier to inspect.
+        request: Incoming request carrying the composition root.
+        cursor: Opaque continuation cursor supplied by the prior result.
+        limit: Maximum descriptors to return, from 1 through 200.
+
+    Returns:
+        Typed context descriptors and continuation information.
+
+    Raises:
+        HTTPException: If the Agent is absent, input is invalid, or its adapter
+            does not expose an audited readable-context protocol.
+    """
+    try:
+        page = _core(request).external_agent_hub.contexts(agent_id, cursor, limit)
+        return {"contexts": [_context(item) for item in page.items], "next_cursor": page.next_cursor, "has_more": page.has_more}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/api/external-agents/{agent_id}/contexts/{context_id}")
+def read_external_agent_context(agent_id: str, context_id: str, request: Request) -> dict[str, object]:
+    """Read one external context as a credential-redacted portable package.
+
+    Args:
+        agent_id: Stable external Agent identifier to inspect.
+        context_id: Adapter-local external context identifier.
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Portable context package without credential values.
+
+    Raises:
+        HTTPException: If the Agent/context is invalid or the adapter cannot
+            export the selected context through an audited protocol.
+    """
+    try:
+        return {"package": _package(_core(request).external_agent_hub.read_context(agent_id, context_id))}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/external-agents/{agent_id}/contexts/import")
+def write_external_agent_context(agent_id: str, request: Request, payload: object = Body(...)) -> dict[str, object]:
+    """Write a user-selected portable package through an audited adapter.
+
+    Args:
+        agent_id: Stable external Agent identifier selected as the destination.
+        request: Incoming request carrying the composition root.
+        payload: Strict portable context package with no credential fields.
+
+    Returns:
+        External adapter acknowledgement with accepted record counts.
+
+    Raises:
+        HTTPException: If package input is invalid, the Agent is absent, or the
+            adapter does not support an audited context-import operation.
+    """
+    try:
+        package = parse_context_package(payload)
+        result = _core(request).external_agent_hub.write_context(agent_id, package)
+        return {"result": _transfer_result(result)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="external Agent not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ExternalAgentAdapterFailure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/api/external-agents/{agent_id}")
@@ -379,6 +467,74 @@ def _session(value: ExternalAgentSession) -> dict[str, object]:
         "updated_at": value.updated_at,
         "project_path": value.project_path,
     }
+
+
+def _context(value: ExternalAgentContext) -> dict[str, object]:
+    """Serialize one external context descriptor for an HTTP response.
+
+    Args:
+        value: Typed context descriptor returned by an adapter.
+
+    Returns:
+        JSON-safe public context descriptor.
+    """
+    return {"agent_id": value.agent_id, "external_id": value.external_id, "title": value.title, "updated_at": value.updated_at, "message_count": value.message_count}
+
+
+def _package(value: ContextPackage) -> dict[str, object]:
+    """Serialize a credential-redacted portable context package.
+
+    Args:
+        value: Typed portable context package.
+
+    Returns:
+        JSON-safe context package representation.
+    """
+    return {
+        "format_version": value.format_version,
+        "source": value.source,
+        "source_session_id": value.source_session_id,
+        "source_agent": value.source_agent,
+        "messages": [_message(item) for item in value.messages],
+        "summary": value.summary,
+        "redactions": list(value.redactions),
+    }
+
+
+def _message(value: ContextMessage) -> dict[str, object]:
+    """Serialize one non-executable portable context record.
+
+    Args:
+        value: Typed portable context message.
+
+    Returns:
+        JSON-safe message representation.
+    """
+    return {"sequence": value.sequence, "role": value.role, "content": value.content, "reasoning": value.reasoning, "tool_calls": [_tool(item) for item in value.tool_calls], "created_at": value.created_at}
+
+
+def _tool(value: ContextToolCall) -> dict[str, object]:
+    """Serialize one historical tool call without an executable handle.
+
+    Args:
+        value: Typed non-executable tool-call record.
+
+    Returns:
+        JSON-safe tool-call representation.
+    """
+    return {"name": value.name, "arguments_json": value.arguments_json, "result": value.result}
+
+
+def _transfer_result(value: ContextTransferResult) -> dict[str, object]:
+    """Serialize a typed context write acknowledgement.
+
+    Args:
+        value: Typed result returned after an audited context transfer.
+
+    Returns:
+        JSON-safe result including accepted and rejected counts.
+    """
+    return {"direction": value.direction, "agent_id": value.agent_id, "context_id": value.context_id, "accepted_messages": value.accepted_messages, "rejected_messages": value.rejected_messages, "detail": value.detail}
 
 
 __all__ = ["router"]

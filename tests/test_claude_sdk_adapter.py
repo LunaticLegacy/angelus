@@ -6,9 +6,11 @@ from dataclasses import dataclass
 import unittest
 
 from angelus.modules.external_agent_hub_module import ExternalAgentDefinition
+from angelus.modules.external_agent_hub_module.models import ContextPackage
 from angelus.modules.external_agent_hub_module.adapters.claude_sdk import (
     ClaudeSdkAdapter,
     ClaudeSdkAvailability,
+    ClaudeSdkContextUnsupportedError,
     ClaudeSdkSessionRecord,
 )
 
@@ -92,6 +94,25 @@ class ClaudeSdkAdapterTests(unittest.TestCase):
         capabilities = adapter.discover_capabilities(definition)
         self.assertEqual(("claude.sessions.list",), tuple(item.id for item in capabilities))
         self.assertEqual(("tool",), tuple(item.invocation_mode for item in capabilities))
+
+    def test_context_operations_report_explicit_unsupported_boundary(self) -> None:
+        """Transcript operations fail instead of pretending Claude data is empty.
+
+        Returns:
+            ``None`` after asserting that all unsupported context operations
+            expose the same safe domain failure.
+        """
+        adapter = ClaudeSdkAdapter(FakeClaudeDiscovery(True))
+        definition = ExternalAgentDefinition("claude-local", "Local Claude", "claude_sdk")
+        with self.assertRaisesRegex(ClaudeSdkContextUnsupportedError, "context listing API"):
+            adapter.list_contexts(definition)
+        with self.assertRaisesRegex(ClaudeSdkContextUnsupportedError, "context read API"):
+            adapter.read_context(definition, "claude-session")
+        with self.assertRaisesRegex(ClaudeSdkContextUnsupportedError, "context write API"):
+            adapter.write_context(
+                definition,
+                ContextPackage(1, "Angelus", "session", "coordinator", ()),
+            )
 
 
 if __name__ == "__main__":

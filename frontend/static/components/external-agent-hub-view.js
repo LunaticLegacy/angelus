@@ -1,4 +1,4 @@
-/** External Agent Hub configuration and read-only inspection workbench. */
+/** External Agent Hub configuration and capability-gated context inspection workbench. */
 
 const ADAPTERS = [
   ["codex_app_server", "Codex App Server"],
@@ -141,17 +141,11 @@ export function createExternalAgentHubView(dialog, root) {
     health.dataset.hubHealth = agent.id;
     const capabilities = section("Capabilities", "只读查看 adapter 已声明的能力。", "正在读取…", "external-hub-capabilities");
     const sessions = section("External Sessions", "仅列出远端会话摘要；不会导入、恢复或运行它们。", "正在读取…", "external-hub-sessions");
-    const context = element("div", "external-hub-context-boundary");
-    const contextButton = button("读取上下文（即将支持）", () => {}, "secondary", "该能力尚未开放");
-    contextButton.disabled = true;
-    context.append(
-      element("strong", "", "上下文交换"),
-      element("p", "", "读取与发送上下文将在下一阶段以预览、确认和审计流程接入。当前不会读取或写入外部上下文。"),
-      contextButton,
-    );
-    view.append(form, tools, health, capabilities, sessions, context);
+    const contexts = section("External Contexts", "仅显示 adapter 真实支持读取的上下文。读取失败会保留服务端的领域错误；不会伪造空数据。", "正在读取…", "external-hub-contexts");
+    view.append(form, tools, health, capabilities, sessions, contexts);
     loadCapabilities(agent.id, capabilities).catch((error) => renderError(capabilities, error));
     loadSessions(agent.id, sessions).catch((error) => renderError(sessions, error));
+    loadContexts(agent.id, contexts).catch((error) => renderError(contexts, error));
     return view;
   }
 
@@ -253,6 +247,35 @@ export function createExternalAgentHubView(dialog, root) {
       ? values.map((item) => element("p", "external-hub-row", `${item.title || item.external_id} · ${item.status || "—"} · ${item.external_id}`))
       : [message("尚未发现可读取的外部会话。", "empty")];
     body.replaceChildren(...rows);
+  }
+
+  /** Populate readable external contexts and render an explicit package preview action. */
+  async function loadContexts(agentId, container) {
+    const payload = await request(`/api/external-agents/${encodeURIComponent(agentId)}/contexts?limit=50`);
+    const body = container.querySelector(".external-hub-section-body");
+    const values = Array.isArray(payload.contexts) ? payload.contexts : [];
+    const rows = values.length ? values.map((item) => {
+      const row = element("div", "external-hub-row external-hub-context-row");
+      row.append(
+        element("span", "", `${item.title || item.external_id} · ${item.message_count ?? "?"} 条消息`),
+        button("预览包", () => previewContext(agentId, item.external_id, container), "secondary"),
+      );
+      return row;
+    }) : [message("该 adapter 没有可读取的上下文，或尚未配置其读取协议。", "empty")];
+    body.replaceChildren(...rows);
+  }
+
+  /** Read one explicitly selected context and show its redacted portable envelope. */
+  async function previewContext(agentId, contextId, container) {
+    try {
+      const payload = await request(`/api/external-agents/${encodeURIComponent(agentId)}/contexts/${encodeURIComponent(contextId)}`);
+      const packageValue = payload.package || {};
+      const preview = element("pre", "external-hub-context-preview", JSON.stringify(packageValue, null, 2));
+      const body = container.querySelector(".external-hub-section-body");
+      body.append(preview);
+    } catch (error) {
+      window.alert(`读取上下文失败：${error.message}`);
+    }
   }
 
   return { open, close, refresh };

@@ -17,7 +17,7 @@ from .modules.connector_module import ConnectorStore, ProviderCatalog
 from .modules.settings_module import RunProfileStore
 from .modules.tool_module import ToolRegistry, runtime_tool_registration
 from .modules.plugin_module import PluginManager
-from .modules.external_agent_hub_module import CodexAppServerAdapter, ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore
+from .modules.external_agent_hub_module import CodexAppServerAdapter, ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore, SessionContextExchangeService
 from .modules.external_agent_hub_module.adapters import ClaudeSdkAdapter, CozeExternalAgentAdapter, OpenCodeExternalAgentAdapter, UnavailableExternalAgentFacade, WorkBuddyExternalAgentAdapter
 
 
@@ -103,6 +103,9 @@ class AngelusCore:
         self.execution_service = ExecutionService(self)
         self.settings_service = SettingsService(self)
         self.console_service = ConsoleProjectionService(self)
+        # Portable external-context exchange delegates Session reads and writes
+        # through this core; it owns no shadow transcript store.
+        self.context_exchange_service = SessionContextExchangeService(self)
         # SIGINT coordinator obtains live attempts from Session ownership.
         self.sigint = SigintSupervisor(self.sessions.live_attempts)
         # Event used to stop the helper thread that drains signal requests.

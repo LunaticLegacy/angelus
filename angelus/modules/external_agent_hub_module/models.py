@@ -15,6 +15,122 @@ ExternalAgentAdapterKind = Literal[
     "custom",
 ]
 ExternalAgentHealthStatus = Literal["unknown", "healthy", "unavailable", "unsupported"]
+ContextRole = Literal["system", "user", "assistant", "tool"]
+ContextTransferDirection = Literal["import", "export"]
+
+
+@dataclass(frozen=True)
+class ContextToolCall:
+    """One non-executable historical tool-call record in a context package.
+
+    Attributes:
+        name: Public tool name recorded by the source runtime.
+        arguments_json: Redacted JSON representation of the call arguments.
+        result: Redacted textual result recorded by the source runtime.
+    """
+
+    name: str
+    arguments_json: str = ""
+    result: str = ""
+
+
+@dataclass(frozen=True)
+class ContextMessage:
+    """One ordered, credential-free conversation record.
+
+    Attributes:
+        sequence: Source-local monotonically increasing message sequence.
+        role: Normalized message role.
+        content: Redacted message content.
+        reasoning: Optional redacted reasoning content supplied by the source.
+        tool_calls: Historical tool calls; importers must never execute them.
+        created_at: Optional source Unix timestamp in milliseconds.
+    """
+
+    sequence: int
+    role: ContextRole
+    content: str
+    reasoning: str = ""
+    tool_calls: tuple[ContextToolCall, ...] = ()
+    created_at: int | None = None
+
+
+@dataclass(frozen=True)
+class ExternalAgentContext:
+    """A remote context descriptor that may be read through an adapter.
+
+    Attributes:
+        agent_id: Owning Hub definition identifier.
+        external_id: Adapter-local stable context identifier.
+        title: User-safe context title.
+        updated_at: Optional source Unix timestamp in milliseconds.
+        message_count: Source-reported count when known.
+    """
+
+    agent_id: str
+    external_id: str
+    title: str
+    updated_at: int | None = None
+    message_count: int | None = None
+
+
+@dataclass(frozen=True)
+class ContextPage:
+    """One bounded page of external context descriptors.
+
+    Attributes:
+        items: Context descriptors in adapter-defined newest-first order.
+        next_cursor: Opaque cursor for the next older page, if available.
+        has_more: Whether another older page can be requested.
+    """
+
+    items: tuple[ExternalAgentContext, ...]
+    next_cursor: str | None = None
+    has_more: bool = False
+
+
+@dataclass(frozen=True)
+class ContextPackage:
+    """Portable, redacted context exchange envelope.
+
+    Attributes:
+        format_version: Angelus-owned exchange schema version.
+        source: Human-readable source product or adapter identity.
+        source_session_id: Source-local session or context identifier.
+        source_agent: Source Agent identity when known.
+        messages: Chronologically ordered normalized history records.
+        summary: Optional redacted compacted summary.
+        redactions: Human-readable list of sensitive fields removed in transit.
+    """
+
+    format_version: int
+    source: str
+    source_session_id: str
+    source_agent: str
+    messages: tuple[ContextMessage, ...]
+    summary: str = ""
+    redactions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ContextTransferResult:
+    """Auditable result of a context read or write operation.
+
+    Attributes:
+        direction: Whether the operation imported into or exported from a target.
+        agent_id: Hub definition or Angelus Session identity owning the target.
+        context_id: Target-local context identifier.
+        accepted_messages: Number of history records accepted by the target.
+        rejected_messages: Number of records omitted by the target.
+        detail: User-safe outcome explanation.
+    """
+
+    direction: ContextTransferDirection
+    agent_id: str
+    context_id: str
+    accepted_messages: int
+    rejected_messages: int
+    detail: str = ""
 
 
 @dataclass(frozen=True)

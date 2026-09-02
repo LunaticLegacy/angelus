@@ -6,7 +6,7 @@ import re
 
 from .adapter import ExternalAgentAdapterRegistry
 from .discovery import ExternalAgentProcessDiscovery
-from .models import ExternalAgentAdapterKind, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from .models import ContextPage, ContextPackage, ContextTransferResult, ExternalAgentAdapterKind, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
 from .store import ExternalAgentHubStore
 
 
@@ -170,6 +170,61 @@ class ExternalAgentHubService:
         if not 1 <= limit <= 200:
             raise ValueError("external session limit must be between 1 and 200")
         return self._adapters.sessions(self.get(agent_id), limit)
+
+    def contexts(self, agent_id: str, cursor: str | None, limit: int) -> ContextPage:
+        """Return one bounded external context descriptor page.
+
+        Args:
+            agent_id: External Agent identifier to inspect.
+            cursor: Opaque older-page cursor from the preceding result.
+            limit: Requested descriptor count from 1 through 200.
+
+        Returns:
+            Typed bounded context descriptor page.
+
+        Raises:
+            KeyError: If no definition has the supplied identifier.
+            ValueError: If the requested page size is out of bounds.
+            ExternalAgentAdapterFailure: If the product cannot list contexts.
+        """
+        if not 1 <= limit <= 200:
+            raise ValueError("external context limit must be between 1 and 200")
+        return self._adapters.contexts(self.get(agent_id), cursor, limit)
+
+    def read_context(self, agent_id: str, context_id: str) -> ContextPackage:
+        """Read one selected external context into a portable package.
+
+        Args:
+            agent_id: External Agent identifier to inspect.
+            context_id: Adapter-local context selected explicitly by the user.
+
+        Returns:
+            Credential-redacted portable context package.
+
+        Raises:
+            KeyError: If no definition has the supplied identifier.
+            ValueError: If the selected context identifier is blank.
+            ExternalAgentAdapterFailure: If the product cannot export context.
+        """
+        if not context_id.strip():
+            raise ValueError("external context id must not be blank")
+        return self._adapters.read_context(self.get(agent_id), context_id)
+
+    def write_context(self, agent_id: str, package: ContextPackage) -> ContextTransferResult:
+        """Write one portable package through an audited external adapter.
+
+        Args:
+            agent_id: External Agent identifier selected as the destination.
+            package: Credential-redacted package selected for export.
+
+        Returns:
+            Target acknowledgement including accepted record counts.
+
+        Raises:
+            KeyError: If no definition has the supplied identifier.
+            ExternalAgentAdapterFailure: If the product cannot import context.
+        """
+        return self._adapters.write_context(self.get(agent_id), package)
 
     def _validate(self, definition: ExternalAgentDefinition) -> None:
         """Validate bounded public configuration before persistence.

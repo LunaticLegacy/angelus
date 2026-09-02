@@ -16,6 +16,7 @@ real API credentials or mutate the repository's `.angelus-state` directory.
 | `test_external_agent_hub_read_only_adapters.py` | Coze, OpenCode, and WorkBuddy typed read-only facade adapter tests. |
 | `test_codex_app_server_adapter.py` | Constrained Codex App Server stdio handshake and bounded thread discovery. |
 | `test_claude_sdk_adapter.py` | Lazy Claude SDK availability and bounded local session discovery. |
+| `test_context_package.py` | Strict portable context-package decoding and historical tool-call containment. |
 
 Run from repository root:
 
