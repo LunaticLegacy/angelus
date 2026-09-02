@@ -6,7 +6,7 @@ or terminal presentation logic.
 | File | Responsibility |
 |---|---|
 | `session_service.py` | Create/list/delete Session + Workspace pairs and materialize coordinator from saved configuration. |
-| `execution_service.py` | Start/inspect/stop/replay a Session-owned execution attempt. |
+| `execution_service.py` | Start/inspect/stop/replay a Session-owned execution attempt and checkpoint a safe live graph view after every persisted Agent round. |
 | `settings_service.py` | Validate connector/profile relationships and perform settings use cases. |
 
 ## Function Map
@@ -18,7 +18,7 @@ or terminal presentation logic.
 | `SessionService.rebuild_swarm` | Materialize the typed, secret-free console graph blueprint using the effective Session profile. |
 | `ToolRegistry.materialize` | Attach only profile-authorized registered Tools to the coordinator and every restored worker. |
 | `SessionService.delete` | Force-stop, remove Angelus state/legacy archive/catalog/aggregate in safe order. |
-| `ExecutionService.start` | Confirm coordinator, subscribe one attempt-scoped journal hook, run the complete AgentSwarm, and turn a failed coordinator marker into a failed attempt. Hook cleanup is compatibility-safe and cannot overwrite the run result. |
+| `ExecutionService.start` | Confirm coordinator, subscribe one attempt-scoped journal hook, run the complete AgentSwarm, checkpoint safe graph/context-pointer generations after persisted Agent rounds, and turn a failed coordinator marker into a failed attempt. |
 | `ExecutionService.stop` | Apply graceful/forced strategy to same Session controller. |
 | `SettingsService.*profile` | Read/replace/clear future-run global or Session profile. |
 | `SettingsService.*connector` | CRUD connector and reject deletion while effective profiles reference it. |

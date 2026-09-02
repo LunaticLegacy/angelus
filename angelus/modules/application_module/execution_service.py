@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
 from llmfetcher.swarm_module import AgentFailure
@@ -111,6 +112,15 @@ class ExecutionService:
         # durable trace subscription.
         binding = _JournalBinding()
         def journal_hook(event: Any) -> None:
+            """Journal one swarm event and commit a safe graph generation.
+
+            Args:
+                event: LLMFetcher lifecycle event emitted by the Session swarm.
+
+            Returns:
+                None. Context-checkpoint events additionally commit a graph
+                view and Agent-owned context references through the attempt.
+            """
             attempt = binding.attempt
             if attempt is None:
                 return
@@ -122,6 +132,36 @@ class ExecutionService:
                 message=event.message, usage=usage if isinstance(usage, dict) else {},
                 duration_ms=data.get("duration_ms") or data.get("model_duration_ms"),
             )
+            if event.event_type == "agent:context_checkpoint":
+                snapshotter = getattr(session.swarm, "view_snapshot", None)
+                if not callable(snapshotter):
+                    return
+                graph = snapshotter()
+                if not isinstance(graph, dict):
+                    return
+                round_value = data.get("round")
+                nodes = graph.get("nodes", [])
+                context_agents = [
+                    node.get("id")
+                    for node in nodes
+                    if isinstance(node, dict)
+                    and node.get("kind") == "agent"
+                    and isinstance(node.get("id"), str)
+                ]
+                contexts = {
+                    agent_name: {
+                        "boundary": {"round": round_value},
+                        "storage": "agent-owned-context-pointer",
+                        "persisted": True,
+                    }
+                    for agent_name in context_agents
+                }
+                attempt.commit_checkpoint(
+                    uuid4().hex,
+                    graph,
+                    contexts,
+                    reason=f"{event.agent_name}:round:{round_value}",
+                )
         def install_hook(attempt: Any) -> None:
             binding.attempt = attempt
             session.swarm.add_hook(journal_hook)
