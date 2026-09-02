@@ -18,10 +18,12 @@ from angelus._version import ANGELUS_VERSION
 
 from .adapter import ExternalAgentAdapterFailure
 from .models import (
+    ContextMessage,
     ContextPackage,
     ContextPage,
     ContextTransferResult,
     ExternalAgentCapability,
+    ExternalAgentContext,
     ExternalAgentDefinition,
     ExternalAgentHealth,
     ExternalAgentSession,
@@ -313,43 +315,40 @@ class CodexAppServerAdapter:
         cursor: str | None,
         limit: int,
     ) -> ContextPage:
-        """Reject context listing until Codex publishes an audited protocol.
-
-        The constrained App Server transport currently uses only ``initialize``
-        and ``thread/list``.  A thread summary cannot be represented as a
-        portable message history, so this method must not guess at a history
-        endpoint, scrape local files, or return an empty successful page.
+        """List persisted Codex threads as readable context descriptors.
 
         Args:
             definition: Credential-free local Codex App Server declaration
                 selected for context inspection.
-            cursor: Opaque older-page cursor that would be used by a future
-                audited context-listing protocol.
-            limit: Requested context descriptor limit for that future protocol.
+            cursor: Opaque older-page cursor from an earlier thread-list page.
+            limit: Requested context descriptor limit from 1 through 200.
 
         Returns:
-            This method does not return normally because the current Codex App
-            Server protocol adapter has no audited context-listing operation.
+            Bounded readable thread descriptors and an optional older cursor.
 
         Raises:
-            ExternalAgentAdapterFailure: Always, without opening a transport or
-                inspecting Codex filesystem state.
+            ValueError: If the requested page size is out of bounds.
+            CodexAppServerError: If the handshake or listing request fails.
         """
-        del definition, cursor, limit
-        raise ExternalAgentAdapterFailure(
-            "Codex App Server context listing is not supported by the current audited protocol."
-        )
+        if not 1 <= limit <= 200:
+            raise ValueError("external context limit must be between 1 and 200")
+        transport = self._open(definition)
+        try:
+            self._initialize(transport)
+            params: dict[str, object] = {"limit": limit, "sortKey": "updated_at", "sortDirection": "desc"}
+            if cursor:
+                params["cursor"] = cursor
+            result = transport.request("thread/list", params)
+            return _contexts(definition.id, result, limit)
+        finally:
+            transport.close()
 
     def read_context(
         self,
         definition: ExternalAgentDefinition,
         context_id: str,
     ) -> ContextPackage:
-        """Reject context export until Codex publishes an audited protocol.
-
-        ``thread/list`` yields only summaries.  It does not establish a stable
-        protocol method or message schema for a complete Codex thread, so
-        Angelus cannot safely build a portable context package from it.
+        """Read one stored Codex thread without resuming it.
 
         Args:
             definition: Credential-free local Codex App Server declaration
@@ -358,17 +357,22 @@ class CodexAppServerAdapter:
                 caller.
 
         Returns:
-            This method does not return normally because the current Codex App
-            Server protocol adapter has no audited context-read operation.
+            Credential-redacted portable package built from text items in the
+            stored thread history.
 
         Raises:
-            ExternalAgentAdapterFailure: Always, without opening a transport,
-                scraping local state, or synthesizing context messages.
+            ValueError: If the selected thread identifier is blank.
+            CodexAppServerError: If the handshake or read request fails.
         """
-        del definition, context_id
-        raise ExternalAgentAdapterFailure(
-            "Codex App Server context reading is not supported by the current audited protocol."
-        )
+        if not context_id.strip():
+            raise ValueError("Codex thread id must not be blank")
+        transport = self._open(definition)
+        try:
+            self._initialize(transport)
+            result = transport.request("thread/read", {"threadId": context_id, "includeTurns": True})
+            return _context_package(definition.id, context_id, result)
+        finally:
+            transport.close()
 
     def write_context(
         self,
@@ -522,6 +526,103 @@ def _sessions(agent_id: str, result: Mapping[str, object], limit: int) -> tuple[
         if len(sessions) == limit:
             break
     return tuple(sessions)
+
+
+def _contexts(agent_id: str, result: Mapping[str, object], limit: int) -> ContextPage:
+    """Project one Codex thread-list response into context descriptors.
+
+    Args:
+        agent_id: Owning Hub external Agent definition identifier.
+        result: JSON object returned by ``thread/list``.
+        limit: Maximum valid descriptors to retain.
+
+    Returns:
+        Bounded context page retaining Codex's opaque continuation cursor.
+    """
+    values = result.get("data", result.get("threads", ()))
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
+        return ContextPage(())
+    items: list[ExternalAgentContext] = []
+    for value in values:
+        item = _object_mapping(value)
+        if item is None:
+            continue
+        context_id = _text(item.get("id")) or _text(item.get("threadId"))
+        if not context_id:
+            continue
+        items.append(ExternalAgentContext(agent_id, context_id, _text(item.get("name")) or _text(item.get("title")) or _text(item.get("preview")) or context_id, _timestamp(item.get("updatedAt")) or _timestamp(item.get("updated_at"))))
+        if len(items) == limit:
+            break
+    cursor = _text(result.get("nextCursor")) or None
+    return ContextPage(tuple(items), cursor, cursor is not None)
+
+
+def _context_package(agent_id: str, context_id: str, result: Mapping[str, object]) -> ContextPackage:
+    """Extract ordered text messages from one ``thread/read`` response.
+
+    Args:
+        agent_id: Hub definition identifier used as the package source Agent.
+        context_id: Read Codex thread identifier.
+        result: JSON object returned by ``thread/read`` with included turns.
+
+    Returns:
+        Portable package containing only text-bearing historical items.
+    """
+    thread = _object_mapping(result.get("thread")) or {}
+    turns = thread.get("turns", ())
+    messages: list[ContextMessage] = []
+    if isinstance(turns, Sequence) and not isinstance(turns, (str, bytes, bytearray)):
+        for turn in turns:
+            turn_object = _object_mapping(turn)
+            if turn_object is None:
+                continue
+            items = turn_object.get("items", ())
+            if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+                continue
+            for item in items:
+                parsed = _codex_message(item, len(messages) + 1)
+                if parsed is not None:
+                    messages.append(parsed)
+    return ContextPackage(1, "codex_app_server", context_id, agent_id, tuple(messages))
+
+
+def _codex_message(value: object, sequence: int) -> ContextMessage | None:
+    """Normalize a text-bearing Codex item without treating tools as messages.
+
+    Args:
+        value: One untrusted App Server item from a stored turn.
+        sequence: Chronological portable message sequence to assign.
+
+    Returns:
+        Normalized user or assistant message, or ``None`` for non-text items.
+    """
+    item = _object_mapping(value)
+    if item is None:
+        return None
+    item_type = _text(item.get("type"))
+    role = "user" if item_type in {"userMessage", "user_message"} else "assistant" if item_type in {"agentMessage", "agent_message"} else ""
+    if not role:
+        return None
+    content = _text(item.get("text")) or _text(item.get("content"))
+    if not content:
+        content = _content_text(item.get("content"))
+    return ContextMessage(sequence, role, content) if content else None
+
+
+def _content_text(value: object) -> str:
+    """Join supported textual content parts from a Codex item.
+
+    Args:
+        value: Candidate string or sequence of content-part objects.
+
+    Returns:
+        Joined text content, or an empty string when no text is present.
+    """
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ""
+    return "\n".join(_text(_object_mapping(part).get("text")) for part in value if _object_mapping(part) is not None).strip()
 
 
 def _text(value: object) -> str:

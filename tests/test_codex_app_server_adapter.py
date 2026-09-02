@@ -53,6 +53,7 @@ class FakeCodexTransport(CodexAppServerTransport):
     """
 
     thread_result: Mapping[str, object] = field(default_factory=dict)
+    thread_read_result: Mapping[str, object] = field(default_factory=dict)
     fail_initialize: bool = False
     requests: list[RecordedRequest] = field(default_factory=list)
     notifications: list[RecordedNotification] = field(default_factory=list)
@@ -74,7 +75,11 @@ class FakeCodexTransport(CodexAppServerTransport):
         self.requests.append(RecordedRequest(method, params))
         if method == "initialize" and self.fail_initialize:
             raise CodexAppServerError("Codex App Server rejected the request.")
-        return self.thread_result if method == "thread/list" else {}
+        if method == "thread/list":
+            return self.thread_result
+        if method == "thread/read":
+            return self.thread_read_result
+        return {}
 
     def notify(self, method: str, params: Mapping[str, object]) -> None:
         """Capture one notification.
@@ -165,6 +170,18 @@ class CodexAppServerAdapterTests(unittest.TestCase):
 
         self.assertEqual("unavailable", health.status)
         self.assertIn("stdio://", health.message)
+
+    def test_read_context_uses_thread_read_without_resuming(self) -> None:
+        """Read text items through the documented non-resuming thread endpoint.
+
+        Returns:
+            None.
+        """
+        transport = FakeCodexTransport(thread_read_result={"thread": {"turns": [{"items": [{"type": "userMessage", "content": [{"type": "input_text", "text": "hello"}]}, {"type": "agentMessage", "text": "world"}]}]}})
+        package = CodexAppServerAdapter(lambda definition: transport).read_context(_definition(), "thr-1")
+        self.assertEqual(["user", "assistant"], [message.role for message in package.messages])
+        self.assertEqual(["hello", "world"], [message.content for message in package.messages])
+        self.assertEqual(["initialize", "thread/read"], [request.method for request in transport.requests])
 
 
 def _definition() -> ExternalAgentDefinition:

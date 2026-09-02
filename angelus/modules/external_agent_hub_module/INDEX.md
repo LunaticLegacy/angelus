@@ -36,6 +36,9 @@ and are never allowed to dispatch remote work as part of context exchange.
 - External reads/writes exist only when an adapter exposes an audited protocol.
   Unsupported adapters raise a domain failure; they never return fake context
   data or successful writes.
+- Codex App Server uses documented non-resuming `thread/list` and
+  `thread/read(includeTurns=true)` calls for context listing and read-only
+  package extraction. Context writes remain unsupported.
 - Coze, OpenCode, and WorkBuddy adapters receive an injected HTTP, CLI, or SDK
   facade. They only health-check and list bounded session summaries; they do
   not start, resume, import, steer, or cancel a remote run.
