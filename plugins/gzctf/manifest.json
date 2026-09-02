@@ -1,0 +1,38 @@
+{
+  "name": "gzctf",
+  "display_name": "GZCTF Helper",
+  "version": "2.0.0",
+  "api_version": "1",
+  "description": "GZCTF 比赛平台工具：登录、题目列表/详情拉取、队伍信息、flag 提交判题、附件下载与动态实例启动。HTTP 层仅依赖 Python 标准库；当 GZCTF 实例启用 API 加密时惰性使用 cryptography（X25519 + AES-GCM，与 GZCTF 前端一致）。",
+  "kind": "tool",
+  "entry": "main",
+  "permissions": [
+    {"action": "network", "scope": "*"},
+    {"action": "http", "scope": "*"},
+    {"action": "fs.write", "scope": "data/downloads/**"},
+    {"action": "fs.write", "scope": "data/automation-runs/**"}
+  ],
+  "frontend": {
+    "assets": [],
+    "panels": [
+      {
+        "id": "login",
+        "title": "登录 GZCTF",
+        "description": "密码仅用于本次登录；不会写入插件设置、浏览器存储或 Angelus 事件日志。",
+        "action": "login",
+        "submit_label": "登录",
+        "fields": [
+          {"key": "base_url", "type": "string", "title": "GZCTF 地址", "required": true, "format": "uri", "placeholder": "https://ctf.example.com/games/1"},
+          {"key": "username", "type": "string", "title": "用户名", "required": true},
+          {"key": "password", "type": "string", "title": "密码", "required": true, "format": "password", "sensitive": true}
+        ]
+      }
+    ],
+    "settings": true,
+    "themes": []
+  },
+  "settings_schema": [
+    {"key": "base_url", "type": "string", "title": "GZCTF 地址", "description": "站点地址或含 /games/{id} 的比赛链接；供 Agent 工具默认使用。", "format": "uri", "placeholder": "https://ctf.example.com/games/1"},
+    {"key": "username", "type": "string", "title": "用户名", "description": "Cookie 失效后供 Agent 重新登录使用；密码绝不保存。"}
+  ]
+}

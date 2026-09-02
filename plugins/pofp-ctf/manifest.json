@@ -1,0 +1,59 @@
+{
+  "name": "pofp-ctf",
+  "display_name": "POFP CTF Knowledge",
+  "version": "1.0.0",
+  "api_version": "1",
+  "kind": "tool",
+  "description": "Read-only POFP CTF Markdown knowledge search and document tools for Angelus Agents.",
+  "entry": "main",
+  "permissions": [{"action": "fs.read", "scope": "knowledge/**"}],
+  "frontend": {
+    "assets": [],
+    "settings": true,
+    "panels": [
+      {
+        "id": "knowledge-search",
+        "title": "CTF 知识库搜索",
+        "description": "搜索当前配置的只读 POFP CTF Markdown 知识库。",
+        "action": "search",
+        "submit_label": "搜索",
+        "fields": [
+          {
+            "key": "query",
+            "type": "string",
+            "title": "关键词",
+            "description": "按标题、路径和文档正文进行不区分大小写搜索。",
+            "required": true,
+            "placeholder": "例如 heap overflow"
+          },
+          {
+            "key": "direction",
+            "type": "string",
+            "title": "方向",
+            "enum": ["", "re", "web", "pwn", "crypto", "misc", "strategy"],
+            "default": ""
+          },
+          {
+            "key": "limit",
+            "type": "integer",
+            "title": "结果数量",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        ]
+      }
+    ]
+  },
+  "settings_schema": [
+    {
+      "key": "knowledge_root",
+      "type": "string",
+      "title": "知识库目录",
+      "description": "可选。CTF Markdown 知识库根目录；留空时使用 POFP_KNOWLEDGE_ROOT，随后尝试仓库 knowledge/ 目录。",
+      "format": "path",
+      "placeholder": "/absolute/path/to/pofp-knowledge",
+      "default": ""
+    }
+  ]
+}

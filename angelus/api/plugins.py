@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..core import AngelusCore
+from ..modules.plugin_module import PluginUiActionResult
 
 
 router = APIRouter()
@@ -186,6 +187,53 @@ def put_plugin_settings(plugin_id: str, request: Request, values: object = Body(
         raise HTTPException(status_code=404, detail="plugin settings are unavailable") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/plugins/{plugin_id}/panels/{panel_id}/invoke")
+def invoke_plugin_panel(
+    plugin_id: str,
+    panel_id: str,
+    request: Request,
+    values: object = Body(...),
+) -> dict[str, object]:
+    """Submit transient user input to one active declarative plugin panel.
+
+    Args:
+        plugin_id: Durable plugin identity owning the declared panel.
+        panel_id: Manifest-declared panel identity.
+        request: Incoming request carrying the composition root.
+        values: JSON object containing only the panel's declared scalar fields.
+
+    Returns:
+        Safe textual action result for host-side panel rendering.
+
+    Raises:
+        HTTPException: If the plugin/panel is inactive or unknown, submitted
+            fields are invalid, or the plugin action fails.
+    """
+    if not isinstance(values, Mapping):
+        raise HTTPException(status_code=422, detail="plugin panel values must be an object")
+    try:
+        result = _core(request).plugin_manager.invoke_panel(plugin_id, panel_id, values)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="active plugin panel not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _action_result_json(result)
+
+
+def _action_result_json(result: PluginUiActionResult) -> dict[str, str]:
+    """Serialize one typed plugin action result for the browser.
+
+    Args:
+        result: Safe textual result returned by the active plugin action.
+
+    Returns:
+        JSON-safe title, content, and visual tone fields.
+    """
+    return {"title": result.title, "content": result.content, "tone": result.tone}
 
 
 @router.get("/plugins/{name}/static/{asset:path}", include_in_schema=False)

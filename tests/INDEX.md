@@ -17,6 +17,7 @@ real API credentials or mutate the repository's `.angelus-state` directory.
 | `test_codex_app_server_adapter.py` | Constrained Codex App Server stdio handshake and bounded thread discovery. |
 | `test_claude_sdk_adapter.py` | Lazy Claude SDK availability and bounded local session discovery. |
 | `test_context_package.py` | Strict portable context-package decoding and historical tool-call containment. |
+| `test_plugin_manager.py` | Strict plugin manifest discovery, settings/theme lifecycle, namespaced POFP/GZCTF tool publication, and declarative transient-panel action dispatch. |
 
 Run from repository root:
 
@@ -49,6 +50,8 @@ node --check frontend/static/app.js
 | [test_paged_context_storage.py](test_paged_context_storage.py#L19) | `PagedContextStorageTests.test_save_load_and_page_without_full_context` | `None` | `None` | Store 205 entries then restore and page the newest 200 entries. |
 | [test_plugin_manager.py](test_plugin_manager.py#L17) | `PluginManagerTests.test_theme_pack_registers_settings_and_serves_only_whitelisted_css` | `None` | `None` | A theme pack exposes multiple skins without executable entry code. |
 | [test_plugin_manager.py](test_plugin_manager.py#L55) | `PluginManagerTests.test_tool_plugin_registers_only_namespaced_provider_after_explicit_load` | `None` | `None` | A tool plugin executes only at load and publishes host namespaced tools. |
+| [test_plugin_manager.py](test_plugin_manager.py#L90) | `PluginManagerTests.test_settings_schema_exposes_user_parameters_to_runtime` | `None` | `None` | Persist a declared parameter and expose it to plugin setup through `PluginRuntime.setting`. |
+| [test_plugin_manager.py](test_plugin_manager.py#L120) | `PluginManagerTests.test_declarative_panel_validates_inputs_and_invokes_registered_action` | `None` | `None` | Validate transient manifest-panel fields and invoke only the matching registered action. |
 | [test_plugin_manager.py](test_plugin_manager.py#L90) | `_json` | `path: Path, value: object` | `None` | Write a test fixture manifest. |
 | [test_session_console.py](test_session_console.py#L18) | `_Journal.append` | `event_type: str, data: dict[str, object], **_kwargs: object` | `None` | Implement `_Journal.append`. |
 | [test_session_console.py](test_session_console.py#L33) | `_Swarm.dynamic_add_connection` | `source: str, target: str` | `str` | Implement `_Swarm.dynamic_add_connection`. |

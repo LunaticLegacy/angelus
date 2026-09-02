@@ -80,6 +80,13 @@ src-tauri/binaries/*
 !/plugins/demo-hello/**
 !/plugins/example-tool/
 !/plugins/example-tool/**
+!/plugins/pofp-ctf/
+!/plugins/pofp-ctf/**
+!/plugins/gzctf/
+!/plugins/gzctf/**
+/plugins/gzctf/cookies.txt
+/plugins/gzctf/__pycache__/
+/plugins/gzctf/data/
 !/plugins/token-burner/
 !/plugins/token-burner/**
 plugins/**/__pycache__/

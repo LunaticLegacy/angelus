@@ -14,6 +14,7 @@ They do not own Session, Agent, execution, persistence or credentials.
 | `workspace_directory.py` | `/api/workspace-directory/pick` | Optional local native directory chooser. |
 | `session_console.py` | `/api/sessions/{id}/agents`, graph, plan, events, usage and context routes | Typed Session-console projection, idle-only graph editing, and bounded portable context export/import. |
 | `external_agent_hub.py` | `/api/external-agents` | External Agent definition CRUD, explicit local-process discovery, inspection, and capability-gated portable-context reads/writes. |
+| `plugins.py` | `/api/plugins` | Controlled plugin discovery/lifecycle, persisted settings, static assets, and active declarative panel actions. |
 
 ## Not Mounted in Phase 1
 
@@ -36,6 +37,7 @@ replaced solely by `settings.py`.
 | `providers.py` | `list_providers` | Runtime capability read. |
 | `workspace_directory.py` | directory picker endpoint | Desktop-only local directory selection. |
 | `external_agent_hub.py` | External Agent CRUD/discovery/health/capabilities/sessions/contexts | Hub API; discovery is an explicit read-only scan and context exchange is capability-gated with no connector-secret serialization. |
+| `plugins.py` | plugin lifecycle/settings/panel action endpoints | Register/load controlled packages; validate persistent settings and transient host-rendered panel input. |
 
 ## Class Map
 

@@ -9,6 +9,8 @@ import re
 
 from .models import (
     PluginManifest,
+    PluginPanel,
+    PluginPanelField,
     PluginPermission,
     PluginSettingField,
     PluginSettingScalar,
@@ -108,8 +110,15 @@ def _decode_manifest(raw: Mapping[str, object]) -> PluginManifest:
     frontend = raw.get("frontend", {})
     if not isinstance(frontend, Mapping):
         raise ManifestError("frontend must be an object")
+    frontend_allowed = {"assets", "settings", "themes", "panels"}
+    frontend_unknown = sorted(str(key) for key in frontend if key not in frontend_allowed)
+    if frontend_unknown:
+        raise ManifestError(f"unknown frontend fields: {', '.join(frontend_unknown)}")
     assets = _assets(frontend.get("assets", ()))
     themes = _themes(frontend.get("themes", ()), assets, kind)
+    panels = _panels(frontend.get("panels", ()))
+    if panels and kind != "tool":
+        raise ManifestError("frontend panels require a tool plugin entry")
     settings_enabled = frontend.get("settings", False)
     if not isinstance(settings_enabled, bool):
         raise ManifestError("frontend.settings must be boolean")
@@ -129,6 +138,7 @@ def _decode_manifest(raw: Mapping[str, object]) -> PluginManifest:
         settings_enabled=settings_enabled,
         settings_schema=schema,
         themes=themes,
+        panels=panels,
     )
 
 
@@ -218,11 +228,122 @@ def _themes(value: object, assets: tuple[str, ...], kind: object) -> tuple[Plugi
     return tuple(result)
 
 
-def _settings(value: object) -> tuple[PluginSettingField, ...]:
+def _panels(value: object) -> tuple[PluginPanel, ...]:
+    """Decode declarative plugin panels without importing package code.
+
+    Args:
+        value: Raw ``frontend.panels`` manifest array.
+
+    Returns:
+        Immutable host-rendered panel declarations.
+
+    Raises:
+        ManifestError: If a panel has unknown fields, malformed controls, or
+            duplicate panel/action IDs.
+    """
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        raise ManifestError("frontend.panels must be an array")
+    panels: list[PluginPanel] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise ManifestError("every frontend panel must be an object")
+        allowed = {"id", "title", "description", "action", "submit_label", "fields"}
+        if any(key not in allowed for key in raw):
+            raise ManifestError("frontend panel contains an unknown property")
+        panel_id, action = raw.get("id"), raw.get("action")
+        if not isinstance(panel_id, str) or not _NAME.fullmatch(panel_id):
+            raise ManifestError("frontend panel id is invalid")
+        if not isinstance(action, str) or not _NAME.fullmatch(action):
+            raise ManifestError("frontend panel action is invalid")
+        if any(panel.id == panel_id for panel in panels):
+            raise ManifestError("frontend panel ids must be unique")
+        if any(panel.action == action for panel in panels):
+            raise ManifestError("frontend panel actions must be unique")
+        fields = _panel_fields(raw.get("fields", ()))
+        panels.append(PluginPanel(
+            id=panel_id,
+            title=_plain(raw.get("title"), 120) or panel_id,
+            description=_plain(raw.get("description"), 1_000),
+            action=action,
+            submit_label=_plain(raw.get("submit_label"), 120) or "Run",
+            fields=fields,
+        ))
+    return tuple(panels)
+
+
+def _panel_fields(value: object) -> tuple[PluginPanelField, ...]:
+    """Decode transient panel fields while isolating sensitive values.
+
+    Args:
+        value: Raw manifest field definitions for a single panel.
+
+    Returns:
+        Immutable transient field schema accepted by the host renderer.
+
+    Raises:
+        ManifestError: If a field is malformed or a secret attempts durable
+            behavior such as a default value.
+    """
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        raise ManifestError("frontend panel fields must be an array")
+    fields: list[PluginPanelField] = []
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise ManifestError("every frontend panel field must be an object")
+        allowed = {"key", "type", "title", "description", "required", "default", "enum", "minimum", "maximum", "format", "placeholder", "sensitive"}
+        if any(key not in allowed for key in raw):
+            raise ManifestError("frontend panel field contains an unknown property")
+        key, field_type = raw.get("key"), raw.get("type")
+        sensitive = raw.get("sensitive", False)
+        if not isinstance(key, str) or not _SETTING.fullmatch(key):
+            raise ManifestError("frontend panel field key is invalid")
+        if not isinstance(sensitive, bool):
+            raise ManifestError("frontend panel sensitive must be boolean")
+        if sensitive != any(token in key.replace("-", "_").lower() for token in _SENSITIVE):
+            raise ManifestError("credential-shaped panel keys must be explicitly sensitive")
+        if field_type not in {"string", "integer", "number", "boolean"}:
+            raise ManifestError("frontend panel field type is invalid")
+        if sensitive and (field_type != "string" or raw.get("format") != "password" or "default" in raw):
+            raise ManifestError("sensitive panel fields require string password format and no default")
+        default = raw.get("default")
+        if "default" in raw and not _matches(default, field_type):
+            raise ManifestError(f"frontend panel default does not match {key} type")
+        choices_raw = raw.get("enum", ())
+        if not isinstance(choices_raw, Sequence) or isinstance(choices_raw, str) or any(not _matches(item, field_type) for item in choices_raw):
+            raise ManifestError("frontend panel enum must contain declared scalar values")
+        minimum, maximum = raw.get("minimum"), raw.get("maximum")
+        if minimum is not None and (field_type not in {"integer", "number"} or not _matches(minimum, field_type)):
+            raise ManifestError("frontend panel minimum is numeric only")
+        if maximum is not None and (field_type not in {"integer", "number"} or not _matches(maximum, field_type)):
+            raise ManifestError("frontend panel maximum is numeric only")
+        if isinstance(minimum, (int, float)) and isinstance(maximum, (int, float)) and minimum > maximum:
+            raise ManifestError("frontend panel minimum must not exceed maximum")
+        format_value = raw.get("format")
+        formats = {"uri", "path", "textarea", "password"}
+        if format_value is not None and (field_type != "string" or format_value not in formats):
+            raise ManifestError("frontend panel format supports only string controls")
+        if format_value == "password" and not sensitive:
+            raise ManifestError("password panel format requires sensitive=true")
+        if any(field.key == key for field in fields):
+            raise ManifestError("frontend panel field keys must be unique")
+        fields.append(PluginPanelField(
+            key=key, value_type=field_type, title=_plain(raw.get("title"), 120),
+            description=_plain(raw.get("description"), 1_000), required=raw.get("required", False) is True,
+            default=default if "default" in raw else None, choices=tuple(choices_raw),
+            minimum=minimum if isinstance(minimum, (int, float)) else None,
+            maximum=maximum if isinstance(maximum, (int, float)) else None,
+            value_format=format_value if format_value in formats else None,
+            placeholder=_plain(raw.get("placeholder"), 240), sensitive=sensitive,
+        ))
+    return tuple(fields)
+
+
+def _settings(value: object, *, label: str = "settings_schema") -> tuple[PluginSettingField, ...]:
     """Decode the restricted scalar settings schema.
 
     Args:
         value: Raw schema field list.
+        label: Manifest field name used in validation errors.
 
     Returns:
         Typed immutable schema fields.
@@ -231,14 +352,14 @@ def _settings(value: object) -> tuple[PluginSettingField, ...]:
         ManifestError: If a field is unknown, credential-shaped, or ill typed.
     """
     if not isinstance(value, Sequence) or isinstance(value, str):
-        raise ManifestError("settings_schema must be an array")
+        raise ManifestError(f"{label} must be an array")
     fields: list[PluginSettingField] = []
     for raw in value:
         if not isinstance(raw, Mapping):
-            raise ManifestError("every settings_schema item must be an object")
-        allowed = {"key", "type", "title", "description", "required", "default", "enum", "minimum", "maximum", "format"}
+            raise ManifestError(f"every {label} item must be an object")
+        allowed = {"key", "type", "title", "description", "required", "default", "enum", "minimum", "maximum", "format", "placeholder"}
         if any(key not in allowed for key in raw):
-            raise ManifestError("settings_schema contains an unknown field property")
+            raise ManifestError(f"{label} contains an unknown field property")
         key, field_type = raw.get("key"), raw.get("type")
         if not isinstance(key, str) or not _SETTING.fullmatch(key) or any(token in key.replace("-", "_").lower() for token in _SENSITIVE):
             raise ManifestError("settings key is invalid or credential-shaped")
@@ -259,8 +380,8 @@ def _settings(value: object) -> tuple[PluginSettingField, ...]:
         if isinstance(minimum, (int, float)) and isinstance(maximum, (int, float)) and minimum > maximum:
             raise ManifestError("settings minimum must not exceed maximum")
         format_value = raw.get("format")
-        if format_value is not None and (field_type != "string" or format_value != "uri"):
-            raise ManifestError("settings format supports only string uri")
+        if format_value is not None and (field_type != "string" or format_value not in {"uri", "path", "textarea"}):
+            raise ManifestError("settings format supports only string uri, path, or textarea")
         if any(field.key == key for field in fields):
             raise ManifestError("settings keys must be unique")
         fields.append(PluginSettingField(
@@ -269,7 +390,8 @@ def _settings(value: object) -> tuple[PluginSettingField, ...]:
             default=default if "default" in raw else None, choices=choices,
             minimum=minimum if isinstance(minimum, (int, float)) else None,
             maximum=maximum if isinstance(maximum, (int, float)) else None,
-            value_format=format_value if format_value == "uri" else None,
+            value_format=format_value if format_value in {"uri", "path", "textarea"} else None,
+            placeholder=_plain(raw.get("placeholder"), 240),
         ))
     return tuple(fields)
 

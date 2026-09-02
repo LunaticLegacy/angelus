@@ -15,12 +15,18 @@ from ..tool_module import ToolCategory, ToolDefinition, ToolProviderRegistration
 from .manifest import ManifestError, load_manifest
 from .models import (
     PluginManifest,
+    PluginPanel,
+    PluginPanelField,
     PluginPermission,
     PluginRecord,
     PluginRuntime,
+    PluginSettingField,
     PluginSettingScalar,
     PluginSettingValue,
     PluginToolContribution,
+    PluginUiActionRegistration,
+    PluginUiActionRequest,
+    PluginUiActionResult,
 )
 from .store import PluginStore
 
@@ -76,6 +82,7 @@ class LoadedPlugin:
         module_name: Unique import namespace to remove at unload.
         entrypoint: Optional executable plugin object for tool plugins.
         provider_ids: Registry provider IDs published by setup.
+        ui_actions: Registered transient UI action handlers.
     """
 
     manifest: PluginManifest
@@ -83,6 +90,7 @@ class LoadedPlugin:
     module_name: str = ""
     entrypoint: PluginEntrypoint | None = None
     provider_ids: tuple[str, ...] = ()
+    ui_actions: tuple[PluginUiActionRegistration, ...] = ()
 
 
 class PluginManager:
@@ -265,7 +273,7 @@ class PluginManager:
                     except Exception:
                         pass
                 if loaded.module_name:
-                    sys.modules.pop(loaded.module_name, None)
+                    _remove_plugin_modules(loaded.module_name)
             updated = PluginRecord(record.id, record.name, record.package_path, False, record.permissions_granted, record.settings)
             self.store.put(updated)
             return _status(manifest, updated, "inactive", "")
@@ -314,6 +322,49 @@ class PluginManager:
         updated = PluginRecord(record.id, record.name, record.package_path, record.enabled, record.permissions_granted, settings)
         self.store.put(updated)
         return {"id": updated.id, "name": updated.name, "settings": _settings_json(updated.settings)}
+
+    def invoke_panel(
+        self,
+        plugin_id: str,
+        panel_id: str,
+        values: Mapping[str, object],
+    ) -> PluginUiActionResult:
+        """Validate and dispatch one active plugin's declarative panel action.
+
+        Args:
+            plugin_id: Durable registered plugin identity.
+            panel_id: Manifest-declared panel identity submitted by the user.
+            values: Candidate transient field values sent by the host renderer.
+
+        Returns:
+            Safe textual result supplied by the registered plugin action.
+
+        Raises:
+            KeyError: If the plugin is inactive or the panel is unknown.
+            ValueError: If submitted values violate the panel field schema.
+            RuntimeError: If the loaded plugin omitted or fails its declared
+                action handler.
+        """
+        record = self.store.get(plugin_id)
+        if record is None:
+            raise KeyError(plugin_id)
+        loaded = self._loaded.get(record.name)
+        if loaded is None:
+            raise KeyError(plugin_id)
+        panel = next((item for item in loaded.manifest.panels if item.id == panel_id), None)
+        if panel is None:
+            raise KeyError(panel_id)
+        action = next((item for item in loaded.ui_actions if item.id == panel.action), None)
+        if action is None:
+            raise RuntimeError("plugin panel action is not registered")
+        request = PluginUiActionRequest(panel.id, _validate_fields(panel.fields, values, defaults=True))
+        try:
+            result = action.handler(request)
+        except Exception as exc:
+            raise RuntimeError(f"plugin panel action failed: {type(exc).__name__}: {exc}") from exc
+        if not isinstance(result, PluginUiActionResult):
+            raise RuntimeError("plugin panel action must return PluginUiActionResult")
+        return result
 
     def static_asset(self, name: str, asset: str) -> Path | None:
         """Resolve a manifest-whitelisted static asset without traversal.
@@ -412,7 +463,11 @@ class PluginManager:
             raise RuntimeError("tool plugin is missing an entry module")
         module_name = f"angelus_plugins_{manifest.name.replace('-', '_')}"
         entry_path = Path(record.package_path) / f"{manifest.entry}.py"
-        spec = importlib.util.spec_from_file_location(module_name, entry_path)
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            entry_path,
+            submodule_search_locations=[str(Path(record.package_path))],
+        )
         if spec is None or spec.loader is None:
             raise RuntimeError("cannot create plugin module loader")
         module = importlib.util.module_from_spec(spec)
@@ -423,10 +478,11 @@ class PluginManager:
             runtime = PluginRuntime(manifest, record.settings, str(self.store.data_root / record.id))
             Path(runtime.state_path).mkdir(parents=True, exist_ok=True)
             entrypoint.setup(runtime)
+            ui_actions = _validate_ui_actions(manifest, runtime.ui_actions)
             provider_ids = self._publish(manifest, runtime.contributions)
-            return LoadedPlugin(manifest, record, module_name, entrypoint, provider_ids)
+            return LoadedPlugin(manifest, record, module_name, entrypoint, provider_ids, ui_actions)
         except Exception as exc:
-            sys.modules.pop(module_name, None)
+            _remove_plugin_modules(module_name)
             raise RuntimeError(f"plugin setup failed: {type(exc).__name__}: {exc}") from exc
 
     def _publish(self, manifest: PluginManifest, contributions: list[PluginToolContribution]) -> tuple[str, ...]:
@@ -497,6 +553,21 @@ class _PluginProvider:
         return tools
 
 
+def _remove_plugin_modules(module_name: str) -> None:
+    """Remove a plugin entry namespace and its relative-import children.
+
+    Args:
+        module_name: Unique package-style module namespace assigned at load.
+
+    Returns:
+        None.
+    """
+    prefix = f"{module_name}."
+    for name in tuple(sys.modules):
+        if name == module_name or name.startswith(prefix):
+            sys.modules.pop(name, None)
+
+
 def _entrypoint(module: ModuleType) -> PluginEntrypoint:
     """Extract a valid module-level plugin lifecycle object.
 
@@ -537,6 +608,7 @@ def _status(manifest: PluginManifest, record: PluginRecord | None, state: str, e
         "permissions_requested": [_permission_json(item) for item in manifest.permissions],
         "permissions_granted": [_permission_json(item) for item in record.permissions_granted] if record is not None else [],
         "themes": [_theme_json(item) for item in manifest.themes],
+        "panels": [_panel_json(item) for item in manifest.panels],
     }
 
 
@@ -564,6 +636,24 @@ def _theme_json(value: object) -> dict[str, str]:
     return {"id": value.id, "title": value.title, "asset": value.asset, "mode": value.mode}
 
 
+def _panel_json(value: PluginPanel) -> dict[str, object]:
+    """Serialize one declarative panel for the generic browser renderer.
+
+    Args:
+        value: Validated manifest panel with only non-secret field metadata.
+
+    Returns:
+        JSON-safe panel declaration without handler objects or filesystem paths.
+    """
+    return {
+        "id": value.id,
+        "title": value.title,
+        "description": value.description,
+        "submit_label": value.submit_label,
+        "fields": [_field_json(field) for field in value.fields],
+    }
+
+
 def _field_json(value: object) -> dict[str, object]:
     """Serialize one typed schema field for form rendering.
 
@@ -576,7 +666,8 @@ def _field_json(value: object) -> dict[str, object]:
     return {
         "key": value.key, "type": value.value_type, "title": value.title, "description": value.description,
         "required": value.required, "default": value.default, "enum": list(value.choices), "minimum": value.minimum,
-        "maximum": value.maximum, "format": value.value_format,
+        "maximum": value.maximum, "format": value.value_format, "placeholder": value.placeholder,
+        "sensitive": isinstance(value, PluginPanelField) and value.sensitive,
     }
 
 
@@ -605,27 +696,78 @@ def _validate_settings(manifest: PluginManifest, values: Mapping[str, object]) -
     Raises:
         ValueError: If a field is unknown, missing, sensitive, or invalid.
     """
-    fields = {field.key: field for field in manifest.settings_schema}
+    return _validate_fields(manifest.settings_schema, values, defaults=False)
+
+
+def _validate_fields(
+    declared: tuple[PluginSettingField, ...],
+    values: Mapping[str, object],
+    *,
+    defaults: bool,
+) -> tuple[PluginSettingValue, ...]:
+    """Validate typed persisted or transient values against declared fields.
+
+    Args:
+        declared: Manifest-declared scalar field definitions.
+        values: Browser-submitted candidate values.
+        defaults: Whether omitted fields with defaults join the action request.
+
+    Returns:
+        Ordered validated scalar values.
+
+    Raises:
+        ValueError: If a key, value type, required field, or bound is invalid.
+    """
+    fields = {field.key: field for field in declared}
     unknown = sorted(set(values) - set(fields))
     if unknown:
-        raise ValueError(f"unknown settings fields: {', '.join(unknown)}")
+        raise ValueError(f"unknown plugin fields: {', '.join(unknown)}")
     result: list[PluginSettingValue] = []
-    for field in manifest.settings_schema:
+    for field in declared:
         if field.key not in values:
             if field.required:
-                raise ValueError(f"missing required setting: {field.key}")
+                raise ValueError(f"missing required plugin field: {field.key}")
+            if defaults and field.default is not None:
+                result.append(PluginSettingValue(field.key, field.default))
             continue
         value = values[field.key]
         if not _setting_type(value, field.value_type):
-            raise ValueError(f"setting {field.key} has invalid type")
+            raise ValueError(f"plugin field {field.key} has invalid type")
         if field.choices and value not in field.choices:
-            raise ValueError(f"setting {field.key} is not an allowed option")
+            raise ValueError(f"plugin field {field.key} is not an allowed option")
         if field.minimum is not None and isinstance(value, (int, float)) and value < field.minimum:
-            raise ValueError(f"setting {field.key} is below its minimum")
+            raise ValueError(f"plugin field {field.key} is below its minimum")
         if field.maximum is not None and isinstance(value, (int, float)) and value > field.maximum:
-            raise ValueError(f"setting {field.key} exceeds its maximum")
+            raise ValueError(f"plugin field {field.key} exceeds its maximum")
         result.append(PluginSettingValue(field.key, value))
     return tuple(result)
+
+
+def _validate_ui_actions(
+    manifest: PluginManifest,
+    actions: list[PluginUiActionRegistration],
+) -> tuple[PluginUiActionRegistration, ...]:
+    """Ensure loaded code registered every and only manifest panel action.
+
+    Args:
+        manifest: Validated package declaration with panel action identifiers.
+        actions: Actions staged by the plugin setup hook.
+
+    Returns:
+        Ordered immutable action registrations.
+
+    Raises:
+        RuntimeError: If action IDs are missing, duplicated, or undeclared.
+    """
+    expected = {panel.action for panel in manifest.panels}
+    actual = [item.id for item in actions]
+    if len(actual) != len(set(actual)):
+        raise RuntimeError("plugin registered duplicate panel actions")
+    if set(actual) != expected:
+        raise RuntimeError("plugin panel actions do not match manifest")
+    if any(not callable(item.handler) for item in actions):
+        raise RuntimeError("plugin panel action handler is not callable")
+    return tuple(actions)
 
 
 def _setting_type(value: object, kind: str) -> bool:

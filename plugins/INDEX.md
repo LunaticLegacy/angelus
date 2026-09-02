@@ -6,6 +6,8 @@
 |---|---|---|
 | `demo-hello/` | Tool + UI example | 演示受控、命名空间化工具和可选 CSS 前端资产。 |
 | `example-tool/` | Tool example | 演示离线文档搜索 Tool provider。 |
+| `pofp-ctf/` | Tool example | 迁移后的 POFP CTF Markdown 知识库搜索与文档读取 Tool provider，带可持久化知识库目录设置。 |
+| [`gzctf/`](gzctf/INDEX.md) | Tool example | 迁移后的 GZCTF v1 Provider：11 个命名空间 Agent 工具、插件私有 Cookie/下载/批量状态，以及宿主渲染的一次性密码登录面板。 |
 | `angelus/` | UI skin example | 演示工作台皮肤插件的清单与前端样式/脚本。 |
 | `angelus-control-plane-ui/` | Control-plane UI example | 演示更完整的控制平面 UI 插件，并附设计、变更和使用文档。 |
 | `token-burner/` | Visual example | 把 token 消耗速率可视化为火焰的独立浮动窗口插件（纯前端，读 /api/sessions/{id}/usage）。 |

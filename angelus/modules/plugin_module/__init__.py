@@ -12,10 +12,15 @@ from .models import (
     PluginToolCategory,
     PluginToolContribution,
     PluginToolDefinition,
+    PluginPanel,
+    PluginPanelField,
+    PluginUiActionRequest,
+    PluginUiActionResult,
 )
 
 __all__ = [
     "PluginManager", "PluginManifest", "PluginPermission", "PluginRecord",
     "PluginRuntime", "PluginSettingField", "PluginSettingValue", "PluginTheme",
     "PluginToolCategory", "PluginToolContribution", "PluginToolDefinition",
+    "PluginPanel", "PluginPanelField", "PluginUiActionRequest", "PluginUiActionResult",
 ]

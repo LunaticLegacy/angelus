@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 from llmfetcher import Tool
 
@@ -41,7 +41,9 @@ class PluginSettingField:
         choices: Optional finite list of permitted scalar values.
         minimum: Optional inclusive numeric lower bound.
         maximum: Optional inclusive numeric upper bound.
-        value_format: Optional UI hint; only ``uri`` is currently supported.
+        value_format: Optional UI hint: ``uri``, ``path``, or ``textarea``.
+        placeholder: Optional bounded input hint shown before the user enters a
+            value; it is never persisted as a parameter value.
     """
 
     key: str
@@ -53,7 +55,43 @@ class PluginSettingField:
     choices: tuple[PluginSettingScalar, ...] = ()
     minimum: int | float | None = None
     maximum: int | float | None = None
-    value_format: Literal["uri"] | None = None
+    value_format: Literal["uri", "path", "textarea"] | None = None
+    placeholder: str = ""
+
+
+@dataclass(frozen=True)
+class PluginPanelField:
+    """One typed transient field displayed in a host-rendered plugin panel.
+
+    Attributes:
+        key: Stable panel-local input key.
+        value_type: One supported scalar kind.
+        title: User-facing field label.
+        description: Optional explanation rendered beside the control.
+        required: Whether the submitted action requires this input.
+        default: Optional non-sensitive scalar applied when omitted.
+        choices: Optional permitted scalar values.
+        minimum: Optional inclusive numeric lower bound.
+        maximum: Optional inclusive numeric upper bound.
+        value_format: Optional renderer hint including ``password`` for a
+            sensitive transient input.
+        placeholder: Optional bounded input hint which is never persisted.
+        sensitive: Whether the host must treat this value as transient secret
+            input. Sensitive fields cannot declare defaults or settings.
+    """
+
+    key: str
+    value_type: Literal["string", "integer", "number", "boolean"]
+    title: str = ""
+    description: str = ""
+    required: bool = False
+    default: PluginSettingScalar | None = None
+    choices: tuple[PluginSettingScalar, ...] = ()
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+    value_format: Literal["uri", "path", "textarea", "password"] | None = None
+    placeholder: str = ""
+    sensitive: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +112,27 @@ class PluginTheme:
 
 
 @dataclass(frozen=True)
+class PluginPanel:
+    """One declarative plugin function panel rendered by the host.
+
+    Attributes:
+        id: Plugin-local stable panel identity.
+        title: User-facing panel title.
+        description: Optional explanation rendered above the form.
+        action: Runtime action identifier invoked when the user submits.
+        submit_label: User-facing label for the action button.
+        fields: Typed transient input controls; values are not persisted.
+    """
+
+    id: str
+    title: str
+    description: str
+    action: str
+    submit_label: str
+    fields: tuple[PluginPanelField, ...]
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     """Validated, declarative plugin package contract.
 
@@ -90,6 +149,7 @@ class PluginManifest:
         settings_enabled: Whether this plugin owns a persisted settings form.
         settings_schema: Typed settings fields; empty enables legacy JSON-free defaults.
         themes: Named CSS skins published by a theme-pack.
+        panels: Declarative transient-input function panels rendered by the host.
     """
 
     name: str
@@ -104,6 +164,7 @@ class PluginManifest:
     settings_enabled: bool = False
     settings_schema: tuple[PluginSettingField, ...] = ()
     themes: tuple[PluginTheme, ...] = ()
+    panels: tuple[PluginPanel, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,6 +178,65 @@ class PluginSettingValue:
 
     key: str
     value: PluginSettingScalar
+
+
+@dataclass(frozen=True)
+class PluginUiActionRequest:
+    """Validated transient user input delivered to one plugin action.
+
+    Attributes:
+        panel_id: Manifest panel that submitted the action.
+        values: Field values validated against that panel's schema.
+    """
+
+    panel_id: str
+    values: tuple[PluginSettingValue, ...]
+
+    def value(
+        self,
+        key: str,
+        default: PluginSettingScalar | None = None,
+    ) -> PluginSettingScalar | None:
+        """Return one validated transient field value.
+
+        Args:
+            key: Manifest-declared panel field key to read.
+            default: Value returned when the request omitted an optional field.
+
+        Returns:
+            Validated scalar value, or ``default`` when no value was supplied.
+        """
+        return next((item.value for item in self.values if item.key == key), default)
+
+
+@dataclass(frozen=True)
+class PluginUiActionResult:
+    """Safe textual result rendered by the host after a plugin UI action.
+
+    Attributes:
+        title: Optional short result heading.
+        content: Plain text or Markdown-like content rendered as text by the
+            generic panel to prevent plugin-supplied DOM injection.
+        tone: Visual outcome class for neutral, successful, or failed actions.
+    """
+
+    title: str
+    content: str
+    tone: Literal["info", "success", "error"] = "info"
+
+
+@dataclass(frozen=True)
+class PluginUiActionRegistration:
+    """One action handler explicitly registered during plugin setup.
+
+    Attributes:
+        id: Plugin-local action identity declared by a manifest panel.
+        handler: Callable receiving validated transient fields and returning a
+            host-renderable textual result.
+    """
+
+    id: str
+    handler: Callable[[PluginUiActionRequest], PluginUiActionResult]
 
 
 @dataclass(frozen=True)
@@ -212,16 +332,18 @@ class PluginRuntime:
 
     Attributes:
         plugin: Manifest defining the executing plugin.
-        settings: Persisted settings validated by the host.
+        settings: Persisted user parameters validated by the host.
         state_path: Plugin-private state directory under Angelus state rather
             than the source or managed package directory.
         contributions: Tool providers accumulated before the host publishes them.
+        ui_actions: Transient UI action handlers accumulated before activation.
     """
 
     plugin: PluginManifest
     settings: tuple[PluginSettingValue, ...]
     state_path: str
     contributions: list[PluginToolContribution] = field(default_factory=list)
+    ui_actions: list[PluginUiActionRegistration] = field(default_factory=list)
 
     def register_tool_provider(self, contribution: PluginToolContribution) -> None:
         """Stage one Tool contribution for atomic publication after setup.
@@ -233,3 +355,36 @@ class PluginRuntime:
             None.
         """
         self.contributions.append(contribution)
+
+    def register_ui_action(
+        self,
+        action_id: str,
+        handler: Callable[[PluginUiActionRequest], PluginUiActionResult],
+    ) -> None:
+        """Stage one manifest-declared user-interface action handler.
+
+        Args:
+            action_id: Plugin-local action ID referenced by a manifest panel.
+            handler: Callable that consumes validated fields and returns a
+                textual host-renderable action result.
+
+        Returns:
+            None.
+        """
+        self.ui_actions.append(PluginUiActionRegistration(action_id, handler))
+
+    def setting(
+        self,
+        key: str,
+        default: PluginSettingScalar | None = None,
+    ) -> PluginSettingScalar | None:
+        """Read one validated user-configured plugin parameter.
+
+        Args:
+            key: Manifest-declared setting key to look up.
+            default: Value returned when the user has not persisted the key.
+
+        Returns:
+            Persisted typed scalar parameter, or ``default`` when absent.
+        """
+        return next((item.value for item in self.settings if item.key == key), default)
