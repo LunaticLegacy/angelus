@@ -843,6 +843,7 @@ tests/
 | Plugin API | [docs/plugin-api.md](docs/plugin-api.md) |
 | 安全边界 | [docs/security.md](docs/security.md) |
 | 设计决策 | [docs/decisions.md](docs/decisions.md) |
+| 发布说明 | [CHANGELOG.md](CHANGELOG.md) |
 | LLMFetcher | [llmfetcher/INDEX.md](llmfetcher/INDEX.md) |
 
 ---

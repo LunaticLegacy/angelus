@@ -18,6 +18,7 @@
 | 桌面壳 | [`src-tauri/INDEX.md`](src-tauri/INDEX.md) | Sidecar/桌面分发 |
 | 构建脚本 | [`scripts/INDEX.md`](scripts/INDEX.md) | 构建与打包 |
 | 历史设计资料 | [`docs/INDEX.md`](docs/INDEX.md) | 非运行时权威 |
+| 发布说明 | [`CHANGELOG.md`](CHANGELOG.md) | 当前版本的用户可见变更与升级提示 |
 
 ## Runtime Ownership
 
