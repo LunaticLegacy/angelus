@@ -22,6 +22,10 @@ adapter definitions and inspect their health, declared capabilities and remote
 session summaries. It intentionally does not offer context import or export
 until the audited context-exchange API exists.
 
+The Hub can explicitly scan local known Agent processes and show ephemeral
+candidate cards. Scanning neither attaches to nor persists a discovered
+process; a separate user action creates any durable definition.
+
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
 ## Function Map

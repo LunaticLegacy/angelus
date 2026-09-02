@@ -13,6 +13,8 @@ const ADAPTERS = [
 export function createExternalAgentHubView(dialog, root) {
   let agents = [];
   let selectedId = "";
+  let candidates = [];
+  let createDraft = null;
 
   /** Open the dialog and refresh durable Agent definitions. */
   async function open() {
@@ -43,7 +45,11 @@ export function createExternalAgentHubView(dialog, root) {
     const layout = element("div", "external-hub-layout");
     const rail = element("aside", "external-hub-list");
     const actions = element("div", "external-hub-list-actions");
-    actions.append(button("＋ 添加", () => { selectedId = ""; render(); }, "primary"), button("↻", () => refresh(), "icon", "刷新"));
+    actions.append(
+      button("＋ 添加", () => { selectedId = ""; createDraft = null; render(); }, "primary"),
+      button("扫描本机", () => discoverLocalProcesses(), "secondary"),
+      button("↻", () => refresh(), "icon", "刷新"),
+    );
     rail.append(actions);
     if (!agents.length) rail.append(message("尚未配置外部 Agent。", "empty"));
     for (const agent of agents) rail.append(agentCard(agent));
@@ -68,17 +74,51 @@ export function createExternalAgentHubView(dialog, root) {
   function createView() {
     const view = element("div", "external-hub-create");
     view.append(heading("添加 External Agent", "保存的是协议和连接引用；不会保存 API key，也不会启动远端任务。"));
-    const form = definitionForm({ id: "", title: "", adapter_kind: "codex_app_server", endpoint: "stdio://", connector_id: "", enabled: true, description: "" }, "创建");
+    if (candidates.length) view.append(candidateSection());
+    const form = definitionForm(createDraft || defaultDefinition(), "创建");
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const body = readDefinition(form);
       await mutate("创建失败", async () => {
         await request("/api/external-agents", { method: "POST", body });
         selectedId = body.id;
+        createDraft = null;
       });
     });
     view.append(form);
     return view;
+  }
+
+  /** Render process candidates that require a separate definition create action. */
+  function candidateSection() {
+    const sectionNode = section("已发现的本机实例", "扫描只读取进程信息。它不会附着、停止或复用这些实例。", "", "external-hub-candidates");
+    const body = sectionNode.querySelector(".external-hub-section-body");
+    const rows = candidates.map((candidate) => {
+      const row = element("article", "external-hub-candidate");
+      const copy = element("div");
+      copy.append(
+        element("strong", "", candidate.title || "未知外部 Agent"),
+        element("small", "", `PID ${candidate.process_id} · ${adapterLabel(candidate.adapter_kind)} · 不可附着`),
+        element("p", "", candidate.working_directory ? `工作目录：${candidate.working_directory}` : candidate.command || candidate.detail || "未提供额外进程信息。"),
+      );
+      row.append(copy, button("用于新定义", () => { createDraft = definitionFromCandidate(candidate); render(); }, "secondary"));
+      return row;
+    });
+    body.replaceChildren(...rows);
+    return sectionNode;
+  }
+
+  /** Perform an explicit read-only local process scan. */
+  async function discoverLocalProcesses() {
+    try {
+      const payload = await request("/api/external-agents/discover", { method: "POST" });
+      candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      selectedId = "";
+      createDraft = null;
+      render();
+    } catch (error) {
+      window.alert(`扫描本机失败：${error.message}`);
+    }
   }
 
   /** Render one definition editor plus inspection controls and data. */
@@ -236,5 +276,7 @@ function heading(title, note) { const node = element("header", "external-hub-det
 function section(title, note, loading, className) { const node = element("section", `external-hub-section ${className}`); node.append(heading(title, note), element("div", "external-hub-section-body", loading)); return node; }
 function field(label, name, type, current, placeholder) { const input = element("input"); input.name = name; input.type = type; input.value = current || ""; input.placeholder = placeholder; const labelNode = element("label", "external-hub-field"); labelNode.append(element("span", "", label), input); return { label: labelNode, input }; }
 function adapterLabel(kind) { return ADAPTERS.find(([id]) => id === kind)?.[1] || kind || "未知 adapter"; }
+function defaultDefinition() { return { id: "", title: "", adapter_kind: "codex_app_server", endpoint: "stdio://", connector_id: "", enabled: true, description: "" }; }
+function definitionFromCandidate(candidate) { return { id: `${String(candidate.adapter_kind || "agent").replace(/[^a-z0-9_-]/g, "-")}-${candidate.process_id}`, title: candidate.title || "Detected external Agent", adapter_kind: candidate.adapter_kind || "custom", endpoint: candidate.endpoint || "", connector_id: "", enabled: true, description: `${candidate.detail || "Detected local process."}${candidate.working_directory ? ` Working directory: ${candidate.working_directory}` : ""}`.slice(0, 2000) }; }
 function setBusy(text) { const root = document.getElementById("external-agent-hub-root"); root.replaceChildren(message(text, "loading")); }
 function renderError(container, error) { const body = container.querySelector(".external-hub-section-body"); body.replaceChildren(message(`读取失败：${error.message}`, "error")); }

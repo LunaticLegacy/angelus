@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 
 from .adapter import ExternalAgentAdapterRegistry
-from .models import ExternalAgentAdapterKind, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from .discovery import ExternalAgentProcessDiscovery
+from .models import ExternalAgentAdapterKind, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
 from .store import ExternalAgentHubStore
 
 
@@ -16,18 +17,35 @@ _KINDS = {"codex_app_server", "claude_sdk", "coze", "opencode", "workbuddy", "cu
 class ExternalAgentHubService:
     """Validate and project phase-one external Agent configuration state."""
 
-    def __init__(self, store: ExternalAgentHubStore, adapters: ExternalAgentAdapterRegistry) -> None:
+    def __init__(
+        self,
+        store: ExternalAgentHubStore,
+        adapters: ExternalAgentAdapterRegistry,
+        process_discovery: ExternalAgentProcessDiscovery | None = None,
+    ) -> None:
         """Create one service with durable storage and protocol adapters.
 
         Args:
             store: Durable owner of credential-free Agent definitions.
             adapters: Process-local protocol adapter registry.
+            process_discovery: Read-only local-process scanner. When omitted,
+                the service builds the standard procfs scanner.
 
         Returns:
             None.
         """
         self._store = store
         self._adapters = adapters
+        self._process_discovery = process_discovery or ExternalAgentProcessDiscovery()
+
+    def discover_local_processes(self) -> tuple[ExternalAgentCandidate, ...]:
+        """Find currently running known Agent processes without attaching.
+
+        Returns:
+            Ephemeral local process candidates that require an explicit user
+            confirmation before any Hub definition is created.
+        """
+        return self._process_discovery.discover()
 
     def list(self) -> tuple[ExternalAgentDefinition, ...]:
         """Return all configured external Agent definitions.

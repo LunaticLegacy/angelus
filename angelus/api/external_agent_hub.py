@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..core import AngelusCore
-from ..modules.external_agent_hub_module import ExternalAgentAdapterFailure, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
+from ..modules.external_agent_hub_module import ExternalAgentAdapterFailure, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
 
 
 router = APIRouter()
@@ -66,6 +66,21 @@ def list_external_agents(request: Request) -> dict[str, object]:
         Public, credential-free external Agent definitions.
     """
     return {"agents": [_definition(item) for item in _core(request).external_agent_hub.list()]}
+
+
+@router.post("/api/external-agents/discover")
+def discover_external_agent_processes(request: Request) -> dict[str, object]:
+    """Read local known Agent processes without attaching or persisting one.
+
+    Args:
+        request: Incoming request carrying the composition root.
+
+    Returns:
+        Ephemeral process candidates that a user may choose to turn into new
+        Hub definitions. The scan never starts, signals, or attaches to them.
+    """
+    candidates = _core(request).external_agent_hub.discover_local_processes()
+    return {"candidates": [_candidate(item) for item in candidates]}
 
 
 @router.get("/api/external-agents/{agent_id}")
@@ -288,6 +303,28 @@ def _definition(value: ExternalAgentDefinition) -> dict[str, object]:
         "connector_id": value.connector_id,
         "enabled": value.enabled,
         "description": value.description,
+    }
+
+
+def _candidate(value: ExternalAgentCandidate) -> dict[str, object]:
+    """Serialize one ephemeral process observation without secrets.
+
+    Args:
+        value: Typed candidate returned by the read-only process scanner.
+
+    Returns:
+        JSON-safe candidate data; it contains no credential or control handle.
+    """
+    return {
+        "candidate_id": value.candidate_id,
+        "adapter_kind": value.adapter_kind,
+        "title": value.title,
+        "process_id": value.process_id,
+        "command": value.command,
+        "working_directory": value.working_directory,
+        "endpoint": value.endpoint,
+        "attachable": value.attachable,
+        "detail": value.detail,
     }
 
 

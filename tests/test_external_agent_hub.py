@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from dataclasses import dataclass
 
-from angelus.api.external_agent_hub import create_external_agent, delete_external_agent, external_agent_health, get_external_agent
+from angelus.api.external_agent_hub import create_external_agent, delete_external_agent, discover_external_agent_processes, external_agent_health, get_external_agent
 from angelus.core import AngelusCore
 from angelus.modules.external_agent_hub_module import (
     ExternalAgentAdapterRegistry,
@@ -15,6 +15,7 @@ from angelus.modules.external_agent_hub_module import (
     ExternalAgentDefinition,
     ExternalAgentHealth,
     ExternalAgentHubService,
+    ExternalAgentProcessDiscovery,
     ExternalAgentSession,
     ExternalAgentHubStore,
 )
@@ -162,6 +163,38 @@ class ExternalAgentHubTests(unittest.TestCase):
             delete_external_agent("codex-local", request)
             with self.assertRaises(Exception):
                 get_external_agent("codex-local", request)
+
+    def test_process_discovery_returns_bounded_non_attachable_candidates(self) -> None:
+        """Known procfs commands become safe user-confirmed Hub candidates.
+
+        Returns:
+            ``None`` after confirming discovery exposes no attach control and
+            redacts obvious command-line credentials.
+        """
+        with TemporaryDirectory() as directory:
+            proc_root = Path(directory)
+            process = proc_root / "417"
+            process.mkdir()
+            (process / "cmdline").write_bytes(b"/usr/local/bin/codex\0--token\0very-secret\0")
+            candidates = ExternalAgentProcessDiscovery(proc_root).discover()
+            self.assertEqual(1, len(candidates))
+            self.assertEqual("codex_app_server", candidates[0].adapter_kind)
+            self.assertFalse(candidates[0].attachable)
+            self.assertNotIn("very-secret", candidates[0].command)
+            self.assertEqual("stdio://", candidates[0].endpoint)
+
+    def test_discovery_route_returns_ephemeral_candidate_projections(self) -> None:
+        """The discovery route projects candidates without writing Hub state.
+
+        Returns:
+            ``None`` after confirming the route returns a candidate collection
+            and does not create a durable Hub definition.
+        """
+        with TemporaryDirectory() as directory:
+            request = RequestContext(ApplicationContext(CoreState(AngelusCore(state_root=Path(directory)))))
+            response = discover_external_agent_processes(request)
+            self.assertIn("candidates", response)
+            self.assertEqual((), request.app.state.angelus_core.external_agent_hub.list())
 
 
 if __name__ == "__main__":

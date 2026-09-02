@@ -7,7 +7,8 @@ behind the adapter base and are not yet allowed to dispatch remote work.
 
 | File | Responsibility |
 |---|---|
-| `models.py` | Dataclass contracts for definitions, health, capabilities, and read-only external sessions. |
+| `models.py` | Dataclass contracts for definitions, health, capabilities, sessions, and ephemeral process candidates. |
+| `discovery.py` | Bounded Linux procfs process scanner; discovery is read-only and never attaches to a process. |
 | `store.py` | Atomic credential-free definition persistence. |
 | `adapter.py` | Read-only protocol adapter contract and process-local registry. |
 | `codex_app_server.py` | Constrained local-stdio Codex App Server handshake and thread inspection. |
@@ -16,7 +17,7 @@ behind the adapter base and are not yet allowed to dispatch remote work.
 | `adapters/coze.py` | Read-only Coze Bot and Workflow adapter. |
 | `adapters/opencode.py` | Read-only OpenCode Server adapter. |
 | `adapters/workbuddy.py` | Read-only WorkBuddy adapter. |
-| `service.py` | Validation, CRUD, health, and capability use cases. |
+| `service.py` | Validation, CRUD, health, capability, session, and local process discovery use cases. |
 
 ## Phase-one Boundary
 
@@ -29,3 +30,6 @@ behind the adapter base and are not yet allowed to dispatch remote work.
 - Coze, OpenCode, and WorkBuddy adapters receive an injected HTTP, CLI, or SDK
   facade. They only health-check and list bounded session summaries; they do
   not start, resume, import, steer, or cancel a remote run.
+- Local process discovery is an explicitly invoked, ephemeral procfs scan. A
+  candidate is never persisted or attached automatically; the browser must
+  create a separate durable definition after user confirmation.

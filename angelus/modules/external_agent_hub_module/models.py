@@ -96,3 +96,31 @@ class ExternalAgentSession:
     status: str = ""
     updated_at: int | None = None
     project_path: str = ""
+
+
+@dataclass(frozen=True)
+class ExternalAgentCandidate:
+    """One locally observed external Agent process that requires user approval.
+
+    Attributes:
+        candidate_id: Ephemeral scan identifier; it is never persisted.
+        adapter_kind: Hub adapter kind that can describe a future definition.
+        title: User-facing name of the observed local process.
+        process_id: Operating-system process identifier observed during scanning.
+        command: Bounded, credential-redacted process command summary.
+        working_directory: Best-effort process working directory when readable.
+        endpoint: Non-secret suggested endpoint for a future definition.
+        attachable: Whether Angelus can safely communicate with this exact
+            already-running instance. A false value explicitly prohibits attach.
+        detail: User-safe explanation of the discovery and its boundary.
+    """
+
+    candidate_id: str
+    adapter_kind: ExternalAgentAdapterKind
+    title: str
+    process_id: int
+    command: str
+    working_directory: str = ""
+    endpoint: str = ""
+    attachable: bool = False
+    detail: str = ""

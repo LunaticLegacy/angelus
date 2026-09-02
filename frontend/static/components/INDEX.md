@@ -9,7 +9,7 @@
 | `markdown-renderer.js` | Marked/DOMPurify-backed single Markdown projection for restored and streaming Agent output. |
 | `trace-view.js` | 可展开的 Agent 生命周期与 Trace 卡片。 |
 | `task-plan-view.js` | 递归任务计划标记和状态展示。 |
-| `external-agent-hub-view.js` | 全局 External Agent Hub：定义配置、健康检查、能力和外部会话只读检查。 |
+| `external-agent-hub-view.js` | 全局 External Agent Hub：定义配置、本机进程候选扫描、健康检查、能力和外部会话只读检查。 |
 
 ## Intent Routing
 
@@ -18,7 +18,7 @@
 - **安全 Markdown 解析与流式投影** → `markdown-renderer.js`
 - **Trace 呈现** → `trace-view.js`
 - **任务计划呈现** → `task-plan-view.js`
-- **外部 Agent 配置与只读检查** → `external-agent-hub-view.js`
+- **外部 Agent 配置、本机候选扫描与只读检查** → `external-agent-hub-view.js`
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 
