@@ -233,48 +233,64 @@ export function createChatView({ getAgentLabel }) {
     return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
   }
 
-  /** Format an epoch-seconds value as local HH:MM:SS. */
-  function formatClock(epochSeconds) {
+  /** Format an epoch timestamp (seconds or milliseconds) as local HH:MM:SS. */
+  function formatClock(timestamp) {
+    let epochSeconds = Number(timestamp);
     if (!Number.isFinite(epochSeconds) || epochSeconds <= 0) return "";
+    if (epochSeconds > 10_000_000_000) epochSeconds /= 1000;
     const date = new Date(epochSeconds * 1000);
     const pad = (value) => String(value).padStart(2, "0");
     return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
-  /** One-line token accounting footer for one model round. */
-  function buildTokenStats(usage, modelDurationMs = null, timestamp = null, durationMs = null) {
+  /** Structured token accounting footer for one completed model round. */
+  function buildTokenStats(usage, modelDurationMs = null, timestamp = null, roundDurationMs = null) {
     if (!usage || typeof usage !== "object") return "";
-    const n = (value) => Math.max(0, Number(value || 0));
+    const n = (value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+    };
     const fmt = (value) => n(value).toLocaleString();
     const input = n(usage.input);
     const cached = n(usage.cached);
     const miss = Math.max(0, input - cached);
     const output = n(usage.output);
-    let text = `↑ ${fmt(input)} · 缓存命中 ${fmt(cached)} · 未命中 ${fmt(miss)} · ↓ ${fmt(output)}`;
-    const seconds = typeof modelDurationMs === "number" ? modelDurationMs / 1000 : 0;
+    const reasoning = n(usage.reasoning);
+    const total = n(usage.total);
+    // Old checkpoints deliberately have no footer; do not present six zeroes
+    // as though their per-turn observation data had been recorded.
+    if (![input, cached, output, reasoning, total].some((value) => value > 0)) return "";
+    const modelMs = n(modelDurationMs);
+    const seconds = modelMs / 1000;
+    const cacheRate = input > 0 ? `${((cached / input) * 100).toFixed(1)}%` : "—";
+    const facts = [
+      ["输入", fmt(input)], ["缓存命中", fmt(cached)], ["缓存未命中", fmt(miss)],
+      ["输出", fmt(output)], ["推理", fmt(reasoning)], ["总计", fmt(total)],
+    ].map(([label, value]) => `<span><small>${label}</small><b>${value}</b></span>`).join("");
+    const details = [`缓存命中率 ${cacheRate}`];
     if (seconds > 0 && output > 0) {
-      text += ` · ${(output / seconds).toFixed(1)} tok/s`;
+      details.push(`${(output / seconds).toFixed(1)} tok/s`);
     }
     // The block's end time is the durable round timestamp; the start is end
     // minus the full round duration (fall back to the model duration).
-    const end = Number(timestamp);
-    const spanMs = Number.isFinite(Number(durationMs)) && Number(durationMs) > 0
-      ? Number(durationMs)
-      : (Number.isFinite(Number(modelDurationMs)) && Number(modelDurationMs) > 0 ? Number(modelDurationMs) : 0);
+    let end = Number(timestamp);
+    if (end > 10_000_000_000) end /= 1000;
+    const spanMs = n(roundDurationMs) || modelMs;
     if (Number.isFinite(end) && end > 0) {
       const startText = formatClock(end - spanMs / 1000);
       const endText = formatClock(end);
       if (startText && endText) {
-        text += ` · 起始 ${startText} · 结束 ${endText}`;
+        details.push(`起始 ${startText}`, `结束 ${endText}`);
       }
     }
-    return `<footer class="message-tokens">${escapeHtml(text)}</footer>`;
+    return `<footer class="message-tokens" aria-label="本轮模型用量"><div class="message-token-grid">${facts}</div><div class="message-token-details">${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div></footer>`;
   }
 
   /** Build one transcript card without inserting it into the document. */
   function buildMessage(message, agentName = "") {
     const { role, content, reasoning = "", tools = [], usage = null,
-      model_duration_ms = null, timestamp = null, duration_ms = null } = message;
+      model_duration_ms = null, round_duration_ms = null, duration_ms = null,
+      timestamp = null, created_at = null } = message;
     if (role === "steer") return buildSteer(content);
 
     const element = document.createElement("article");
@@ -288,7 +304,9 @@ export function createChatView({ getAgentLabel }) {
     // Reasoning is visible before the formal answer in both live and restored
     // transcript cards, so readers see the model's working context first.
     const contentClass = isAgentReply ? "markdown" : "plain-text";
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown" data-message-reasoning></div></section>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, timestamp, duration_ms) : ""}`;
+    const messageTimestamp = timestamp ?? created_at;
+    const completeDuration = round_duration_ms ?? duration_ms;
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown" data-message-reasoning></div></section>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, messageTimestamp, completeDuration) : ""}`;
     const contentTarget = element.querySelector("[data-message-content]");
     if (contentTarget) {
       if (isAgentReply) renderMarkdownInto(contentTarget, content);

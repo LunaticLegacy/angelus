@@ -10,6 +10,7 @@ from angelus.core import AngelusCore
 from angelus.modules.console_module import ConsoleDomainError, SessionConsoleTools, ToolPermissionPolicy
 from angelus.modules.tool_module import ToolPolicy
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
+from llmfetcher.llm_types import LLMOutput, TokenUsage
 
 
 class _Journal:
@@ -133,6 +134,40 @@ class SessionConsoleTests(unittest.TestCase):
             page = restored.console_service.messages("demo", "all", None, 200)
             self.assertEqual("coordinator", page["agent"])
             self.assertEqual(["persisted user request"], [entry["content"] for entry in page["messages"]])
+
+    def test_chat_messages_preserve_per_response_usage_metadata(self) -> None:
+        """A saved assistant turn retains its own primary-call observability."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            workspace = core.session_service.create("demo", "Demo", project)
+            context = ContextHandlerLinear(object())
+            context.add_assistant_message(
+                LLMOutput(
+                    content="durable answer", provider="test", backend_name="test",
+                    model="test", usage=TokenUsage(
+                        input_tokens=100, cached_tokens=80, output_tokens=20,
+                        reasoning_tokens=5, total_tokens=120,
+                    ),
+                ),
+                usage={"input": 100, "cached": 80, "output": 20, "reasoning": 5, "total": 120},
+                model_duration_ms=250,
+                round_duration_ms=400,
+                created_at=1_700_000_000.5,
+            )
+            context.save(workspace.state_path / "agents" / "coordinator" / "context.json")
+
+            restored = AngelusCore(state_root=root / "state")
+            message = restored.console_service.messages("demo", "coordinator", None, 200)["messages"][0]
+            self.assertEqual(
+                {"input": 100, "cached": 80, "output": 20, "reasoning": 5, "total": 120},
+                message["usage"],
+            )
+            self.assertEqual(250, message["model_duration_ms"])
+            self.assertEqual(400, message["round_duration_ms"])
+            self.assertEqual(1_700_000_000.5, message["created_at"])
 
     def test_runtime_registry_exposes_and_materializes_project_shell(self) -> None:
         """Shell is both catalog-visible and a real authorized Agent Tool.

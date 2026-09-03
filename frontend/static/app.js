@@ -176,7 +176,8 @@ const traceView = createTraceView();
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
 function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??"", duration_ms:Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null})); }
 /** Append a single transcript turn live (real-time path). */
-function appendMessage(role, content, reasoning="", tools=[], agentName="", usage=null, modelDurationMs=null, timestamp=null) { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,tools,usage,model_duration_ms:modelDurationMs,timestamp},agentName); }
+/** Append one completed turn with its per-round observation metadata intact. */
+function appendMessage(role, content, reasoning="", tools=[], agentName="", usage=null, modelDurationMs=null, roundDurationMs=null, timestamp=null) { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,tools,usage,model_duration_ms:modelDurationMs,round_duration_ms:roundDurationMs,duration_ms:roundDurationMs,timestamp},agentName); }
 function streamKey(agent, round) { return `${agent || "coordinator"}:${round || ""}`; }
 function renderStreamDelta(agent, data) { const key=streamKey(agent,data?.round); let state=streamingMessages.get(key); if(!state){state={content:"",reasoning:"",view:chatView.beginStream(agent)};streamingMessages.set(key,state);} if(data?.channel==="reasoning")state.reasoning+=String(data.delta||"");else state.content+=String(data?.delta||"");state.view.update(state.content,state.reasoning); }
 function discardStream(agent, round) { const key=streamKey(agent,round); const state=streamingMessages.get(key); if(state){state.view.remove();streamingMessages.delete(key);} }
@@ -186,7 +187,17 @@ function appendRunErrorBlock(title, message, rawContent="") { chatView.appendErr
 function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEvents.has(eventKey)) return; if(eventKey) renderedSteerEvents.add(eventKey); chatView.append({role:"steer",content:text}); }
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
-function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.render(messages, assistantLabel); }
+function messageForChat(message) {
+  // Durable history names its completion time `created_at`; live lifecycle
+  // events name it `timestamp`.  The renderer intentionally receives one
+  // stable shape regardless of where the message came from.
+  return {
+    ...message,
+    timestamp: message.timestamp ?? message.created_at ?? null,
+    duration_ms: message.duration_ms ?? message.round_duration_ms ?? null,
+  };
+}
+function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.render(messages.map(messageForChat), assistantLabel); }
 /** Restore the accessible history control if an older cached view removed it. */
 function ensureLoadMoreMessagesButton() { let button=$("load-more-messages"); if(button)return button; button=document.createElement("button"); button.id="load-more-messages"; button.className="load-more-messages"; button.type="button"; button.textContent="加载更早消息"; $("chat").prepend(button); return button; }
 function setMessageHistoryButton(hasMore, text="加载更早消息") { const button=ensureLoadMoreMessagesButton(); button.hidden=!hasMore; button.textContent=text; return button; }
@@ -583,7 +594,15 @@ async function graphSetRouter() {
   graphEditFeedback(payload.status||`Router 已设置（${targets.join("、")||"无"}）`,"success");
   await loadInspectorAgents();
 }
-function usageCells(usage, run=null) { return [["Input","input"],["Output","output"],["Total","total"],["Cached","cached"],["Reasoning","reasoning"]].map(([label,key])=>`<span>${run ? `<i class="usage-round">+${Number(run[key] || 0).toLocaleString()}</i>` : ""}<small>${label}</small><b>${Number(usage[key] || 0).toLocaleString()}</b></span>`).join(""); }
+function usageCells(usage={}, run=null) {
+  const value=(key)=>Math.max(0,Number(usage[key] || 0));
+  const cells=[["Input","input"],["Output","output"],["Total","total"],["Cached","cached"],["Reasoning","reasoning"]]
+    .map(([label,key])=>`<span>${run ? `<i class="usage-round">+${Number(run[key] || 0).toLocaleString()}</i>` : ""}<small>${label}</small><b>${value(key).toLocaleString()}</b></span>`);
+  const input=value("input"), cached=value("cached");
+  const rate=input > 0 ? `${Math.min(100,(cached / input) * 100).toFixed(1)}%` : "—";
+  cells.push(`<span><small>缓存命中率</small><b>${rate}</b></span>`);
+  return cells.join("");
+}
 /** Render per-Agent token totals with the same reconciled state lights as other Agent surfaces. */
 async function loadUsage() { if(!hasSelectedSession()) { $("usage-total").innerHTML=`<p class="empty">请先创建或选择一个会话。</p>`; $("usage-agents").innerHTML=""; return; } const [payload,graphPayload]=await Promise.all([apiJson(sessionApi("/usage")),apiJson(graphUrl()).catch(()=>null)]); if(graphPayload) currentGraph=graphPayload; const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage, payload.run).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>{const view=agentStateView(agent.id); return `<article class="usage-agent"><header><span class="usage-agent-title"><i class="agent-state ${escapeHtml(view.ui)}" title="${escapeHtml(view.message)}"></i><strong>${escapeHtml(agent.id)}</strong></span><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage, agent.run)}</div></article>`;}).join(""); }
 function selectInspectorPanel(panel, refresh=true) { const target=document.getElementById(panel); if(!target) return; activeInspectorPanel=panel; localStorage.llmfetcherInspectorPanel=panel; document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.classList.toggle("active",button.dataset.inspectorPanel===panel)); document.querySelectorAll(".inspector-panel").forEach(item=>item.classList.toggle("active",item===target)); if(!refresh) return; const loaders={"inspector-plan":loadPlan,"inspector-agents":loadInspectorAgents,"inspector-trace":()=>loadTrace(true),"inspector-usage":loadUsage}; loaders[panel]?.().catch(error=>trace("检查器加载失败",error.message)); }
@@ -614,7 +633,7 @@ async function loadHistory() {
   }
   const fragment = document.createDocumentFragment();
   for (const message of messages) {
-    fragment.append(chatView.buildMessage(message, selectedAgent));
+    fragment.append(chatView.buildMessage(messageForChat(message), selectedAgent));
   }
   loadMore.after(fragment);
   chat.scrollTop = chat.scrollHeight;
@@ -640,7 +659,7 @@ async function loadOlderMessages() {
     messagesBefore = page.next_cursor ?? null;
     if (!older.length) { button.hidden = true; return; }
     const fragment = document.createDocumentFragment();
-    for (const message of older) fragment.append(chatView.buildMessage(message, snapshot.agent === "all" ? "coordinator" : snapshot.agent));
+    for (const message of older) fragment.append(chatView.buildMessage(messageForChat(message), snapshot.agent === "all" ? "coordinator" : snapshot.agent));
     button.after(fragment);
     chat.scrollTop = chat.scrollHeight - previousHeight + previousTop;
     button.hidden = !page.has_more;
@@ -729,7 +748,7 @@ function handleEvent(event) {
     else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
     else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
   if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
-  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
+  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
   if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); return; }
   if(event.event === "stopped") { setWorkspaceIndicator(sessionId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }

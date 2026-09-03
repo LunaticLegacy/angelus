@@ -99,7 +99,15 @@ class ConsoleProjectionService:
         Returns:
             Input, output, total, cached, and reasoning token totals.
         """
-        return {"usage": self._session(session_id).swarm.total_usage()}
+        swarm = self._session(session_id).swarm
+        per_agent = swarm.agent_usage()
+        return {
+            "usage": swarm.total_usage(),
+            "agents": [
+                {"id": agent_id, "usage": usage}
+                for agent_id, usage in sorted(per_agent.items())
+            ],
+        }
 
     def events(self, session_id: str, cursor: int = 0, limit: int = 200) -> dict[str, object]:
         """Page the current attempt's durable journal in commit order.
@@ -284,7 +292,17 @@ class ConsoleProjectionService:
         messages = []
         for entry in entries:
             tools = [{"name": tool.call.name, "arguments": tool.call.arguments, "result": tool.result} for tool in entry.tool_calls]
-            messages.append({"role": entry.role, "content": entry.content, "reasoning": entry.content_reasoning, "tools": tools, "timeline": entry.timeline})
+            messages.append({
+                "role": entry.role,
+                "content": entry.content,
+                "reasoning": entry.content_reasoning,
+                "tools": tools,
+                "timeline": entry.timeline,
+                "usage": entry.usage,
+                "model_duration_ms": entry.model_duration_ms,
+                "round_duration_ms": entry.round_duration_ms,
+                "created_at": entry.created_at,
+            })
         return {"agent": resolved_name, "messages": messages, "next_cursor": next_cursor, "has_more": next_cursor is not None}
     def context_graph(self, session_id: str, name: str) -> dict[str, object]:
         """Return the actual GraphContextHandler entity graph projection.
