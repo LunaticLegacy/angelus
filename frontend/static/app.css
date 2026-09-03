@@ -67,14 +67,7 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .message { width:min(780px,88%); margin:0 0 20px; }
 .message.user,.message.steer { margin-left:auto; }
 .message.assistant { margin-right:auto; }
-.message-tokens { margin-top:7px; padding:8px 9px; border:1px solid var(--line); border-radius:7px; background:#0c1524; color:var(--muted); font-size:10px; line-height:1.35; font-variant-numeric:tabular-nums; }
-.message-token-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
-.message-token-grid span { min-width:0; padding:4px 5px; border-radius:4px; background:#101d30; }
-.message-token-grid small,.message-token-grid b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.message-token-grid small { color:var(--muted); font-size:8px; }
-.message-token-grid b { margin-top:2px; color:var(--soft); font-size:10px; }
-.message-token-details { display:flex; flex-wrap:wrap; gap:3px 9px; margin-top:7px; color:var(--muted); font-size:9px; }
-.message-token-details span + span::before { content:"·"; margin-right:9px; color:#53617b; }
+.message-tokens { margin-top:6px; padding:0 3px; color:var(--muted); font-size:10px; line-height:1.5; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 
 .agent-behavior-block { width:min(780px,88%); margin:0 0 10px; border:1px solid #384a72; border-left:3px solid var(--purple); border-radius:7px; background:#101a2b; overflow:hidden; }
 .agent-behavior-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; padding:10px 12px; background:transparent; color:var(--text); text-align:left; }

@@ -243,7 +243,7 @@ export function createChatView({ getAgentLabel }) {
     return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
-  /** Structured token accounting footer for one completed model round. */
+  /** One-line token accounting footer for one completed model round. */
   function buildTokenStats(usage, modelDurationMs = null, timestamp = null, roundDurationMs = null) {
     if (!usage || typeof usage !== "object") return "";
     const n = (value) => {
@@ -263,11 +263,15 @@ export function createChatView({ getAgentLabel }) {
     const modelMs = n(modelDurationMs);
     const seconds = modelMs / 1000;
     const cacheRate = input > 0 ? `${((cached / input) * 100).toFixed(1)}%` : "—";
-    const facts = [
-      ["输入", fmt(input)], ["缓存命中", fmt(cached)], ["缓存未命中", fmt(miss)],
-      ["输出", fmt(output)], ["推理", fmt(reasoning)], ["总计", fmt(total)],
-    ].map(([label, value]) => `<span><small>${label}</small><b>${value}</b></span>`).join("");
-    const details = [`缓存命中率 ${cacheRate}`];
+    const details = [
+      `↑ ${fmt(input)}`,
+      `缓存命中 ${fmt(cached)}`,
+      `缓存未命中 ${fmt(miss)}`,
+      `↓ ${fmt(output)}`,
+      `推理 ${fmt(reasoning)}`,
+      `总计 ${fmt(total)}`,
+      `缓存命中率 ${cacheRate}`,
+    ];
     if (seconds > 0 && output > 0) {
       details.push(`${(output / seconds).toFixed(1)} tok/s`);
     }
@@ -283,7 +287,7 @@ export function createChatView({ getAgentLabel }) {
         details.push(`起始 ${startText}`, `结束 ${endText}`);
       }
     }
-    return `<footer class="message-tokens" aria-label="本轮模型用量"><div class="message-token-grid">${facts}</div><div class="message-token-details">${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}</div></footer>`;
+    return `<footer class="message-tokens" aria-label="本轮模型用量">${escapeHtml(details.join(" · "))}</footer>`;
   }
 
   /** Build one transcript card without inserting it into the document. */
