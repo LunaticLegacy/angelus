@@ -96,12 +96,12 @@ class AgentControlView:
         return global_request or local_request
 
     def drain_steers(self) -> list[str]:
-        """Return targeted and broadcast steering messages in FIFO order.
+        """Return pending steering messages in FIFO order.
 
         Returns:
             Pending user instructions for this Agent only.
         """
-        return [*self._owner._drain_broadcast(self._agent_id), *self._local.drain_steers()]
+        return self._local.drain_steers()
 
     def steer(self, message: str) -> None:
         """Queue one Agent-specific steering message.
@@ -151,8 +151,6 @@ class SessionRunControl:
         self.global_control = global_control
         self._lock = threading.RLock()
         self._agents: dict[str, AgentControlView] = {}
-        self._broadcasts: list[str] = []
-        self._broadcast_offsets: dict[str, int] = {}
 
     def for_agent(self, agent_id: str) -> AgentControlView:
         """Return the persistent local control view for one Agent.
@@ -168,7 +166,6 @@ class SessionRunControl:
             if view is None:
                 view = AgentControlView(self, agent_id)
                 self._agents[agent_id] = view
-                self._broadcast_offsets[agent_id] = 0
             return view
 
     def should_stop(self, agent_id: str = "all") -> bool:
@@ -188,7 +185,8 @@ class SessionRunControl:
         """Queue steering for all Agents or one existing Agent.
 
         Args:
-            agent_id: ``all`` for broadcast or one concrete Agent identity.
+            agent_id: ``all`` for every Agent registered at submission time,
+                or one concrete Agent identity.
             message: Non-empty instruction applied at the next safe boundary.
 
         Returns:
@@ -201,8 +199,10 @@ class SessionRunControl:
             raise ValueError("message is required")
         with self._lock:
             if agent_id == "all":
-                self._broadcasts.append(message)
-                return tuple(sorted(self._agents))
+                targets = tuple(sorted(self._agents))
+                for target in targets:
+                    self._agents[target].steer(message)
+                return targets
             if agent_id not in self._agents:
                 raise KeyError(agent_id)
             self._agents[agent_id].steer(message)
@@ -231,22 +231,6 @@ class SessionRunControl:
                 raise KeyError(agent_id)
             self._agents[agent_id].request_stop(force, reason)
             return (agent_id,)
-
-    def _drain_broadcast(self, agent_id: str) -> list[str]:
-        """Return unseen broadcast steering messages for one Agent.
-
-        Args:
-            agent_id: Agent consuming its broadcast queue cursor.
-
-        Returns:
-            New broadcast instructions in submitted order.
-        """
-        with self._lock:
-            offset = self._broadcast_offsets.get(agent_id, 0)
-            messages = self._broadcasts[offset:]
-            self._broadcast_offsets[agent_id] = len(self._broadcasts)
-            return list(messages)
-
 
 @dataclass(frozen=True)
 class AgentControlReceipt:

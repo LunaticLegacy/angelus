@@ -38,6 +38,19 @@ class AgentControlTests(unittest.TestCase):
         self.assertTrue(coordinator.should_stop())
         self.assertTrue(worker.should_stop())
 
+    def test_all_scope_steer_does_not_reach_agents_created_later(self) -> None:
+        """An ALL steer snapshots live Agent views at submission time."""
+        control = SessionRunControl(ExecutionController())
+        coordinator = control.for_agent("coordinator")
+        worker = control.for_agent("worker")
+
+        self.assertEqual(control.steer("all", "Use primary sources."), ("coordinator", "worker"))
+        new_worker = control.for_agent("new-worker")
+
+        self.assertEqual(coordinator.drain_steers(), ["Use primary sources."])
+        self.assertEqual(worker.drain_steers(), ["Use primary sources."])
+        self.assertEqual(new_worker.drain_steers(), [])
+
     def test_targeted_force_stop_cancels_only_target_resources(self) -> None:
         """Invoke only the selected Agent's registered resource canceller."""
         control = SessionRunControl(ExecutionController())
