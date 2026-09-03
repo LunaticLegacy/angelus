@@ -297,6 +297,7 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 .message .role.role-steer { color:#ffcf6e; }
 .message .role.role-steer i { background:var(--amber); box-shadow:0 0 7px #ffcf6e88; }
 .steer .bubble { border-color:#6b5418; background:#181e0e; }
+.steer-deliveries { display:flex; flex-wrap:wrap; gap:4px 7px; margin:6px 3px 0; color:var(--muted); font-size:9px; }.steer-deliveries span { padding:2px 5px; border:1px solid #625329; border-radius:4px; }.steer-deliveries .applied { border-color:#437642; color:#a9dc91; }.steer-deliveries .pending { color:#d6bf83; }
 :root[data-theme="light"] .message .role.role-steer { color:#a06a00; }
 :root[data-theme="light"] .steer .bubble { border-color:#d8b25c; background:#fdf6e3; }
 /* Connection settings dialog opened from the sidebar gear button. */

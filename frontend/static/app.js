@@ -58,7 +58,7 @@ const externalAgentHubView = createExternalAgentHubView(
   $("external-agent-hub-dialog"),
   $("external-agent-hub-root"),
 );
-let renderedSteerEvents = new Set();
+let steeringRecords = new Map();
 let renderedRoundEvents = new Set();
 let currentAgents = [];
 let currentGraph = {nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};
@@ -184,7 +184,7 @@ function discardStream(agent, round) { const key=streamKey(agent,round); const s
 /** Display a durable run failure in the chat pane without hiding prior work. */
 function appendRunErrorBlock(title, message, rawContent="") { chatView.appendError(title, message, rawContent); }
 /** Render one durably applied steering message beside the original user input. */
-function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEvents.has(eventKey)) return; if(eventKey) renderedSteerEvents.add(eventKey); chatView.append({role:"steer",content:text}); }
+function upsertSteering(record) { if(!record?.id)return; steeringRecords.set(record.id,record); chatView.upsertSteer(record); }
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
 function messageForChat(message) {
@@ -201,7 +201,7 @@ function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.r
 /** Restore the accessible history control if an older cached view removed it. */
 function ensureLoadMoreMessagesButton() { let button=$("load-more-messages"); if(button)return button; button=document.createElement("button"); button.id="load-more-messages"; button.className="load-more-messages"; button.type="button"; button.textContent="加载更早消息"; $("chat").prepend(button); return button; }
 function setMessageHistoryButton(hasMore, text="加载更早消息") { const button=ensureLoadMoreMessagesButton(); button.hidden=!hasMore; button.textContent=text; return button; }
-async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); setMessageHistoryButton(Boolean(page.has_more)); }
+async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; steeringRecords.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); (page.steering||[]).forEach(upsertSteering); setMessageHistoryButton(Boolean(page.has_more)); }
 function trace(title, message="", data=null, kind="") { traceView.append(title, message, data, kind); }
 function tracePayload(event, position="prepend") { traceView.appendEvent(event, position); }
 /** Present one server-initiated sampling or elicitation request for approval. */
@@ -620,13 +620,13 @@ async function loadHistory() {
   if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
   const messages = page.messages || [];
   messagesBefore = page.next_cursor ?? null;
-  renderedSteerEvents.clear();
+  steeringRecords.clear();
   renderedRoundEvents.clear();
   pendingRoundTools.clear();
   const chat = $("chat");
   const loadMore=ensureLoadMoreMessagesButton();
   chat.replaceChildren(loadMore);
-  if (!messages.length) {
+  if (!messages.length && !(page.steering||[]).length) {
     loadMore.insertAdjacentHTML("afterend",`<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`);
     loadMore.hidden = true;
     return;
@@ -636,6 +636,7 @@ async function loadHistory() {
     fragment.append(chatView.buildMessage(messageForChat(message), selectedAgent));
   }
   loadMore.after(fragment);
+  (page.steering||[]).forEach(upsertSteering);
   chat.scrollTop = chat.scrollHeight;
   loadMore.hidden = !page.has_more;
 }
@@ -748,7 +749,11 @@ function handleEvent(event) {
     else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
     else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
   if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
-  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
+  if(event.type === "agent:control" && event.data?.action === "steer") { const data=event.data; upsertSteering({id:data.steer_id,text:event.message||"",scope:data.agent_id||"all",recipients:data.target_agents||[],applied_agents:[],submitted_at:event.timestamp}); }
+  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); }
+  if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); }
+  if(event.type === "agent:steer_applied") { const ids=event.data?.steer_ids||[]; const agent=event.agent||"coordinator"; ids.forEach(id=>{const current=steeringRecords.get(id); if(!current)return; const applied=new Set(current.applied_agents||[]); applied.add(agent); upsertSteering({...current,applied_agents:[...applied]});}); setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); }
+  if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
   if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); return; }
   if(event.event === "stopped") { setWorkspaceIndicator(sessionId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }

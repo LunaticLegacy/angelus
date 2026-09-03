@@ -282,9 +282,11 @@ class ConsoleProjectionService:
         """
         resolved_name = "coordinator" if name in {None, "", "all"} else name
         self._agent(session_id, resolved_name)
+        steering = self.steering(session_id, name)
         path = self._context_path(session_id, resolved_name)
         if not path.is_file():
-            return {"agent": resolved_name, "messages": [], "next_cursor": None, "has_more": False}
+            return {"agent": resolved_name, "messages": [], "steering": steering,
+                    "next_cursor": None, "has_more": False}
         try:
             entries, next_cursor, _ = read_persisted_context_page(path, before_timeline=before, limit=limit)
         except (OSError, ValueError) as exc:
@@ -303,7 +305,57 @@ class ConsoleProjectionService:
                 "round_duration_ms": entry.round_duration_ms,
                 "created_at": entry.created_at,
             })
-        return {"agent": resolved_name, "messages": messages, "next_cursor": next_cursor, "has_more": next_cursor is not None}
+        return {"agent": resolved_name, "messages": messages, "steering": steering,
+                "next_cursor": next_cursor, "has_more": next_cursor is not None}
+
+    def steering(self, session_id: str, name: str | None = None) -> list[dict[str, object]]:
+        """Project durable steering deliveries from the latest attempt journal.
+
+        A control submission creates one record; later ``agent:steer_applied``
+        events update its recipient state by the same durable steering ID.
+        """
+        session = self._session(session_id)
+        attempt = session.execution.attempt if session.execution else None
+        if attempt is None:
+            return []
+        records: dict[str, dict[str, object]] = {}
+        for event in attempt.journal.events():
+            data = event.get("data")
+            if not isinstance(data, dict):
+                continue
+            if event.get("type") == "agent:control" and data.get("action") == "steer":
+                steer_id = data.get("steer_id")
+                targets = data.get("target_agents")
+                if not isinstance(steer_id, str) or not isinstance(targets, list):
+                    continue
+                recipients = [target for target in targets if isinstance(target, str)]
+                records[steer_id] = {
+                    "id": steer_id,
+                    "text": str(event.get("message") or ""),
+                    "scope": data.get("agent_id") if isinstance(data.get("agent_id"), str) else "all",
+                    "recipients": recipients,
+                    "applied_agents": [],
+                    "submitted_at": event.get("timestamp"),
+                }
+            elif event.get("type") == "agent:steer_applied":
+                agent = event.get("agent")
+                steer_ids = data.get("steer_ids")
+                if not isinstance(agent, str) or not isinstance(steer_ids, list):
+                    continue
+                for steer_id in steer_ids:
+                    record = records.get(steer_id)
+                    if record is None:
+                        continue
+                    applied = record["applied_agents"]
+                    if isinstance(applied, list) and agent not in applied:
+                        applied.append(agent)
+        selected = []
+        for record in records.values():
+            recipients = record["recipients"]
+            if name not in {None, "", "all"} and (not isinstance(recipients, list) or name not in recipients):
+                continue
+            selected.append(record)
+        return sorted(selected, key=lambda item: float(item.get("submitted_at") or 0))
     def context_graph(self, session_id: str, name: str) -> dict[str, object]:
         """Return the actual GraphContextHandler entity graph projection.
 

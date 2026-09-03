@@ -266,7 +266,9 @@ class ExecutionService:
         if snapshot is None or snapshot.state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING} or control is None:
             raise RuntimeError("Session has no active Agent control boundary")
         if action == "steer":
-            targets = control.steer(agent_id, message)
+            steering = control.steer(agent_id, message)
+            targets = steering.target_agents
+            steer_id = steering.steer_id
             queued = True
         elif action == "stop":
             targets = control.stop(agent_id, False, reason)
@@ -278,11 +280,13 @@ class ExecutionService:
             raise ValueError("action must be steer, stop, or force_stop")
         session.execution.attempt.journal.append(
             "agent:control",
-            {"agent_id": agent_id, "action": action, "target_agents": list(targets), "reason": reason},
+            {"agent_id": agent_id, "action": action, "target_agents": list(targets), "reason": reason,
+             **({"steer_id": steer_id} if action == "steer" else {})},
             agent=agent_id,
             message=message or reason,
         )
-        return AgentControlReceipt(session_id, snapshot.execution_id or "", agent_id, action, targets, queued)
+        return AgentControlReceipt(session_id, snapshot.execution_id or "", agent_id, action, targets, queued,
+                                   steer_id if action == "steer" else None)
 
     def events(self, session_id: str) -> Iterator[dict[str, Any]]:
         """Yield durable events from the most recent in-process attempt.

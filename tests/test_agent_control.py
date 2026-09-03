@@ -16,8 +16,11 @@ class AgentControlTests(unittest.TestCase):
         coordinator = control.for_agent("coordinator")
         worker = control.for_agent("worker")
 
-        self.assertEqual(control.steer("worker", "Inspect the API."), ("worker",))
-        self.assertEqual(worker.drain_steers(), ["Inspect the API."])
+        submission = control.steer("worker", "Inspect the API.")
+        self.assertEqual(submission.target_agents, ("worker",))
+        delivered = worker.drain_steers()
+        self.assertEqual(delivered, ["Inspect the API."])
+        self.assertEqual(delivered[0].steer_id, submission.steer_id)
         self.assertEqual(coordinator.drain_steers(), [])
 
         self.assertEqual(control.stop("worker", False, "not needed"), ("worker",))
@@ -30,7 +33,7 @@ class AgentControlTests(unittest.TestCase):
         coordinator = control.for_agent("coordinator")
         worker = control.for_agent("worker")
 
-        self.assertEqual(control.steer("all", "Summarize now."), ("coordinator", "worker"))
+        self.assertEqual(control.steer("all", "Summarize now.").target_agents, ("coordinator", "worker"))
         self.assertEqual(coordinator.drain_steers(), ["Summarize now."])
         self.assertEqual(worker.drain_steers(), ["Summarize now."])
 
@@ -44,7 +47,7 @@ class AgentControlTests(unittest.TestCase):
         coordinator = control.for_agent("coordinator")
         worker = control.for_agent("worker")
 
-        self.assertEqual(control.steer("all", "Use primary sources."), ("coordinator", "worker"))
+        self.assertEqual(control.steer("all", "Use primary sources.").target_agents, ("coordinator", "worker"))
         new_worker = control.for_agent("new-worker")
 
         self.assertEqual(coordinator.drain_steers(), ["Use primary sources."])

@@ -295,7 +295,7 @@ export function createChatView({ getAgentLabel }) {
     const { role, content, reasoning = "", tools = [], usage = null,
       model_duration_ms = null, round_duration_ms = null, duration_ms = null,
       timestamp = null, created_at = null } = message;
-    if (role === "steer") return buildSteer(content);
+    if (role === "steer") return buildSteer(message);
 
     const element = document.createElement("article");
     element.className = `message ${role}`;
@@ -323,10 +323,22 @@ export function createChatView({ getAgentLabel }) {
     return element;
   }
 
-  function buildSteer(text) {
+  function buildSteer(message) {
+    const text = String(message.content || "");
+    const steering = message.steering || {};
+    const id = String(steering.id || "");
+    const recipients = Array.isArray(steering.recipients) ? steering.recipients : [];
+    const applied = new Set(Array.isArray(steering.applied_agents) ? steering.applied_agents : []);
+    const scope = steering.scope === "all" ? `全部活跃 Agent（${recipients.length}）` : String(steering.scope || "Agent");
+    const appliedCount = [...applied].filter((agent) => recipients.includes(agent)).length;
+    const status = recipients.length ? `已应用 ${appliedCount}/${recipients.length}` : "未找到可投递的活跃 Agent";
+    const deliveries = recipients.length
+      ? `<div class="steer-deliveries">${recipients.map((agent) => `<span class="${applied.has(agent) ? "applied" : "pending"}">${escapeHtml(agent)} ${applied.has(agent) ? "✓" : "等待应用"}</span>`).join("")}</div>`
+      : "";
     const element = document.createElement("article");
     element.className = "message steer";
-    element.innerHTML = `<div class="message-meta"><div class="role role-steer"><i></i><span>调整指令</span></div><small>已应用</small></div><div class="bubble plain-text">${escapeHtml(text)}</div>`;
+    if (id) element.dataset.steerId = id;
+    element.innerHTML = `<div class="message-meta"><div class="role role-steer"><i></i><span>调整指令</span></div><small>${escapeHtml(scope)} · ${escapeHtml(status)}</small></div><div class="bubble plain-text">${escapeHtml(text)}</div>${deliveries}`;
     return element;
   }
 
@@ -334,6 +346,17 @@ export function createChatView({ getAgentLabel }) {
     removeWelcome();
     const chat = $("chat");
     chat.append(buildMessage(message, agentName));
+    scrollToLatestIfFollowing();
+  }
+
+  function upsertSteer(steering) {
+    removeWelcome();
+    const chat = $("chat");
+    const id = String(steering?.id || "");
+    const next = buildSteer({ role: "steer", content: steering?.text || "", steering });
+    const existing = id ? chat.querySelector(`[data-steer-id="${CSS.escape(id)}"]`) : null;
+    if (existing) existing.replaceWith(next);
+    else chat.append(next);
     scrollToLatestIfFollowing();
   }
 
@@ -399,5 +422,5 @@ export function createChatView({ getAgentLabel }) {
     chat.scrollTop = chat.scrollHeight;
   }
 
-  return { append, appendError, beginStream, buildMessage, removeWelcome, render };
+  return { append, appendError, beginStream, buildMessage, removeWelcome, render, upsertSteer };
 }

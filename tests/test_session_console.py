@@ -202,6 +202,35 @@ class SessionConsoleTests(unittest.TestCase):
                 [tool.name for tool in tools],
             )
 
+    def test_steering_projection_rebuilds_recipient_delivery_state(self) -> None:
+        """One journaled steering command becomes one durable UI record."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            core.session_service.create("demo", "Demo", project)
+            session = core.sessions.get("demo")
+            attempt = session.execution.start(lambda _control: None)
+            self.assertTrue(session.execution.wait(1))
+            attempt.journal.append(
+                "agent:control",
+                {"action": "steer", "agent_id": "all", "steer_id": "steer-1",
+                 "target_agents": ["coordinator", "worker"]},
+                message="Use primary sources.",
+            )
+            attempt.journal.append(
+                "agent:steer_applied",
+                {"steer_ids": ["steer-1"], "messages": ["Use primary sources."]},
+                agent="worker",
+            )
+
+            records = core.console_service.steering("demo")
+            self.assertEqual(1, len(records))
+            self.assertEqual("Use primary sources.", records[0]["text"])
+            self.assertEqual(["coordinator", "worker"], records[0]["recipients"])
+            self.assertEqual(["worker"], records[0]["applied_agents"])
+
     def test_detached_previews_restore_context_without_dispatch_or_writes(self) -> None:
         """Both previews compose from checkpoint state without saving the draft.
 
