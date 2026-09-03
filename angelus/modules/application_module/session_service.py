@@ -98,6 +98,8 @@ class SessionService:
         if session.coordinator_matches(fingerprint):
             return
         workspace = self._core.workspaces.get(session_id)
+        if session.artifacts is None:
+            raise RuntimeError("Session artifact storage is not configured")
         coordinator = create_agent(
             [LLMBackendConfig(
                 name=session.coordinator_name,
@@ -116,6 +118,7 @@ class SessionService:
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
+            tool_result_transformer=session.artifacts.transform_tool_result,
         )
         session.set_coordinator(coordinator, fingerprint)
         # Unit-test and alternate-host factories may supply a sentinel role;
@@ -179,6 +182,8 @@ class SessionService:
         api_key = self._core.connectors.api_key(connector_id)
         permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
         workspace = self._core.workspaces.get(session_id)
+        if session.artifacts is None:
+            raise RuntimeError("Session artifact storage is not configured")
         return create_agent(
             [LLMBackendConfig(
                 name=name, provider=profile["provider"], model=profile["model"], api_key=api_key,
@@ -193,6 +198,7 @@ class SessionService:
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
+            tool_result_transformer=session.artifacts.transform_tool_result,
         )
 
     def preview_agent(self, session_id: str, name: str) -> Agent:
@@ -224,6 +230,8 @@ class SessionService:
         except KeyError as exc:
             raise RuntimeError("Session preview connector has no saved API key") from exc
         workspace = self._core.workspaces.get(session_id)
+        if session.artifacts is None:
+            raise RuntimeError("Session artifact storage is not configured")
         worker = blueprint.workers.get(name)
         role = "coordinator" if name == session.coordinator_name else "worker"
         system_prompt = profile["system_prompt"] if worker is None else worker.system_prompt or profile["system_prompt"]
@@ -245,6 +253,7 @@ class SessionService:
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
+            tool_result_transformer=session.artifacts.transform_tool_result,
         )
 
     def delete(self, session_id: str, *, confirmation: str, wait_timeout: float = 5.0) -> Workspace:

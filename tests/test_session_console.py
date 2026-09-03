@@ -197,7 +197,10 @@ class SessionConsoleTests(unittest.TestCase):
                 ToolPolicy(frozenset({"shell"}), frozenset({"shell"})),
                 "coordinator",
             )
-            self.assertEqual(["shell"], [tool.name for tool in tools])
+            self.assertEqual(
+                ["artifact_info", "artifact_read", "artifact_search", "shell"],
+                [tool.name for tool in tools],
+            )
 
     def test_detached_previews_restore_context_without_dispatch_or_writes(self) -> None:
         """Both previews compose from checkpoint state without saving the draft.

@@ -12,6 +12,7 @@ from llmfetcher import Agent, AgentSwarm
 from ..swarm_module.session_executor import SessionExecutor
 from ..execution_module import ExecutionAttempt, ExecutionState
 from ..console_module import ConsoleState
+from .artifact_store import SessionArtifactStore
 
 if TYPE_CHECKING:
     from ..application_module.agent_control import SessionRunControl
@@ -72,6 +73,9 @@ class Session:
         # Durable console-only state (plans and safe graph blueprints).  It is
         # attached when the session receives its durable state root.
         self.console: ConsoleState | None = None
+        # Complete large tool outputs live in this session's attempt roots;
+        # Agents retain only stable artifact references in their model context.
+        self.artifacts: SessionArtifactStore | None = None
 
     def add_agent(self, agent: Agent) -> None:
         """Append one fully configured Agent to this session.
@@ -95,6 +99,7 @@ class Session:
             raise RuntimeError("Session execution is already configured")
         self.execution = SessionExecutor(session_id, root)
         self.console = ConsoleState(root)
+        self.artifacts = SessionArtifactStore(session_id, root, self.execution)
 
     def set_coordinator(self, agent: Agent, fingerprint: tuple[object, ...]) -> None:
         """Install the required coordinator and retain it as ``agents[0]``.

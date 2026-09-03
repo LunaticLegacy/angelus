@@ -1,4 +1,4 @@
-"""Regression coverage for stable model-visible tool-result limits."""
+"""Regression coverage for lossless model-visible tool results."""
 from __future__ import annotations
 
 import unittest
@@ -10,10 +10,10 @@ from llmfetcher.llm_types import LLMContext, LLMToolCall, ToolInfo
 class ToolResultPromptBudgetTests(unittest.TestCase):
     """Ensure historical tool output remains cache-stable across rounds."""
 
-    def test_each_tool_result_uses_only_its_stable_per_result_limit(self) -> None:
-        """New results never rewrite an earlier provider-visible result."""
+    def test_tool_results_are_not_truncated_or_rewritten(self) -> None:
+        """Context reconstruction preserves a host-supplied result verbatim."""
         handler = ContextHandlerLinear(object(), max_context_threshold=10_000_000)
-        historical = "h" * 24_000
+        historical = "h" * 50_000
         handler.messages = [
             LLMContext(
                 role="assistant",
@@ -54,3 +54,4 @@ class ToolResultPromptBudgetTests(unittest.TestCase):
             "Historical tool result omitted" not in item["content"]
             for item in tool_messages[:-1]
         ))
+        self.assertEqual(historical, tool_messages[0]["content"])

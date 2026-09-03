@@ -5,7 +5,7 @@ Abstract:
     There should be a factory for the Agent.
 
 """
-from typing import Optional, List
+from typing import Optional, List, Callable
 from pathlib import Path
 
 from llmfetcher import Agent, LLMBackendConfig, LLMFetcher, Tool
@@ -26,6 +26,7 @@ def create_agent(
     default_max_tokens: int = 32768,
     enable_stop_turn: bool = False,
     default_stream: bool = True,
+    tool_result_transformer: Callable[[str, str, str], str] | None = None,
 ) -> Agent:
     """Build one configured Agent without assigning it to a session or run.
 
@@ -50,6 +51,8 @@ def create_agent(
             workflow needs a model-visible non-text terminal boundary.
         default_stream: Whether calls omitting ``stream`` should emit
             incremental lifecycle events while preserving final results.
+        tool_result_transformer: Optional Session-owned transformation that
+            persists large tool results before they enter model context.
     
     Returns:
         Fully configured but not yet executing Agent.
@@ -84,7 +87,8 @@ def create_agent(
         enable_stop_turn=enable_stop_turn,
         default_stream=default_stream,
         context_path=context_path,
-        context_handler=context_handler
+        context_handler=context_handler,
+        tool_result_transformer=tool_result_transformer,
     )
     # Tool ownership belongs to the Agent factory. Session ownership is
     # established later by SessionHandler.

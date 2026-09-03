@@ -41,11 +41,16 @@ class RuntimeToolProvider:
         """
         if role not in {"coordinator", "worker"}:
             return []
+        # Artifact inspection is an internal consequence of receiving a large
+        # tool result, not a project capability. It is always available to the
+        # same Session and never accepts host filesystem paths.
+        if session.artifacts is None:
+            raise RuntimeError("Session artifact storage is not configured")
+        tools = session.artifacts.tools()
         workspace = self._core.workspaces.get(session.execution.session_id) if session.execution else None
         project_path = workspace.project_path if workspace is not None else None
         if project_path is None:
-            return []
-        tools: list[Tool] = []
+            return tools
         if policy.allows("shell", "shell"):
             tools.extend(create_shell_tools(sandbox_cwd=str(project_path)))
         if policy.allows("file_discovery", "tlb_rag"):
