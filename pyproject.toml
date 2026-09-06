@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "angelus"
 dynamic = ["version"]
 description = "Local observable Agent control plane built on LLMFetcher"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
