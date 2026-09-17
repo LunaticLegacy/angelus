@@ -1,11 +1,18 @@
 """Regression tests for typed Session-console durability and controlled tools."""
 from __future__ import annotations
 
+import asyncio
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from angelus.api import include_api_routes, session_console
 from angelus.core import AngelusCore
 from angelus.modules.console_module import ConsoleDomainError, SessionConsoleTools, ToolPermissionPolicy
 from angelus.modules.tool_module import ToolPolicy
@@ -268,6 +275,79 @@ class SessionConsoleTests(unittest.TestCase):
             self.assertIn("persisted evidence", str(compact["text"]))
             self.assertEqual(12000, compact["request"]["max_tokens"])
             self.assertNotIn("draft only", str(metadata["metadata"]))
+
+
+async def _first_stream_chunk(response: object) -> str:
+    """Return only the first SSE chunk so a running stream can be inspected.
+
+    Args:
+        response: Streaming response whose body iterator emits one frame.
+
+    Returns:
+        The first decoded chunk, or an empty string for an empty stream.
+    """
+    async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+        return chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+    return ""
+
+
+class GraphEventStreamTests(unittest.TestCase):
+    """The run-graph SSE route must emit spec-framed real newlines.
+
+    A regression returned literal backslash-n sequences, so browsers never
+    dispatched any ``message`` event and live runs silently stopped updating.
+    """
+
+    def _core_with_completed_attempt(self, root: Path) -> AngelusCore:
+        """Build one Session whose terminal attempt has durable journal facts."""
+        (root / "project").mkdir()
+        core = AngelusCore(state_root=root / "state")
+        core.session_service.create("demo", "Demo", root / "project")
+        session = core.sessions.get("demo")
+        attempt = session.execution.start(lambda _control: None)
+        self.assertTrue(session.execution.wait(2))
+        attempt.journal.append("execution_started", {"message": "original request"})
+        attempt.journal.append(
+            "agent:failed", {"error": "bad schema"}, agent="worker", message="bad schema")
+        return core
+
+    def test_graph_events_sse_frames_use_real_newlines(self) -> None:
+        """Raw HTTP bytes are id/data frames separated by real blank lines."""
+        with TemporaryDirectory() as directory:
+            core = self._core_with_completed_attempt(Path(directory))
+            app = FastAPI()
+            include_api_routes(app, core)
+            with TestClient(app) as client:
+                response = client.get("/api/sessions/demo/graph/events?cursor=0")
+            self.assertEqual(200, response.status_code)
+            self.assertTrue(response.headers["content-type"].startswith("text/event-stream"))
+            body = response.content
+            self.assertEqual(body.count(b"\\n"), 0, "literal backslash-n leaked into the stream")
+            self.assertIn(b"\n", body)
+            frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame]
+            self.assertEqual(4, len(frames))
+            for index, frame in enumerate(frames, start=1):
+                lines = frame.split("\n")
+                self.assertEqual(f"id: {index}", lines[0])
+                self.assertTrue(lines[1].startswith("data: "))
+                payload = json.loads(lines[1][len("data: "):])
+                self.assertEqual("angelus.run-graph-event", payload["kind"])
+                self.assertEqual(index, payload["sequence"])
+
+    def test_keep_alive_frame_uses_real_newlines_while_running(self) -> None:
+        """An idle poll while the attempt runs emits a real newline keep-alive."""
+        status = SimpleNamespace(execution_id="run-1", state="running")
+        service = SimpleNamespace(
+            graph_events=lambda *_args, **_kwargs: {
+                "events": [], "next_cursor": 0, "has_more": False, "execution_id": "run-1"})
+        core = SimpleNamespace(
+            execution_service=SimpleNamespace(status=lambda _session_id: status),
+            console_service=service)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(angelus_core=core)))
+        with patch.object(session_console, "_service", lambda _request: service):
+            response = session_console.graph_events("demo", request, cursor=0, last_event_id=None)
+            chunk = asyncio.run(_first_stream_chunk(response))
+        self.assertEqual(": keep-alive\n\n", chunk)
 
 
 if __name__ == "__main__":

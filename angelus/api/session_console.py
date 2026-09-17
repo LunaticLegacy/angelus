@@ -145,14 +145,14 @@ def graph_events(session_id: str, request: Request, cursor: int = 0, execution_i
                 events = page["events"]
                 for event in events:
                     next_cursor = int(event["sequence"])
-                    yield f"id: {next_cursor}\\ndata: {json.dumps(event, ensure_ascii=False)}\\n\\n"
+                    yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                 core = getattr(request.app.state, "angelus_core")
                 status = core.execution_service.status(session_id)
                 selected = page.get("execution_id")
                 if execution_id is not None or selected != status.execution_id or str(status.state) not in {"running", "stopping", "force_stopping"}:
                     return
                 if not events:
-                    yield ": keep-alive\\n\\n"
+                    yield ": keep-alive\n\n"
                     time.sleep(0.25)
         except (KeyError, LookupError):
             return
