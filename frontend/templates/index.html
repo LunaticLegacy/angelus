@@ -123,7 +123,7 @@
 
       <section id="chat" class="chat"><button id="load-more-messages" class="load-more-messages" type="button" hidden>加载更早消息</button><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
 
-      <form id="composer" class="composer"><div class="composer-box"><div class="steer-hint" id="steer-hint" hidden><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><textarea id="message" placeholder="给 Agent 一个任务… （/ 开头为指令，/help 查看）" rows="1" required></textarea><div class="composer-meta"><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
+      <form id="composer" class="composer"><div class="composer-box"><div class="steer-hint" id="steer-hint" hidden><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><div id="image-previews" class="image-previews" hidden></div><textarea id="message" placeholder="给 Agent 一个任务… （/ 开头为指令，/help 查看）" rows="1"></textarea><p id="image-feedback" class="image-feedback" role="status" aria-live="polite" hidden></p><div class="composer-meta"><button id="attach-image" type="button" title="添加图片，也可粘贴或拖入">＋ 图片</button><input id="image-picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden /><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
     </main>
 
     <aside class="activity" aria-label="会话执行信息">

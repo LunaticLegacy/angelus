@@ -1,5 +1,6 @@
 import { $, escapeHtml } from "./dom.js";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown-renderer.js";
+import { attachmentImageUrl } from "./image-composer.js";
 
 /**
  * Create the transcript view for the Workbench chat panel.
@@ -11,7 +12,7 @@ import { createMarkdownStream, renderMarkdownInto } from "./markdown-renderer.js
  *   DOM rendering operations. They mutate only `#chat`; persistent state remains
  *   owned by the Workbench controller.
  */
-export function createChatView({ getAgentLabel }) {
+export function createChatView({ getAgentLabel, getSessionId = () => null }) {
   const followTolerancePixels = 8;
   let followsLatest = true;
 
@@ -317,6 +318,17 @@ export function createChatView({ getAgentLabel }) {
       else contentTarget.textContent = content;
     }
     const reasoningTarget = element.querySelector("[data-message-reasoning]");
+    if (Array.isArray(message.images) && message.images.length) {
+      const gallery = document.createElement("div"); gallery.className = "message-images";
+      for (const image of message.images) {
+        const url = attachmentImageUrl(getSessionId(), image); if (!url) continue;
+        const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+        const thumb = document.createElement("img"); thumb.src = url; thumb.alt = image.filename || "图片附件"; thumb.loading = "lazy";
+        thumb.addEventListener("error", () => { const missing=document.createElement("span"); missing.textContent=`图片不可用：${thumb.alt}`; thumb.replaceWith(missing); }, {once:true});
+        link.append(thumb); gallery.append(link);
+      }
+      element.append(gallery);
+    }
     if (reasoningTarget) renderMarkdownInto(reasoningTarget, reasoning);
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));

@@ -677,3 +677,13 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 .external-path-picker{display:flex;gap:8px}.external-path-picker input{min-width:0;flex:1}.external-path-picker button{flex:0 0 auto;border:1px solid #526991;border-radius:8px;background:#172945;color:inherit;padding:8px 12px;white-space:nowrap}.external-path-picker button:disabled{opacity:.55}
 .external-tutorial{width:min(680px,calc(100vw - 40px));max-height:min(720px,calc(100vh - 40px));overflow:auto;padding:0;border:1px solid #405b8b;border-radius:14px;background:#101b2e;color:var(--text,#e7eefc)}.external-tutorial::backdrop{background:rgba(3,4,7,.76);backdrop-filter:blur(4px)}.external-tutorial header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px;border-bottom:1px solid #293b5c}.external-tutorial h2{margin:.15rem 0}.external-tutorial header button{border:1px solid #526991;border-radius:8px;background:#172945;color:inherit;font-size:24px;line-height:1;padding:3px 9px}.external-tutorial ol{display:grid;gap:14px;margin:0;padding:24px 42px}.external-tutorial li{line-height:1.55}.external-tutorial>p{padding:0 24px 24px}.external-tutorial code{font-family:var(--mono,monospace)}
  .external-hub-context-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid rgba(72,91,122,.35)}.external-hub-context-row:last-child{border-bottom:0}.external-hub-context-preview{max-height:260px;overflow:auto;margin:4px 0 0;padding:10px;white-space:pre-wrap;word-break:break-word;border:1px solid var(--line);border-radius:7px;background:rgba(3,7,14,.75);color:var(--muted);font-size:11px;line-height:1.5}
+/* Native image drafts and durable transcript previews. */
+.image-previews, .message-images { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.image-previews[hidden] { display: none; }
+.composer-image { position: relative; display: inline-flex; }
+.composer-image img { width: 76px; height: 76px; object-fit: cover; border-radius: 8px; }
+.composer-image button { position: absolute; right: 0; top: 0; min-width: 24px; min-height: 24px; border-radius: 50%; color: white; background: #282833; border: 1px solid #aaa; cursor: pointer; }
+.image-feedback { margin: 6px 0; font-size: 12px; color: var(--text-muted, #999); }
+.message-images img { display: block; max-width: min(280px, 100%); max-height: 240px; object-fit: contain; border-radius: 8px; }
+.message-images a { min-width: 0; }
+#attach-image { border: 1px solid var(--border, #555); border-radius: 6px; padding: 3px 8px; color: inherit; background: transparent; cursor: pointer; }

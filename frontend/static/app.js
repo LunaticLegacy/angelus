@@ -1,6 +1,7 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=token-footer-inline-1";
+import { createChatView } from "./components/chat-view.js?v=native-vision-1";
+import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { createExternalAgentHubView } from "./components/external-agent-hub-view.js?v=context-exchange-1";
@@ -172,7 +173,18 @@ function updateModelSummary() { $("model-label").textContent=$("model").value.tr
 function selectedMemorySessions() { return [...new Set($("session-memory-sessions").value.split(",").map(value=>value.trim()).filter(value=>value && value !== sessionId))]; }
 /** Render searchable session choices and removable selections without exposing session content. */
 function renderMemorySessionPicker() { const options=$("session-memory-options"), selected=$("session-memory-selected"), search=$("session-memory-search"); if(!options || !selected || !search) return; const chosen=selectedMemorySessions(), query=search.value.trim().toLowerCase(); const candidates=availableSessions.filter(item=>item.id !== sessionId && (`${item.name} ${item.id}`).toLowerCase().includes(query)); selected.innerHTML=chosen.length ? chosen.map(id=>{const item=availableSessions.find(candidate=>candidate.id===id); return `<button type="button" class="memory-session-chip" data-memory-session="${escapeHtml(id)}">${escapeHtml(item?.name || id)} ×</button>`;}).join("") : '<span class="memory-session-empty">未授权其他会话</span>'; options.innerHTML=candidates.length ? candidates.map(item=>`<button type="button" class="memory-session-option ${chosen.includes(item.id)?"selected":""}" data-memory-session="${escapeHtml(item.id)}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.id)}</small></button>`).join("") : '<p class="memory-session-empty">没有匹配的会话</p>'; document.querySelectorAll("[data-memory-session]").forEach(button=>button.addEventListener("click",()=>{const id=button.dataset.memorySession; const next=chosen.includes(id) ? chosen.filter(value=>value!==id) : [...chosen,id]; $("session-memory-sessions").value=next.join(","); persistSettings(); renderMemorySessionPicker();})); }
-const chatView = createChatView({ getAgentLabel: () => selectedAgent });
+const imageComposer = createImageComposer({
+  input: $("message"), picker: $("image-picker"), button: $("attach-image"),
+  previews: $("image-previews"), feedback: $("image-feedback"), dropTarget: $("composer"),
+  isRunning: () => runActive, resize: resizeComposer,
+  upload: async (id, file) => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/attachments/images?filename=${encodeURIComponent(file.name)}`, {method:"POST", headers:{"Content-Type":file.type}, body:file});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "图片上传失败");
+    return payload;
+  },
+});
+const chatView = createChatView({ getAgentLabel: () => selectedAgent, getSessionId: () => sessionId });
 const traceView = createTraceView();
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
 function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??"", duration_ms:Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null})); }
@@ -220,7 +232,7 @@ async function apiPost(path, body={}) { const response=await fetch(path,{method:
 async function apiPut(path, body={}) { const response=await fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
-async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";imageComposer.setSession(sessionId);renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; imageComposer.setSession(sessionId); const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
 function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
 async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
@@ -667,17 +679,22 @@ async function loadOlderMessages() {
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
 async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if(source && sourceSessionId !== selected){source.close();source=null;sourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
 
-async function start(message) {
+async function start(message, images=[], targetSession=sessionId) {
   let runConfig;
-  try { runConfig=config(); } catch(error) { setStatus("MCP 配置无效", "error"); trace("MCP 配置无效", error.message); alert(error.message); return; }
+  try { runConfig=config(); } catch(error) { setStatus("MCP 配置无效", "error"); trace("MCP 配置无效", error.message); alert(error.message); return false; }
   // Show the submitted prompt immediately in every filter; the durable reload
   // after a result will replace this optimistic turn with canonical history.
-  sseCursor = 0; setRunning(true); runRetryCount = 0; setStatus("正在执行", "running"); appendMessage("user", message);
+  sseCursor = 0; runRetryCount = 0; setStatus("正在提交", "running");
   try {
-    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, message})});
+    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"}))})});
     const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
-    setWorkspaceIndicator(sessionId,"running"); await loadAgents(); connectRunGraphEvents();
-  } catch(error) { const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("请先设置连接器", message); setStatus("请求失败", "error"); setRunning(false); }
+    setWorkspaceIndicator(targetSession,"running");
+    if (targetSession === sessionId) {
+      setRunning(true); setStatus("正在执行", "running"); chatView.append({role:"user",content:message,images});
+      connectRunGraphEvents(); loadAgents().catch(error=>trace("Agent 列表刷新失败",error.message));
+    }
+    return true;
+  } catch(error) { if(targetSession === sessionId){ const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("发送失败，草稿已保留", message); setStatus("请求失败", "error"); setRunning(false); } return false; }
 }
 let compactStatusTimer=null;
 function showCompactStatus(text, state="running", dismissMs=0) {
@@ -831,7 +848,20 @@ function applyRunGraphEvent(event) { if(event?.kind!=="angelus.run-graph-event")
 function handleRunGraphEvent(event) { applyRunGraphEvent(event); scheduleGraphPlanReload(); if(event.type==="node.state_changed" && event.data?.to==="failed") appendRunErrorBlock(`Agent ${event.node_id||"未知"} 运行失败`,String(event.data?.error||event.data?.message||"未知错误")); if(event.type==="run.state_changed" && ["completed","failed","stopped","interrupted"].includes(event.data?.to)){ loadHistory().catch(error=>trace("会话历史刷新失败",error.message)); loadTrace(true).catch(error=>trace("Trace 刷新失败",error.message)); setWorkspaceIndicator(sessionId,event.data.to==="failed"?"error":"done"); finish(); } }
 function connectRunGraphEvents() { source?.close(); const eventSource=new EventSource(graphEventsUrl(sseCursor)); source=eventSource; sourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==sourceSessionId)return; const event=JSON.parse(message.data); const cursor=Number(event.sequence||message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)sseCursor=cursor; handleRunGraphEvent(event); }; eventSource.onerror=()=>{ if(source!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED){ if(!runActive) finish(); return; } if(sseStatusCheckPending)return; sseStatusCheckPending=true; apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`).then(state=>{ if(source!==eventSource)return; if(["running","stopping","force_stopping"].includes(state.state))setStatus("执行图连接中断，正在重连…","running");else finish(); }).catch(()=>{if(source===eventSource)setStatus("执行图连接中断，正在重连…","running");}).finally(()=>{sseStatusCheckPending=false;}); }; }
 async function restoreRunState() { if(!hasSelectedSession()) return; try { const graph=await apiJson(graphUrl()); if(graph?.kind==="angelus.run-graph") currentRunGraph=graph; if(["running","stopping","force_stopping"].includes(currentRunGraph.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunGraphEvents(); return; } if(["failed","interrupted"].includes(currentRunGraph.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",currentRunGraph.error||""); } else if(currentRunGraph.state === "completed") setStatus("已完成"); else if(currentRunGraph.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
-$("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; if(runActive){ sendSteer(message).then(()=>{$("message").value="";resizeComposer();}).catch(error=>setSteerStatus(`发送失败：${error.message}`,"error")); return; } $("message").value=""; resizeComposer(); const parsed=parseSlashCommand(message); if(parsed){ dispatchSlashCommand(parsed); return; } start(message);});
+$("composer").addEventListener("submit", async event=>{
+  event.preventDefault();
+  const snapshot=imageComposer.beginSend(); if(!snapshot)return;
+  let accepted=false;
+  try {
+    if(runActive){ await sendSteer(snapshot.message); accepted=true; }
+    else {
+      const parsed=snapshot.images.length ? null : parseSlashCommand(snapshot.message);
+      if(parsed){ dispatchSlashCommand(parsed); accepted=true; }
+      else accepted=await start(snapshot.message,snapshot.images,snapshot.sessionId);
+    }
+  } catch(error){ if(snapshot.sessionId===sessionId)setSteerStatus(`发送失败：${error.message}`,"error"); }
+  finally { imageComposer.finishSend(snapshot,accepted); }
+});
 $("message").addEventListener("keydown", (event)=>{
   // Plain Enter submits; Shift/Alt+Enter insert a newline in the textarea.
   if(event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return;
