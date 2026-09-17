@@ -37,14 +37,8 @@ class RunGraphProjector:
             error=_string(manifest.get("error")),
             stop_reason=_string(_mapping(manifest.get("stop_request")).get("reason")),
         )
-        if manifest.get("checkpoint") and isinstance(manifest["checkpoint"], Mapping):
-            graph.checkpoint = dict(manifest["checkpoint"])
-            checkpoint_run_graph = self._checkpoint_payload(attempt_root, manifest["checkpoint"], "run_graph")
-            if checkpoint_run_graph:
-                apply_run_graph_snapshot(graph, checkpoint_run_graph)
         if attempt_root:
-            for cursor, event in enumerate(self._events(attempt_root / "execution.events.ndjson"), start=1):
-                apply_journal_event(graph, event, cursor=cursor)
+            self._replay(graph, attempt_root, manifest)
         if live_snapshot is not None:
             apply_live_snapshot(graph, live_snapshot)
         if live_status is not None:
@@ -55,6 +49,42 @@ class RunGraphProjector:
             graph.execution_id = _string(live_status.get("execution_id")) or graph.execution_id
             graph.attempt = _int(live_status.get("attempt")) or graph.attempt
         return graph.to_json()
+
+    def _replay(self, graph: RunGraph, attempt_root: Path, manifest: Mapping[str, Any]) -> None:
+        """Reduce a checkpoint snapshot plus only the un-checkpointed journal tail.
+
+        A committed ``run_graph`` checkpoint carries the ``event_cursor`` of the
+        last journal fact folded into the snapshot.  We seed the graph from that
+        snapshot, then skip exactly that many valid journal lines and reduce
+        only the tail, so replay is bounded by the facts written since the last
+        checkpoint instead of the whole journal.  The checkpoint's byte
+        ``event_offset`` is deliberately not used for seeking: events appended
+        between the snapshot cursor and the commit line would otherwise be
+        silently skipped, under-counting the cursor and missing node activity.
+        """
+        checkpoint = _mapping(manifest.get("checkpoint"))
+        if checkpoint:
+            graph.checkpoint = dict(checkpoint)
+        cursor, skip = self._replay_prefix(graph, attempt_root, manifest)
+        for event in self._events(attempt_root / "execution.events.ndjson", skip_lines=skip):
+            cursor += 1
+            apply_journal_event(graph, event, cursor=cursor)
+
+    def _replay_prefix(self, graph: RunGraph, attempt_root: Path, manifest: Mapping[str, Any]) -> tuple[int, int]:
+        """Seed ``graph`` from the checkpoint and return ``(cursor, skip)``.
+
+        ``skip`` is the number of valid journal lines already folded into the
+        checkpoint snapshot; the caller must skip exactly this many leading
+        events before reducing the tail so every fact is applied exactly once.
+        Both values are zero when the manifest has no usable checkpoint.
+        """
+        checkpoint = _mapping(manifest.get("checkpoint"))
+        payload = self._checkpoint_payload(attempt_root, checkpoint, "run_graph") if checkpoint else None
+        if not payload:
+            return 0, 0
+        apply_run_graph_snapshot(graph, payload)
+        resume_cursor = graph.event_cursor
+        return resume_cursor, resume_cursor
 
     def recovery_checkpoint(self, execution_root: Path, execution_id: str | None = None) -> dict[str, object]:
         """Read one verified recovery checkpoint without materializing a swarm.
@@ -113,21 +143,33 @@ class RunGraphProjector:
         start = max(0, cursor)
         page: list[dict[str, object]] = []
         maximum = max(1, min(limit, 500))
-        journal = list(self._events(attempt_root / "execution.events.ndjson"))
-        for sequence, event in enumerate(journal, start=1):
+        # Only resume from the checkpoint when the caller already consumed every
+        # fact up to it; otherwise the page must replay from the file start so
+        # early events stay observable.
+        cursor_at, skip = self._replay_prefix(graph, attempt_root, manifest)
+        if cursor_at and start < cursor_at:
+            # The caller still needs facts from before the checkpoint, so replay
+            # the whole file rather than resuming mid-stream.
+            graph = RunGraph(session_id=session_id, execution_id=execution, attempt=_int(manifest.get("attempt")))
+            cursor_at, skip = 0, 0
+        sequence = cursor_at
+        has_more = False
+        for event in self._events(attempt_root / "execution.events.ndjson", skip_lines=skip):
+            if len(page) >= maximum:
+                has_more = True
+                break
             previous_run_state = graph.state
             agent = _string(event.get("agent")) or _string(_mapping(event.get("data")).get("agent"))
             previous_node_state = graph.nodes.get(agent).state if agent and agent in graph.nodes else None
+            sequence += 1
             apply_journal_event(graph, event, cursor=sequence)
             if sequence <= start:
                 continue
             page.append(_run_graph_event(graph, event, sequence, previous_run_state, previous_node_state))
-            if len(page) >= maximum:
-                break
         return {
             "events": page,
             "next_cursor": start + len(page),
-            "has_more": len(journal) > start + len(page),
+            "has_more": has_more,
             "execution_id": execution,
         }
 
@@ -160,13 +202,31 @@ class RunGraphProjector:
         return value if isinstance(value, Mapping) else None
 
     @staticmethod
-    def _events(path: Path):
+    def _events(path: Path, skip_lines: int = 0):
+        """Yield JSON object lines in commit order, skipping the checkpointed prefix.
+
+        ``skip_lines`` counts leading records already folded into a checkpoint.
+        Those lines are discarded by raw byte-line count without JSON parsing so
+        a bounded tail replay never pays for the checkpointed prefix (the
+        dominant cost on multi-megabyte journals).  The append-only journal only
+        ever leaves a partial line at the tail after a crash, so prefix records
+        are always complete; the tail is still parsed defensively and corrupt
+        lines are skipped.
+        """
         try:
-            with path.open(encoding="utf-8") as handle:
+            with path.open("rb") as handle:
+                remaining = skip_lines
+                if remaining > 0:
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        remaining -= 1
+                        if remaining <= 0:
+                            break
                 for line in handle:
                     try:
                         value = json.loads(line)
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, UnicodeDecodeError):
                         continue
                     if isinstance(value, Mapping):
                         yield value

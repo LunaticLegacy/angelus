@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,6 +26,12 @@ class ConsoleProjectionService:
             core: Process composition root that owns every Session aggregate.
         """
         self._core = core
+        # Non-authoritative, byte-size-keyed journal caches.  The durable
+        # file stays the source of truth; a new committed size invalidates.
+        self._steering_cache: OrderedDict[tuple[str, int, str], list[dict[str, object]]] = OrderedDict()
+        self._steering_state: tuple[str, str, dict[str, Any]] | None = None
+        self._steering_lock = threading.RLock()
+        self._STEERING_CACHE_LIMIT = 8
 
     def _session(self, session_id: str):
         """Resolve a Session or translate its absence into a domain lookup."""
@@ -171,13 +179,22 @@ class ConsoleProjectionService:
             Events plus pagination cursor and durable offset.
         """
         session=self._session(session_id); attempt=session.execution.attempt if session.execution else None
-        raw=list(attempt.journal.events()) if attempt else []
-        events=[]
-        for item in raw:
+        start=max(0, cursor); maximum=max(1,min(limit,500))
+        if attempt is None:
+            return {"events": [], "next_cursor": None, "has_more": False, "durable_offset": 0}
+        # Stream the append-only file and stop once the page is full plus one
+        # look-ahead fact, so a page never materializes the whole journal.
+        page=[]; has_more=False
+        for index, item in enumerate(attempt.journal.events()):
+            if index < start:
+                continue
+            if len(page) >= maximum:
+                has_more=True
+                break
             data=item.get("data") or {}
-            events.append({**item, "event": "lifecycle", "agent": item.get("agent") or data.get("agent", ""), "message": item.get("message") or data.get("message", ""), "usage": item.get("usage") or data.get("usage", {})})
-        start=max(0, cursor); page=events[start:start+max(1,min(limit,500))]; next_cursor=start+len(page)
-        return {"events": page, "next_cursor": next_cursor if next_cursor < len(events) else None, "has_more": next_cursor < len(events), "durable_offset": page[-1].get("offset", 0) if page else 0}
+            page.append({**item, "event": "lifecycle", "agent": item.get("agent") or data.get("agent", ""), "message": item.get("message") or data.get("message", ""), "usage": item.get("usage") or data.get("usage", {})})
+        next_cursor=start+len(page)
+        return {"events": page, "next_cursor": next_cursor if has_more else None, "has_more": has_more, "durable_offset": page[-1].get("offset", 0) if page else 0}
 
     def _rebuild_after_edit(self, session_id: str) -> dict[str, object]:
         """Rebuild the concrete swarm after a persisted static graph change.
@@ -394,44 +411,124 @@ class ConsoleProjectionService:
         attempt = session.execution.attempt if session.execution else None
         if attempt is None:
             return []
-        records: dict[str, dict[str, object]] = {}
-        for event in attempt.journal.events():
-            data = event.get("data")
-            if not isinstance(data, dict):
-                continue
-            if event.get("type") == "agent:control" and data.get("action") == "steer":
-                steer_id = data.get("steer_id")
-                targets = data.get("target_agents")
-                if not isinstance(steer_id, str) or not isinstance(targets, list):
-                    continue
-                recipients = [target for target in targets if isinstance(target, str)]
-                records[steer_id] = {
-                    "id": steer_id,
-                    "text": str(event.get("message") or ""),
-                    "scope": data.get("agent_id") if isinstance(data.get("agent_id"), str) else "all",
-                    "recipients": recipients,
-                    "applied_agents": [],
-                    "submitted_at": event.get("timestamp"),
-                }
-            elif event.get("type") == "agent:steer_applied":
-                agent = event.get("agent")
-                steer_ids = data.get("steer_ids")
-                if not isinstance(agent, str) or not isinstance(steer_ids, list):
-                    continue
-                for steer_id in steer_ids:
-                    record = records.get(steer_id)
-                    if record is None:
+        records = self._cached_steering(attempt)
+        if name in {None, "", "all"}:
+            return records
+        return [record for record in records if name in record["recipients"]]
+
+    def _journal_signature(self, attempt: object) -> tuple[str, int, str] | None:
+        """Return the (path, committed byte size, execution id) cache key."""
+        path = getattr(getattr(attempt, "journal", None), "path", None)
+        if path is None:
+            return None
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            return None
+        return (str(path), size, str(getattr(attempt, "execution_id", "")))
+
+    def _cached_steering(self, attempt: object) -> list[dict[str, object]]:
+        """Reduce steering records once per journal state, appending only new lines.
+
+        The append-only journal remains the source of truth.  The cache key is
+        the journal path plus its committed byte size, so the running swarm (or
+        any out-of-process writer) transparently invalidates it.  A prefix state
+        is reused only while the path and execution identity are unchanged, so a
+        rotated or recreated file can never mix into a stale cursor.
+        """
+        signature = self._journal_signature(attempt)
+        if signature is None:
+            records: dict[str, dict[str, object]] = {}
+            for event in attempt.journal.events():
+                self._reduce_steering_event(records, event)
+            return self._steering_records(records)
+        path, size, execution = signature
+        with self._steering_lock:
+            cached = self._steering_cache.get(signature)
+            if cached is not None:
+                self._steering_cache.move_to_end(signature)
+                return cached
+            previous = self._steering_state
+            if previous is not None and previous[0] == path and previous[1] == execution:
+                state = previous[2]
+            else:
+                state = {"records": {}, "cursor": 0}
+            if size < state["cursor"]:
+                # The append-only file shrank (for example a rotation or an
+                # out-of-band rewrite), so the cached prefix no longer matches
+                # the durable bytes; discard it and re-read from the start.
+                state = {"records": {}, "cursor": 0}
+            if size > state["cursor"]:
+                with open(path, "rb") as handle:
+                    handle.seek(state["cursor"])
+                    chunk = handle.read(size - state["cursor"])
+                for line in chunk.split(b"\n"):
+                    if not line:
                         continue
-                    applied = record["applied_agents"]
-                    if isinstance(applied, list) and agent not in applied:
-                        applied.append(agent)
-        selected = []
-        for record in records.values():
-            recipients = record["recipients"]
-            if name not in {None, "", "all"} and (not isinstance(recipients, list) or name not in recipients):
-                continue
-            selected.append(record)
-        return sorted(selected, key=lambda item: float(item.get("submitted_at") or 0))
+                    try:
+                        event = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if isinstance(event, dict):
+                        self._reduce_steering_event(state["records"], event)
+                state["cursor"] = size
+            records = self._steering_records(state["records"])
+            self._steering_state = (path, execution, state)
+            self._steering_cache[signature] = records
+            self._steering_cache.move_to_end(signature)
+            while len(self._steering_cache) > self._STEERING_CACHE_LIMIT:
+                self._steering_cache.popitem(last=False)
+            return records
+
+    @staticmethod
+    def _reduce_steering_event(records: dict[str, dict[str, object]], event: dict[str, object]) -> None:
+        """Fold one journal fact into the durable steering record map."""
+        data = event.get("data")
+        if not isinstance(data, dict):
+            return
+        if event.get("type") == "agent:control" and data.get("action") == "steer":
+            steer_id = data.get("steer_id")
+            targets = data.get("target_agents")
+            if not isinstance(steer_id, str) or not isinstance(targets, list):
+                return
+            records[steer_id] = {
+                "id": steer_id,
+                "text": str(event.get("message") or ""),
+                "scope": data.get("agent_id") if isinstance(data.get("agent_id"), str) else "all",
+                "recipients": [target for target in targets if isinstance(target, str)],
+                "applied_agents": [],
+                "submitted_at": event.get("timestamp"),
+            }
+        elif event.get("type") == "agent:steer_applied":
+            agent = event.get("agent")
+            steer_ids = data.get("steer_ids")
+            if not isinstance(agent, str) or not isinstance(steer_ids, list):
+                return
+            for steer_id in steer_ids:
+                record = records.get(steer_id)
+                if record is None:
+                    continue
+                applied = record["applied_agents"]
+                if isinstance(applied, list) and agent not in applied:
+                    applied.append(agent)
+
+    @staticmethod
+    def _steering_records(records: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+        """Return ordered copies so cached records are never mutated by callers."""
+        values = [
+            {
+                "id": record["id"],
+                "text": record["text"],
+                "scope": record["scope"],
+                "recipients": list(record["recipients"]),  # type: ignore[arg-type]
+                "applied_agents": list(record["applied_agents"]),  # type: ignore[arg-type]
+                "submitted_at": record["submitted_at"],
+            }
+            for record in records.values()
+        ]
+        values.sort(key=lambda item: float(item.get("submitted_at") or 0))
+        return values
+
     def context_graph(self, session_id: str, name: str) -> dict[str, object]:
         """Return the actual GraphContextHandler entity graph projection.
 

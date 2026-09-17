@@ -45,6 +45,8 @@ let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-p
 let traceBefore = null;
 let messagesBefore = null;
 let messageLoadPending = false;
+/** Initial/older chat page size; the server caps /messages limit at 200. */
+const MESSAGES_PAGE_SIZE = 60;
 let historyGeneration = 0;
 let traceEvents = [];
 // Newest lifecycle/error event per Agent id, kept in sync with traceEvents so
@@ -75,6 +77,7 @@ let selectedPluginKey = "";
 let mcpServersState = [];
 let mcpBindingsState = [];
 let contextDialogAgent = "";
+const contextDialogLoaded = new Set();
 
 const KIMI_CODE_PROVIDER = "kimi-code";
 const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
@@ -282,7 +285,7 @@ async function saveMcpBinding(serverId) { const roles=[];if($("mcp-role-coordina
 async function saveMcpServer(event) { event.preventDefault();const id=$("mcp-server-id").value;const payload={name:value("mcp-name"),transport:value("mcp-transport"),command:value("mcp-command"),args:$("mcp-args").value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),cwd:value("mcp-cwd"),url:value("mcp-url"),headers:mcpKeyValues("mcp-headers"),env:mcpKeyValues("mcp-env"),auth_type:value("mcp-auth-type"),bearer_token:$("mcp-bearer").value,oauth_authorize_url:value("mcp-oauth-authorize-url"),oauth_token_url:value("mcp-oauth-token-url"),oauth_client_id:value("mcp-oauth-client-id"),oauth_client_secret:$("mcp-oauth-client-secret").value,oauth_scopes:value("mcp-oauth-scopes")};const response=await fetch(id?`/api/mcp/servers/${id}`:"/api/mcp/servers",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const server=await response.json().catch(()=>({}));if(!response.ok)throw new Error(server.detail||response.statusText);await saveMcpBinding(server.id);await loadMcpConsole();selectMcpServer(server.id);setMcpFeedback(`${server.name} 已安全保存。`,"success"); }
 function sessionApi(path, selectedSession=sessionId) { if(!selectedSession) throw new Error("尚未选择会话"); return `/api/sessions/${encodeURIComponent(selectedSession)}${path}`; }
 function planUrl() { return selectedPlanAgent === "coordinator" ? sessionApi("/plan") : `${sessionApi("/plan")}?agent=${encodeURIComponent(selectedPlanAgent)}`; }
-function messagesUrl(before=null, selectedSession=sessionId, agent=selectedAgent) { const params=new URLSearchParams({agent,limit:"200"}); if(before!=null) params.set("before",String(before)); return `${sessionApi("/messages",selectedSession)}?${params.toString()}`; }
+function messagesUrl(before=null, selectedSession=sessionId, agent=selectedAgent, limit=MESSAGES_PAGE_SIZE) { const params=new URLSearchParams({agent,limit:String(limit)}); if(before!=null) params.set("before",String(before)); return `${sessionApi("/messages",selectedSession)}?${params.toString()}`; }
 function graphUrl() { return sessionApi("/graph"); }
 function graphEventsUrl(cursor=0) { const params=new URLSearchParams({cursor:String(cursor)}); return `${sessionApi("/graph/events")}?${params}`; }
 function workflowUrl() { return sessionApi("/workflow"); }
@@ -435,29 +438,35 @@ function renderCompactionInput(payload) {
 /** Fetch the exact compaction input the compactor would send for one Agent. */
 async function loadCompactionInput(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/compaction-input`));renderCompactionInput(payload); }
 /**
- * Open the Agent context inspector and request each independent panel in parallel.
+ * Hydrate one context-dialog tab on demand, once per dialog opening.
+ *
+ * The graph, prompt, and compaction payloads each rehydrate a full Agent
+ * context server-side, so they are fetched lazily only when the matching tab
+ * becomes active instead of all three in parallel on open.
  *
  * Args:
- *   agentId: Stable identifier of the Agent whose context is inspected.
+ *   tab: Requested graph, prompt, or compaction tab identifier.
  *
  * Returns:
- *   Promise that resolves after each available panel has rendered its own data or error.
+ *   None.
  */
+function ensureContextDialogTab(tab) {
+  const agentId=contextDialogAgent;
+  if(!agentId||contextDialogLoaded.has(tab))return;
+  contextDialogLoaded.add(tab);
+  if(tab==="graph") apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)).then(renderContextGraph).catch(error=>{ if(contextDialogAgent===agentId) $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; });
+  else if(tab==="prompt") loadContextPrompt(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-prompt-preview").textContent=error.message; $("context-prompt-status").textContent="读取失败"; } });
+  else if(tab==="compaction") loadCompactionInput(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-compaction-preview").textContent=error.message; $("context-compaction-status").textContent="读取失败"; } });
+}
 async function openAgentContextInspector(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   contextDialogAgent=agentId;
+  contextDialogLoaded.clear();
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
-  selectContextDialogTab("graph");$("context-preview-message").value=$("message").value;$("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
+  $("context-preview-message").value=$("message").value;$("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
   if(!dialog.open) dialog.showModal();
-  const [graph,prompt,compaction]=await Promise.allSettled([
-    apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)),
-    loadContextPrompt(agentId),
-    loadCompactionInput(agentId),
-  ]);
-  if(graph.status==="fulfilled") renderContextGraph(graph.value);
-  else $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(graph.reason.message)}</p>`;
-  if(prompt.status==="rejected") { $("context-prompt-preview").textContent=prompt.reason.message; $("context-prompt-status").textContent="读取失败"; }
-  if(compaction.status==="rejected") { $("context-compaction-preview").textContent=compaction.reason.message; $("context-compaction-status").textContent="读取失败"; }
+  selectContextDialogTab("graph");
+  ensureContextDialogTab("graph");
 }
 function hasSelectedSession() { return Boolean(sessionId); }
 function renderInspectorEmpty(message) { const target=$("trace"); if(target) target.innerHTML=`<p class="empty">${escapeHtml(message)}</p>`; }
@@ -872,8 +881,8 @@ $("message").addEventListener("input", resizeComposer);
 $("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",()=>{applyProviderPreset(); updateModelSummary();});
 $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
-$("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
-document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
+$("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";contextDialogLoaded.clear();$("context-graph-dialog").close();});
+document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>{const tab=button.dataset.contextDialogTab;selectContextDialogTab(tab);ensureContextDialogTab(tab);}));
 $("refresh-context-preview").addEventListener("click",()=>{if(contextDialogAgent)loadContextPrompt(contextDialogAgent).catch(error=>trace("下一次请求预览加载失败",error.message));});
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 /** Ask the loopback backend to show the host operating system's folder picker. */
