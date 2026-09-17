@@ -1,10 +1,10 @@
 {
   "name": "token-burner",
   "display_name": "Token Burner 🔥",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "api_version": "1",
   "kind": "ui",
-  "description": "把 Angelus 的 token 消耗速率可视化成一团更自然的动态火焰：多层不对称焰体、侧舌、白热核心、地面光晕、余烬与火星会随 burn rate 平滑变化。独立浮动小窗口，也可弹出脱离主界面的独立窗口。纯前端、只读 session usage。",
+  "description": "DSH-inspired ambient token telemetry for Angelus. The floating flame follows the selected Session's authoritative usage projection and turns settled token deltas into a decaying visual burn rate. Frontend-only; no Python entrypoint and no model/tool calls.",
   "permissions": [],
   "frontend": {
     "assets": [
@@ -12,6 +12,56 @@
       "plugin.css",
       "window.html"
     ],
-    "settings": false
-  }
+    "settings": true
+  },
+  "settings_schema": [
+    {
+      "key": "poll_ms",
+      "type": "integer",
+      "title": "Telemetry sample interval (ms)",
+      "description": "How often the plugin refreshes Session usage and run state. This is a projection refresh, not a model request.",
+      "default": 1200,
+      "minimum": 500,
+      "maximum": 5000
+    },
+    {
+      "key": "decay_ms",
+      "type": "integer",
+      "title": "Flame decay (ms)",
+      "description": "How long a settled token burst remains visible before fading.",
+      "default": 1750,
+      "minimum": 500,
+      "maximum": 10000
+    },
+    {
+      "key": "rate_scale",
+      "type": "number",
+      "title": "Full-flame reference rate",
+      "description": "Visual reference tok/s used by the logarithmic intensity mapping. It does not alter usage accounting.",
+      "default": 2600,
+      "minimum": 50,
+      "maximum": 20000
+    },
+    {
+      "key": "show_total",
+      "type": "boolean",
+      "title": "Show cumulative tokens",
+      "description": "Display the selected Session's authoritative cumulative total.",
+      "default": true
+    },
+    {
+      "key": "show_peak",
+      "type": "boolean",
+      "title": "Show peak burn rate",
+      "description": "Display the largest visual burn-rate impulse observed since the current Session was selected.",
+      "default": true
+    },
+    {
+      "key": "idle_flame",
+      "type": "boolean",
+      "title": "Keep a pilot flame while running",
+      "description": "Keep a small flame visible while a run is active even between settled token updates.",
+      "default": true
+    }
+  ]
 }
