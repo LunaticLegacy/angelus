@@ -44,3 +44,33 @@ class PagedContextStorageTests(unittest.TestCase):
             self.assertEqual([1, 2, 3, 4, 5], [entry.timeline for entry in oldest])
             self.assertIsNone(cursor)
 
+    def test_history_page_includes_compacted_archive_but_agent_load_does_not(self) -> None:
+        """Archived rounds remain pageable without becoming active context."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "context.json"
+            writer = ContextHandlerLinear(_NoopCompactor())
+            for number in range(205):
+                writer.add_user_message(f"message-{number}")
+            self.assertTrue(writer.save(path))
+
+            writer.archive.extend(writer.messages)
+            writer.messages.clear()
+            self.assertTrue(writer.save(path))
+
+            active, cursor, total = read_persisted_context_page(path)
+            self.assertEqual(([], None, 0), (active, cursor, total))
+            newest, cursor, total = read_persisted_context_page(path, include_archive=True)
+            self.assertEqual(205, total)
+            self.assertEqual(200, len(newest))
+            self.assertEqual(6, newest[0].timeline)
+            self.assertEqual(205, newest[-1].timeline)
+            oldest, cursor, total = read_persisted_context_page(
+                path, before_timeline=cursor, include_archive=True,
+            )
+            self.assertEqual(205, total)
+            self.assertEqual([1, 2, 3, 4, 5], [entry.timeline for entry in oldest])
+            self.assertIsNone(cursor)
+
+            reader = ContextHandlerLinear(_NoopCompactor())
+            self.assertTrue(reader.load(path))
+            self.assertEqual([], reader.messages)
