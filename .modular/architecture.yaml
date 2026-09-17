@@ -1,0 +1,26 @@
+version: 2
+modules:
+  console_module: {owns: [nested_agent_plans, task_status_invariants]}
+  mcp_module: {owns: [server_registry, credentials, bindings, sdk_transports]}
+  context_version_module: {owns: [revisions, edits, audit]}
+  session_memory_module: {owns: [snapshots, handoffs, artifact_copies, access_checks]}
+  tool_module: {owns: [catalog, agent_scoped_materialization]}
+  api: {owns: [http_validation, public_projection]}
+  frontend: {owns: [configuration_interaction]}
+  settings_module: {owns: [future_run_profile, request_timeout_validation]}
+  llmfetcher: {owns: [provider_dispatch, timeout_enforcement, retry_classification]}
+allowed_edges:
+  - tool_module -> capability_modules
+  - api -> application_services
+  - application_services -> capability_modules
+  - frontend -> api
+  - api -> settings_module
+  - application_services -> llmfetcher
+forbidden_edges:
+  - frontend -> mcp_sdk
+  - api -> credential_files
+  - context_version_module -> another_agent_context
+  - session_memory_module -> implicit_context_injection
+  - settings_module -> provider_sdk
+  - frontend -> provider_sdk
+validation: PASS

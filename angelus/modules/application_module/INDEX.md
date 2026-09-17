@@ -26,6 +26,8 @@ or terminal presentation logic.
 Coordinator, workers, and detached request-preview Agents receive the same
 effective compaction-output budget, so the inspector displays the exact value
 that a future compactor request would use.
+They also receive the same effective `request_timeout_seconds`; changing it
+changes coordinator identity and therefore applies on the next materialization.
 
 ## Class Map
 
@@ -42,33 +44,34 @@ that a future compactor request would use.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [agent_control.py](agent_control.py#L24) | `_CombinedForceEvent.is_set` | `None` | `bool` | Return whether either force-stop source is active. |
-| [agent_control.py](agent_control.py#L32) | `_CombinedForceEvent.wait` | `timeout: float \| None` | `bool` | Wait briefly for either force-stop source. |
-| [agent_control.py](agent_control.py#L71) | `AgentControlView.should_stop` | `None` | `bool` | Return whether global or local cooperative stop is requested. |
-| [agent_control.py](agent_control.py#L80) | `AgentControlView.stop_request` | `None` | `StopRequest \| None` | Return the effective global-or-local stop request for this Agent. |
-| [agent_control.py](agent_control.py#L98) | `AgentControlView.drain_steers` | `None` | `list[str]` | Return targeted and broadcast steering messages in FIFO order. |
-| [agent_control.py](agent_control.py#L106) | `AgentControlView.steer` | `message: str` | `None` | Queue one Agent-specific steering message. |
-| [agent_control.py](agent_control.py#L114) | `AgentControlView.request_stop` | `force: bool, reason: str` | `None` | Request a local cooperative or forceful stop. |
-| [agent_control.py](agent_control.py#L123) | `AgentControlView.register_force_canceller` | `cancel: Callable[[StopRequest], None]` | `Callable[[], None]` | Register a resource canceller with both global and local scope. |
-| [agent_control.py](agent_control.py#L157) | `SessionRunControl.for_agent` | `agent_id: str` | `AgentControlView` | Return the persistent local control view for one Agent. |
-| [agent_control.py](agent_control.py#L174) | `SessionRunControl.should_stop` | `agent_id: str` | `bool` | Return the stop state used by AgentSwarm scheduling. |
-| [agent_control.py](agent_control.py#L187) | `SessionRunControl.steer` | `agent_id: str, message: str` | `tuple[str, ...]` | Queue steering for all Agents or one existing Agent. |
-| [agent_control.py](agent_control.py#L211) | `SessionRunControl.stop` | `agent_id: str, force: bool, reason: str` | `tuple[str, ...]` | Request stop for all Agents or one active Agent. |
-| [agent_control.py](agent_control.py#L235) | `SessionRunControl._drain_broadcast` | `agent_id: str` | `list[str]` | Return unseen broadcast steering messages for one Agent. |
-| [execution_service.py](execution_service.py#L32) | `_remove_journal_hook` | `swarm: object, hook: object` | `None` | Best-effort remove an attempt-local hook across supported swarm builds. |
-| [execution_service.py](execution_service.py#L82) | `ExecutionService.start` | `session_id: str, message: str` | `ExecutionSnapshot` | Start the configured Session AgentSwarm under a fresh attempt. |
-| [execution_service.py](execution_service.py#L169) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
-| [execution_service.py](execution_service.py#L182) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
-| [execution_service.py](execution_service.py#L194) | `ExecutionService.control` | `session_id: str, agent_id: str, action: str, message: str, reason: str` | `AgentControlReceipt` | Route one typed browser command to all or one active Agent. |
-| [execution_service.py](execution_service.py#L246) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
-| [execution_service.py](execution_service.py#L260) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
+| [agent_control.py](agent_control.py#L15) | `SteeringInstruction.__new__` | `message: str, steer_id: str` | `'SteeringInstruction'` | Implement `SteeringInstruction.__new__`. |
+| [agent_control.py](agent_control.py#L42) | `_CombinedForceEvent.is_set` | `None` | `bool` | Return whether either force-stop source is active. |
+| [agent_control.py](agent_control.py#L50) | `_CombinedForceEvent.wait` | `timeout: float \| None` | `bool` | Wait briefly for either force-stop source. |
+| [agent_control.py](agent_control.py#L89) | `AgentControlView.should_stop` | `None` | `bool` | Return whether global or local cooperative stop is requested. |
+| [agent_control.py](agent_control.py#L98) | `AgentControlView.stop_request` | `None` | `StopRequest \| None` | Return the effective global-or-local stop request for this Agent. |
+| [agent_control.py](agent_control.py#L116) | `AgentControlView.drain_steers` | `None` | `list[str]` | Return pending steering messages in FIFO order. |
+| [agent_control.py](agent_control.py#L124) | `AgentControlView.steer` | `message: str, steer_id: str` | `None` | Queue one Agent-specific steering message. |
+| [agent_control.py](agent_control.py#L132) | `AgentControlView.request_stop` | `force: bool, reason: str` | `None` | Request a local cooperative or forceful stop. |
+| [agent_control.py](agent_control.py#L141) | `AgentControlView.register_force_canceller` | `cancel: Callable[[StopRequest], None]` | `Callable[[], None]` | Register a resource canceller with both global and local scope. |
+| [agent_control.py](agent_control.py#L173) | `SessionRunControl.for_agent` | `agent_id: str` | `AgentControlView` | Return the persistent local control view for one Agent. |
+| [agent_control.py](agent_control.py#L189) | `SessionRunControl.should_stop` | `agent_id: str` | `bool` | Return the stop state used by AgentSwarm scheduling. |
+| [agent_control.py](agent_control.py#L202) | `SessionRunControl.steer` | `agent_id: str, message: str` | `SteeringSubmission` | Queue steering for all Agents or one existing Agent. |
+| [agent_control.py](agent_control.py#L230) | `SessionRunControl.stop` | `agent_id: str, force: bool, reason: str` | `tuple[str, ...]` | Request stop for all Agents or one active Agent. |
+| [execution_service.py](execution_service.py#L34) | `_remove_journal_hook` | `swarm: object, hook: object` | `None` | Best-effort remove an attempt-local hook across supported swarm builds. |
+| [execution_service.py](execution_service.py#L84) | `ExecutionService.start` | `session_id: str, message: str, recovery: dict[str, object] \| None` | `ExecutionSnapshot` | Start the configured Session AgentSwarm under a fresh attempt. |
+| [execution_service.py](execution_service.py#L242) | `ExecutionService.recover` | `session_id: str, execution_id: str \| None` | `ExecutionSnapshot` | Start a safe, guided continuation from a verified RunGraph checkpoint. |
+| [execution_service.py](execution_service.py#L276) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
+| [execution_service.py](execution_service.py#L289) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
+| [execution_service.py](execution_service.py#L301) | `ExecutionService.control` | `session_id: str, agent_id: str, action: str, message: str, reason: str` | `AgentControlReceipt` | Route one typed browser command to all or one active Agent. |
+| [execution_service.py](execution_service.py#L357) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
+| [execution_service.py](execution_service.py#L371) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
 | [session_service.py](session_service.py#L34) | `SessionService.create` | `session_id: str, name: str, project_path: Path` | `Workspace` | Register an empty Session and its durable workspace metadata. |
 | [session_service.py](session_service.py#L60) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
 | [session_service.py](session_service.py#L68) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |
-| [session_service.py](session_service.py#L126) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
-| [session_service.py](session_service.py#L154) | `SessionService.create_runtime_worker` | `session_id: str, name: str, system_prompt: str` | `Agent` | Build one worker using the effective Session profile and ToolRegistry. |
-| [session_service.py](session_service.py#L198) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
-| [session_service.py](session_service.py#L250) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
+| [session_service.py](session_service.py#L130) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
+| [session_service.py](session_service.py#L158) | `SessionService.create_runtime_worker` | `session_id: str, name: str, system_prompt: str` | `Agent` | Build one worker using the effective Session profile and ToolRegistry. |
+| [session_service.py](session_service.py#L205) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
+| [session_service.py](session_service.py#L260) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
 | [settings_service.py](settings_service.py#L32) | `SettingsService.global_profile` | `None` | `dict[str, Any]` | Read future-attempt defaults shared by all Sessions. |
 | [settings_service.py](settings_service.py#L40) | `SettingsService.replace_global_profile` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate connector ownership then atomically replace global defaults. |
 | [settings_service.py](settings_service.py#L49) | `SettingsService.session_profile` | `session_id: str` | `dict[str, Any]` | Read effective future-attempt settings for an existing Session. |
@@ -85,13 +88,15 @@ that a future compactor request would use.
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [agent_control.py](agent_control.py#L11) | `_CombinedForceEvent` | `global_control: ExecutionController, local_control: ExecutionController` | `object` | Expose the force state of a global and local controller as one event. |
-| [agent_control.py](agent_control.py#L56) | `AgentControlView` | `owner: 'SessionRunControl', agent_id: str` | `object` | Duck-typed llmfetcher control view for one concrete Agent. |
-| [agent_control.py](agent_control.py#L142) | `SessionRunControl` | `global_control: ExecutionController` | `object` | Route Session-wide and Agent-local controls to active swarm Agents. |
-| [agent_control.py](agent_control.py#L252) | `AgentControlReceipt` | `session_id: str, execution_id: str, agent_id: str, action: str, target_agents: tuple[str, ...], queued: bool` | `object` | Acknowledgement for one accepted Agent control command. |
-| [execution_service.py](execution_service.py#L17) | `UnknownSession` | `None` | `LookupError` | Raised when a lifecycle request does not name a registered session. |
-| [execution_service.py](execution_service.py#L22) | `_JournalBinding` | `attempt: ExecutionAttempt[object] \| None` | `object` | Attempt-scoped target used by a swarm hook before worker scheduling. |
-| [execution_service.py](execution_service.py#L65) | `ExecutionService` | `core: 'AngelusCore'` | `object` | Perform Session execution lifecycle use cases without transport code. |
+| [agent_control.py](agent_control.py#L12) | `SteeringInstruction` | `None` | `str` | A model-visible steering string with a durable delivery identity. |
+| [agent_control.py](agent_control.py#L22) | `SteeringSubmission` | `steer_id: str, target_agents: tuple[str, ...]` | `object` | One queued steering command and its fixed recipient snapshot. |
+| [agent_control.py](agent_control.py#L29) | `_CombinedForceEvent` | `global_control: ExecutionController, local_control: ExecutionController` | `object` | Expose the force state of a global and local controller as one event. |
+| [agent_control.py](agent_control.py#L74) | `AgentControlView` | `owner: 'SessionRunControl', agent_id: str` | `object` | Duck-typed llmfetcher control view for one concrete Agent. |
+| [agent_control.py](agent_control.py#L160) | `SessionRunControl` | `global_control: ExecutionController` | `object` | Route Session-wide and Agent-local controls to active swarm Agents. |
+| [agent_control.py](agent_control.py#L255) | `AgentControlReceipt` | `session_id: str, execution_id: str, agent_id: str, action: str, target_agents: tuple[str, ...], queued: bool, steer_id: str \| None` | `object` | Acknowledgement for one accepted Agent control command. |
+| [execution_service.py](execution_service.py#L19) | `UnknownSession` | `None` | `LookupError` | Raised when a lifecycle request does not name a registered session. |
+| [execution_service.py](execution_service.py#L24) | `_JournalBinding` | `attempt: ExecutionAttempt[object] \| None` | `object` | Attempt-scoped target used by a swarm hook before worker scheduling. |
+| [execution_service.py](execution_service.py#L67) | `ExecutionService` | `core: 'AngelusCore'` | `object` | Perform Session execution lifecycle use cases without transport code. |
 | [session_service.py](session_service.py#L21) | `SessionService` | `core: 'AngelusCore'` | `object` | Create Sessions and materialize their required coordinator when runnable. |
 | [settings_service.py](settings_service.py#L14) | `SettingsService` | `core: 'AngelusCore'` | `object` | Apply settings transactions without letting HTTP handlers own policy. |
 

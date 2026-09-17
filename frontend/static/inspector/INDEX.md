@@ -28,8 +28,7 @@ not currently loaded by the browser.
 | [graph.js](graph.js#L10) | `load` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load. |
 | [graph.js](graph.js#L26) | `renderAgentStrip` | `graph: unknown` | `unknown` | Perform the browser runtime operation: render agent strip. |
 | [graph.js](graph.js#L67) | `renderGraph` | `graph: unknown` | `unknown` | Perform the browser runtime operation: render graph. |
-| [graph.js](graph.js#L107) | `taskFor` | `id: unknown` | `unknown` | Perform the browser runtime operation: task for. |
-| [graph.js](graph.js#L115) | `renderNode` | `nodeId: unknown, depth: unknown, path: unknown` | `unknown` | Perform the browser runtime operation: render node. |
+| [graph.js](graph.js#L106) | `renderNode` | `nodeId: unknown, depth: unknown, path: unknown` | `unknown` | Perform the browser runtime operation: render node. |
 | [index.js](index.js#L4) | `initTabs` | `None` | `unknown` | Perform the browser runtime operation: init tabs. |
 | [metrics.js](metrics.js#L7) | `update` | `data: unknown` | `unknown` | Perform the browser runtime operation: update. |
 | [plan.js](plan.js#L10) | `load` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load. |

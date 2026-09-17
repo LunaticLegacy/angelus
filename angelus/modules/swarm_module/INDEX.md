@@ -24,7 +24,7 @@ AgentSwarm event.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [session_executor.py](session_executor.py#L47) | `SessionExecutor.start` | `operation: Callable[[ExecutionController], ResultT], before_start: Callable[[ExecutionAttempt[ResultT]], None] \| None` | `ExecutionAttempt[ResultT]` | Start one operation in its attempt's non-daemon worker thread. |
+| [session_executor.py](session_executor.py#L47) | `SessionExecutor.start` | `operation: Callable[[ExecutionController], ResultT], before_start: Callable[[ExecutionAttempt[ResultT]], None] \| None, start_data: dict[str, object] \| None` | `ExecutionAttempt[ResultT]` | Start one operation in its attempt's non-daemon worker thread. |
 | [session_executor.py](session_executor.py#L68) | `SessionExecutor.request_stop` | `force: bool, reason: str` | `ExecutionSnapshot` | Signal cancellation and return the immediately visible state. |
 | [session_executor.py](session_executor.py#L80) | `SessionExecutor.wait` | `timeout: float \| None` | `bool` | Wait for operation exit without joining its worker thread. |
 | [session_executor.py](session_executor.py#L92) | `SessionExecutor.snapshot` | `None` | `ExecutionSnapshot` | Return current attempt snapshot or a synthetic Session-idle snapshot. |

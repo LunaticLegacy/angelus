@@ -26,7 +26,6 @@
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: HTMLDialogElement, root: HTMLElement` | `object` | Creates the global Hub controller for durable definition management and read-only external inspection. |
 | [chat-view.js](chat-view.js#L14) | `createChatView` | `options: object` | `unknown` | Perform the browser runtime operation: create chat view. |
 | [chat-view.js](chat-view.js#L24) | `isAtLatest` | `None` | `unknown` | Perform the browser runtime operation: is at latest. |
 | [chat-view.js](chat-view.js#L35) | `updateFollowState` | `None` | `unknown` | Perform the browser runtime operation: update follow state. |
@@ -40,23 +39,56 @@
 | [chat-view.js](chat-view.js#L208) | `renderToolPayload` | `value: unknown, emptyText: unknown` | `unknown` | Perform the browser runtime operation: render tool payload. |
 | [chat-view.js](chat-view.js#L216) | `formatDuration` | `durationMs: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
 | [chat-view.js](chat-view.js#L222) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |
-| [chat-view.js](chat-view.js#L237) | `formatClock` | `epochSeconds: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
-| [chat-view.js](chat-view.js#L240) | `pad` | `value: unknown` | `unknown` | Perform the browser runtime operation: pad. |
-| [chat-view.js](chat-view.js#L245) | `buildTokenStats` | `usage: unknown, modelDurationMs: unknown, timestamp: unknown, durationMs: unknown` | `unknown` | Perform the browser runtime operation: build token stats. |
-| [chat-view.js](chat-view.js#L247) | `n` | `value: unknown` | `unknown` | Perform the browser runtime operation: n. |
-| [chat-view.js](chat-view.js#L248) | `fmt` | `value: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
-| [chat-view.js](chat-view.js#L275) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
-| [chat-view.js](chat-view.js#L303) | `buildSteer` | `text: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
-| [chat-view.js](chat-view.js#L310) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
-| [chat-view.js](chat-view.js#L317) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
-| [chat-view.js](chat-view.js#L340) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
-| [chat-view.js](chat-view.js#L353) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L237) | `formatClock` | `timestamp: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
+| [chat-view.js](chat-view.js#L242) | `pad` | `value: unknown` | `unknown` | Perform the browser runtime operation: pad. |
+| [chat-view.js](chat-view.js#L247) | `buildTokenStats` | `usage: unknown, modelDurationMs: unknown, timestamp: unknown, roundDurationMs: unknown` | `unknown` | Perform the browser runtime operation: build token stats. |
+| [chat-view.js](chat-view.js#L249) | `n` | `value: unknown` | `unknown` | Perform the browser runtime operation: n. |
+| [chat-view.js](chat-view.js#L253) | `fmt` | `value: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
+| [chat-view.js](chat-view.js#L294) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
+| [chat-view.js](chat-view.js#L325) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
+| [chat-view.js](chat-view.js#L344) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
+| [chat-view.js](chat-view.js#L351) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
+| [chat-view.js](chat-view.js#L362) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
+| [chat-view.js](chat-view.js#L385) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
+| [chat-view.js](chat-view.js#L398) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
-| [markdown-renderer.js](markdown-renderer.js#L26) | `renderMarkdown` | `source: unknown` | `unknown` | Perform the browser runtime operation: render markdown. |
-| [markdown-renderer.js](markdown-renderer.js#L44) | `renderMarkdownInto` | `target: unknown, source: unknown` | `unknown` | Perform the browser runtime operation: render markdown into. |
-| [markdown-renderer.js](markdown-renderer.js#L62) | `createMarkdownStream` | `target: unknown, afterRender: unknown` | `unknown` | Perform the browser runtime operation: create markdown stream. |
-| [markdown-renderer.js](markdown-renderer.js#L66) | `flush` | `None` | `unknown` | Perform the browser runtime operation: flush. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L20) | `open` | `None` | `Promise<unknown>` | Perform the browser runtime operation: open. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L26) | `close` | `None` | `unknown` | Perform the browser runtime operation: close. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L31) | `refresh` | `None` | `Promise<unknown>` | Perform the browser runtime operation: refresh. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L44) | `render` | `None` | `unknown` | Perform the browser runtime operation: render. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L63) | `agentCard` | `agent: unknown` | `unknown` | Perform the browser runtime operation: agent card. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L74) | `createView` | `None` | `unknown` | Perform the browser runtime operation: create view. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L93) | `candidateSection` | `None` | `unknown` | Perform the browser runtime operation: candidate section. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L112) | `discoverLocalProcesses` | `None` | `Promise<unknown>` | Perform the browser runtime operation: discover local processes. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L125) | `detailView` | `agent: unknown` | `unknown` | Perform the browser runtime operation: detail view. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L153) | `definitionForm` | `agent: unknown, submitLabel: unknown` | `unknown` | Perform the browser runtime operation: definition form. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L196) | `readDefinition` | `form: unknown` | `unknown` | Perform the browser runtime operation: read definition. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L197) | `get` | `name: unknown` | `unknown` | Perform the browser runtime operation: get. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L206) | `mutate` | `prefix: unknown, operation: unknown` | `Promise<unknown>` | Perform the browser runtime operation: mutate. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L216) | `loadHealth` | `agentId: unknown, view: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load health. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L231) | `loadCapabilities` | `agentId: unknown, container: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load capabilities. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L242) | `loadSessions` | `agentId: unknown, container: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load sessions. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L253) | `loadContexts` | `agentId: unknown, container: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load contexts. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L269) | `previewContext` | `agentId: unknown, contextId: unknown, container: unknown` | `Promise<unknown>` | Perform the browser runtime operation: preview context. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L283) | `request` | `path: unknown, options: unknown` | `Promise<unknown>` | Perform the browser runtime operation: request. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L295) | `element` | `tag: unknown, className: unknown, text: unknown` | `unknown` | Perform the browser runtime operation: element. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L296) | `button` | `text: unknown, handler: unknown, className: unknown, title: unknown` | `unknown` | Perform the browser runtime operation: button. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L297) | `message` | `text: unknown, className: unknown` | `unknown` | Perform the browser runtime operation: message. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L298) | `heading` | `title: unknown, note: unknown` | `unknown` | Perform the browser runtime operation: heading. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L299) | `section` | `title: unknown, note: unknown, loading: unknown, className: unknown` | `unknown` | Perform the browser runtime operation: section. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L300) | `field` | `label: unknown, name: unknown, type: unknown, current: unknown, placeholder: unknown` | `unknown` | Perform the browser runtime operation: field. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L301) | `adapterLabel` | `kind: unknown` | `unknown` | Perform the browser runtime operation: adapter label. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L302) | `defaultDefinition` | `None` | `unknown` | Perform the browser runtime operation: default definition. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L303) | `definitionFromCandidate` | `candidate: unknown` | `unknown` | Perform the browser runtime operation: definition from candidate. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L304) | `setBusy` | `text: unknown` | `unknown` | Perform the browser runtime operation: set busy. |
+| [external-agent-hub-view.js](external-agent-hub-view.js#L305) | `renderError` | `container: unknown, error: unknown` | `unknown` | Perform the browser runtime operation: render error. |
+| [markdown-renderer.js](markdown-renderer.js#L26) | `isAllowedLink` | `href: unknown` | `unknown` | Perform the browser runtime operation: is allowed link. |
+| [markdown-renderer.js](markdown-renderer.js#L43) | `renderMarkdown` | `source: unknown` | `unknown` | Perform the browser runtime operation: render markdown. |
+| [markdown-renderer.js](markdown-renderer.js#L61) | `renderMarkdownInto` | `target: unknown, source: unknown` | `unknown` | Perform the browser runtime operation: render markdown into. |
+| [markdown-renderer.js](markdown-renderer.js#L83) | `createMarkdownStream` | `target: unknown, afterRender: unknown` | `unknown` | Perform the browser runtime operation: create markdown stream. |
+| [markdown-renderer.js](markdown-renderer.js#L87) | `flush` | `None` | `unknown` | Perform the browser runtime operation: flush. |
 | [task-plan-view.js](task-plan-view.js#L14) | `renderTaskPlanItem` | `task: unknown, depth: unknown` | `unknown` | Perform the browser runtime operation: render task plan item. |
 | [trace-view.js](trace-view.js#L9) | `createTraceView` | `None` | `unknown` | Perform the browser runtime operation: create trace view. |
 | [trace-view.js](trace-view.js#L10) | `kindFor` | `event: unknown` | `unknown` | Perform the browser runtime operation: kind for. |
