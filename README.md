@@ -918,22 +918,6 @@ LLMFetcher 是独立仓库，遵循其自身的版权与许可证声明。
 
 ---
 
-# 社区
-
-<div align="center">
-
-<img src="docs/assets/qq-group.png" alt="Angelus QQ 群" width="280" />
-
-### 月天使 · Angelus
-
-**QQ 群：1061368718**
-
-使用交流 · Agent Architecture · 插件开发 · Swarm Research
-
-</div>
-
----
-
 <div align="center">
 
 ### Angelus
