@@ -33,7 +33,7 @@ providers; legacy three-argument callers remain supported.
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [runtime_provider.py](runtime_provider.py#L30) | `RuntimeToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Build only explicitly authorized project-scoped runtime tools. |
-| [runtime_provider.py](runtime_provider.py#L71) | `runtime_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Return built-in runtime registration for the application's registry. |
+| [runtime_provider.py](runtime_provider.py#L72) | `runtime_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Return built-in runtime registration for the application's registry. |
 | [tool_policy.py](tool_policy.py#L30) | `ToolPolicy.from_profile` | `value: object` | `'ToolPolicy'` | Decode profile grants and migrate recognized historic Tool names. |
 | [tool_policy.py](tool_policy.py#L58) | `ToolPolicy.allows` | `category_id: str, tool_id: str` | `bool` | Return whether both grants needed to expose a Tool are present. |
 | [tool_policy.py](tool_policy.py#L70) | `ToolPolicy.fingerprint` | `None` | `tuple[tuple[str, ...], tuple[str, ...]]` | Return a deterministic configuration identity for Agent rebuilding. |

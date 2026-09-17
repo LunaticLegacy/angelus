@@ -34,6 +34,28 @@
 - **安全边界** → `security.md`
 - **开发或审核插件** → `plugin-guide.md`、`plugin-api.md`、`plugin-panel-manifest.md`、`plugin-swarm-execution.md`
 - **RAG 研究材料** → `mnavrag-arxiv-draft.md`
+- **原生识图（native vision）实现与官方来源** → `.modular/vision-design.md` 与下方「官方来源注记」
+
+## 官方来源注记 — Native vision input（2026-09-17）
+
+本仓库的原生识图输入按 `../.modular/vision-design.md` 的 5 步蓝图实现；provider wire
+格式严格遵循官方文档，且**不依赖任何付费实网请求**即可验证传输契约（测试以
+`MagicMock` SDK / 假传输核对请求 payload，见 `../tests/test_native_vision_payload.py`）。
+
+| Provider | 官方来源 | 本仓库 wire 形态 |
+|---|---|---|
+| OpenAI Chat Completions | https://developers.openai.com/api/docs/guides/images-vision | `{"type":"image_url","image_url":{"url":"data:<mime>;base64,…","detail":"auto\|low\|high"}}`，纯文本块在前 |
+| Anthropic Messages | https://platform.claude.com/docs/en/build-with-claude/vision | `{"type":"image","source":{"type":"base64","media_type":"<mime>","data":…}}` |
+
+实现落点：`llmfetcher/multimodal.py`（引用校验 / marker / wire block）、
+`llmfetcher/fetcher_handlers/{openai,anthropic}.py`（wire 转换与不支持后端拒绝）、
+`angelus/modules/attachment_module` 与 `angelus/api/attachments.py`（图片字节唯一所有者）、
+`frontend/static/components/image-composer.js`（前端 composer / renderer）。
+
+契约要点：仅 `openai`/`anthropic` 接受原生图片，其余 provider 抛
+`ValueError("... does not support native image inputs")`；图片字节只存在于 provider
+请求边界，journal/checkpoint/preview/snapshot/summary 仅保留持久引用与
+`[image: <attachment_id> (<mime>)]` marker。
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 

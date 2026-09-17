@@ -21,8 +21,8 @@
 | [store.py](store.py#L94) | `ContextVersionStore._metadata` | `None` | `dict[str, Any]` | Implement `ContextVersionStore._metadata`. |
 | [store.py](store.py#L98) | `ContextVersionStore._messages` | `None` | `list[dict[str, Any]]` | Implement `ContextVersionStore._messages`. |
 | [store.py](store.py#L102) | `ContextVersionStore._record` | `item: dict[str, Any], ordinal: int` | `dict[str, Any]` | Implement `ContextVersionStore._record`. |
-| [store.py](store.py#L108) | `ContextVersionStore._snapshot` | `messages: list[dict[str, Any]], parent: str \| None, actor: str, reason: str, operations: list[dict[str, Any]], restored_from: str \| None` | `str` | Implement `ContextVersionStore._snapshot`. |
-| [store.py](store.py#L118) | `ContextVersionStore._activate` | `messages: list[dict[str, Any]], revision_id: str` | `None` | Implement `ContextVersionStore._activate`. |
+| [store.py](store.py#L110) | `ContextVersionStore._snapshot` | `messages: list[dict[str, Any]], parent: str \| None, actor: str, reason: str, operations: list[dict[str, Any]], restored_from: str \| None` | `str` | Implement `ContextVersionStore._snapshot`. |
+| [store.py](store.py#L120) | `ContextVersionStore._activate` | `messages: list[dict[str, Any]], revision_id: str` | `None` | Implement `ContextVersionStore._activate`. |
 | [tool_provider.py](tool_provider.py#L18) | `ContextVersionToolProvider.materialize` | `session: Any, policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `ContextVersionToolProvider.materialize`. |
 | [tool_provider.py](tool_provider.py#L36) | `context_version_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Implement `context_version_tool_registration`. |
 

@@ -8,7 +8,8 @@ They do not own Session, Agent, execution, persistence or credentials.
 |---|---|---|
 | `__init__.py` | `/`, `/favicon.ico`, `/static/*` | Install mounted routers and SPA shell; call core shutdown hook. |
 | `sessions.py` | `/api/sessions` | Create/list/delete Session identities and page legacy transcript projection. |
-| `runs.py` | `/api/runs`, `/api/runs/{id}/…` | Start, inspect, stop/force-stop and event-index cursor-resumable replay/follow of one Session attempt. SSE uses default `message` frames so all trace types reach the browser handler. |
+| `runs.py` | `/api/runs`, `/api/runs/{id}/…` | Start, inspect, stop/force-stop and event-index cursor-resumable replay/follow of one Session attempt. SSE uses default `message` frames so all trace types reach the browser handler. Steering stays text-only: a non-empty `images` field is rejected with 422 rather than silently dropped. |
+| `attachments.py` | `/api/sessions/{id}/attachments/images` | Session-scoped image upload (bounded raw bytes plus `filename` query) and validated download. Owns no storage; the Session aggregate owns the bytes. |
 | `settings.py` | `/api/connectors`, `/api/settings/run-profile`, `/api/sessions/{id}/run-profile` | Connector CRUD and global/Session future-run settings. |
 | `providers.py` | `/api/providers` | Read installed LLMFetcher provider capabilities. |
 | `workspace_directory.py` | `/api/workspace-directory/pick` | HTTP mapping over the backend system resource-manager adapter. |
@@ -32,7 +33,8 @@ replaced solely by `settings.py`.
 | `__init__.py` | `include_api_routes` | Register Phase-1 routers, static assets and host shutdown callback. |
 | `sessions.py` | `list_sessions`, `create_session`, `delete_session` | Session identity lifecycle over `SessionService`. |
 | `sessions.py` | `get_session_messages` | Bounded legacy conversation projection for selected Session. |
-| `runs.py` | `start_run`, `run_status`, stop endpoints | Execution lifecycle over `ExecutionService`. |
+| `runs.py` | `start_run`, `run_status`, stop endpoints | Execution lifecycle over `ExecutionService`; validates per-Session image references before dispatch. |
+| `attachments.py` | `upload_image`, `download_image` | Session-scoped image transport over the Session-owned attachment store. |
 | `session_console.py` | graph/workflow/plan/events/context endpoints | Console projection over Session execution evidence, the editable workflow and persisted contexts; context export pages durable history and import appends only to idle Agents. |
 | `settings.py` | connector/profile endpoints | Settings use cases over `SettingsService`. |
 | `providers.py` | `list_providers` | Runtime capability read. |
@@ -44,7 +46,7 @@ replaced solely by `settings.py`.
 
 | Source | Class | Semantics |
 |---|---|---|
-| `runs.py` | `RunRequest`, `StopRequest` | Typed input for starting/cancelling a Session attempt. |
+| `runs.py` | `RunImageReference`, `RunRequest`, `StopRequest` | Typed input for starting/cancelling a Session attempt; image refs are validated Session attachment IDs only, never paths or remote URLs. |
 | `sessions.py` | `CreateSessionRequest`, `DeleteSessionRequest` | Typed Session registration/deletion input. |
 | `settings.py` | `ConnectorPayload`, `ProfilePayload` | Typed connector and future-run profile input. |
 | `external_agent_hub.py` | `ExternalAgentInput` | Typed non-secret HTTP definition body for one external Agent runtime. |
@@ -55,7 +57,10 @@ replaced solely by `settings.py`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [__init__.py](__init__.py#L22) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
+| [__init__.py](__init__.py#L23) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
+| [attachments.py](attachments.py#L13) | `_store` | `request: Request, session_id: str` | `Any` | Implement `_store`. |
+| [attachments.py](attachments.py#L21) | `upload_image` | `session_id: str, request: Request, filename: str` | `dict` | Accept bounded raw image bytes without requiring a multipart parser. |
+| [attachments.py](attachments.py#L37) | `download_image` | `session_id: str, attachment_id: str, request: Request` | `FileResponse` | Serve an existing validated image only within its owning Session. |
 | [compact.py](compact.py#L29) | `_stage` | `stage: str, detail: str, kind: str, error: str \| None, raw_content: str \| None` | `str` | Serialize one compaction progress record as an NDJSON line. |
 | [compact.py](compact.py#L63) | `_build_compactor_fetcher` | `config: Any` | `LLMFetcher` | Create a throwaway LLM fetcher for the manual compaction call. |
 | [compact.py](compact.py#L84) | `compact_session` | `session_id: str, request: CompactRequest` | `StreamingResponse` | Compress one Agent's linear context into a single summary abstract. |
@@ -131,13 +136,14 @@ replaced solely by `settings.py`.
 | [plugins.py](plugins.py#L240) | `plugin_static` | `name: str, asset: str, request: Request` | `FileResponse` | Serve one active plugin's manifest-whitelisted static asset. |
 | [providers.py](providers.py#L13) | `_core` | `request: Request` | `AngelusCore` | Resolve the application-owned core and its provider catalog. |
 | [providers.py](providers.py#L22) | `list_providers` | `request: Request` | `dict[str, list[str]]` | Return providers available from the installed LLMFetcher handlers. |
-| [runs.py](runs.py#L49) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without constructing a fallback instance. |
-| [runs.py](runs.py#L58) | `start_run` | `payload: RunRequest, request: Request` | `dict[str, Any]` | Start one attempt against the Session's configured coordinator. |
-| [runs.py](runs.py#L78) | `run_status` | `session_id: str, request: Request` | `dict[str, Any]` | Return current process state; manifest is the restart source. |
-| [runs.py](runs.py#L95) | `_stop` | `session_id: str, payload: StopRequest, request: Request, force: bool` | `dict[str, Any]` | Implement `_stop`. |
-| [runs.py](runs.py#L109) | `stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Request graceful stop through the attempt's only controller. |
-| [runs.py](runs.py#L115) | `force_stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Escalate the same request and close every registered live resource. |
-| [runs.py](runs.py#L121) | `control_run` | `session_id: str, payload: AgentControlRequest, request: Request` | `dict[str, object]` | Apply one control command to every Agent or one selected Agent. |
+| [runs.py](runs.py#L36) | `RunRequest.require_input` | `None` | `'RunRequest'` | Implement `RunRequest.require_input`. |
+| [runs.py](runs.py#L69) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without constructing a fallback instance. |
+| [runs.py](runs.py#L78) | `start_run` | `payload: RunRequest, request: Request` | `dict[str, Any]` | Start one attempt against the Session's configured coordinator. |
+| [runs.py](runs.py#L101) | `run_status` | `session_id: str, request: Request` | `dict[str, Any]` | Return current process state; manifest is the restart source. |
+| [runs.py](runs.py#L118) | `_stop` | `session_id: str, payload: StopRequest, request: Request, force: bool` | `dict[str, Any]` | Implement `_stop`. |
+| [runs.py](runs.py#L132) | `stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Request graceful stop through the attempt's only controller. |
+| [runs.py](runs.py#L138) | `force_stop_run` | `session_id: str, payload: StopRequest, request: Request` | `dict[str, Any]` | Escalate the same request and close every registered live resource. |
+| [runs.py](runs.py#L144) | `control_run` | `session_id: str, payload: AgentControlRequest, request: Request` | `dict[str, object]` | Apply one control command to every Agent or one selected Agent. |
 | [session_console.py](session_console.py#L80) | `_service` | `request: Request` | `Any` | Resolve the installed console projection service. |
 | [session_console.py](session_console.py#L95) | `_call` | `fn: Any` | `Any` | Map console-domain failures raised by one deferred route action. |
 | [session_console.py](session_console.py#L110) | `agents` | `session_id: str, request: Request` | `Any` | Return safe metadata for all Session Agents. |
@@ -189,9 +195,10 @@ replaced solely by `settings.py`.
 |---|---|---|---|---|
 | [external_agent_hub.py](external_agent_hub.py#L19) | `ExternalAgentInput` | `id: str, title: str, adapter_kind: str, endpoint: str, connector_id: str, enabled: bool, description: str` | `object` | Validated HTTP body fields for a complete external Agent definition. |
 | [plugins.py](plugins.py#L18) | `PluginConfirmation` | `confirm: bool, grant_permissions: bool` | `BaseModel` | Explicit browser confirmation required for executable plugin actions. |
-| [runs.py](runs.py#L19) | `RunRequest` | `session_id: str, message: str` | `BaseModel` | HTTP input for one configured Session execution. |
-| [runs.py](runs.py#L26) | `StopRequest` | `reason: str` | `BaseModel` | HTTP input for either graceful or forced stop. |
-| [runs.py](runs.py#L33) | `AgentControlRequest` | `agent_id: str, action: str, message: str, reason: str` | `object` | Typed input for an all-Agent or targeted runtime command. |
+| [runs.py](runs.py#L19) | `RunImageReference` | `attachment_id: str, media_type: Literal['image/png', 'image/jpeg', 'image/webp', 'image/gif'], detail: Literal['auto', 'low', 'high']` | `BaseModel` | An existing Session image, never arbitrary paths or remote URLs. |
+| [runs.py](runs.py#L28) | `RunRequest` | `session_id: str, message: str, images: list[RunImageReference]` | `BaseModel` | HTTP input for one configured Session execution. |
+| [runs.py](runs.py#L42) | `StopRequest` | `reason: str` | `BaseModel` | HTTP input for either graceful or forced stop. |
+| [runs.py](runs.py#L49) | `AgentControlRequest` | `agent_id: str, action: str, message: str, reason: str, images: list[RunImageReference]` | `object` | Typed input for an all-Agent or targeted runtime command. |
 | [session_console.py](session_console.py#L18) | `AgentEdit` | `name: str, system_prompt: str` | `object` | Typed input for an idle graph worker edit. |
 | [session_console.py](session_console.py#L29) | `ConnectionEdit` | `source: str, target: str` | `object` | Typed input for a directed dependency mutation. |
 | [session_console.py](session_console.py#L40) | `MapperEdit` | `agent: str, mode: str` | `object` | Typed input for a declarative input mapper. |

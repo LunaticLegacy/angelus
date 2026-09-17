@@ -14,6 +14,7 @@ by storing mutable runtime state in an API adapter.
 | Conversation | [`conversation_module/INDEX.md`](conversation_module/INDEX.md) | Legacy transcript read/delete bridge during migration. |
 | Swarm adapter | [`swarm_module/INDEX.md`](swarm_module/INDEX.md) | Session-local execution boundary; no global swarm registry. |
 | Plugins | [`plugin_module/INDEX.md`](plugin_module/INDEX.md) | Controlled global package discovery, typed settings, and ToolRegistry-backed loading. |
+| Image attachments | [`attachment_module/INDEX.md`](attachment_module/INDEX.md) | Session-owned immutable image blobs, validated metadata, confined project import and provider-neutral byte resolution. |
 | Session console | [`console_module/INDEX.md`](console_module/INDEX.md) | Persisted task-plan/topology blueprints and Session projections. |
 | Run graph | [`run_graph_module/INDEX.md`](run_graph_module/INDEX.md) | Versioned read-only graph projection from attempt journals, checkpoints and live views. |
 | Knowledge | [`knowledge_module/INDEX.md`](knowledge_module/INDEX.md) | Session-isolated durable knowledge documents and explicit Agent retrieval tools. |

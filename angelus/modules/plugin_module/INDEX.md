@@ -79,7 +79,7 @@ namespaced `ToolProviderRegistration` values to `tool_module.ToolRegistry`.
 | [manager.py](manager.py#L435) | `PluginManager._is_discovery_package` | `package_path: Path` | `bool` | Return whether a record points at a direct child of a trusted root. |
 | [manager.py](manager.py#L447) | `PluginManager._load` | `manifest: PluginManifest, record: PluginRecord` | `LoadedPlugin` | Execute one approved tool plugin and atomically publish providers. |
 | [manager.py](manager.py#L488) | `PluginManager._publish` | `manifest: PluginManifest, contributions: list[PluginToolContribution]` | `tuple[str, ...]` | Namespace and publish setup contributions after complete validation. |
-| [manager.py](manager.py#L534) | `_PluginProvider.materialize` | `session: 'Session', policy: 'ToolPolicy', role: str` | `list['Tool']` | Create namespaced concrete Tools for one Agent. |
+| [manager.py](manager.py#L534) | `_PluginProvider.materialize` | `session: 'Session', policy: 'ToolPolicy', role: str, agent_name: str \| None` | `list['Tool']` | Create namespaced concrete Tools for one Agent. |
 | [manager.py](manager.py#L556) | `_remove_plugin_modules` | `module_name: str` | `None` | Remove a plugin entry namespace and its relative-import children. |
 | [manager.py](manager.py#L571) | `_entrypoint` | `module: ModuleType` | `PluginEntrypoint` | Extract a valid module-level plugin lifecycle object. |
 | [manager.py](manager.py#L591) | `_status` | `manifest: PluginManifest, record: PluginRecord \| None, state: str, error: str` | `dict[str, object]` | Build a non-secret plugin projection for browser controls. |

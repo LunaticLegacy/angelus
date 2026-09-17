@@ -34,7 +34,7 @@ both the `knowledge` category and the individual Tool grant are enabled.
 | [tool_provider.py](tool_provider.py#L21) | `_schema` | `*parameters: ToolParameter` | `ToolSchema` | Implement `_schema`. |
 | [tool_provider.py](tool_provider.py#L32) | `KnowledgeToolProvider._store` | `session: 'Session'` | `KnowledgeStore` | Implement `KnowledgeToolProvider._store`. |
 | [tool_provider.py](tool_provider.py#L40) | `KnowledgeToolProvider._result` | `value: object` | `str` | Implement `KnowledgeToolProvider._result`. |
-| [tool_provider.py](tool_provider.py#L43) | `KnowledgeToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str` | `list[Tool]` | Implement `KnowledgeToolProvider.materialize`. |
+| [tool_provider.py](tool_provider.py#L43) | `KnowledgeToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `KnowledgeToolProvider.materialize`. |
 | [tool_provider.py](tool_provider.py#L86) | `knowledge_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Return the built-in local knowledge-base provider registration. |
 
 ## Class Map

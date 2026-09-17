@@ -5,6 +5,7 @@
 | File | Responsibility |
 |---|---|
 | `dom.js` | 共用且安全的 DOM 创建、转义与格式化原语。 |
+| `image-composer.js` | 会话隔离的图片草稿：上传/粘贴/拖放/移除、缩略图预览与 `attachmentImageUrl` 受限 URL 构造；运行中拒绝图片改走文字 steer。 |
 | `chat-view.js` | 对话消息、steer 指令与流式转录卡片。 |
 | `markdown-renderer.js` | Marked/DOMPurify-backed single Markdown projection for restored and streaming Agent output. |
 | `trace-view.js` | 可展开的 Agent 生命周期与 Trace 卡片。 |
@@ -14,6 +15,7 @@
 ## Intent Routing
 
 - **DOM 基础设施** → `dom.js`
+- **图片草稿、预览与受限附件 URL** → `image-composer.js`
 - **聊天和 steering 呈现** → `chat-view.js`
 - **安全 Markdown 解析与流式投影** → `markdown-renderer.js`
 - **Trace 呈现** → `trace-view.js`
@@ -26,31 +28,31 @@
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [chat-view.js](chat-view.js#L14) | `createChatView` | `options: object` | `unknown` | Perform the browser runtime operation: create chat view. |
-| [chat-view.js](chat-view.js#L24) | `isAtLatest` | `None` | `unknown` | Perform the browser runtime operation: is at latest. |
-| [chat-view.js](chat-view.js#L35) | `updateFollowState` | `None` | `unknown` | Perform the browser runtime operation: update follow state. |
-| [chat-view.js](chat-view.js#L45) | `scrollToLatestIfFollowing` | `None` | `unknown` | Perform the browser runtime operation: scroll to latest if following. |
-| [chat-view.js](chat-view.js#L52) | `removeWelcome` | `None` | `unknown` | Perform the browser runtime operation: remove welcome. |
-| [chat-view.js](chat-view.js#L56) | `copyResult` | `text: unknown, button: unknown` | `Promise<unknown>` | Perform the browser runtime operation: copy result. |
-| [chat-view.js](chat-view.js#L73) | `legacyPythonContainerToJson` | `source: unknown` | `unknown` | Perform the browser runtime operation: legacy python container to json. |
-| [chat-view.js](chat-view.js#L130) | `decodeJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode json. |
-| [chat-view.js](chat-view.js#L164) | `decodeDisplayString` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode display string. |
-| [chat-view.js](chat-view.js#L186) | `renderJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: render json. |
-| [chat-view.js](chat-view.js#L208) | `renderToolPayload` | `value: unknown, emptyText: unknown` | `unknown` | Perform the browser runtime operation: render tool payload. |
-| [chat-view.js](chat-view.js#L216) | `formatDuration` | `durationMs: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
-| [chat-view.js](chat-view.js#L222) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |
-| [chat-view.js](chat-view.js#L237) | `formatClock` | `timestamp: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
-| [chat-view.js](chat-view.js#L242) | `pad` | `value: unknown` | `unknown` | Perform the browser runtime operation: pad. |
-| [chat-view.js](chat-view.js#L247) | `buildTokenStats` | `usage: unknown, modelDurationMs: unknown, timestamp: unknown, roundDurationMs: unknown` | `unknown` | Perform the browser runtime operation: build token stats. |
-| [chat-view.js](chat-view.js#L249) | `n` | `value: unknown` | `unknown` | Perform the browser runtime operation: n. |
-| [chat-view.js](chat-view.js#L253) | `fmt` | `value: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
-| [chat-view.js](chat-view.js#L294) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
-| [chat-view.js](chat-view.js#L325) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
-| [chat-view.js](chat-view.js#L344) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
-| [chat-view.js](chat-view.js#L351) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
-| [chat-view.js](chat-view.js#L362) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
-| [chat-view.js](chat-view.js#L385) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
-| [chat-view.js](chat-view.js#L398) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L15) | `createChatView` | `options: object` | `unknown` | Perform the browser runtime operation: create chat view. |
+| [chat-view.js](chat-view.js#L25) | `isAtLatest` | `None` | `unknown` | Perform the browser runtime operation: is at latest. |
+| [chat-view.js](chat-view.js#L36) | `updateFollowState` | `None` | `unknown` | Perform the browser runtime operation: update follow state. |
+| [chat-view.js](chat-view.js#L46) | `scrollToLatestIfFollowing` | `None` | `unknown` | Perform the browser runtime operation: scroll to latest if following. |
+| [chat-view.js](chat-view.js#L53) | `removeWelcome` | `None` | `unknown` | Perform the browser runtime operation: remove welcome. |
+| [chat-view.js](chat-view.js#L57) | `copyResult` | `text: unknown, button: unknown` | `Promise<unknown>` | Perform the browser runtime operation: copy result. |
+| [chat-view.js](chat-view.js#L74) | `legacyPythonContainerToJson` | `source: unknown` | `unknown` | Perform the browser runtime operation: legacy python container to json. |
+| [chat-view.js](chat-view.js#L131) | `decodeJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode json. |
+| [chat-view.js](chat-view.js#L165) | `decodeDisplayString` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode display string. |
+| [chat-view.js](chat-view.js#L187) | `renderJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: render json. |
+| [chat-view.js](chat-view.js#L209) | `renderToolPayload` | `value: unknown, emptyText: unknown` | `unknown` | Perform the browser runtime operation: render tool payload. |
+| [chat-view.js](chat-view.js#L217) | `formatDuration` | `durationMs: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
+| [chat-view.js](chat-view.js#L223) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |
+| [chat-view.js](chat-view.js#L238) | `formatClock` | `timestamp: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
+| [chat-view.js](chat-view.js#L243) | `pad` | `value: unknown` | `unknown` | Perform the browser runtime operation: pad. |
+| [chat-view.js](chat-view.js#L248) | `buildTokenStats` | `usage: unknown, modelDurationMs: unknown, timestamp: unknown, roundDurationMs: unknown` | `unknown` | Perform the browser runtime operation: build token stats. |
+| [chat-view.js](chat-view.js#L250) | `n` | `value: unknown` | `unknown` | Perform the browser runtime operation: n. |
+| [chat-view.js](chat-view.js#L254) | `fmt` | `value: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
+| [chat-view.js](chat-view.js#L295) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
+| [chat-view.js](chat-view.js#L337) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
+| [chat-view.js](chat-view.js#L356) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
+| [chat-view.js](chat-view.js#L363) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
+| [chat-view.js](chat-view.js#L374) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
+| [chat-view.js](chat-view.js#L397) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
+| [chat-view.js](chat-view.js#L410) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |
@@ -84,6 +86,10 @@
 | [external-agent-hub-view.js](external-agent-hub-view.js#L303) | `definitionFromCandidate` | `candidate: unknown` | `unknown` | Perform the browser runtime operation: definition from candidate. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L304) | `setBusy` | `text: unknown` | `unknown` | Perform the browser runtime operation: set busy. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L305) | `renderError` | `container: unknown, error: unknown` | `unknown` | Perform the browser runtime operation: render error. |
+| [image-composer.js](image-composer.js#L2) | `attachmentImageUrl` | `sessionId: unknown, image: unknown` | `unknown` | Perform the browser runtime operation: attachment image url. |
+| [image-composer.js](image-composer.js#L7) | `createImageComposer` | `options: object` | `unknown` | Perform the browser runtime operation: create image composer. |
+| [image-composer.js](image-composer.js#L15) | `render` | `None` | `unknown` | Perform the browser runtime operation: render. |
+| [image-composer.js](image-composer.js#L30) | `addFiles` | `files: unknown` | `Promise<unknown>` | Perform the browser runtime operation: add files. |
 | [markdown-renderer.js](markdown-renderer.js#L26) | `isAllowedLink` | `href: unknown` | `unknown` | Perform the browser runtime operation: is allowed link. |
 | [markdown-renderer.js](markdown-renderer.js#L43) | `renderMarkdown` | `source: unknown` | `unknown` | Perform the browser runtime operation: render markdown. |
 | [markdown-renderer.js](markdown-renderer.js#L61) | `renderMarkdownInto` | `target: unknown, source: unknown` | `unknown` | Perform the browser runtime operation: render markdown into. |

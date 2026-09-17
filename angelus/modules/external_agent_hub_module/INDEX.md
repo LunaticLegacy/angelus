@@ -143,11 +143,11 @@ and are never allowed to dispatch remote work as part of context exchange.
 | [context_codec.py](context_codec.py#L58) | `_message` | `payload: object` | `ContextMessage` | Decode one strict context record from an untrusted JSON value. |
 | [context_codec.py](context_codec.py#L104) | `_tool` | `payload: object` | `ContextToolCall` | Decode one non-executable historical tool record. |
 | [context_exchange.py](context_exchange.py#L50) | `SessionContextExchangeService.export_page` | `session_id: str, agent_name: str, before: int \| None, limit: int` | `tuple[ContextPackage, int \| None, bool]` | Export one durable context page without reading the full transcript. |
-| [context_exchange.py](context_exchange.py#L95) | `SessionContextExchangeService.append_package` | `session_id: str, agent_name: str, package: ContextPackage` | `ContextTransferResult` | Append portable historical records to one idle Session Agent. |
-| [context_exchange.py](context_exchange.py#L167) | `SessionContextExchangeService._message` | `raw: Mapping[object, object]` | `ContextMessage` | Convert one console message card into a portable record. |
-| [context_exchange.py](context_exchange.py#L196) | `SessionContextExchangeService._context_path` | `session_id: str, agent_name: str` | `Path` | Return the durable pointer path for one valid Session Agent. |
-| [context_exchange.py](context_exchange.py#L209) | `SessionContextExchangeService._redact` | `value: str` | `str` | Remove credential-like substrings from text copied across products. |
-| [context_exchange.py](context_exchange.py#L221) | `SessionContextExchangeService._optional_int` | `value: object` | `int \| None` | Return a non-boolean integer cursor when the value is valid. |
+| [context_exchange.py](context_exchange.py#L96) | `SessionContextExchangeService.append_package` | `session_id: str, agent_name: str, package: ContextPackage` | `ContextTransferResult` | Append portable historical records to one idle Session Agent. |
+| [context_exchange.py](context_exchange.py#L168) | `SessionContextExchangeService._message` | `raw: Mapping[object, object]` | `ContextMessage` | Convert one console message card into a portable record. |
+| [context_exchange.py](context_exchange.py#L201) | `SessionContextExchangeService._context_path` | `session_id: str, agent_name: str` | `Path` | Return the durable pointer path for one valid Session Agent. |
+| [context_exchange.py](context_exchange.py#L214) | `SessionContextExchangeService._redact` | `value: str` | `str` | Remove credential-like substrings from text copied across products. |
+| [context_exchange.py](context_exchange.py#L226) | `SessionContextExchangeService._optional_int` | `value: object` | `int \| None` | Return a non-boolean integer cursor when the value is valid. |
 | [discovery.py](discovery.py#L51) | `ExternalAgentProcessDiscovery.discover` | `None` | `tuple[ExternalAgentCandidate, ...]` | Return known local Agent processes in ascending process-id order. |
 | [discovery.py](discovery.py#L69) | `ExternalAgentProcessDiscovery._read_candidate` | `process_path: Path` | `ExternalAgentCandidate \| None` | Project one readable procfs entry into a known-product candidate. |
 | [discovery.py](discovery.py#L108) | `_process_sort_key` | `path: Path` | `int` | Return a deterministic numeric sort key for a procfs directory. |

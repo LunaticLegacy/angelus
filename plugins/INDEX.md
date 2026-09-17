@@ -81,49 +81,91 @@
 | [angelus/main.py](angelus/main.py#L17) | `AngelusSkinPlugin.teardown` | `None` | `Any` | Implement `AngelusSkinPlugin.teardown`. |
 | [angelus/plugin.js](angelus/plugin.js#L9) | `node` | `className: unknown, parent: unknown` | `unknown` | Perform the browser runtime operation: node. |
 | [angelus/plugin.js](angelus/plugin.js#L18) | `mountOrnaments` | `None` | `unknown` | Perform the browser runtime operation: mount ornaments. |
-| [demo-hello/main.py](demo-hello/main.py#L28) | `DemoHelloPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `DemoHelloPlugin.setup`. |
-| [demo-hello/main.py](demo-hello/main.py#L51) | `DemoHelloPlugin.teardown` | `None` | `None` | Implement `DemoHelloPlugin.teardown`. |
-| [demo-hello/main.py](demo-hello/main.py#L57) | `DemoHelloPlugin._tool_hello` | `name: str, **_: Any` | `dict[str, Any]` | Agent-visible tool: greets ``name`` (default "world"). |
-| [demo-hello/main.py](demo-hello/main.py#L65) | `DemoHelloPlugin._on_tool_after` | `event: Any` | `None` | Append the event to ``<state_dir>/events.jsonl`` (never raises). |
-| [demo-hello/main.py](demo-hello/main.py#L81) | `DemoHelloPlugin._api_hello` | `None` | `dict[str, Any]` | REST: GET /plugins/demo-hello/api/hello. |
-| [example-tool/main.py](example-tool/main.py#L60) | `ExampleToolPlugin.setup` | `runtime: PluginRuntime` | `None` | 注册工具与钩子（所有 register_* 只能发生在 setup 内）。 |
-| [example-tool/main.py](example-tool/main.py#L94) | `ExampleToolPlugin.teardown` | `None` | `None` | 幂等清理：注册回收由 manager 负责，这里只复位内部引用。 |
-| [example-tool/main.py](example-tool/main.py#L101) | `ExampleToolPlugin._web_search` | `query: str, limit: int, base_url: str, **_kwargs: Any` | `dict[str, Any]` | 执行搜索：有 base_url 走 HTTP，否则查内置演示索引。 |
-| [example-tool/main.py](example-tool/main.py#L123) | `ExampleToolPlugin._local_search` | `query: str` | `list[dict[str, str]]` | 内置演示索引的简单子串匹配（无网络）。 |
-| [example-tool/main.py](example-tool/main.py#L135) | `ExampleToolPlugin._remote_search` | `base_url: str, query: str` | `list[dict[str, Any]]` | 远程索引：GET ``base_url?q=<query>``，响应体为 ``{"results": [...]}``。 |
-| [example-tool/main.py](example-tool/main.py#L153) | `ExampleToolPlugin._on_tool_before` | `event: Any` | `None` | tool.before 钩子：把事件快照写入 state_dir/events.jsonl。 |
-| [example-tool/main.py](example-tool/main.py#L157) | `ExampleToolPlugin._on_tool_after` | `event: Any` | `None` | tool.after 钩子：把事件快照写入 state_dir/events.jsonl。 |
-| [example-tool/main.py](example-tool/main.py#L161) | `ExampleToolPlugin._record_event` | `kind: str, event: Any, payload: dict[str, Any] \| None` | `None` | 追加一行 JSON 事件到 ``<state_dir>/events.jsonl``。 |
-| [token-burner/main.py](token-burner/main.py#L22) | `TokenBurnerPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `TokenBurnerPlugin.setup`. |
-| [token-burner/main.py](token-burner/main.py#L26) | `TokenBurnerPlugin.teardown` | `None` | `None` | Implement `TokenBurnerPlugin.teardown`. |
-| [token-burner/plugin.js](token-burner/plugin.js#L40) | `readPrefs` | `None` | `unknown` | Perform the browser runtime operation: read prefs. |
-| [token-burner/plugin.js](token-burner/plugin.js#L56) | `currentSessionId` | `None` | `unknown` | Perform the browser runtime operation: current session id. |
-| [token-burner/plugin.js](token-burner/plugin.js#L65) | `fmt` | `n: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
-| [token-burner/plugin.js](token-burner/plugin.js#L83) | `onUsageDelta` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: on usage delta. |
-| [token-burner/plugin.js](token-burner/plugin.js#L91) | `pushSample` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: push sample. |
-| [token-burner/plugin.js](token-burner/plugin.js#L97) | `windowRate` | `now: unknown` | `unknown` | Perform the browser runtime operation: window rate. |
-| [token-burner/plugin.js](token-burner/plugin.js#L111) | `pollUsage` | `None` | `Promise<unknown>` | Perform the browser runtime operation: poll usage. |
-| [token-burner/plugin.js](token-burner/plugin.js#L136) | `refreshActivity` | `sid: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh activity. |
-| [token-burner/plugin.js](token-burner/plugin.js#L159) | `targetIntensity` | `None` | `unknown` | Perform the browser runtime operation: target intensity. |
-| [token-burner/plugin.js](token-burner/plugin.js#L184) | `buildSprites` | `None` | `unknown` | Perform the browser runtime operation: build sprites. |
-| [token-burner/plugin.js](token-burner/plugin.js#L200) | `resize` | `None` | `unknown` | Perform the browser runtime operation: resize. |
-| [token-burner/plugin.js](token-burner/plugin.js#L213) | `spawnParticle` | `intensity: unknown` | `unknown` | Perform the browser runtime operation: spawn particle. |
-| [token-burner/plugin.js](token-burner/plugin.js#L234) | `spawnSpark` | `intensity: unknown` | `unknown` | Perform the browser runtime operation: spawn spark. |
-| [token-burner/plugin.js](token-burner/plugin.js#L247) | `flamePath` | `cx: unknown, baseY: unknown, w: unknown, h: unknown, tSec: unknown, phase: unknown, lean: unknown, pinch: unknown` | `unknown` | Perform the browser runtime operation: flame path. |
-| [token-burner/plugin.js](token-burner/plugin.js#L274) | `drawTongue` | `cx: unknown, baseY: unknown, w: unknown, h: unknown, tSec: unknown, phase: unknown, alpha: unknown, rgb: unknown` | `unknown` | Perform the browser runtime operation: draw tongue. |
-| [token-burner/plugin.js](token-burner/plugin.js#L285) | `drawFlame` | `intensity: unknown, tSec: unknown` | `unknown` | Perform the browser runtime operation: draw flame. |
-| [token-burner/plugin.js](token-burner/plugin.js#L383) | `drawParticles` | `intensity: unknown, tSec: unknown` | `unknown` | Perform the browser runtime operation: draw particles. |
-| [token-burner/plugin.js](token-burner/plugin.js#L404) | `drawSparks` | `None` | `unknown` | Perform the browser runtime operation: draw sparks. |
-| [token-burner/plugin.js](token-burner/plugin.js#L426) | `updateReadout` | `None` | `unknown` | Perform the browser runtime operation: update readout. |
-| [token-burner/plugin.js](token-burner/plugin.js#L433) | `frame` | `now: unknown` | `unknown` | Perform the browser runtime operation: frame. |
-| [token-burner/plugin.js](token-burner/plugin.js#L466) | `initFlame` | `canvasEl: unknown, readoutElArg: unknown` | `unknown` | Perform the browser runtime operation: init flame. |
-| [token-burner/plugin.js](token-burner/plugin.js#L482) | `createFloatingWindow` | `None` | `unknown` | Perform the browser runtime operation: create floating window. |
-| [token-burner/plugin.js](token-burner/plugin.js#L518) | `move` | `ev: unknown` | `unknown` | Perform the browser runtime operation: move. |
-| [token-burner/plugin.js](token-burner/plugin.js#L522) | `up` | `None` | `unknown` | Perform the browser runtime operation: up. |
-| [token-burner/plugin.js](token-burner/plugin.js#L547) | `ensureWindow` | `None` | `unknown` | Perform the browser runtime operation: ensure window. |
-| [token-burner/plugin.js](token-burner/plugin.js#L552) | `toggleWindow` | `force: unknown` | `unknown` | Perform the browser runtime operation: toggle window. |
-| [token-burner/plugin.js](token-burner/plugin.js#L559) | `openPopout` | `None` | `unknown` | Perform the browser runtime operation: open popout. |
-| [token-burner/plugin.js](token-burner/plugin.js#L566) | `startPolling` | `None` | `unknown` | Perform the browser runtime operation: start polling. |
+| [demo-hello/main.py](demo-hello/main.py#L23) | `GreetingProvider.materialize` | `session_id: str, policy: object, role: str` | `list[Tool]` | Return the namespaced greeting tool for coordinators and workers. |
+| [demo-hello/main.py](demo-hello/main.py#L43) | `GreetingProvider._hello` | `name: str` | `str` | Format one safe, plain-text greeting. |
+| [demo-hello/main.py](demo-hello/main.py#L58) | `DemoHelloPlugin.setup` | `runtime: PluginRuntime` | `None` | Declare the tool category and tool definition. |
+| [demo-hello/main.py](demo-hello/main.py#L74) | `DemoHelloPlugin.teardown` | `None` | `None` | Release no resources because this plugin is stateless. |
+| [example-tool/main.py](example-tool/main.py#L30) | `SearchProvider.materialize` | `session_id: str, policy: object, role: str` | `list[Tool]` | Return the offline search tool for supported Agent roles. |
+| [example-tool/main.py](example-tool/main.py#L53) | `SearchProvider._search` | `query: str, limit: int` | `str` | Search the bounded local index and format matching documents. |
+| [example-tool/main.py](example-tool/main.py#L75) | `ExampleToolPlugin.setup` | `runtime: PluginRuntime` | `None` | Declare the search category and definition through the host runtime. |
+| [example-tool/main.py](example-tool/main.py#L90) | `ExampleToolPlugin.teardown` | `None` | `None` | Release no resources because the search index is immutable. |
+| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L10) | `bbox` | `value: dict[str, Any]` | `list[float]` | Implement `bbox`. |
+| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L18) | `centroid` | `value: dict[str, Any]` | `list[float]` | Implement `centroid`. |
+| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L23) | `measure` | `value: dict[str, Any]` | `dict[str, float]` | Implement `measure`. |
+| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L52) | `contains` | `value: dict[str, Any], point: tuple[float, float]` | `list[int]` | Implement `contains`. |
+| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L70) | `feature_distance` | `value: dict[str, Any], point: tuple[float, float]` | `list[dict[str, Any]]` | Implement `feature_distance`. |
+| [geo-pack/geopack/engine.py](geo-pack/geopack/engine.py#L17) | `GeoEngine.dispatch` | `tool: str, params: dict[str, Any] \| None` | `str` | Implement `GeoEngine.dispatch`. |
+| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L7) | `normalize` | `value: Any` | `dict[str, Any]` | Implement `normalize`. |
+| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L20) | `features` | `value: dict[str, Any]` | `list[dict[str, Any]]` | Implement `features`. |
+| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L32) | `geometries` | `value: dict[str, Any]` | `Iterator[dict[str, Any]]` | Implement `geometries`. |
+| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L45) | `coordinate_points` | `geometry: dict[str, Any]` | `Iterator[tuple[float, float]]` | Implement `coordinate_points`. |
+| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L64) | `_list` | `value: Any` | `list[Any]` | Implement `_list`. |
+| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L70) | `_point` | `value: Any` | `tuple[float, float]` | Implement `_point`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L11) | `haversine` | `a: tuple[float, float], b: tuple[float, float]` | `float` | Implement `haversine`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L18) | `line_length` | `points: list[tuple[float, float]]` | `float` | Implement `line_length`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L22) | `web_mercator` | `point: tuple[float, float]` | `tuple[float, float]` | Implement `web_mercator`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L30) | `inverse_web_mercator` | `point: tuple[float, float]` | `tuple[float, float]` | Implement `inverse_web_mercator`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L37) | `ring_area_m2` | `points: list[tuple[float, float]]` | `float` | Approximate geodesic polygon area using a spherical trapezoid sum. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L49) | `point_in_ring` | `point: tuple[float, float], ring: list[tuple[float, float]]` | `bool` | Implement `point_in_ring`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L63) | `centroid_of_points` | `points: list[tuple[float, float]]` | `tuple[float, float]` | Implement `centroid_of_points`. |
+| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L69) | `distance_to_segment_m` | `p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]` | `float` | Implement `distance_to_segment_m`. |
+| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L22) | `GeoToolRegistry.add` | `name: str, description: str, parameters: dict[str, str], handler: Handler` | `None` | Implement `GeoToolRegistry.add`. |
+| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L27) | `GeoToolRegistry.call` | `name: str, params: dict[str, Any]` | `Any` | Implement `GeoToolRegistry.call`. |
+| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L33) | `GeoToolRegistry.describe` | `None` | `list[dict[str, Any]]` | Implement `GeoToolRegistry.describe`. |
+| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L16) | `DatasetStore._safe_name` | `name: str` | `str` | Implement `DatasetStore._safe_name`. |
+| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L22) | `DatasetStore.save` | `name: str, geojson: dict[str, Any]` | `dict[str, Any]` | Implement `DatasetStore.save`. |
+| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L30) | `DatasetStore.load` | `name: str` | `dict[str, Any]` | Implement `DatasetStore.load`. |
+| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L39) | `DatasetStore.delete` | `name: str` | `bool` | Implement `DatasetStore.delete`. |
+| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L46) | `DatasetStore.list` | `None` | `list[dict[str, Any]]` | Implement `DatasetStore.list`. |
+| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L13) | `build_registry` | `store: DatasetStore` | `GeoToolRegistry` | Implement `build_registry`. |
+| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L79) | `_point` | `value: Any` | `tuple[float, float]` | Implement `_point`. |
+| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L86) | `_xy` | `value: Any` | `tuple[float, float]` | Implement `_xy`. |
+| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L92) | `_compare` | `actual: Any, expected: Any, op: str` | `bool` | Implement `_compare`. |
+| [geo-pack/main.py](geo-pack/main.py#L50) | `GeoPackProvider.materialize` | `session_id: str, policy: object, role: str` | `list[Tool]` | Implement `GeoPackProvider.materialize`. |
+| [geo-pack/main.py](geo-pack/main.py#L71) | `GeoPackPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `GeoPackPlugin.setup`. |
+| [geo-pack/main.py](geo-pack/main.py#L99) | `GeoPackPlugin._bridge` | `request: PluginUiActionRequest` | `PluginUiActionResult` | Implement `GeoPackPlugin._bridge`. |
+| [geo-pack/main.py](geo-pack/main.py#L113) | `GeoPackPlugin.teardown` | `None` | `None` | Implement `GeoPackPlugin.teardown`. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L6) | `el` | `tag: unknown, cls: unknown, text: unknown` | `unknown` | Perform the browser runtime operation: el. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L8) | `bridge` | `tool: unknown, params: unknown` | `Promise<unknown>` | Perform the browser runtime operation: bridge. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L16) | `features` | `g: unknown` | `unknown` | Perform the browser runtime operation: features. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L17) | `walkCoords` | `g: unknown, cb: unknown` | `unknown` | Perform the browser runtime operation: walk coords. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L18) | `calcBBox` | `g: unknown` | `unknown` | Perform the browser runtime operation: calc b box. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L19) | `fit` | `g: unknown` | `unknown` | Perform the browser runtime operation: fit. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L20) | `project` | `p: unknown, canvas: unknown` | `unknown` | Perform the browser runtime operation: project. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L21) | `drawGeom` | `ctx: unknown, g: unknown, c: unknown` | `unknown` | Perform the browser runtime operation: draw geom. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L22) | `draw` | `None` | `unknown` | Perform the browser runtime operation: draw. |
+| [geo-pack/plugin.js](geo-pack/plugin.js#L36) | `refresh` | `None` | `Promise<unknown>` | Perform the browser runtime operation: refresh. |
+| [token-burner/plugin.js](token-burner/plugin.js#L38) | `clamp` | `value: unknown, min: unknown, max: unknown` | `unknown` | Perform the browser runtime operation: clamp. |
+| [token-burner/plugin.js](token-burner/plugin.js#L42) | `finite` | `value: unknown, fallback: unknown` | `unknown` | Perform the browser runtime operation: finite. |
+| [token-burner/plugin.js](token-burner/plugin.js#L47) | `readUiState` | `None` | `unknown` | Perform the browser runtime operation: read ui state. |
+| [token-burner/plugin.js](token-burner/plugin.js#L56) | `writeUiState` | `patch: unknown` | `unknown` | Perform the browser runtime operation: write ui state. |
+| [token-burner/plugin.js](token-burner/plugin.js#L64) | `currentSessionId` | `None` | `unknown` | Perform the browser runtime operation: current session id. |
+| [token-burner/plugin.js](token-burner/plugin.js#L75) | `usageTotal` | `payload: unknown` | `unknown` | Perform the browser runtime operation: usage total. |
+| [token-burner/plugin.js](token-burner/plugin.js#L90) | `getJson` | `url: unknown` | `Promise<unknown>` | Perform the browser runtime operation: get json. |
+| [token-burner/plugin.js](token-burner/plugin.js#L101) | `normalizeSettings` | `values: unknown` | `unknown` | Perform the browser runtime operation: normalize settings. |
+| [token-burner/plugin.js](token-burner/plugin.js#L113) | `refreshSettings` | `force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: refresh settings. |
+| [token-burner/plugin.js](token-burner/plugin.js#L125) | `resetSessionState` | `nextSession: unknown` | `unknown` | Perform the browser runtime operation: reset session state. |
+| [token-burner/plugin.js](token-burner/plugin.js#L139) | `recordUsage` | `total: unknown, now: unknown` | `unknown` | Perform the browser runtime operation: record usage. |
+| [token-burner/plugin.js](token-burner/plugin.js#L171) | `poll` | `None` | `Promise<unknown>` | Perform the browser runtime operation: poll. |
+| [token-burner/plugin.js](token-burner/plugin.js#L214) | `schedulePoll` | `None` | `unknown` | Perform the browser runtime operation: schedule poll. |
+| [token-burner/plugin.js](token-burner/plugin.js#L220) | `formatNumber` | `value: unknown` | `unknown` | Perform the browser runtime operation: format number. |
+| [token-burner/plugin.js](token-burner/plugin.js#L228) | `formatRate` | `value: unknown` | `unknown` | Perform the browser runtime operation: format rate. |
+| [token-burner/plugin.js](token-burner/plugin.js#L234) | `visualTick` | `None` | `unknown` | Perform the browser runtime operation: visual tick. |
+| [token-burner/plugin.js](token-burner/plugin.js#L246) | `renderTelemetry` | `None` | `unknown` | Perform the browser runtime operation: render telemetry. |
+| [token-burner/plugin.js](token-burner/plugin.js#L285) | `flameMarkup` | `None` | `unknown` | Perform the browser runtime operation: flame markup. |
+| [token-burner/plugin.js](token-burner/plugin.js#L304) | `panelMarkup` | `None` | `unknown` | Perform the browser runtime operation: panel markup. |
+| [token-burner/plugin.js](token-burner/plugin.js#L330) | `mount` | `None` | `unknown` | Perform the browser runtime operation: mount. |
+| [token-burner/plugin.js](token-burner/plugin.js#L362) | `onActionClick` | `event: unknown` | `unknown` | Perform the browser runtime operation: on action click. |
+| [token-burner/plugin.js](token-burner/plugin.js#L372) | `setCollapsed` | `value: unknown` | `unknown` | Perform the browser runtime operation: set collapsed. |
+| [token-burner/plugin.js](token-burner/plugin.js#L378) | `toggleLarge` | `None` | `unknown` | Perform the browser runtime operation: toggle large. |
+| [token-burner/plugin.js](token-burner/plugin.js#L385) | `resetPosition` | `None` | `unknown` | Perform the browser runtime operation: reset position. |
+| [token-burner/plugin.js](token-burner/plugin.js#L394) | `bindDrag` | `None` | `unknown` | Perform the browser runtime operation: bind drag. |
+| [token-burner/plugin.js](token-burner/plugin.js#L420) | `finish` | `None` | `unknown` | Perform the browser runtime operation: finish. |
+| [token-burner/plugin.js](token-burner/plugin.js#L431) | `openPopout` | `None` | `unknown` | Perform the browser runtime operation: open popout. |
+| [token-burner/plugin.js](token-burner/plugin.js#L438) | `toggleVisible` | `None` | `unknown` | Perform the browser runtime operation: toggle visible. |
+| [token-burner/plugin.js](token-burner/plugin.js#L445) | `registerBridge` | `None` | `unknown` | Perform the browser runtime operation: register bridge. |
+| [token-burner/plugin.js](token-burner/plugin.js#L474) | `destroy` | `None` | `unknown` | Perform the browser runtime operation: destroy. |
+| [token-burner/plugin.js](token-burner/plugin.js#L481) | `start` | `None` | `Promise<unknown>` | Perform the browser runtime operation: start. |
 
 ## Class Map
 
@@ -131,8 +173,16 @@
 |---|---|---|---|---|
 | [angelus-control-plane-ui-v0.2.2/main.py](angelus-control-plane-ui-v0.2.2/main.py#L13) | `ControlPlaneUIPlugin` | `None` | `AngelusPlugin` | Provide `ControlPlaneUIPlugin` behavior. |
 | [angelus/main.py](angelus/main.py#L10) | `AngelusSkinPlugin` | `None` | `AngelusPlugin` | Provide `AngelusSkinPlugin` behavior. |
-| [demo-hello/main.py](demo-hello/main.py#L24) | `DemoHelloPlugin` | `None` | `AngelusPlugin` | Provide `DemoHelloPlugin` behavior. |
-| [example-tool/main.py](example-tool/main.py#L48) | `ExampleToolPlugin` | `None` | `AngelusPlugin` | 网络搜索工具示例：``web_search`` 工具 + ``tool.before``/``tool.after`` 钩子。 |
-| [token-burner/main.py](token-burner/main.py#L18) | `TokenBurnerPlugin` | `None` | `AngelusPlugin` | Provide `TokenBurnerPlugin` behavior. |
+| [demo-hello/main.py](demo-hello/main.py#L9) | `GreetingProvider` | `greeting: str` | `object` | Materialize the greeting tool for eligible Agent roles. |
+| [demo-hello/main.py](demo-hello/main.py#L55) | `DemoHelloPlugin` | `None` | `object` | Publish one namespaced greeting tool through the constrained runtime. |
+| [example-tool/main.py](example-tool/main.py#L12) | `SearchDocument` | `title: str, url: str, snippet: str` | `object` | One document in the plugin's intentionally offline demo index. |
+| [example-tool/main.py](example-tool/main.py#L27) | `SearchProvider` | `None` | `object` | Materialize the offline search Tool without external permissions. |
+| [example-tool/main.py](example-tool/main.py#L72) | `ExampleToolPlugin` | `None` | `object` | Publish one offline documentation search tool. |
+| [geo-pack/geopack/engine.py](geo-pack/geopack/engine.py#L12) | `GeoEngine` | `state_root: Path, session_id: str` | `object` | Provide `GeoEngine` behavior. |
+| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L11) | `GeoTool` | `name: str, description: str, parameters: dict[str, str], handler: Handler` | `object` | Provide `GeoTool` behavior. |
+| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L18) | `GeoToolRegistry` | `None` | `object` | Provide `GeoToolRegistry` behavior. |
+| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L9) | `DatasetStore` | `state_root: Path, session_id: str` | `object` | Provide `DatasetStore` behavior. |
+| [geo-pack/main.py](geo-pack/main.py#L44) | `GeoPackProvider` | `state_root: Path` | `object` | Materialize the one model-visible router tool. |
+| [geo-pack/main.py](geo-pack/main.py#L67) | `GeoPackPlugin` | `None` | `object` | Provide `GeoPackPlugin` behavior. |
 
 <!-- END GENERATED SYMBOL MAP -->
