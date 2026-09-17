@@ -17,6 +17,7 @@ from .session_console import router as session_console_router
 from .plugins import router as plugins_router
 from .external_agent_hub import router as external_agent_hub_router
 from .mcp import router as mcp_router
+from .attachments import router as attachments_router
 
 
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
@@ -64,6 +65,7 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     app.include_router(plugins_router)
     app.include_router(external_agent_hub_router)
     app.include_router(mcp_router)
+    app.include_router(attachments_router)
     app.mount("/static", StaticFiles(directory=frontend_root / "static"), name="static")
 
 

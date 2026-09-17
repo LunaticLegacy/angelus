@@ -20,6 +20,7 @@ from .modules.knowledge_module import knowledge_tool_registration
 from .modules.mcp_module import MCPService, mcp_tool_registration
 from .modules.context_version_module import context_version_tool_registration
 from .modules.session_memory_module import session_memory_tool_registration
+from .modules.attachment_module.tool_provider import image_tool_registration
 from .modules.plugin_module import PluginManager
 from .modules.external_agent_hub_module import CodexAppServerAdapter, ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore, SessionContextExchangeService
 from .modules.external_agent_hub_module.adapters import ClaudeSdkAdapter, CozeExternalAgentAdapter, OpenCodeExternalAgentAdapter, UnavailableExternalAgentFacade, WorkBuddyExternalAgentAdapter
@@ -84,6 +85,7 @@ class AngelusCore:
         self.tool_registry.register(mcp_tool_registration(self.mcp_service))
         self.tool_registry.register(context_version_tool_registration(self))
         self.tool_registry.register(session_memory_tool_registration(self))
+        self.tool_registry.register(image_tool_registration(self))
         # Plugins can only extend the application through this same ToolRegistry.
         bundled_plugins = Path(__file__).resolve().parent.parent / "plugins"
         self.plugin_manager = PluginManager(self.state_root, self.tool_registry, bundled_plugins)

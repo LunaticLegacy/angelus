@@ -5,7 +5,7 @@ Abstract:
     There should be a factory for the Agent.
 
 """
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Any
 from pathlib import Path
 
 from llmfetcher import Agent, LLMBackendConfig, LLMFetcher, Tool
@@ -27,6 +27,7 @@ def create_agent(
     enable_stop_turn: bool = False,
     default_stream: bool = True,
     tool_result_transformer: Callable[[str, str, str], str] | None = None,
+    image_resolver: Callable[[dict[str, Any]], dict[str, str]] | None = None,
 ) -> Agent:
     """Build one configured Agent without assigning it to a session or run.
 
@@ -53,6 +54,7 @@ def create_agent(
             incremental lifecycle events while preserving final results.
         tool_result_transformer: Optional Session-owned transformation that
             persists large tool results before they enter model context.
+        image_resolver: Session-owned image lookup used only for model I/O.
     
     Returns:
         Fully configured but not yet executing Agent.
@@ -67,6 +69,7 @@ def create_agent(
 
     """
     fetcher = LLMFetcher(configs)
+    fetcher.image_resolver = image_resolver
     # GraphContextHandler is the standard persistent context implementation.
     # Passing an explicit handler remains supported for specialised hosts.
     if context_handler is None:

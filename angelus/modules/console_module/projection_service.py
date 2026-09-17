@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from llmfetcher.context_handlers.linear import read_persisted_context_page
 
@@ -349,10 +349,13 @@ class ConsoleProjectionService:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         messages = []
         for entry in entries:
-            tools = [{"name": tool.call.name, "arguments": tool.call.arguments, "result": tool.result} for tool in entry.tool_calls]
+            tools = [{"name": tool.call.name, "arguments": tool.call.arguments, "result": tool.result,
+                      "images": self._image_previews(session_id, getattr(tool, "images", []))}
+                     for tool in entry.tool_calls]
             messages.append({
                 "role": entry.role,
                 "content": entry.content,
+                "images": self._image_previews(session_id, getattr(entry, "images", [])),
                 "reasoning": entry.content_reasoning,
                 "tools": tools,
                 "timeline": entry.timeline,
@@ -363,6 +366,23 @@ class ConsoleProjectionService:
             })
         return {"agent": resolved_name, "messages": messages, "steering": steering,
                 "next_cursor": next_cursor, "has_more": next_cursor is not None}
+
+    def _image_previews(self, session_id: str, references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return only Session-local image URLs, keeping missing refs visible."""
+        store = self._core.sessions.get(session_id).attachments
+        result = []
+        for ref in references:
+            attachment_id = ref.get("attachment_id", "")
+            try:
+                metadata = store.get(attachment_id) if store is not None else None
+            except (ValueError, KeyError, OSError):
+                metadata = None
+            if metadata is None:
+                result.append({"attachment_id": attachment_id, "unavailable": True})
+            else:
+                result.append({**metadata, "detail": ref.get("detail", "auto"),
+                               "url": f"/api/sessions/{session_id}/attachments/images/{attachment_id}"})
+        return result
 
     def steering(self, session_id: str, name: str | None = None) -> list[dict[str, object]]:
         """Project durable steering deliveries from the latest attempt journal.

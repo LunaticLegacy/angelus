@@ -101,9 +101,11 @@ class ContextVersionStore:
 
     def _record(self, item: dict[str, Any], ordinal: int) -> dict[str, Any]:
         stable = f"{ordinal}:{item.get('timeline', 0)}:{item.get('role', '')}:{item.get('content', '')}"
+        stable += json.dumps(item.get("images", []), sort_keys=True)
         return {"record_id": hashlib.sha256(stable.encode()).hexdigest()[:24], "ordinal": ordinal,
                 "timeline": item.get("timeline", 0), "role": item.get("role", ""),
-                "content": item.get("content", ""), "has_tool_calls": bool(item.get("tool_calls"))}
+                "content": item.get("content", ""), "images": item.get("images", []),
+                "has_tool_calls": bool(item.get("tool_calls"))}
 
     def _snapshot(self, messages: list[dict[str, Any]], parent: str | None, actor: str, reason: str,
                   operations: list[dict[str, Any]], restored_from: str | None = None) -> str:

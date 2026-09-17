@@ -74,11 +74,15 @@ class RunGraphProjector:
         if recovery.get("strategy") != "new_attempt":
             raise ValueError("Execution checkpoint does not declare a safe recovery strategy")
         message = ""
+        images: list[dict[str, object]] = []
         for event in self._events(attempt_root / "execution.events.ndjson"):
             if event.get("type") == "execution_started":
                 message = _string(_mapping(event.get("data")).get("message")) or ""
+                raw_images = _mapping(event.get("data")).get("images", [])
+                if isinstance(raw_images, list):
+                    images = [dict(item) for item in raw_images if isinstance(item, Mapping)]
                 break
-        if not message:
+        if not message and not images:
             raise ValueError("Execution checkpoint has no recoverable initial message")
         return {
             "source_execution_id": _string(manifest.get("execution_id")) or attempt_root.name,
@@ -87,6 +91,7 @@ class RunGraphProjector:
             "checkpoint": dict(checkpoint),
             "run_graph": dict(payload),
             "initial_message": message,
+            "initial_images": images,
         }
 
     def events(

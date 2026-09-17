@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from ..core import AngelusCore
 from ..modules.application_module import UnknownSession
@@ -16,11 +16,27 @@ from ..modules.execution_module import ExecutionState
 router = APIRouter()
 
 
+class RunImageReference(BaseModel):
+    """An existing Session image, never arbitrary paths or remote URLs."""
+
+    model_config = ConfigDict(extra="forbid")
+    attachment_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    media_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
+    detail: Literal["auto", "low", "high"] = "auto"
+
+
 class RunRequest(BaseModel):
     """HTTP input for one configured Session execution."""
 
     session_id: str = Field(min_length=1, max_length=80)
-    message: str = Field(min_length=1, max_length=100_000)
+    message: str = Field(default="", max_length=100_000)
+    images: list[RunImageReference] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def require_input(self) -> "RunRequest":
+        if not self.message.strip() and not self.images:
+            raise ValueError("A message or image is required")
+        return self
 
 
 class StopRequest(BaseModel):
@@ -38,12 +54,16 @@ class AgentControlRequest:
         action: ``steer``, ``stop``, or ``force_stop``.
         message: Required non-empty instruction for ``steer``.
         reason: Journal-safe reason for stop actions.
+        images: Image references a client mistakenly attached to a steering
+            command. Steering stays text-only this iteration, so a non-empty
+            value is rejected explicitly rather than silently ignored.
     """
 
     agent_id: str = "all"
     action: str = "steer"
     message: str = ""
     reason: str = "user_requested"
+    images: list[RunImageReference] = field(default_factory=list)
 
 
 def _core(request: Request) -> AngelusCore:
@@ -59,7 +79,10 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
     """Start one attempt against the Session's configured coordinator."""
     core = _core(request)
     try:
-        snapshot = core.execution_service.start(payload.session_id, payload.message)
+        snapshot = core.execution_service.start(
+            payload.session_id, payload.message,
+            images=[image.model_dump() for image in payload.images],
+        )
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
     except (KeyError, ValueError) as exc:
@@ -129,6 +152,13 @@ def control_run(session_id: str, payload: AgentControlRequest, request: Request)
     Returns:
         Accepted command receipt including resolved target Agent identities.
     """
+    if payload.images:
+        # Image steering is out of scope for the text-only control path. Fail
+        # loudly so a caller never believes an attachment reached the Agent.
+        raise HTTPException(
+            status_code=422,
+            detail="Image steering is not supported; send images with a new run request instead",
+        )
     try:
         receipt = _core(request).execution_service.control(
             session_id, payload.agent_id, payload.action, payload.message, payload.reason,

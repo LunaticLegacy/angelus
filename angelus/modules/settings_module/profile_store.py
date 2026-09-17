@@ -31,12 +31,13 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "session_artifact_search_sessions": [],
     "session_artifact_open_sessions": [],
     "tool_permissions": {
-        "categories": {"context_version": True, "session_memory": True},
+        "categories": {"context_version": True, "session_memory": True, "vision": True},
         "tools": {
             "inspect_agent_context": True, "edit_agent_context": True, "restore_agent_context": True,
             "search_session_memory": True, "read_session_memory": True,
             "search_session_artifacts": True, "open_session_artifact": True,
             "create_session_handoff": True, "read_session_handoff": True,
+            "view_image": True,
         },
     },
 }

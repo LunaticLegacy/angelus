@@ -121,6 +121,7 @@ class SessionService:
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
+            image_resolver=session.attachments.resolve if session.attachments else None,
         )
         session.set_coordinator(coordinator, fingerprint)
         # Unit-test and alternate-host factories may supply a sentinel role;
@@ -201,6 +202,7 @@ class SessionService:
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
+            image_resolver=session.attachments.resolve if session.attachments else None,
         )
 
     def preview_agent(self, session_id: str, name: str) -> Agent:
@@ -257,6 +259,7 @@ class SessionService:
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
+            image_resolver=session.attachments.resolve if session.attachments else None,
         )
 
     def delete(self, session_id: str, *, confirmation: str, wait_timeout: float = 5.0) -> Workspace:

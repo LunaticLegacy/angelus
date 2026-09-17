@@ -10,6 +10,7 @@ from uuid import uuid4
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
 from ..run_graph_module import RunGraphProjector
 from llmfetcher.swarm_module import AgentFailure
+from llmfetcher.multimodal import UserMessage
 from .agent_control import AgentControlReceipt, SessionRunControl
 
 if TYPE_CHECKING:
@@ -81,7 +82,8 @@ class ExecutionService:
         # Service dependency; it grants access to Session-owned execution.
         self._core = core
 
-    def start(self, session_id: str, message: str, *, recovery: dict[str, object] | None = None) -> ExecutionSnapshot:
+    def start(self, session_id: str, message: str, *, recovery: dict[str, object] | None = None,
+              images: list[dict[str, Any]] | None = None) -> ExecutionSnapshot:
         """Start the configured Session AgentSwarm under a fresh attempt.
 
         Args:
@@ -100,6 +102,9 @@ class ExecutionService:
             session = self._core.sessions.get(session_id)
         except KeyError as exc:
             raise UnknownSession(session_id) from exc
+        image_refs = self._validate_images(session, images or [])
+        if not message.strip() and not image_refs:
+            raise ValueError("A message or image is required")
         self._core.session_service.ensure_coordinator(session_id)
         # ``ensure_coordinator`` installs the required role at index zero.
         # Keep this defensive guard so a malformed custom Session cannot run.
@@ -227,7 +232,8 @@ class ExecutionService:
                         run_control.for_agent(agent_name)
             session.run_control = run_control
             try:
-                output = session.swarm.run(message, control=run_control)
+                user_input = UserMessage(text=message, images=image_refs) if image_refs else message
+                output = session.swarm.run(user_input, control=run_control)
                 root = output.get(session.coordinator_name) if isinstance(output, dict) else None
                 if isinstance(root, AgentFailure):
                     raise RuntimeError(f"{root.agent_name} failed: {root.error}")
@@ -236,8 +242,39 @@ class ExecutionService:
                 _remove_journal_hook(session.swarm, journal_hook)
                 session.run_control = None
 
-        attempt = executor.start(run_swarm, before_start=install_hook, start_data={"message": message})
+        attempt = executor.start(run_swarm, before_start=install_hook,
+                                 start_data={"message": message, "images": image_refs})
         return attempt.snapshot()
+
+    @staticmethod
+    def _validate_images(session: Any, images: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Resolve ownership and metadata before an execution can start."""
+        if not isinstance(images, list) or len(images) > 8:
+            raise ValueError("At most 8 images may be sent in one turn")
+        if not images:
+            return []
+        if session.attachments is None:
+            raise ValueError("Session image storage is unavailable")
+        refs = []
+        total_bytes = 0
+        for ref in images:
+            if not isinstance(ref, dict) or set(ref) - {"attachment_id", "media_type", "detail"}:
+                raise ValueError("Invalid image reference")
+            try:
+                metadata = session.attachments.get(ref.get("attachment_id", ""))
+            except (KeyError, FileNotFoundError) as exc:
+                raise ValueError("Image is not available in this Session") from exc
+            if ref.get("media_type") != metadata["media_type"]:
+                raise ValueError("Image media type does not match stored bytes")
+            detail = ref.get("detail", "auto")
+            if detail not in {"auto", "low", "high"}:
+                raise ValueError("Invalid image detail")
+            total_bytes += metadata["size_bytes"]
+            refs.append({"attachment_id": metadata["attachment_id"],
+                         "media_type": metadata["media_type"], "detail": detail})
+        if total_bytes > 15 * 1024 * 1024:
+            raise ValueError("Images exceed the 15 MiB per-turn upload budget")
+        return refs
 
     def recover(self, session_id: str, execution_id: str | None = None) -> ExecutionSnapshot:
         """Start a safe, guided continuation from a verified RunGraph checkpoint.
@@ -271,7 +308,7 @@ class ExecutionService:
             f"Prior execution: {source['source_execution_id']}.\n\n"
             f"Original user request:\n{source['initial_message']}"
         )
-        return self.start(session_id, prompt, recovery=recovery)
+        return self.start(session_id, prompt, recovery=recovery, images=source.get("initial_images", []))
 
     def status(self, session_id: str) -> ExecutionSnapshot:
         """Return current in-process execution state, or synthetic idle state.
