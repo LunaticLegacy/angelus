@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from llmfetcher import Agent, Tool, ToolParameter, ToolSchema
 
-from .console_state import ConsoleDomainError, PlanItem
+from .console_state import ConsoleDomainError
 
 if TYPE_CHECKING:
     from ..session_module.session_handler import Session
@@ -95,7 +95,7 @@ class SessionConsoleTools:
         permissions: Effective allowlist used to omit disabled tools entirely.
     """
 
-    def __init__(self, session: "Session", permissions: ToolPermissionPolicy, worker_factory: WorkerFactory | None = None) -> None:
+    def __init__(self, session: "Session", permissions: ToolPermissionPolicy, worker_factory: WorkerFactory | None = None, agent_name: str = "coordinator") -> None:
         """Retain the one aggregate used by every generated handler.
 
         Args:
@@ -107,6 +107,7 @@ class SessionConsoleTools:
         self._session = session
         self._permissions = permissions
         self._worker_factory = worker_factory
+        self._agent_name = agent_name
 
     def build(self) -> list[Tool]:
         """Create the controlled tool set for a coordinator or worker.
@@ -116,15 +117,23 @@ class SessionConsoleTools:
             change; no handler can access connector secrets.
         """
         tools: list[Tool] = []
-        if self._permissions.allows("planning", "plan_upsert"):
-            tools.append(
-            Tool("plan_upsert", "Create or update a task-plan item.", _schema(
-                ToolParameter("id", description="Stable task identifier"),
-                ToolParameter("status", description="Task lifecycle status"),
-                ToolParameter("title", description="Short task title", required=False, default=""),
+        if self._permissions.allows("planning", "set_task_plan"):
+            tools.append(Tool("set_task_plan", "Atomically replace this Agent's complete nested task plan.", _schema(
+                ToolParameter("goal", description="Overall outcome"),
+                ToolParameter("summary", description="Compact planning rationale", required=False, default=""),
+                ToolParameter("tasks", type="array", description="Complete recursive task array; each task may contain subtasks"),
+            ), self.set_task_plan))
+        elif self._permissions.allows("planning", "plan_upsert"):
+            tools.append(Tool("plan_upsert", "Compatibility adapter for one legacy flat plan item.", _schema(
+                ToolParameter("id"), ToolParameter("status"), ToolParameter("title", required=False, default=""),
             ), self.plan_upsert))
-        if self._permissions.allows("planning", "plan_read"):
-            tools.append(Tool("plan_read", "Read the current Session task plan.", _schema(), self.plan_read))
+        if self._permissions.allows("planning", "update_task_status"):
+            tools.append(Tool("update_task_status", "Update one leaf task and derive ancestor states.", _schema(
+                ToolParameter("task_id", description="Existing leaf task ID"),
+                ToolParameter("status", description="not_started, in_progress, completed, or blocked"),
+            ), self.update_task_status))
+        if self._permissions.allows("planning", "read_task_plan"):
+            tools.append(Tool("read_task_plan", "Read this Agent's complete nested task plan.", _schema(), self.read_task_plan))
         if self._permissions.allows("swarm", "swarm_connect"):
             tools.append(
             Tool("swarm_connect", "Dynamically add a dependency edge.", _schema(
@@ -195,28 +204,30 @@ class SessionConsoleTools:
         if attempt is not None:
             attempt.journal.append(event_type, data, agent="", message=message)
 
+    def set_task_plan(self, goal: str, tasks: list[dict[str, object]], summary: str = "") -> dict[str, object]:
+        """Atomically validate and replace the caller's complete task tree."""
+        plan = self._session.console.set_plan(self._agent_name, goal, summary, tasks)
+        self._journal("plan:set", f"Task plan replaced by {self._agent_name}", {"agent": self._agent_name, "goal": plan.goal, "tasks": len(plan.tasks)})
+        return asdict(plan)
+
     def plan_upsert(self, id: str, status: str, title: str = "") -> str:
-        """Persist a task item and record the mutation in the attempt journal.
-
-        Args:
-            id: Stable task identifier.
-            status: New task lifecycle state.
-            title: Optional concise task label.
-
-        Returns:
-            Confirmation text for the calling Agent.
-        """
-        self._session.console.upsert_plan_item(PlanItem(id=id, status=status, title=title))
+        """Compatibility adapter used only by pre-registry callers."""
+        current = self._session.console.plan(self._agent_name)
+        tasks = [asdict(item) for item in current.tasks if item.id != id]
+        tasks.append({"id": id, "title": title, "status": "in_progress" if status == "running" else status})
+        self._session.console.set_plan(self._agent_name, current.goal or "Legacy task plan", current.summary, tasks)
         self._journal("plan:upsert", f"Plan item {id} is {status}", {"id": id, "status": status, "title": title})
         return f"Plan item {id} saved as {status}."
 
-    def plan_read(self) -> list[dict[str, object]]:
-        """Return the currently durable plan to the calling Agent.
+    def update_task_status(self, task_id: str, status: str) -> dict[str, object]:
+        """Update one leaf task with optimistic structural invariants."""
+        plan = self._session.console.update_task_status(self._agent_name, task_id, status)
+        self._journal("plan:status", f"Plan task {task_id} is {status}", {"agent": self._agent_name, "task_id": task_id, "status": status})
+        return asdict(plan)
 
-        Returns:
-            Secret-free serialized plan items in stored order.
-        """
-        return [asdict(item) for item in self._session.console.plan()]
+    def read_task_plan(self) -> dict[str, object]:
+        """Return the caller's complete recursive task plan."""
+        return asdict(self._session.console.plan(self._agent_name))
 
     def swarm_connect(self, source: str, target: str) -> str:
         """Persist and dynamically apply one safe dependency connection.
@@ -364,8 +375,8 @@ class SessionConsoleTools:
         """
         if not objective.strip() or not system_prompt.strip():
             raise ConsoleDomainError("system_prompt and objective are required")
-        if plan_task_id and not any(item.id == plan_task_id for item in self._session.console.plan()):
-            raise ConsoleDomainError("plan_task_id must identify an existing plan item")
+        if plan_task_id and not self._session.console.is_bindable_leaf(plan_task_id):
+            raise ConsoleDomainError("plan_task_id must identify an existing plan leaf")
         self._session.console.add_worker(name, system_prompt)
         try:
             worker = self._worker_factory(self._session_id(), name, system_prompt)
@@ -375,6 +386,8 @@ class SessionConsoleTools:
                 reply_to=reply_to or "coordinator", expected_artifacts=tuple(expected_artifacts or ()),
                 plan_task_id=plan_task_id,
             )
+            if plan_task_id:
+                self._session.console.bind_execution(plan_task_id, assignment.id)
         except BaseException:
             self._session.console.remove_worker(name)
             raise
@@ -440,12 +453,14 @@ class SessionConsoleTools:
         """
         if not objective.strip():
             raise ConsoleDomainError("objective is required")
-        if plan_task_id and not any(item.id == plan_task_id for item in self._session.console.plan()):
-            raise ConsoleDomainError("plan_task_id must identify an existing plan item")
+        if plan_task_id and not self._session.console.is_bindable_leaf(plan_task_id):
+            raise ConsoleDomainError("plan_task_id must identify an existing plan leaf")
         assignment = self._session.swarm.redispatch_task(
             agent_name=name, objective=objective, handoff=handoff, reply_to=reply_to or "coordinator",
             expected_artifacts=tuple(expected_artifacts or ()), plan_task_id=plan_task_id,
         )
+        if plan_task_id:
+            self._session.console.bind_execution(plan_task_id, assignment.id)
         payload = {"agent_name": assignment.recipient, "task_id": assignment.id}
         self._journal("swarm:revive", f"Task {assignment.id} revived on {name}", payload)
         return json.dumps(payload, ensure_ascii=False)
@@ -515,6 +530,9 @@ class SessionConsoleTools:
                 task_id=self._session.swarm.task_id_for_agent(name), reporter=name, status=status, summary=summary,
                 findings=tuple(findings or ()), evidence=tuple(evidence or ()), artifacts=tuple(artifacts or ()),
                 open_questions=tuple(open_questions or ()), recommended_next_action=recommended_next_action,
+            )
+            self._session.console.update_assignment_status(
+                report.task_id, "completed" if status == "completed" else "blocked",
             )
             worker.request_completion()
             return f"Report submitted for task {report.task_id}."

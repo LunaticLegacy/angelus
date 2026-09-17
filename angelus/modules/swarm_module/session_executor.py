@@ -44,7 +44,7 @@ class SessionExecutor(Generic[ResultT]):
         # Serializes start/stop/snapshot against concurrent API callers.
         self._lock = threading.RLock()
 
-    def start(self, operation: Callable[[ExecutionController], ResultT], *, before_start: Callable[[ExecutionAttempt[ResultT]], None] | None = None) -> ExecutionAttempt[ResultT]:
+    def start(self, operation: Callable[[ExecutionController], ResultT], *, before_start: Callable[[ExecutionAttempt[ResultT]], None] | None = None, start_data: dict[str, object] | None = None) -> ExecutionAttempt[ResultT]:
         """Start one operation in its attempt's non-daemon worker thread.
 
         Args:
@@ -62,7 +62,7 @@ class SessionExecutor(Generic[ResultT]):
             self._attempt = ExecutionAttempt(self.session_id, self._attempt_number, self.root)
             if before_start is not None:
                 before_start(self._attempt)
-            self._attempt.start(operation)
+            self._attempt.start(operation, start_data=start_data)
             return self._attempt
 
     def request_stop(self, *, force: bool = False, reason: str = "user_requested") -> ExecutionSnapshot:

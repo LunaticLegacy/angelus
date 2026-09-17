@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from fastapi import APIRouter, Body, HTTPException, Request
+import json
+import time
+from collections.abc import Iterator
+from fastapi import APIRouter, Body, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from ..core import AngelusCore
 from ..modules.console_module import ConsoleDomainError
 from ..modules.external_agent_hub_module import ContextExchangeError, ContextPackage
@@ -66,6 +70,13 @@ class RequestPreviewInput:
 
     message: str
 
+
+@dataclass
+class RecoveryRequest:
+    """Optional source execution selected for safe guided recovery."""
+
+    execution_id: str | None = None
+
 def _service(request: Request):
     """Resolve the installed console projection service.
 
@@ -108,8 +119,8 @@ def agents(session_id: str, request: Request):
     """
     return _call(lambda:_service(request).agents(session_id))
 @router.get("/graph")
-def graph(session_id: str, request: Request):
-    """Return the Session graph projection.
+def graph(session_id: str, request: Request, execution_id: str | None = None):
+    """Return the selected/latest execution graph for this Session.
 
     Args:
         session_id: Stable Session identity to inspect.
@@ -118,7 +129,48 @@ def graph(session_id: str, request: Request):
     Returns:
         JSON-safe graph topology and state.
     """
-    return _call(lambda:_service(request).graph(session_id))
+    return _call(lambda:_service(request).graph(session_id, execution_id))
+@router.get("/graph/events")
+def graph_events(session_id: str, request: Request, cursor: int = 0, execution_id: str | None = None, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
+    """Replay and follow standardized RunGraph events for one execution."""
+    def stream() -> Iterator[str]:
+        try:
+            resumed_cursor = int(last_event_id) if last_event_id is not None else 0
+        except ValueError:
+            resumed_cursor = 0
+        next_cursor = max(0, cursor, resumed_cursor)
+        try:
+            while True:
+                page = _service(request).graph_events(session_id, next_cursor, execution_id)
+                events = page["events"]
+                for event in events:
+                    next_cursor = int(event["sequence"])
+                    yield f"id: {next_cursor}\\ndata: {json.dumps(event, ensure_ascii=False)}\\n\\n"
+                core = getattr(request.app.state, "angelus_core")
+                status = core.execution_service.status(session_id)
+                selected = page.get("execution_id")
+                if execution_id is not None or selected != status.execution_id or str(status.state) not in {"running", "stopping", "force_stopping"}:
+                    return
+                if not events:
+                    yield ": keep-alive\\n\\n"
+                    time.sleep(0.25)
+        except (KeyError, LookupError):
+            return
+    return StreamingResponse(stream(), media_type="text/event-stream")
+@router.get("/workflow")
+def workflow(session_id: str, request: Request):
+    """Return the persisted, editable Session workflow blueprint."""
+    return _call(lambda:_service(request).workflow(session_id))
+@router.post("/graph/recover")
+def recover_graph(session_id: str, body: RecoveryRequest, request: Request):
+    """Create a new guided attempt from a verified RunGraph checkpoint."""
+    try:
+        snapshot = getattr(request.app.state, "angelus_core").execution_service.recover(session_id, body.execution_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Unknown session") from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"session_id": snapshot.session_id, "execution_id": snapshot.execution_id, "attempt": snapshot.attempt, "state": snapshot.state}
 @router.get("/graph/info")
 def graph_info(session_id: str, request: Request):
     """Return compact graph counts and editability.
@@ -131,7 +183,7 @@ def graph_info(session_id: str, request: Request):
         Graph count and run-state projection.
     """
     return _call(lambda:_service(request).graph_info(session_id))
-@router.post("/graph/agents")
+@router.post("/workflow/agents")
 def add_agent(session_id: str, body: AgentEdit, request: Request):
     """Persist one worker and rebuild the idle graph.
 
@@ -144,17 +196,17 @@ def add_agent(session_id: str, body: AgentEdit, request: Request):
         Updated graph projection.
     """
     return _call(lambda:_service(request).add_worker(session_id, body.name, body.system_prompt))
-@router.delete("/graph/agents/{name}")
+@router.delete("/workflow/agents/{name}")
 def delete_agent(session_id: str, name: str, request: Request): return _call(lambda:_service(request).remove_worker(session_id, name))
-@router.delete("/graph/agents")
+@router.delete("/workflow/agents")
 def delete_agent_body(session_id: str, body: AgentEdit, request: Request): return _call(lambda:_service(request).remove_worker(session_id, body.name))
-@router.post("/graph/connections")
+@router.post("/workflow/connections")
 def add_connection(session_id: str, body: ConnectionEdit, request: Request): return _call(lambda:_service(request).add_connection(session_id, body.source, body.target))
-@router.delete("/graph/connections")
+@router.delete("/workflow/connections")
 def delete_connection(session_id: str, body: ConnectionEdit, request: Request): return _call(lambda:_service(request).remove_connection(session_id, body.source, body.target))
-@router.post("/graph/mapper")
+@router.post("/workflow/mapper")
 def mapper(session_id: str, body: MapperEdit, request: Request): return _call(lambda:_service(request).set_mapper(session_id, body.agent, body.mode))
-@router.post("/graph/router")
+@router.post("/workflow/router")
 def router_edit(session_id: str, body: RouterEdit, request: Request): return _call(lambda:_service(request).set_router(session_id, body.agent, body.targets))
 @router.get("/plan")
 def plan(session_id: str, request: Request, agent: str | None = None): return _call(lambda:_service(request).plan(session_id, agent))

@@ -98,7 +98,7 @@ class ExecutionAttempt(Generic[ResultT]):
         # Serializes lifecycle fields, journal ordering, and manifest updates.
         self._lock = threading.RLock()
 
-    def start(self, operation: Callable[[ExecutionController], ResultT]) -> None:
+    def start(self, operation: Callable[[ExecutionController], ResultT], *, start_data: dict[str, object] | None = None) -> None:
         """Schedule exactly one operation under this attempt's controller.
 
         The durable start event and initial manifest are committed before the
@@ -112,7 +112,7 @@ class ExecutionAttempt(Generic[ResultT]):
             self._state = ExecutionState.RUNNING
             self._started_at = time.time()
             self._write_manifest()
-            self.journal.append("execution_started", {"session_id": self.session_id, "attempt": self.attempt})
+            self.journal.append("execution_started", {"session_id": self.session_id, "attempt": self.attempt, **(start_data or {})})
         threading.Thread(target=self._run, args=(operation,), name=f"angelus-execution-{self.execution_id}", daemon=False).start()
 
     def request_stop(self, *, force: bool, reason: str) -> ExecutionSnapshot:
@@ -153,10 +153,12 @@ class ExecutionAttempt(Generic[ResultT]):
     def commit_checkpoint(
         self,
         generation: str,
-        graph: dict[str, object],
+        graph: dict[str, object] | None,
         contexts: dict[str, dict[str, object]],
         *,
         reason: str,
+        run_graph: dict[str, object] | None = None,
+        recovery: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Commit one complete graph/context generation through this attempt.
 
@@ -164,7 +166,7 @@ class ExecutionAttempt(Generic[ResultT]):
         must treat only journal-referenced generations as recoverable.
         """
         with self._lock:
-            return self.checkpoints.commit(generation, graph, contexts, reason=reason)
+            return self.checkpoints.commit(generation, graph, contexts, reason=reason, run_graph=run_graph, recovery=recovery)
 
     def mark_interrupted(self, reason: str) -> None:
         """Persist an unconfirmed terminal when host shutdown exceeds deadline.

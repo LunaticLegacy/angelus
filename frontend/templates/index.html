@@ -8,6 +8,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Angelus · Agent Workbench</title>
+    <link rel="icon" type="image/svg+xml" href="/static/angelus-icon.svg?v=2" />
     <link rel="stylesheet" href="/static/app.css?v=workbench-82" />
   </head>
   <body>
@@ -55,7 +56,7 @@
         </section>
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>Agent 执行</h3><p id="profile-status"><b>会话 Coordinator</b> · 正在加载持久化运行档案。</p></div><label>编辑<select id="profile-scope" aria-label="运行档案编辑范围"><option value="agent">当前会话 Coordinator</option><option value="global">全局默认</option></select></label><button id="restore-profile-inheritance" class="mini-button" type="button" title="恢复继承全局默认">↺</button></div>
-          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="16384" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
+          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="16384" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><div class="setting-grid"><label>请求超时 <em>秒；1–3600，默认 60</em><input id="request-timeout-seconds" type="number" min="1" max="3600" step="1" value="60" /></label><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label></div>
           <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="0" /></label><div class="setting-grid"><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label>压缩输出 token 上限 <em>默认 8192；仅控制摘要</em><input id="compaction-output-max-tokens" type="number" min="1" max="131072" value="8192" /></label></div><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
         </section>
         <section data-settings-panel="permissions" class="settings-page" role="tabpanel">
@@ -98,7 +99,7 @@
       <div id="external-agent-hub-root" class="external-hub-root"></div>
     </dialog>
     <aside class="sidebar">
-      <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark">A</span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
+      <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark"><img src="/static/angelus-icon.svg?v=2" alt="" /></span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
 
       <section class="side-block">
         <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button danger" type="button" title="删除当前会话" aria-label="删除当前会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg></button></div></div>

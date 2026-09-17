@@ -10,6 +10,7 @@ from llmfetcher.context_handlers.linear import read_persisted_context_page
 
 from .console_state import ConsoleDomainError
 from ..execution_module import ExecutionState
+from ..run_graph_module import RunGraphProjector
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -38,22 +39,59 @@ class ConsoleProjectionService:
         if snapshot and snapshot.state in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
             raise ConsoleDomainError("graph editing is unavailable while the session is running")
 
-    def graph(self, session_id: str) -> dict[str, object]:
-        """Project the real swarm or its typed idle blueprint for the UI.
+    def workflow(self, session_id: str) -> dict[str, object]:
+        """Project the persisted, editable workflow blueprint.
 
         Args:
             session_id: Stable identity of the Session to inspect.
 
         Returns:
-            JSON-safe graph topology and current graph-node state.
+            JSON-safe static topology. Runtime state never appears here.
         """
-        session = self._session(session_id); live = session.swarm.view_snapshot(); blueprint = session.console.blueprint()
-        # Before a connector materializes Agents the durable blueprint is still
-        # an authoritative useful graph projection.
-        if not live["nodes"]:
-            names = ["coordinator", *blueprint.workers]
-            live = {"nodes": [{"id": name, "kind": "agent", "dynamic": False, "parent": None} for name in names], "edges": [{"source": edge.source, "target": edge.target, "kind": "dependency"} for edge in blueprint.connections], "assignments": {}, "task_states": {}, "node_states": {}, "max_concurrency_agents": 0}
-        return live
+        blueprint = self._state(session_id).blueprint()
+        return {
+            "schema_version": 1,
+            "kind": "angelus.workflow",
+            "nodes": [
+                {"id": "coordinator", "kind": "agent", "role": "coordinator"},
+                *[
+                    {"id": worker.name, "kind": "agent", "role": worker.role}
+                    for _, worker in sorted(blueprint.workers.items())
+                ],
+            ],
+            "edges": [
+                {"source": edge.source, "target": edge.target, "kind": "dependency"}
+                for edge in blueprint.connections
+            ],
+            "mappers": dict(blueprint.mappers),
+            "routers": {name: list(targets) for name, targets in blueprint.routers.items()},
+            "revision": blueprint.schema_version,
+        }
+
+    def graph(self, session_id: str, execution_id: str | None = None) -> dict[str, object]:
+        """Project one selected/latest execution as the Session execution graph."""
+        session = self._session(session_id)
+        executor = session.execution
+        if executor is None:
+            return RunGraphProjector().project(session_id, self._core.state_root / "sessions" / session_id)
+        status = executor.snapshot()
+        requested_is_live = execution_id is None or execution_id == status.execution_id
+        live = session.swarm.view_snapshot() if requested_is_live and session.swarm is not None else None
+        return RunGraphProjector().project(
+            session_id,
+            executor.root,
+            execution_id=execution_id,
+            live_snapshot=live,
+            live_status=asdict(status) if requested_is_live else None,
+        )
+
+    def graph_events(self, session_id: str, cursor: int = 0, execution_id: str | None = None) -> dict[str, object]:
+        """Return only normalized RunGraph events for one attempt."""
+        session = self._session(session_id)
+        executor = session.execution
+        if executor is None:
+            raise LookupError("Session has no execution boundary")
+        return RunGraphProjector().events(session_id, executor.root, execution_id=execution_id, cursor=cursor)
 
     def graph_info(self, session_id: str) -> dict[str, object]:
         """Return compact graph counts and current editability.
@@ -64,7 +102,7 @@ class ConsoleProjectionService:
         Returns:
             Node/edge counts, concurrency limit, and running indicator.
         """
-        graph = self.graph(session_id); return {"node_count": len(graph["nodes"]), "edge_count": len(graph["edges"]), "running": not self._is_idle(session_id), "max_concurrency_agents": graph.get("max_concurrency_agents", 0)}
+        graph = self.graph(session_id); return {"node_count": len(graph["nodes"]), "edge_count": len(graph["edges"]), "running": not self._is_idle(session_id), "state": graph["state"]}
     def _is_idle(self, session_id: str) -> bool:
         """Return whether static graph changes are currently permitted."""
         session=self._session(session_id); return not session.execution or session.execution.snapshot().state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}
@@ -78,7 +116,19 @@ class ConsoleProjectionService:
         Returns:
             Agent-role list without prompts, tools, or credentials.
         """
-        graph = self.graph(session_id); return {"agents": [{"id": node["id"], "name": node["id"], "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": self._context_stats(self._session(session_id).swarm.get_agent(node["id"]))} for node in graph["nodes"] if node["kind"] == "agent"]}
+        session = self._session(session_id)
+        live = session.swarm.view_snapshot()
+        nodes = live["nodes"] or self.workflow(session_id)["nodes"]
+        agents = []
+        for node in nodes:
+            if node["kind"] != "agent":
+                continue
+            try:
+                context = self._context_stats(session.swarm.get_agent(node["id"]))
+            except KeyError:
+                context = {}
+            agents.append({"id": node["id"], "name": node["id"], "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": context})
+        return {"agents": agents}
 
     @staticmethod
     def _context_stats(agent: object) -> dict[str, object]:
@@ -139,7 +189,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._core.session_service.rebuild_swarm(session_id)
-        return self.graph(session_id)
+        return self.workflow(session_id)
 
     def add_worker(self, session_id: str, name: str, system_prompt: str) -> dict[str, object]:
         """Add one worker to an idle Session graph.
@@ -240,7 +290,9 @@ class ConsoleProjectionService:
         Returns:
             Plan items in their durable stored order.
         """
-        return {"plan": [asdict(item) for item in self._state(session_id).plan(agent)]}
+        owner = agent or "coordinator"
+        value = asdict(self._state(session_id).plan(owner))
+        return {"agent": owner, **value, "plan": value["tasks"]}
 
     def context(self, session_id: str, name: str, before: int | None = None, limit: int = 200) -> dict[str, object]:
         """Return persisted linear-context metadata for one valid Agent role.
@@ -259,7 +311,9 @@ class ConsoleProjectionService:
         if not path.is_file():
             return {"agent": name, "metadata": [], "request": None, "stats": {"messages": 0, "characters": 0, "tool_schemas": 0, "tool_schema_characters": 0}, "next_before": None, "has_more": False}
         try:
-            messages, next_before, total = read_persisted_context_page(path, before_timeline=before, limit=limit)
+            messages, next_before, total = read_persisted_context_page(
+                path, before_timeline=before, limit=limit, include_archive=True,
+            )
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         metadata = [{"index": item.timeline, "source": "context", "type": item.role, "length": len(item.content) + len(item.content_reasoning), "timeline": item.timeline} for item in messages]
@@ -288,7 +342,9 @@ class ConsoleProjectionService:
             return {"agent": resolved_name, "messages": [], "steering": steering,
                     "next_cursor": None, "has_more": False}
         try:
-            entries, next_cursor, _ = read_persisted_context_page(path, before_timeline=before, limit=limit)
+            entries, next_cursor, _ = read_persisted_context_page(
+                path, before_timeline=before, limit=limit, include_archive=True,
+            )
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         messages = []

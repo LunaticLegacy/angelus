@@ -531,7 +531,7 @@ class _PluginProvider:
         self._name = name
         self._provider = provider
 
-    def materialize(self, session: "Session", policy: "ToolPolicy", role: str) -> list["Tool"]:
+    def materialize(self, session: "Session", policy: "ToolPolicy", role: str, agent_name: str | None = None) -> list["Tool"]:
         """Create namespaced concrete Tools for one Agent.
 
         Args:

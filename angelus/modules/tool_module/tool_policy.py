@@ -5,9 +5,8 @@ from dataclasses import dataclass
 
 
 _LEGACY_TOOL_IDS = {
-    "set_task_plan": "plan_upsert",
-    "update_task_status": "plan_upsert",
-    "read_task_plan": "plan_read",
+    "plan_upsert": ("set_task_plan", "update_task_status"),
+    "plan_read": ("read_task_plan",),
     "dynamic_add_connection": "swarm_connect",
     "dynamic_remove_connection": "swarm_disconnect",
     "dynamic_set_mapper": "swarm_set_mapper",
@@ -45,11 +44,15 @@ class ToolPolicy:
             name for name, enabled in raw_categories.items()
             if isinstance(name, str) and enabled is True
         ) if isinstance(raw_categories, dict) else frozenset()
-        tools = frozenset(
-            _LEGACY_TOOL_IDS.get(name, name)
-            for name, enabled in raw_tools.items()
-            if isinstance(name, str) and enabled is True
-        ) if isinstance(raw_tools, dict) else frozenset()
+        migrated: set[str] = set()
+        if isinstance(raw_tools, dict):
+            for name, enabled in raw_tools.items():
+                if isinstance(name, str) and enabled is True:
+                    replacement = _LEGACY_TOOL_IDS.get(name, (name,))
+                    if isinstance(replacement, str):
+                        replacement = (replacement,)
+                    migrated.update(replacement)
+        tools = frozenset(migrated)
         return cls(categories, tools)
 
     def allows(self, category_id: str, tool_id: str) -> bool:

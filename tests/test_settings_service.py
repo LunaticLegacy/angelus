@@ -68,6 +68,7 @@ class SettingsServiceTests(unittest.TestCase):
                 "connector_id": connector["id"],
                 "model": "test-model",
                 "compaction_output_max_tokens": 12000,
+                "request_timeout_seconds": 135,
             })
             core.settings_service.replace_session_profile("alpha", profile)
             sentinel = object()
@@ -81,8 +82,21 @@ class SettingsServiceTests(unittest.TestCase):
             session = core.sessions.get("alpha")
             self.assertEqual(session.coordinator_name, "coordinator")
             self.assertEqual(12000, factory.call_args.kwargs["compaction_output_max_tokens"])
+            backend = factory.call_args.args[0][0]
+            self.assertEqual(135, backend.timeout)
             self.assertIs(session.coordinator, sentinel)
             self.assertIs(session.agents[0], sentinel)
+
+    def test_request_timeout_defaults_and_rejects_invalid_values(self) -> None:
+        with TemporaryDirectory() as directory:
+            core = AngelusCore(state_root=Path(directory) / "state")
+            profile = core.settings_service.global_profile()["effective"]
+
+            self.assertEqual(60.0, profile["request_timeout_seconds"])
+            for invalid in (0, 3601, float("inf"), True):
+                candidate = {**profile, "request_timeout_seconds": invalid}
+                with self.assertRaisesRegex(ValueError, "request_timeout_seconds"):
+                    core.settings_service.replace_global_profile(candidate)
 
 
 if __name__ == "__main__":

@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import time
-from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..core import AngelusCore
@@ -146,46 +142,6 @@ def control_run(session_id: str, payload: AgentControlRequest, request: Request)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return asdict(receipt)
-
-
-@router.get("/api/runs/{session_id}/events")
-def run_events(session_id: str, request: Request, cursor: int = 0) -> StreamingResponse:
-    """Replay and follow unified journal events for one Session attempt.
-
-    Args:
-        session_id: Stable Session identity whose latest attempt is streamed.
-        request: FastAPI request providing the application composition root.
-        cursor: Zero-based event index already delivered to the client.
-
-    Returns:
-        SSE response that replays after ``cursor`` and follows until terminal.
-    """
-    def stream() -> Iterator[str]:
-        try:
-            core = _core(request)
-            next_index = max(0, cursor)
-            while True:
-                page = core.console_service.events(session_id, cursor=next_index, limit=500)
-                events = page["events"]
-                for event in events:
-                    next_index += 1
-                    # Leave the SSE event type as the browser default
-                    # ``message``.  Trace types are payload data and may be
-                    # arbitrary (for example ``agent:round``); named SSE
-                    # events would bypass the client's ``onmessage`` handler.
-                    yield f"id: {next_index}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                snapshot = core.execution_service.status(session_id)
-                if snapshot.state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
-                    return
-                if not events:
-                    yield ": keep-alive\n\n"
-                    time.sleep(0.25)
-        except UnknownSession:
-            return
-        except LookupError:
-            return
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 __all__ = ["router"]

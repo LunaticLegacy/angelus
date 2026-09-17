@@ -93,7 +93,8 @@ class SessionService:
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
             profile["provider"], profile["model"], profile["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
-            profile["max_retries"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
+            profile["max_retries"], profile["request_timeout_seconds"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
+            self._core.mcp_service.fingerprint(session_id, "coordinator"),
         )
         if session.coordinator_matches(fingerprint):
             return
@@ -107,9 +108,10 @@ class SessionService:
                 model=profile["model"],
                 api_key=api_key,
                 api_url=profile["api_url"] or None,
+                timeout=profile["request_timeout_seconds"],
                 max_retries=profile["max_retries"],
             )],
-            self._core.tool_registry.materialize(session, permissions, "coordinator"),
+            self._core.tool_registry.materialize(session, permissions, "coordinator", session.coordinator_name),
             system_prompt=profile["system_prompt"],
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
@@ -187,9 +189,9 @@ class SessionService:
         return create_agent(
             [LLMBackendConfig(
                 name=name, provider=profile["provider"], model=profile["model"], api_key=api_key,
-                api_url=profile["api_url"] or None, max_retries=profile["max_retries"],
+                api_url=profile["api_url"] or None, timeout=profile["request_timeout_seconds"], max_retries=profile["max_retries"],
             )],
-            self._core.tool_registry.materialize(session, permissions, "worker"),
+            self._core.tool_registry.materialize(session, permissions, "worker", name),
             system_prompt=system_prompt or profile["system_prompt"],
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
@@ -242,9 +244,10 @@ class SessionService:
                 model=profile["model"],
                 api_key=api_key,
                 api_url=profile["api_url"] or None,
+                timeout=profile["request_timeout_seconds"],
                 max_retries=profile["max_retries"],
             )],
-            self._core.tool_registry.materialize(session, permissions, role),
+            self._core.tool_registry.materialize(session, permissions, role, name),
             system_prompt=system_prompt,
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
@@ -277,6 +280,7 @@ class SessionService:
         sessions_root = (self._core.state_root / "sessions").resolve()
         if state_path.parent != sessions_root:
             raise ValueError("invalid session state path")
+        self._core.mcp_service.invalidate(session_id)
         if state_path.exists():
             shutil.rmtree(state_path)
         self._core.conversations.remove(session_id)

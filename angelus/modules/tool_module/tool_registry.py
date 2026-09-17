@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import inspect
 from typing import TYPE_CHECKING, Protocol
 
 from llmfetcher import Tool
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 class ToolProvider(Protocol):
     """Materialize a registered family's concrete Tools for one Session."""
 
-    def materialize(self, session: "Session", policy: ToolPolicy, role: str) -> list[Tool]:
+    def materialize(self, session: "Session", policy: ToolPolicy, role: str, agent_name: str | None = None) -> list[Tool]:
         """Build only Tools this provider can safely expose.
 
         Args:
@@ -89,7 +90,7 @@ class ToolRegistry:
         self._definitions.update({definition.id: definition for definition in registration.definitions})
         self._revision += 1
 
-    def materialize(self, session: "Session", policy: ToolPolicy, role: str) -> list[Tool]:
+    def materialize(self, session: "Session", policy: ToolPolicy, role: str, agent_name: str | None = None) -> list[Tool]:
         """Build all authorized concrete Tools for one Agent role.
 
         Args:
@@ -103,7 +104,10 @@ class ToolRegistry:
         tools: list[Tool] = []
         seen: set[str] = set()
         for registration in self._providers.values():
-            for tool in registration.provider.materialize(session, policy, role):
+            materialize = registration.provider.materialize
+            parameters = inspect.signature(materialize).parameters
+            provided = materialize(session, policy, role, agent_name) if len(parameters) >= 4 else materialize(session, policy, role)
+            for tool in provided:
                 if tool.name not in seen:
                     tools.append(tool)
                     seen.add(tool.name)

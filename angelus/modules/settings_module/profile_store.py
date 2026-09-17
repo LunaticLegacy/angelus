@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 from pathlib import Path
 import threading
 from typing import Any
@@ -21,6 +22,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "max_tokens": 16384,
     "max_rounds": 0,
     "max_retries": 3,
+    "request_timeout_seconds": 60.0,
     "max_context_threshold": 262144,
     "compaction_output_max_tokens": 8192,
     "max_swarm_agents": 4,
@@ -28,7 +30,15 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "session_memory_read_sessions": [],
     "session_artifact_search_sessions": [],
     "session_artifact_open_sessions": [],
-    "tool_permissions": {"categories": {}, "tools": {}},
+    "tool_permissions": {
+        "categories": {"context_version": True, "session_memory": True},
+        "tools": {
+            "inspect_agent_context": True, "edit_agent_context": True, "restore_agent_context": True,
+            "search_session_memory": True, "read_session_memory": True,
+            "search_session_artifacts": True, "open_session_artifact": True,
+            "create_session_handoff": True, "read_session_handoff": True,
+        },
+    },
 }
 
 
@@ -174,6 +184,15 @@ class RunProfileStore:
                 if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
                     raise ValueError("temperature must be between 0 and 2")
                 result[key] = float(value)
+            elif key == "request_timeout_seconds":
+                if (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not math.isfinite(value)
+                    or not 1 <= value <= 3600
+                ):
+                    raise ValueError("request_timeout_seconds must be between 1 and 3600")
+                result[key] = float(value)
             elif key in {"max_tokens", "max_retries", "max_context_threshold", "compaction_output_max_tokens", "max_swarm_agents", "max_rounds"}:
                 if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                     raise ValueError(f"{key} must be a non-negative integer")
@@ -187,5 +206,16 @@ class RunProfileStore:
             elif key == "tool_permissions":
                 if not isinstance(value, dict):
                     raise ValueError("tool_permissions must be an object")
-                result[key] = value
+                default_permissions = DEFAULT_RUN_PROFILE["tool_permissions"]
+                submitted_categories = value.get("categories", {})
+                submitted_tools = value.get("tools", {})
+                if not isinstance(submitted_categories, dict) or not isinstance(submitted_tools, dict):
+                    raise ValueError("tool_permissions categories and tools must be objects")
+                # New restored capabilities are on by default even for an old
+                # saved `{categories:{}, tools:{}}`; an explicit false remains
+                # authoritative and therefore still supports least privilege.
+                result[key] = {
+                    "categories": {**default_permissions["categories"], **submitted_categories},
+                    "tools": {**default_permissions["tools"], **submitted_tools},
+                }
         return result

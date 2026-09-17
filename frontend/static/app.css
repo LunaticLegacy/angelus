@@ -455,6 +455,7 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
   text-shadow:none;
   box-shadow:inset 0 1px rgba(255,255,255,.08),0 9px 24px rgba(82,65,170,.18);
 }
+.brand .brand-mark img { display:block; width:100%; height:100%; }
 .brand-copy { display:grid; gap:1px; }
 .brand strong { font-weight:720; }
 .brand small { color:var(--muted); font-size:7px; letter-spacing:.17em; }

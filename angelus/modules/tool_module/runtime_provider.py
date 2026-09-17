@@ -27,7 +27,7 @@ class RuntimeToolProvider:
         """
         self._core = core
 
-    def materialize(self, session: "Session", policy: ToolPolicy, role: str) -> list[Tool]:
+    def materialize(self, session: "Session", policy: ToolPolicy, role: str, agent_name: str | None = None) -> list[Tool]:
         """Build only explicitly authorized project-scoped runtime tools.
 
         Args:
@@ -62,7 +62,8 @@ class RuntimeToolProvider:
                     LLMFetcher([LLMBackendConfig(
                         name="tlb_rag", provider=profile["provider"], model=profile["model"],
                         api_key=self._core.connectors.api_key(connector_id),
-                        api_url=profile["api_url"] or None, max_retries=profile["max_retries"],
+                        api_url=profile["api_url"] or None, timeout=profile["request_timeout_seconds"],
+                        max_retries=profile["max_retries"],
                     )]),
                 ))
         return tools

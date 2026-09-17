@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
+from ..run_graph_module import RunGraphProjector
 from llmfetcher.swarm_module import AgentFailure
 from .agent_control import AgentControlReceipt, SessionRunControl
 
@@ -80,7 +81,7 @@ class ExecutionService:
         # Service dependency; it grants access to Session-owned execution.
         self._core = core
 
-    def start(self, session_id: str, message: str) -> ExecutionSnapshot:
+    def start(self, session_id: str, message: str, *, recovery: dict[str, object] | None = None) -> ExecutionSnapshot:
         """Start the configured Session AgentSwarm under a fresh attempt.
 
         Args:
@@ -132,15 +133,28 @@ class ExecutionService:
                 message=event.message, usage=usage if isinstance(usage, dict) else {},
                 duration_ms=data.get("duration_ms") or data.get("model_duration_ms"),
             )
+            # TaskBus assignment IDs are the durable correlation between a
+            # dispatched worker and a plan leaf. Reports and worker failures
+            # therefore advance the same nested plan rather than a shadow UI
+            # state; stale revival assignments are ignored by ConsoleState.
+            if session.console is not None and event.event_type in {"task:reported", "task:report_missing", "agent:failed"}:
+                assignment_id = str(data.get("task_id", ""))
+                if not assignment_id and event.event_type == "agent:failed":
+                    try: assignment_id = session.swarm.task_id_for_agent(event.agent_name)
+                    except (KeyError, ValueError): assignment_id = ""
+                if assignment_id:
+                    report_status = str(data.get("status", ""))
+                    plan_status = "completed" if event.event_type == "task:reported" and report_status == "completed" else "blocked"
+                    session.console.update_assignment_status(assignment_id, plan_status)
             if event.event_type == "agent:context_checkpoint":
                 snapshotter = getattr(session.swarm, "view_snapshot", None)
                 if not callable(snapshotter):
                     return
-                graph = snapshotter()
-                if not isinstance(graph, dict):
+                live_graph = snapshotter()
+                if not isinstance(live_graph, dict):
                     return
                 round_value = data.get("round")
-                nodes = graph.get("nodes", [])
+                nodes = live_graph.get("nodes", [])
                 context_agents = [
                     node.get("id")
                     for node in nodes
@@ -156,15 +170,33 @@ class ExecutionService:
                     }
                     for agent_name in context_agents
                 }
+                run_graph = RunGraphProjector().project(
+                    session_id,
+                    attempt.root.parent.parent,
+                    execution_id=attempt.execution_id,
+                    live_snapshot=live_graph,
+                    live_status=asdict(attempt.snapshot()),
+                )
+                recovery_descriptor = {
+                    "schema_version": 1,
+                    "strategy": "new_attempt",
+                    "safe_boundary": "agent_context_checkpoint",
+                    "unfinished_node_policy": "mark_interrupted_or_cancelled",
+                    "workflow_revision": session.console.blueprint().schema_version if session.console is not None else 0,
+                }
                 attempt.commit_checkpoint(
                     uuid4().hex,
-                    graph,
+                    None,
                     contexts,
                     reason=f"{event.agent_name}:round:{round_value}",
+                    run_graph=run_graph,
+                    recovery=recovery_descriptor,
                 )
         def install_hook(attempt: Any) -> None:
             binding.attempt = attempt
             session.swarm.add_hook(journal_hook)
+            if recovery is not None:
+                attempt.journal.append("execution_recovery_started", recovery)
         def run_swarm(controller: object) -> object:
             """Run the current swarm and convert root-agent failures to attempts.
 
@@ -204,8 +236,42 @@ class ExecutionService:
                 _remove_journal_hook(session.swarm, journal_hook)
                 session.run_control = None
 
-        attempt = executor.start(run_swarm, before_start=install_hook)
+        attempt = executor.start(run_swarm, before_start=install_hook, start_data={"message": message})
         return attempt.snapshot()
+
+    def recover(self, session_id: str, execution_id: str | None = None) -> ExecutionSnapshot:
+        """Start a safe, guided continuation from a verified RunGraph checkpoint.
+
+        Recovery never restores a Python thread, a live provider request, or a
+        running TaskBus item. It creates a new attempt whose coordinator is
+        told to continue only unresolved work using its durable Agent context.
+        """
+        self._require_session(session_id)
+        session = self._core.sessions.get(session_id)
+        executor = session.execution
+        if executor is None:
+            raise RuntimeError("Session has no execution boundary")
+        current = executor.snapshot()
+        if current.state in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
+            raise RuntimeError("A live execution must stop before recovery")
+        source = RunGraphProjector().recovery_checkpoint(executor.root, execution_id)
+        checkpoint = source["checkpoint"]
+        checkpoint_data = checkpoint if isinstance(checkpoint, dict) else {}
+        generation = str(checkpoint_data.get("generation", ""))
+        recovery = {
+            "source_execution_id": source["source_execution_id"],
+            "source_attempt": source["source_attempt"],
+            "source_state": source["source_state"],
+            "checkpoint_generation": generation,
+            "strategy": "guided_new_attempt",
+        }
+        prompt = (
+            "Continue the prior execution from its durable checkpoint. Do not blindly repeat "
+            "work already completed; inspect your persisted context and complete only unresolved work. "
+            f"Prior execution: {source['source_execution_id']}.\n\n"
+            f"Original user request:\n{source['initial_message']}"
+        )
+        return self.start(session_id, prompt, recovery=recovery)
 
     def status(self, session_id: str) -> ExecutionSnapshot:
         """Return current in-process execution state, or synthetic idle state.

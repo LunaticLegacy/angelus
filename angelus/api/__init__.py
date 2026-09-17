@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -16,6 +16,7 @@ from .settings import router as settings_router
 from .session_console import router as session_console_router
 from .plugins import router as plugins_router
 from .external_agent_hub import router as external_agent_hub_router
+from .mcp import router as mcp_router
 
 
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
@@ -32,9 +33,12 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
         )
 
     @app.get("/favicon.ico", include_in_schema=False)
-    def favicon() -> Response:
-        """Avoid a noisy 404 until the rebuilt workbench owns an icon asset."""
-        return Response(status_code=204)
+    def favicon() -> FileResponse:
+        """Serve the Angelus mark to clients that request the default icon URL."""
+        return FileResponse(
+            frontend_root / "static" / "angelus-icon.svg",
+            media_type="image/svg+xml",
+        )
 
     @app.on_event("startup")
     def start_core() -> None:
@@ -59,6 +63,7 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     app.include_router(session_console_router)
     app.include_router(plugins_router)
     app.include_router(external_agent_hub_router)
+    app.include_router(mcp_router)
     app.mount("/static", StaticFiles(directory=frontend_root / "static"), name="static")
 
 

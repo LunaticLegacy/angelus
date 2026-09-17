@@ -24,7 +24,7 @@ class ConsoleToolProvider:
         """
         self._core = core
 
-    def materialize(self, session: object, policy: ToolPolicy, role: str) -> list[Tool]:
+    def materialize(self, session: object, policy: ToolPolicy, role: str, agent_name: str | None = None) -> list[Tool]:
         """Build Console Tools authorized for the requested Agent role.
 
         Args:
@@ -41,6 +41,7 @@ class ConsoleToolProvider:
             session,
             ToolPermissionPolicy(policy.categories, policy.tools),
             self._core.session_service.create_runtime_worker,
+            agent_name or ("coordinator" if role == "coordinator" else "worker"),
         ).build()
 
 
@@ -61,8 +62,9 @@ def console_tool_registration(core: "AngelusCore") -> ToolProviderRegistration:
             ToolCategory("swarm", "Swarm 协作", "安全修改当前 Session 的动态拓扑。"),
         ),
         definitions=(
-            ToolDefinition("plan_upsert", "planning", "创建或更新计划项", "写入任务状态与标题。", "console", frozenset({"coordinator", "worker"})),
-            ToolDefinition("plan_read", "planning", "读取任务计划", "读取当前 Session 的持久化计划。", "console", frozenset({"coordinator", "worker"})),
+            ToolDefinition("set_task_plan", "planning", "提交完整任务计划", "一次提交并原子替换完整嵌套计划。", "console", frozenset({"coordinator", "worker"})),
+            ToolDefinition("update_task_status", "planning", "更新任务状态", "更新叶子任务并派生父任务状态。", "console", frozenset({"coordinator", "worker"})),
+            ToolDefinition("read_task_plan", "planning", "读取任务计划", "读取当前 Agent 的完整嵌套计划。", "console", frozenset({"coordinator", "worker"})),
             ToolDefinition("swarm_connect", "swarm", "添加连接", "新增动态依赖边。", "console", frozenset({"coordinator", "worker"})),
             ToolDefinition("swarm_disconnect", "swarm", "移除连接", "删除动态依赖边。", "console", frozenset({"coordinator", "worker"})),
             ToolDefinition("swarm_set_mapper", "swarm", "设置聚合器", "配置输入汇总方式。", "console", frozenset({"coordinator", "worker"})),
