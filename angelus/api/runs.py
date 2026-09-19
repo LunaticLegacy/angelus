@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import time
-from collections.abc import Iterator
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 from ..core import AngelusCore
 from ..modules.application_module import UnknownSession
@@ -20,11 +16,28 @@ from ..modules.execution_module import ExecutionState
 router = APIRouter()
 
 
+class RunImageReference(BaseModel):
+    """An existing Session image, never arbitrary paths or remote URLs."""
+
+    model_config = ConfigDict(extra="forbid")
+    attachment_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    media_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
+    detail: Literal["auto", "low", "high"] = "auto"
+
+
 class RunRequest(BaseModel):
     """HTTP input for one configured Session execution."""
 
     session_id: str = Field(min_length=1, max_length=80)
-    message: str = Field(min_length=1, max_length=100_000)
+    message: str = Field(default="", max_length=100_000)
+    images: list[RunImageReference] = Field(default_factory=list, max_length=8)
+    target_agent: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def require_input(self) -> "RunRequest":
+        if not self.message.strip() and not self.images:
+            raise ValueError("A message or image is required")
+        return self
 
 
 class StopRequest(BaseModel):
@@ -42,12 +55,16 @@ class AgentControlRequest:
         action: ``steer``, ``stop``, or ``force_stop``.
         message: Required non-empty instruction for ``steer``.
         reason: Journal-safe reason for stop actions.
+        images: Image references a client mistakenly attached to a steering
+            command. Steering stays text-only this iteration, so a non-empty
+            value is rejected explicitly rather than silently ignored.
     """
 
     agent_id: str = "all"
     action: str = "steer"
     message: str = ""
     reason: str = "user_requested"
+    images: list[RunImageReference] = field(default_factory=list)
 
 
 def _core(request: Request) -> AngelusCore:
@@ -63,7 +80,11 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
     """Start one attempt against the Session's configured coordinator."""
     core = _core(request)
     try:
-        snapshot = core.execution_service.start(payload.session_id, payload.message)
+        snapshot = core.execution_service.start(
+            payload.session_id, payload.message,
+            images=[image.model_dump() for image in payload.images],
+            target_agent=payload.target_agent,
+        )
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
     except (KeyError, ValueError) as exc:
@@ -75,6 +96,7 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
         "execution_id": snapshot.execution_id,
         "attempt": snapshot.attempt,
         "state": snapshot.state,
+        "target_agent": payload.target_agent,
     }
 
 
@@ -133,6 +155,13 @@ def control_run(session_id: str, payload: AgentControlRequest, request: Request)
     Returns:
         Accepted command receipt including resolved target Agent identities.
     """
+    if payload.images:
+        # Image steering is out of scope for the text-only control path. Fail
+        # loudly so a caller never believes an attachment reached the Agent.
+        raise HTTPException(
+            status_code=422,
+            detail="Image steering is not supported; send images with a new run request instead",
+        )
     try:
         receipt = _core(request).execution_service.control(
             session_id, payload.agent_id, payload.action, payload.message, payload.reason,
@@ -146,46 +175,6 @@ def control_run(session_id: str, payload: AgentControlRequest, request: Request)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return asdict(receipt)
-
-
-@router.get("/api/runs/{session_id}/events")
-def run_events(session_id: str, request: Request, cursor: int = 0) -> StreamingResponse:
-    """Replay and follow unified journal events for one Session attempt.
-
-    Args:
-        session_id: Stable Session identity whose latest attempt is streamed.
-        request: FastAPI request providing the application composition root.
-        cursor: Zero-based event index already delivered to the client.
-
-    Returns:
-        SSE response that replays after ``cursor`` and follows until terminal.
-    """
-    def stream() -> Iterator[str]:
-        try:
-            core = _core(request)
-            next_index = max(0, cursor)
-            while True:
-                page = core.console_service.events(session_id, cursor=next_index, limit=500)
-                events = page["events"]
-                for event in events:
-                    next_index += 1
-                    # Leave the SSE event type as the browser default
-                    # ``message``.  Trace types are payload data and may be
-                    # arbitrary (for example ``agent:round``); named SSE
-                    # events would bypass the client's ``onmessage`` handler.
-                    yield f"id: {next_index}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                snapshot = core.execution_service.status(session_id)
-                if snapshot.state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
-                    return
-                if not events:
-                    yield ": keep-alive\n\n"
-                    time.sleep(0.25)
-        except UnknownSession:
-            return
-        except LookupError:
-            return
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 __all__ = ["router"]

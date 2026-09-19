@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from llmfetcher.context_handlers.linear import read_persisted_context_page
 
 from .console_state import ConsoleDomainError
 from ..execution_module import ExecutionState
+from ..run_graph_module import RunGraphProjector
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -23,6 +26,12 @@ class ConsoleProjectionService:
             core: Process composition root that owns every Session aggregate.
         """
         self._core = core
+        # Non-authoritative, byte-size-keyed journal caches.  The durable
+        # file stays the source of truth; a new committed size invalidates.
+        self._steering_cache: OrderedDict[tuple[str, int, str], list[dict[str, object]]] = OrderedDict()
+        self._steering_state: tuple[str, str, dict[str, Any]] | None = None
+        self._steering_lock = threading.RLock()
+        self._STEERING_CACHE_LIMIT = 8
 
     def _session(self, session_id: str):
         """Resolve a Session or translate its absence into a domain lookup."""
@@ -38,22 +47,59 @@ class ConsoleProjectionService:
         if snapshot and snapshot.state in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
             raise ConsoleDomainError("graph editing is unavailable while the session is running")
 
-    def graph(self, session_id: str) -> dict[str, object]:
-        """Project the real swarm or its typed idle blueprint for the UI.
+    def workflow(self, session_id: str) -> dict[str, object]:
+        """Project the persisted, editable workflow blueprint.
 
         Args:
             session_id: Stable identity of the Session to inspect.
 
         Returns:
-            JSON-safe graph topology and current graph-node state.
+            JSON-safe static topology. Runtime state never appears here.
         """
-        session = self._session(session_id); live = session.swarm.view_snapshot(); blueprint = session.console.blueprint()
-        # Before a connector materializes Agents the durable blueprint is still
-        # an authoritative useful graph projection.
-        if not live["nodes"]:
-            names = ["coordinator", *blueprint.workers]
-            live = {"nodes": [{"id": name, "kind": "agent", "dynamic": False, "parent": None} for name in names], "edges": [{"source": edge.source, "target": edge.target, "kind": "dependency"} for edge in blueprint.connections], "assignments": {}, "task_states": {}, "node_states": {}, "max_concurrency_agents": 0}
-        return live
+        blueprint = self._state(session_id).blueprint()
+        return {
+            "schema_version": 1,
+            "kind": "angelus.workflow",
+            "nodes": [
+                {"id": "coordinator", "kind": "agent", "role": "coordinator"},
+                *[
+                    {"id": worker.name, "kind": "agent", "role": worker.role}
+                    for _, worker in sorted(blueprint.workers.items())
+                ],
+            ],
+            "edges": [
+                {"source": edge.source, "target": edge.target, "kind": "dependency"}
+                for edge in blueprint.connections
+            ],
+            "mappers": dict(blueprint.mappers),
+            "routers": {name: list(targets) for name, targets in blueprint.routers.items()},
+            "revision": blueprint.schema_version,
+        }
+
+    def graph(self, session_id: str, execution_id: str | None = None) -> dict[str, object]:
+        """Project one selected/latest execution as the Session execution graph."""
+        session = self._session(session_id)
+        executor = session.execution
+        if executor is None:
+            return RunGraphProjector().project(session_id, self._core.state_root / "sessions" / session_id)
+        status = executor.snapshot()
+        requested_is_live = execution_id is None or execution_id == status.execution_id
+        live = session.swarm.view_snapshot() if requested_is_live and session.swarm is not None else None
+        return RunGraphProjector().project(
+            session_id,
+            executor.root,
+            execution_id=execution_id,
+            live_snapshot=live,
+            live_status=asdict(status) if requested_is_live else None,
+        )
+
+    def graph_events(self, session_id: str, cursor: int = 0, execution_id: str | None = None) -> dict[str, object]:
+        """Return only normalized RunGraph events for one attempt."""
+        session = self._session(session_id)
+        executor = session.execution
+        if executor is None:
+            raise LookupError("Session has no execution boundary")
+        return RunGraphProjector().events(session_id, executor.root, execution_id=execution_id, cursor=cursor)
 
     def graph_info(self, session_id: str) -> dict[str, object]:
         """Return compact graph counts and current editability.
@@ -64,7 +110,7 @@ class ConsoleProjectionService:
         Returns:
             Node/edge counts, concurrency limit, and running indicator.
         """
-        graph = self.graph(session_id); return {"node_count": len(graph["nodes"]), "edge_count": len(graph["edges"]), "running": not self._is_idle(session_id), "max_concurrency_agents": graph.get("max_concurrency_agents", 0)}
+        graph = self.graph(session_id); return {"node_count": len(graph["nodes"]), "edge_count": len(graph["edges"]), "running": not self._is_idle(session_id), "state": graph["state"]}
     def _is_idle(self, session_id: str) -> bool:
         """Return whether static graph changes are currently permitted."""
         session=self._session(session_id); return not session.execution or session.execution.snapshot().state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}
@@ -78,7 +124,19 @@ class ConsoleProjectionService:
         Returns:
             Agent-role list without prompts, tools, or credentials.
         """
-        graph = self.graph(session_id); return {"agents": [{"id": node["id"], "name": node["id"], "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": self._context_stats(self._session(session_id).swarm.get_agent(node["id"]))} for node in graph["nodes"] if node["kind"] == "agent"]}
+        session = self._session(session_id)
+        live = session.swarm.view_snapshot()
+        nodes = live["nodes"] or self.workflow(session_id)["nodes"]
+        agents = []
+        for node in nodes:
+            if node["kind"] != "agent":
+                continue
+            try:
+                context = self._context_stats(session.swarm.get_agent(node["id"]))
+            except KeyError:
+                context = {}
+            agents.append({"id": node["id"], "name": node["id"], "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": context})
+        return {"agents": agents}
 
     @staticmethod
     def _context_stats(agent: object) -> dict[str, object]:
@@ -121,13 +179,22 @@ class ConsoleProjectionService:
             Events plus pagination cursor and durable offset.
         """
         session=self._session(session_id); attempt=session.execution.attempt if session.execution else None
-        raw=list(attempt.journal.events()) if attempt else []
-        events=[]
-        for item in raw:
+        start=max(0, cursor); maximum=max(1,min(limit,500))
+        if attempt is None:
+            return {"events": [], "next_cursor": None, "has_more": False, "durable_offset": 0}
+        # Stream the append-only file and stop once the page is full plus one
+        # look-ahead fact, so a page never materializes the whole journal.
+        page=[]; has_more=False
+        for index, item in enumerate(attempt.journal.events()):
+            if index < start:
+                continue
+            if len(page) >= maximum:
+                has_more=True
+                break
             data=item.get("data") or {}
-            events.append({**item, "event": "lifecycle", "agent": item.get("agent") or data.get("agent", ""), "message": item.get("message") or data.get("message", ""), "usage": item.get("usage") or data.get("usage", {})})
-        start=max(0, cursor); page=events[start:start+max(1,min(limit,500))]; next_cursor=start+len(page)
-        return {"events": page, "next_cursor": next_cursor if next_cursor < len(events) else None, "has_more": next_cursor < len(events), "durable_offset": page[-1].get("offset", 0) if page else 0}
+            page.append({**item, "event": "lifecycle", "agent": item.get("agent") or data.get("agent", ""), "message": item.get("message") or data.get("message", ""), "usage": item.get("usage") or data.get("usage", {})})
+        next_cursor=start+len(page)
+        return {"events": page, "next_cursor": next_cursor if has_more else None, "has_more": has_more, "durable_offset": page[-1].get("offset", 0) if page else 0}
 
     def _rebuild_after_edit(self, session_id: str) -> dict[str, object]:
         """Rebuild the concrete swarm after a persisted static graph change.
@@ -139,7 +206,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._core.session_service.rebuild_swarm(session_id)
-        return self.graph(session_id)
+        return self.workflow(session_id)
 
     def add_worker(self, session_id: str, name: str, system_prompt: str) -> dict[str, object]:
         """Add one worker to an idle Session graph.
@@ -240,7 +307,9 @@ class ConsoleProjectionService:
         Returns:
             Plan items in their durable stored order.
         """
-        return {"plan": [asdict(item) for item in self._state(session_id).plan(agent)]}
+        owner = agent or "coordinator"
+        value = asdict(self._state(session_id).plan(owner))
+        return {"agent": owner, **value, "plan": value["tasks"]}
 
     def context(self, session_id: str, name: str, before: int | None = None, limit: int = 200) -> dict[str, object]:
         """Return persisted linear-context metadata for one valid Agent role.
@@ -259,7 +328,9 @@ class ConsoleProjectionService:
         if not path.is_file():
             return {"agent": name, "metadata": [], "request": None, "stats": {"messages": 0, "characters": 0, "tool_schemas": 0, "tool_schema_characters": 0}, "next_before": None, "has_more": False}
         try:
-            messages, next_before, total = read_persisted_context_page(path, before_timeline=before, limit=limit)
+            messages, next_before, total = read_persisted_context_page(
+                path, before_timeline=before, limit=limit, include_archive=True,
+            )
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         metadata = [{"index": item.timeline, "source": "context", "type": item.role, "length": len(item.content) + len(item.content_reasoning), "timeline": item.timeline} for item in messages]
@@ -282,19 +353,26 @@ class ConsoleProjectionService:
         """
         resolved_name = "coordinator" if name in {None, "", "all"} else name
         self._agent(session_id, resolved_name)
+        steering = self.steering(session_id, name)
         path = self._context_path(session_id, resolved_name)
         if not path.is_file():
-            return {"agent": resolved_name, "messages": [], "next_cursor": None, "has_more": False}
+            return {"agent": resolved_name, "messages": [], "steering": steering,
+                    "next_cursor": None, "has_more": False}
         try:
-            entries, next_cursor, _ = read_persisted_context_page(path, before_timeline=before, limit=limit)
+            entries, next_cursor, _ = read_persisted_context_page(
+                path, before_timeline=before, limit=limit, include_archive=True,
+            )
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         messages = []
         for entry in entries:
-            tools = [{"name": tool.call.name, "arguments": tool.call.arguments, "result": tool.result} for tool in entry.tool_calls]
+            tools = [{"name": tool.call.name, "arguments": tool.call.arguments, "result": tool.result,
+                      "images": self._image_previews(session_id, getattr(tool, "images", []))}
+                     for tool in entry.tool_calls]
             messages.append({
                 "role": entry.role,
                 "content": entry.content,
+                "images": self._image_previews(session_id, getattr(entry, "images", [])),
                 "reasoning": entry.content_reasoning,
                 "tools": tools,
                 "timeline": entry.timeline,
@@ -303,7 +381,154 @@ class ConsoleProjectionService:
                 "round_duration_ms": entry.round_duration_ms,
                 "created_at": entry.created_at,
             })
-        return {"agent": resolved_name, "messages": messages, "next_cursor": next_cursor, "has_more": next_cursor is not None}
+        return {"agent": resolved_name, "messages": messages, "steering": steering,
+                "next_cursor": next_cursor, "has_more": next_cursor is not None}
+
+    def _image_previews(self, session_id: str, references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return only Session-local image URLs, keeping missing refs visible."""
+        store = self._core.sessions.get(session_id).attachments
+        result = []
+        for ref in references:
+            attachment_id = ref.get("attachment_id", "")
+            try:
+                metadata = store.get(attachment_id) if store is not None else None
+            except (ValueError, KeyError, OSError):
+                metadata = None
+            if metadata is None:
+                result.append({"attachment_id": attachment_id, "unavailable": True})
+            else:
+                result.append({**metadata, "detail": ref.get("detail", "auto"),
+                               "url": f"/api/sessions/{session_id}/attachments/images/{attachment_id}"})
+        return result
+
+    def steering(self, session_id: str, name: str | None = None) -> list[dict[str, object]]:
+        """Project durable steering deliveries from the latest attempt journal.
+
+        A control submission creates one record; later ``agent:steer_applied``
+        events update its recipient state by the same durable steering ID.
+        """
+        session = self._session(session_id)
+        attempt = session.execution.attempt if session.execution else None
+        if attempt is None:
+            return []
+        records = self._cached_steering(attempt)
+        if name in {None, "", "all"}:
+            return records
+        return [record for record in records if name in record["recipients"]]
+
+    def _journal_signature(self, attempt: object) -> tuple[str, int, str] | None:
+        """Return the (path, committed byte size, execution id) cache key."""
+        path = getattr(getattr(attempt, "journal", None), "path", None)
+        if path is None:
+            return None
+        try:
+            size = Path(path).stat().st_size
+        except OSError:
+            return None
+        return (str(path), size, str(getattr(attempt, "execution_id", "")))
+
+    def _cached_steering(self, attempt: object) -> list[dict[str, object]]:
+        """Reduce steering records once per journal state, appending only new lines.
+
+        The append-only journal remains the source of truth.  The cache key is
+        the journal path plus its committed byte size, so the running swarm (or
+        any out-of-process writer) transparently invalidates it.  A prefix state
+        is reused only while the path and execution identity are unchanged, so a
+        rotated or recreated file can never mix into a stale cursor.
+        """
+        signature = self._journal_signature(attempt)
+        if signature is None:
+            records: dict[str, dict[str, object]] = {}
+            for event in attempt.journal.events():
+                self._reduce_steering_event(records, event)
+            return self._steering_records(records)
+        path, size, execution = signature
+        with self._steering_lock:
+            cached = self._steering_cache.get(signature)
+            if cached is not None:
+                self._steering_cache.move_to_end(signature)
+                return cached
+            previous = self._steering_state
+            if previous is not None and previous[0] == path and previous[1] == execution:
+                state = previous[2]
+            else:
+                state = {"records": {}, "cursor": 0}
+            if size < state["cursor"]:
+                # The append-only file shrank (for example a rotation or an
+                # out-of-band rewrite), so the cached prefix no longer matches
+                # the durable bytes; discard it and re-read from the start.
+                state = {"records": {}, "cursor": 0}
+            if size > state["cursor"]:
+                with open(path, "rb") as handle:
+                    handle.seek(state["cursor"])
+                    chunk = handle.read(size - state["cursor"])
+                for line in chunk.split(b"\n"):
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if isinstance(event, dict):
+                        self._reduce_steering_event(state["records"], event)
+                state["cursor"] = size
+            records = self._steering_records(state["records"])
+            self._steering_state = (path, execution, state)
+            self._steering_cache[signature] = records
+            self._steering_cache.move_to_end(signature)
+            while len(self._steering_cache) > self._STEERING_CACHE_LIMIT:
+                self._steering_cache.popitem(last=False)
+            return records
+
+    @staticmethod
+    def _reduce_steering_event(records: dict[str, dict[str, object]], event: dict[str, object]) -> None:
+        """Fold one journal fact into the durable steering record map."""
+        data = event.get("data")
+        if not isinstance(data, dict):
+            return
+        if event.get("type") == "agent:control" and data.get("action") == "steer":
+            steer_id = data.get("steer_id")
+            targets = data.get("target_agents")
+            if not isinstance(steer_id, str) or not isinstance(targets, list):
+                return
+            records[steer_id] = {
+                "id": steer_id,
+                "text": str(event.get("message") or ""),
+                "scope": data.get("agent_id") if isinstance(data.get("agent_id"), str) else "all",
+                "recipients": [target for target in targets if isinstance(target, str)],
+                "applied_agents": [],
+                "submitted_at": event.get("timestamp"),
+            }
+        elif event.get("type") == "agent:steer_applied":
+            agent = event.get("agent")
+            steer_ids = data.get("steer_ids")
+            if not isinstance(agent, str) or not isinstance(steer_ids, list):
+                return
+            for steer_id in steer_ids:
+                record = records.get(steer_id)
+                if record is None:
+                    continue
+                applied = record["applied_agents"]
+                if isinstance(applied, list) and agent not in applied:
+                    applied.append(agent)
+
+    @staticmethod
+    def _steering_records(records: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+        """Return ordered copies so cached records are never mutated by callers."""
+        values = [
+            {
+                "id": record["id"],
+                "text": record["text"],
+                "scope": record["scope"],
+                "recipients": list(record["recipients"]),  # type: ignore[arg-type]
+                "applied_agents": list(record["applied_agents"]),  # type: ignore[arg-type]
+                "submitted_at": record["submitted_at"],
+            }
+            for record in records.values()
+        ]
+        values.sort(key=lambda item: float(item.get("submitted_at") or 0))
+        return values
+
     def context_graph(self, session_id: str, name: str) -> dict[str, object]:
         """Return the actual GraphContextHandler entity graph projection.
 

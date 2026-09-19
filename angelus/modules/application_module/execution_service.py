@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
+from ..run_graph_module import RunGraphProjector
 from llmfetcher.swarm_module import AgentFailure
+from llmfetcher.multimodal import UserMessage
 from .agent_control import AgentControlReceipt, SessionRunControl
 
 if TYPE_CHECKING:
@@ -80,7 +82,8 @@ class ExecutionService:
         # Service dependency; it grants access to Session-owned execution.
         self._core = core
 
-    def start(self, session_id: str, message: str) -> ExecutionSnapshot:
+    def start(self, session_id: str, message: str, *, recovery: dict[str, object] | None = None,
+              images: list[dict[str, Any]] | None = None, target_agent: str | None = None) -> ExecutionSnapshot:
         """Start the configured Session AgentSwarm under a fresh attempt.
 
         Args:
@@ -99,11 +102,18 @@ class ExecutionService:
             session = self._core.sessions.get(session_id)
         except KeyError as exc:
             raise UnknownSession(session_id) from exc
+        image_refs = self._validate_images(session, images or [])
+        if not message.strip() and not image_refs:
+            raise ValueError("A message or image is required")
         self._core.session_service.ensure_coordinator(session_id)
         # ``ensure_coordinator`` installs the required role at index zero.
         # Keep this defensive guard so a malformed custom Session cannot run.
         if not session.agents:
             raise RuntimeError("Session coordinator could not be constructed")
+        if target_agent is not None:
+            target_agent = str(target_agent).strip()
+            if not target_agent or target_agent == "all" or session.swarm.get_agent(target_agent) is None:
+                raise ValueError("Unknown Session Agent target")
         executor = session.execution
         if executor is None:
             raise RuntimeError("Session has no execution boundary")
@@ -132,15 +142,28 @@ class ExecutionService:
                 message=event.message, usage=usage if isinstance(usage, dict) else {},
                 duration_ms=data.get("duration_ms") or data.get("model_duration_ms"),
             )
+            # TaskBus assignment IDs are the durable correlation between a
+            # dispatched worker and a plan leaf. Reports and worker failures
+            # therefore advance the same nested plan rather than a shadow UI
+            # state; stale revival assignments are ignored by ConsoleState.
+            if session.console is not None and event.event_type in {"task:reported", "task:report_missing", "agent:failed"}:
+                assignment_id = str(data.get("task_id", ""))
+                if not assignment_id and event.event_type == "agent:failed":
+                    try: assignment_id = session.swarm.task_id_for_agent(event.agent_name)
+                    except (KeyError, ValueError): assignment_id = ""
+                if assignment_id:
+                    report_status = str(data.get("status", ""))
+                    plan_status = "completed" if event.event_type == "task:reported" and report_status == "completed" else "blocked"
+                    session.console.update_assignment_status(assignment_id, plan_status)
             if event.event_type == "agent:context_checkpoint":
                 snapshotter = getattr(session.swarm, "view_snapshot", None)
                 if not callable(snapshotter):
                     return
-                graph = snapshotter()
-                if not isinstance(graph, dict):
+                live_graph = snapshotter()
+                if not isinstance(live_graph, dict):
                     return
                 round_value = data.get("round")
-                nodes = graph.get("nodes", [])
+                nodes = live_graph.get("nodes", [])
                 context_agents = [
                     node.get("id")
                     for node in nodes
@@ -156,15 +179,33 @@ class ExecutionService:
                     }
                     for agent_name in context_agents
                 }
+                run_graph = RunGraphProjector().project(
+                    session_id,
+                    attempt.root.parent.parent,
+                    execution_id=attempt.execution_id,
+                    live_snapshot=live_graph,
+                    live_status=asdict(attempt.snapshot()),
+                )
+                recovery_descriptor = {
+                    "schema_version": 1,
+                    "strategy": "new_attempt",
+                    "safe_boundary": "agent_context_checkpoint",
+                    "unfinished_node_policy": "mark_interrupted_or_cancelled",
+                    "workflow_revision": session.console.blueprint().schema_version if session.console is not None else 0,
+                }
                 attempt.commit_checkpoint(
                     uuid4().hex,
-                    graph,
+                    None,
                     contexts,
                     reason=f"{event.agent_name}:round:{round_value}",
+                    run_graph=run_graph,
+                    recovery=recovery_descriptor,
                 )
         def install_hook(attempt: Any) -> None:
             binding.attempt = attempt
             session.swarm.add_hook(journal_hook)
+            if recovery is not None:
+                attempt.journal.append("execution_recovery_started", recovery)
         def run_swarm(controller: object) -> object:
             """Run the current swarm and convert root-agent failures to attempts.
 
@@ -195,8 +236,13 @@ class ExecutionService:
                         run_control.for_agent(agent_name)
             session.run_control = run_control
             try:
-                output = session.swarm.run(message, control=run_control)
-                root = output.get(session.coordinator_name) if isinstance(output, dict) else None
+                user_input = UserMessage(text=message, images=image_refs) if image_refs else message
+                run_kwargs: dict[str, object] = {"control": run_control}
+                if target_agent is not None:
+                    run_kwargs["target_agent"] = target_agent
+                output = session.swarm.run(user_input, **run_kwargs)
+                root_name = target_agent or session.coordinator_name
+                root = output.get(root_name) if isinstance(output, dict) else None
                 if isinstance(root, AgentFailure):
                     raise RuntimeError(f"{root.agent_name} failed: {root.error}")
                 return output
@@ -204,8 +250,74 @@ class ExecutionService:
                 _remove_journal_hook(session.swarm, journal_hook)
                 session.run_control = None
 
-        attempt = executor.start(run_swarm, before_start=install_hook)
+        attempt = executor.start(run_swarm, before_start=install_hook,
+                                 start_data={"message": message, "images": image_refs,
+                                             "target_agent": target_agent})
         return attempt.snapshot()
+
+    @staticmethod
+    def _validate_images(session: Any, images: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Resolve ownership and metadata before an execution can start."""
+        if not isinstance(images, list) or len(images) > 8:
+            raise ValueError("At most 8 images may be sent in one turn")
+        if not images:
+            return []
+        if session.attachments is None:
+            raise ValueError("Session image storage is unavailable")
+        refs = []
+        total_bytes = 0
+        for ref in images:
+            if not isinstance(ref, dict) or set(ref) - {"attachment_id", "media_type", "detail"}:
+                raise ValueError("Invalid image reference")
+            try:
+                metadata = session.attachments.get(ref.get("attachment_id", ""))
+            except (KeyError, FileNotFoundError) as exc:
+                raise ValueError("Image is not available in this Session") from exc
+            if ref.get("media_type") != metadata["media_type"]:
+                raise ValueError("Image media type does not match stored bytes")
+            detail = ref.get("detail", "auto")
+            if detail not in {"auto", "low", "high"}:
+                raise ValueError("Invalid image detail")
+            total_bytes += metadata["size_bytes"]
+            refs.append({"attachment_id": metadata["attachment_id"],
+                         "media_type": metadata["media_type"], "detail": detail})
+        if total_bytes > 15 * 1024 * 1024:
+            raise ValueError("Images exceed the 15 MiB per-turn upload budget")
+        return refs
+
+    def recover(self, session_id: str, execution_id: str | None = None) -> ExecutionSnapshot:
+        """Start a safe, guided continuation from a verified RunGraph checkpoint.
+
+        Recovery never restores a Python thread, a live provider request, or a
+        running TaskBus item. It creates a new attempt whose coordinator is
+        told to continue only unresolved work using its durable Agent context.
+        """
+        self._require_session(session_id)
+        session = self._core.sessions.get(session_id)
+        executor = session.execution
+        if executor is None:
+            raise RuntimeError("Session has no execution boundary")
+        current = executor.snapshot()
+        if current.state in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
+            raise RuntimeError("A live execution must stop before recovery")
+        source = RunGraphProjector().recovery_checkpoint(executor.root, execution_id)
+        checkpoint = source["checkpoint"]
+        checkpoint_data = checkpoint if isinstance(checkpoint, dict) else {}
+        generation = str(checkpoint_data.get("generation", ""))
+        recovery = {
+            "source_execution_id": source["source_execution_id"],
+            "source_attempt": source["source_attempt"],
+            "source_state": source["source_state"],
+            "checkpoint_generation": generation,
+            "strategy": "guided_new_attempt",
+        }
+        prompt = (
+            "Continue the prior execution from its durable checkpoint. Do not blindly repeat "
+            "work already completed; inspect your persisted context and complete only unresolved work. "
+            f"Prior execution: {source['source_execution_id']}.\n\n"
+            f"Original user request:\n{source['initial_message']}"
+        )
+        return self.start(session_id, prompt, recovery=recovery, images=source.get("initial_images", []))
 
     def status(self, session_id: str) -> ExecutionSnapshot:
         """Return current in-process execution state, or synthetic idle state.
@@ -266,7 +378,9 @@ class ExecutionService:
         if snapshot is None or snapshot.state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING} or control is None:
             raise RuntimeError("Session has no active Agent control boundary")
         if action == "steer":
-            targets = control.steer(agent_id, message)
+            steering = control.steer(agent_id, message)
+            targets = steering.target_agents
+            steer_id = steering.steer_id
             queued = True
         elif action == "stop":
             targets = control.stop(agent_id, False, reason)
@@ -278,11 +392,13 @@ class ExecutionService:
             raise ValueError("action must be steer, stop, or force_stop")
         session.execution.attempt.journal.append(
             "agent:control",
-            {"agent_id": agent_id, "action": action, "target_agents": list(targets), "reason": reason},
+            {"agent_id": agent_id, "action": action, "target_agents": list(targets), "reason": reason,
+             **({"steer_id": steer_id} if action == "steer" else {})},
             agent=agent_id,
             message=message or reason,
         )
-        return AgentControlReceipt(session_id, snapshot.execution_id or "", agent_id, action, targets, queued)
+        return AgentControlReceipt(session_id, snapshot.execution_id or "", agent_id, action, targets, queued,
+                                   steer_id if action == "steer" else None)
 
     def events(self, session_id: str) -> Iterator[dict[str, Any]]:
         """Yield durable events from the most recent in-process attempt.

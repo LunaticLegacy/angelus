@@ -36,7 +36,7 @@ function renderAgentStrip(graph) {
     .map((node, index) => {
       const avatar =
         node.kind === "routing" ? "◇" : index === 0 ? "♛" : "&lt;/&gt;";
-      const state = node.dynamic ? "busy" : "running";
+      const state = node.state === "running" ? "busy" : node.state === "failed" ? "error" : node.state === "succeeded" ? "done" : "pending";
       const cls =
         node.kind === "routing"
           ? "docs"
@@ -48,7 +48,7 @@ function renderAgentStrip(graph) {
           <div class="agent-avatar ${cls}">${avatar}</div>
           <div>
             <strong>${escapeHtml(node.id)}</strong>
-            <small>${node.dynamic ? "子智能体" : node.kind === "routing" ? "路由节点" : "协调节点"}</small>
+            <small>${node.origin === "runtime" ? "子智能体" : node.kind === "routing" ? "路由节点" : "协调节点"}</small>
           </div>
           <span class="agent-state ${state}"></span>
         </article>`;
@@ -88,8 +88,8 @@ function renderGraph(graph) {
   /* build parent map */
   const parent = {};
   for (const node of nodes) {
-    if (node.parent && nodeIds.has(node.parent) && node.parent !== node.id)
-      parent[node.id] = node.parent;
+    if (node.parent_id && nodeIds.has(node.parent_id) && node.parent_id !== node.id)
+      parent[node.id] = node.parent_id;
   }
   for (const node of nodes) {
     if (!parent[node.id] && (incoming[node.id] || []).length)
@@ -102,15 +102,6 @@ function renderGraph(graph) {
   }
 
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const assignments = graph.assignments || {};
-  const states = graph.task_states || {};
-
-  function taskFor(id) {
-    return (
-      Object.entries(assignments).find(([, agent]) => agent === id)?.[0]
-    );
-  }
-
   const rendered = new Set();
 
   function renderNode(nodeId, depth = 0, path = new Set()) {
@@ -118,8 +109,7 @@ function renderGraph(graph) {
     if (!node || path.has(nodeId)) return "";
     rendered.add(nodeId);
     const nextPath = new Set(path).add(nodeId);
-    const taskId = taskFor(nodeId);
-    const taskState = taskId ? states[taskId] : "";
+    const taskId = node.task_id;
     const deps = (incoming[nodeId] || []).filter(
       (s) => s !== parent[nodeId]
     );
@@ -131,8 +121,8 @@ function renderGraph(graph) {
       <div class="graph-branch">
         <article class="graph-node" style="--graph-depth:${depth}">
           <strong>${escapeHtml(node.id)}</strong>
-          <span>${node.dynamic ? "子智能体" : node.kind === "routing" ? "路由节点" : "Agent"}${taskState ? ` · ${escapeHtml(taskState)}` : ""}</span>
-          ${node.parent ? `<small>上级：${escapeHtml(node.parent)}</small>` : ""}
+          <span>${node.origin === "runtime" ? "子智能体" : node.kind === "routing" ? "路由节点" : "Agent"} · ${escapeHtml(node.state || "pending")}${taskId ? ` · ${escapeHtml(taskId)}` : ""}</span>
+          ${node.parent_id ? `<small>上级：${escapeHtml(node.parent_id)}</small>` : ""}
           ${deps.length ? `<small>依赖：${escapeHtml(deps.join("、"))}</small>` : ""}
           ${(outgoing[nodeId] || []).length && !descendants ? `<small>下游：${escapeHtml(outgoing[nodeId].join("、"))}</small>` : ""}
         </article>

@@ -1,14 +1,23 @@
 """Regression tests for typed Session-console durability and controlled tools."""
 from __future__ import annotations
 
+import asyncio
+import json
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from angelus.api import include_api_routes, session_console
 from angelus.core import AngelusCore
-from angelus.modules.console_module import ConsoleDomainError, SessionConsoleTools, ToolPermissionPolicy
+from angelus.modules.console_module import ConsoleDomainError, ConsoleProjectionService, SessionConsoleTools, ToolPermissionPolicy
 from angelus.modules.tool_module import ToolPolicy
+from angelus.modules.execution_module.journal import ExecutionJournal
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
 from llmfetcher.llm_types import LLMOutput, TokenUsage
 
@@ -67,7 +76,7 @@ class SessionConsoleTests(unittest.TestCase):
             with self.assertRaises(ConsoleDomainError):
                 service.add_connection("demo", "worker", "coordinator")
             restored = AngelusCore(state_root=root / "state")
-            self.assertEqual(restored.console_service.graph("demo")["edges"], [{"source": "coordinator", "target": "worker", "kind": "dependency"}])
+            self.assertEqual(restored.console_service.workflow("demo")["edges"], [{"source": "coordinator", "target": "worker", "kind": "dependency"}])
             self.assertEqual(
                 [agent["id"] for agent in restored.console_service.agents("demo")["agents"]],
                 ["coordinator", "worker"],
@@ -202,6 +211,35 @@ class SessionConsoleTests(unittest.TestCase):
                 [tool.name for tool in tools],
             )
 
+    def test_steering_projection_rebuilds_recipient_delivery_state(self) -> None:
+        """One journaled steering command becomes one durable UI record."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            core.session_service.create("demo", "Demo", project)
+            session = core.sessions.get("demo")
+            attempt = session.execution.start(lambda _control: None)
+            self.assertTrue(session.execution.wait(1))
+            attempt.journal.append(
+                "agent:control",
+                {"action": "steer", "agent_id": "all", "steer_id": "steer-1",
+                 "target_agents": ["coordinator", "worker"]},
+                message="Use primary sources.",
+            )
+            attempt.journal.append(
+                "agent:steer_applied",
+                {"steer_ids": ["steer-1"], "messages": ["Use primary sources."]},
+                agent="worker",
+            )
+
+            records = core.console_service.steering("demo")
+            self.assertEqual(1, len(records))
+            self.assertEqual("Use primary sources.", records[0]["text"])
+            self.assertEqual(["coordinator", "worker"], records[0]["recipients"])
+            self.assertEqual(["worker"], records[0]["applied_agents"])
+
     def test_detached_previews_restore_context_without_dispatch_or_writes(self) -> None:
         """Both previews compose from checkpoint state without saving the draft.
 
@@ -239,6 +277,225 @@ class SessionConsoleTests(unittest.TestCase):
             self.assertIn("persisted evidence", str(compact["text"]))
             self.assertEqual(12000, compact["request"]["max_tokens"])
             self.assertNotIn("draft only", str(metadata["metadata"]))
+
+
+async def _first_stream_chunk(response: object) -> str:
+    """Return only the first SSE chunk so a running stream can be inspected.
+
+    Args:
+        response: Streaming response whose body iterator emits one frame.
+
+    Returns:
+        The first decoded chunk, or an empty string for an empty stream.
+    """
+    async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+        return chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+    return ""
+
+
+class GraphEventStreamTests(unittest.TestCase):
+    """The run-graph SSE route must emit spec-framed real newlines.
+
+    A regression returned literal backslash-n sequences, so browsers never
+    dispatched any ``message`` event and live runs silently stopped updating.
+    """
+
+    def _core_with_completed_attempt(self, root: Path) -> AngelusCore:
+        """Build one Session whose terminal attempt has durable journal facts."""
+        (root / "project").mkdir()
+        core = AngelusCore(state_root=root / "state")
+        core.session_service.create("demo", "Demo", root / "project")
+        session = core.sessions.get("demo")
+        attempt = session.execution.start(lambda _control: None)
+        self.assertTrue(session.execution.wait(2))
+        attempt.journal.append("execution_started", {"message": "original request"})
+        attempt.journal.append(
+            "agent:failed", {"error": "bad schema"}, agent="worker", message="bad schema")
+        return core
+
+    def test_graph_events_sse_frames_use_real_newlines(self) -> None:
+        """Raw HTTP bytes are id/data frames separated by real blank lines."""
+        with TemporaryDirectory() as directory:
+            core = self._core_with_completed_attempt(Path(directory))
+            app = FastAPI()
+            include_api_routes(app, core)
+            with TestClient(app) as client:
+                response = client.get("/api/sessions/demo/graph/events?cursor=0")
+            self.assertEqual(200, response.status_code)
+            self.assertTrue(response.headers["content-type"].startswith("text/event-stream"))
+            body = response.content
+            self.assertEqual(body.count(b"\\n"), 0, "literal backslash-n leaked into the stream")
+            self.assertIn(b"\n", body)
+            frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame]
+            self.assertEqual(4, len(frames))
+            for index, frame in enumerate(frames, start=1):
+                lines = frame.split("\n")
+                self.assertEqual(f"id: {index}", lines[0])
+                self.assertTrue(lines[1].startswith("data: "))
+                payload = json.loads(lines[1][len("data: "):])
+                self.assertEqual("angelus.run-graph-event", payload["kind"])
+                self.assertEqual(index, payload["sequence"])
+
+    def test_keep_alive_frame_uses_real_newlines_while_running(self) -> None:
+        """An idle poll while the attempt runs emits a real newline keep-alive."""
+        status = SimpleNamespace(execution_id="run-1", state="running")
+        service = SimpleNamespace(
+            graph_events=lambda *_args, **_kwargs: {
+                "events": [], "next_cursor": 0, "has_more": False, "execution_id": "run-1"})
+        core = SimpleNamespace(
+            execution_service=SimpleNamespace(status=lambda _session_id: status),
+            console_service=service)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(angelus_core=core)))
+        with patch.object(session_console, "_service", lambda _request: service):
+            response = session_console.graph_events("demo", request, cursor=0, last_event_id=None)
+            chunk = asyncio.run(_first_stream_chunk(response))
+        self.assertEqual(": keep-alive\n\n", chunk)
+
+
+
+class _FakeAttempt:
+    """Minimal attempt façade exposing a real append-only journal."""
+
+    def __init__(self, journal: ExecutionJournal) -> None:
+        self.journal = journal
+        self.execution_id = journal.execution_id
+
+
+class _FakeExecution:
+    """Minimal execution façade retaining the current attempt."""
+
+    def __init__(self, attempt: _FakeAttempt) -> None:
+        self.attempt = attempt
+
+
+class _FakeSession:
+    """Minimal session façade exposing only the execution attempt."""
+
+    def __init__(self, attempt: _FakeAttempt) -> None:
+        self.execution = _FakeExecution(attempt)
+
+
+class _FakeCore:
+    """Minimal composition root whose session lookup returns one fake."""
+
+    def __init__(self, session: _FakeSession) -> None:
+        self.sessions = SimpleNamespace(get=lambda _session_id: session)
+
+
+class JournalProjectionCacheTests(unittest.TestCase):
+    """Per-request projections must read only the un-consumed journal tail."""
+
+    def _service(self, root: Path) -> tuple[ConsoleProjectionService, ExecutionJournal]:
+        journal = ExecutionJournal(root / "executions" / "run-1" / "execution.events.ndjson", "run-1")
+        service = ConsoleProjectionService(_FakeCore(_FakeSession(_FakeAttempt(journal))))
+        return service, journal
+
+    def test_steering_projection_reads_only_appended_journal_bytes(self) -> None:
+        with TemporaryDirectory() as directory:
+            service, journal = self._service(Path(directory))
+            journal.append(
+                "agent:control",
+                {"action": "steer", "agent_id": "all", "steer_id": "steer-1", "target_agents": ["worker"]},
+                message="first",
+            )
+            journal.append("agent:steer_applied", {"steer_ids": ["steer-1"]}, agent="worker")
+            first = service.steering("demo")
+            self.assertEqual(["steer-1"], [record["id"] for record in first])
+            self.assertEqual(["worker"], first[0]["applied_agents"])
+
+            def _forbidden_transcript():
+                raise AssertionError("steering re-read the whole journal instead of the appended tail")
+
+            journal.events = _forbidden_transcript  # type: ignore[assignment]
+            journal.append(
+                "agent:control",
+                {"action": "steer", "agent_id": "coordinator", "steer_id": "steer-2", "target_agents": ["coordinator"]},
+                message="second",
+            )
+            journal.append("agent:steer_applied", {"steer_ids": ["steer-2"]}, agent="coordinator")
+            second = service.steering("demo")
+            self.assertEqual(["steer-1", "steer-2"], [record["id"] for record in second])
+            self.assertEqual(["coordinator"], second[1]["applied_agents"])
+            self.assertEqual(["steer-2"], [record["id"] for record in service.steering("demo", "coordinator")])
+
+    def test_steering_cache_discards_prefix_when_journal_shrinks(self) -> None:
+        with TemporaryDirectory() as directory:
+            service, journal = self._service(Path(directory))
+            journal.append(
+                "agent:control",
+                {"action": "steer", "agent_id": "all", "steer_id": "old", "target_agents": ["worker"]},
+                message="old",
+            )
+            self.assertEqual(["old"], [record["id"] for record in service.steering("demo")])
+            rewritten = json.dumps({
+                "type": "agent:control",
+                "message": "rotated",
+                "data": {"action": "steer", "agent_id": "all", "steer_id": "new", "target_agents": ["worker"]},
+            }) + "\n"
+            journal.path.write_text(rewritten, encoding="utf-8")
+
+            self.assertEqual(["new"], [record["id"] for record in service.steering("demo")])
+
+    def test_events_page_streams_from_cursor_with_bounded_lookahead(self) -> None:
+        with TemporaryDirectory() as directory:
+            service, journal = self._service(Path(directory))
+            for index in range(5):
+                journal.append("agent:activity", {"index": index}, agent="worker", message=str(index))
+            attempt = service._session("demo").execution.attempt
+            consumed: list[dict[str, object]] = []
+            original = attempt.journal.events
+
+            def counting_events():
+                for item in original():
+                    consumed.append(item)
+                    yield item
+
+            attempt.journal.events = counting_events  # type: ignore[assignment]
+            first = service.events("demo", cursor=0, limit=2)
+            self.assertEqual([0, 1], [event["data"]["index"] for event in first["events"]])
+            self.assertTrue(first["has_more"])
+            self.assertEqual(2, first["next_cursor"])
+            # Two results plus a single look-ahead prove the whole journal is
+            # never materialized for one bounded page.
+            self.assertEqual(3, len(consumed))
+            second = service.events("demo", cursor=first["next_cursor"], limit=2)
+            self.assertEqual([2, 3], [event["data"]["index"] for event in second["events"]])
+            self.assertTrue(second["has_more"])
+            third = service.events("demo", cursor=second["next_cursor"], limit=2)
+            self.assertEqual([4], [event["data"]["index"] for event in third["events"]])
+            self.assertFalse(third["has_more"])
+            self.assertIsNone(third["next_cursor"])
+
+
+class FrontendContextLoadTests(unittest.TestCase):
+    """Static guards for the payload and lazy-tab frontend regressions."""
+
+    def _read(self, relative: str) -> str:
+        root = Path(__file__).resolve().parents[1]
+        return (root / relative).read_text(encoding="utf-8")
+
+    def test_initial_message_page_is_bounded_below_server_cap(self) -> None:
+        app = self._read("frontend/static/app.js")
+        self.assertIn("MESSAGES_PAGE_SIZE = 60", app)
+        messages_line = next(line for line in app.splitlines() if line.startswith("function messagesUrl"))
+        self.assertIn("limit=MESSAGES_PAGE_SIZE", messages_line)
+        self.assertNotIn('"200"', messages_line)
+
+    def test_context_dialog_tabs_hydrate_lazily(self) -> None:
+        app = self._read("frontend/static/app.js")
+        self.assertIn("const contextDialogLoaded = new Set();", app)
+        self.assertIn("function ensureContextDialogTab(tab)", app)
+        opener = app.split("async function openAgentContextInspector", 1)[1].split("\nfunction ", 1)[0]
+        self.assertNotIn("Promise.allSettled", opener)
+        self.assertIn('ensureContextDialogTab("graph")', opener)
+        self.assertEqual(1, opener.count("ensureContextDialogTab("))
+        tab_handler = next(line for line in app.splitlines() if "data-context-dialog-tab" in line and "addEventListener" in line)
+        self.assertIn("ensureContextDialogTab(tab)", tab_handler)
+
+    def test_static_cache_buster_is_bumped(self) -> None:
+        html = self._read("frontend/templates/index.html")
+        self.assertIn("/static/app.js?v=external-hub-4", html)
+        self.assertNotIn("/static/app.js?v=external-hub-3", html)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import { $, escapeHtml } from "./dom.js";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown-renderer.js";
+import { attachmentImageUrl } from "./image-composer.js";
 
 /**
  * Create the transcript view for the Workbench chat panel.
@@ -11,7 +12,7 @@ import { createMarkdownStream, renderMarkdownInto } from "./markdown-renderer.js
  *   DOM rendering operations. They mutate only `#chat`; persistent state remains
  *   owned by the Workbench controller.
  */
-export function createChatView({ getAgentLabel }) {
+export function createChatView({ getAgentLabel, getSessionId = () => null }) {
   const followTolerancePixels = 8;
   let followsLatest = true;
 
@@ -295,7 +296,7 @@ export function createChatView({ getAgentLabel }) {
     const { role, content, reasoning = "", tools = [], usage = null,
       model_duration_ms = null, round_duration_ms = null, duration_ms = null,
       timestamp = null, created_at = null } = message;
-    if (role === "steer") return buildSteer(content);
+    if (role === "steer") return buildSteer(message);
 
     const element = document.createElement("article");
     element.className = `message ${role}`;
@@ -310,23 +311,46 @@ export function createChatView({ getAgentLabel }) {
     const contentClass = isAgentReply ? "markdown" : "plain-text";
     const messageTimestamp = timestamp ?? created_at;
     const completeDuration = round_duration_ms ?? duration_ms;
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown" data-message-reasoning></div></section>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, messageTimestamp, completeDuration) : ""}`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<details class="reasoning" aria-label="思考过程"><summary>思考过程</summary><div class="markdown" data-message-reasoning></div></details>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, messageTimestamp, completeDuration) : ""}`;
     const contentTarget = element.querySelector("[data-message-content]");
     if (contentTarget) {
       if (isAgentReply) renderMarkdownInto(contentTarget, content);
       else contentTarget.textContent = content;
     }
     const reasoningTarget = element.querySelector("[data-message-reasoning]");
+    if (Array.isArray(message.images) && message.images.length) {
+      const gallery = document.createElement("div"); gallery.className = "message-images";
+      for (const image of message.images) {
+        const url = attachmentImageUrl(getSessionId(), image); if (!url) continue;
+        const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+        const thumb = document.createElement("img"); thumb.src = url; thumb.alt = image.filename || "图片附件"; thumb.loading = "lazy";
+        thumb.addEventListener("error", () => { const missing=document.createElement("span"); missing.textContent=`图片不可用：${thumb.alt}`; thumb.replaceWith(missing); }, {once:true});
+        link.append(thumb); gallery.append(link);
+      }
+      element.append(gallery);
+    }
     if (reasoningTarget) renderMarkdownInto(reasoningTarget, reasoning);
     element.querySelector(".copy-result")?.addEventListener("click", () =>
       copyResult(content, element.querySelector(".copy-result")));
     return element;
   }
 
-  function buildSteer(text) {
+  function buildSteer(message) {
+    const text = String(message.content || "");
+    const steering = message.steering || {};
+    const id = String(steering.id || "");
+    const recipients = Array.isArray(steering.recipients) ? steering.recipients : [];
+    const applied = new Set(Array.isArray(steering.applied_agents) ? steering.applied_agents : []);
+    const scope = steering.scope === "all" ? `全部活跃 Agent（${recipients.length}）` : String(steering.scope || "Agent");
+    const appliedCount = [...applied].filter((agent) => recipients.includes(agent)).length;
+    const status = recipients.length ? `已应用 ${appliedCount}/${recipients.length}` : "未找到可投递的活跃 Agent";
+    const deliveries = recipients.length
+      ? `<div class="steer-deliveries">${recipients.map((agent) => `<span class="${applied.has(agent) ? "applied" : "pending"}">${escapeHtml(agent)} ${applied.has(agent) ? "✓" : "等待应用"}</span>`).join("")}</div>`
+      : "";
     const element = document.createElement("article");
     element.className = "message steer";
-    element.innerHTML = `<div class="message-meta"><div class="role role-steer"><i></i><span>调整指令</span></div><small>已应用</small></div><div class="bubble plain-text">${escapeHtml(text)}</div>`;
+    if (id) element.dataset.steerId = id;
+    element.innerHTML = `<div class="message-meta"><div class="role role-steer"><i></i><span>调整指令</span></div><small>${escapeHtml(scope)} · ${escapeHtml(status)}</small></div><div class="bubble plain-text">${escapeHtml(text)}</div>${deliveries}`;
     return element;
   }
 
@@ -337,26 +361,79 @@ export function createChatView({ getAgentLabel }) {
     scrollToLatestIfFollowing();
   }
 
+  function upsertSteer(steering) {
+    removeWelcome();
+    const chat = $("chat");
+    const id = String(steering?.id || "");
+    const next = buildSteer({ role: "steer", content: steering?.text || "", steering });
+    const existing = id ? chat.querySelector(`[data-steer-id="${CSS.escape(id)}"]`) : null;
+    if (existing) existing.replaceWith(next);
+    else chat.append(next);
+    scrollToLatestIfFollowing();
+  }
+
   function beginStream(agentName = "") {
     /** Create one mutable assistant card for provider text/thinking deltas. */
     removeWelcome();
     const element = document.createElement("article");
     const speaker = agentName || getAgentLabel() || "Coordinator";
     element.className = "message assistant streaming";
-    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><section class="reasoning" aria-label="思考过程" hidden><h4>思考过程</h4><div class="markdown"></div></section><div class="bubble markdown"></div>`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><details class="reasoning" aria-label="思考过程" hidden open><summary>思考过程</summary><div class="markdown"></div></details><div class="bubble markdown"></div><details class="tool-calls streaming-tool-calls" hidden><summary>工具调用 · <span data-stream-tool-count>0</span></summary><div data-stream-tool-list></div></details>`;
     $("chat").append(element);
     scrollToLatestIfFollowing();
-    const reasoningRenderer = createMarkdownStream(element.querySelector(".reasoning .markdown"), scrollToLatestIfFollowing);
+    const reasoningTarget = element.querySelector(".reasoning .markdown");
+    let reasoningFollowsLatest = true;
+    const updateReasoningFollow = () => {
+      reasoningFollowsLatest = reasoningTarget.scrollHeight - reasoningTarget.clientHeight - reasoningTarget.scrollTop <= followTolerancePixels;
+    };
+    reasoningTarget.addEventListener("scroll", updateReasoningFollow, { passive: true });
+    const afterReasoningRender = () => {
+      if (reasoningFollowsLatest) reasoningTarget.scrollTop = reasoningTarget.scrollHeight;
+      scrollToLatestIfFollowing();
+    };
+    const reasoningRenderer = createMarkdownStream(reasoningTarget, afterReasoningRender);
     const contentRenderer = createMarkdownStream(element.querySelector(".bubble"), scrollToLatestIfFollowing);
+    const toolTimers = new Map();
+    function updateTool(tool = {}) {
+      const id = String(tool.call_id || `${tool.round || ""}:${tool.name || "tool"}`);
+      const tools = element.querySelector(".streaming-tool-calls");
+      const list = element.querySelector("[data-stream-tool-list]");
+      tools.hidden = false;
+      let card = list.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+      if (!card) {
+        card = document.createElement("article");
+        card.className = "tool-call";
+        card.dataset.toolCallId = id;
+        list.append(card);
+      }
+      element.querySelector("[data-stream-tool-count]").textContent = String(list.children.length);
+      const status = String(tool.status || "参数生成中");
+      const started = Number(tool.started_at || 0);
+      const elapsed = started > 0 ? Math.max(0, Date.now() / 1000 - started) * 1000 : null;
+      const duration = tool.duration_ms ?? elapsed;
+      const args = tool.arguments ?? tool.raw_arguments ?? "";
+      const result = tool.result;
+      card.innerHTML = `<header><strong>${escapeHtml(tool.name || "工具调用")}</strong><span class="tool-live-status">${escapeHtml(status)}</span>${duration != null ? `<span class="tool-duration">${escapeHtml(formatDuration(duration))}</span>` : ""}</header><p>参数</p>${renderToolPayload(args, "正在接收参数…")}${result !== undefined ? `<p>结果</p>${renderToolPayload(result, "无返回内容")}` : ""}`;
+      if (started > 0 && ["running", "执行中"].includes(status) && !toolTimers.has(id)) {
+        const timer = setInterval(() => updateTool({...tool, duration_ms: (Date.now() / 1000 - started) * 1000}), 250);
+        toolTimers.set(id, timer);
+      }
+      if (!["running", "执行中"].includes(status) && toolTimers.has(id)) {
+        clearInterval(toolTimers.get(id)); toolTimers.delete(id);
+      }
+      scrollToLatestIfFollowing();
+    }
     return {
       update(content, reasoning) {
         const reasoningSection = element.querySelector(".reasoning");
         reasoningSection.hidden = !reasoning;
+        if (reasoning) reasoningSection.open = true;
         reasoningRenderer.update(reasoning);
         contentRenderer.update(content);
       },
+      updateTool,
       flush() { reasoningRenderer.flush(); contentRenderer.flush(); },
-      remove() { reasoningRenderer.dispose(); contentRenderer.dispose(); element.remove(); },
+      remove() { for (const timer of toolTimers.values()) clearInterval(timer); toolTimers.clear(); reasoningTarget.removeEventListener("scroll", updateReasoningFollow); reasoningRenderer.dispose(); contentRenderer.dispose(); element.remove(); },
     };
   }
 
@@ -399,5 +476,5 @@ export function createChatView({ getAgentLabel }) {
     chat.scrollTop = chat.scrollHeight;
   }
 
-  return { append, appendError, beginStream, buildMessage, removeWelcome, render };
+  return { append, appendError, beginStream, buildMessage, removeWelcome, render, upsertSteer };
 }

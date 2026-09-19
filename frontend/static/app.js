@@ -1,6 +1,7 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=token-footer-inline-1";
+import { createChatView } from "./components/chat-view.js?v=native-vision-1";
+import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { createExternalAgentHubView } from "./components/external-agent-hub-view.js?v=context-exchange-1";
@@ -39,11 +40,15 @@ let currentProfile = null;
 let profileWorkspaceId = "";
 let source = null;
 let sourceSessionId = "";
+let lifecycleSource = null;
+let lifecycleSourceSessionId = "";
 let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
 let messagesBefore = null;
 let messageLoadPending = false;
+/** Initial/older chat page size; the server caps /messages limit at 200. */
+const MESSAGES_PAGE_SIZE = 60;
 let historyGeneration = 0;
 let traceEvents = [];
 // Newest lifecycle/error event per Agent id, kept in sync with traceEvents so
@@ -52,16 +57,18 @@ let traceEventIndex = new Map();
 let durableEventCount = 0;
 let durableEventOffset = 0;
 let sseCursor = 0;
+let lifecycleCursor = 0;
 let sseStatusCheckPending = false;
 const legacyIntegrationApisAvailable = true;
 const externalAgentHubView = createExternalAgentHubView(
   $("external-agent-hub-dialog"),
   $("external-agent-hub-root"),
 );
-let renderedSteerEvents = new Set();
+let steeringRecords = new Map();
 let renderedRoundEvents = new Set();
 let currentAgents = [];
-let currentGraph = {nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};
+let currentRunGraph = {kind:"angelus.run-graph",state:"idle",nodes:[],edges:[]};
+let currentWorkflow = {kind:"angelus.workflow",nodes:[],edges:[]};
 let selectedPlanAgent = localStorage.llmfetcherPlanAgent || "coordinator";
 let availableSessions = [];
 let runActive = false;
@@ -73,6 +80,7 @@ let selectedPluginKey = "";
 let mcpServersState = [];
 let mcpBindingsState = [];
 let contextDialogAgent = "";
+const contextDialogLoaded = new Set();
 
 const KIMI_CODE_PROVIDER = "kimi-code";
 const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
@@ -84,7 +92,7 @@ const config = () => ({
   provider: value("provider"), model: value("model"), api_key: $("api-key").value, connector_id: connectorId,
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
-  max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), max_context_threshold: Number($("max-context-threshold").value),
+  max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value), max_context_threshold: Number($("max-context-threshold").value),
   compaction_output_max_tokens: Number($("compaction-output-max-tokens").value),
   // Shell and Swarm are enabled exclusively by their permission categories.
   enable_shell: Boolean(currentProfile?.effective?.enable_shell), enable_swarm: Boolean(currentProfile?.effective?.enable_swarm),
@@ -92,7 +100,7 @@ const config = () => ({
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "max-context-threshold", "compaction-output-max-tokens", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
 function profileSettings(overrides={}) { return {
@@ -101,7 +109,7 @@ function profileSettings(overrides={}) { return {
   provider: value("provider"), model: value("model"), api_url: value("api-url"),
   system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
-  max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value),
+  max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value),
   max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), max_swarm_agents: Number($("max-swarm-agents").value),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
@@ -123,7 +131,7 @@ function bindSettingsPersistence() {
   });
 }
 let toolRegistryGroups = [];
-const TOOL_ICONS = { planning:"✓", file_discovery:"⌕", shell:"›_", swarm:"✦", turn_control:"■" };
+const TOOL_ICONS = { knowledge:"⌘", planning:"✓", file_discovery:"⌕", shell:"›_", swarm:"✦", turn_control:"■" };
 
 async function loadToolRegistry() {
   /** Load backend-registered capabilities instead of maintaining UI-only tools. */
@@ -171,20 +179,33 @@ function updateModelSummary() { $("model-label").textContent=$("model").value.tr
 function selectedMemorySessions() { return [...new Set($("session-memory-sessions").value.split(",").map(value=>value.trim()).filter(value=>value && value !== sessionId))]; }
 /** Render searchable session choices and removable selections without exposing session content. */
 function renderMemorySessionPicker() { const options=$("session-memory-options"), selected=$("session-memory-selected"), search=$("session-memory-search"); if(!options || !selected || !search) return; const chosen=selectedMemorySessions(), query=search.value.trim().toLowerCase(); const candidates=availableSessions.filter(item=>item.id !== sessionId && (`${item.name} ${item.id}`).toLowerCase().includes(query)); selected.innerHTML=chosen.length ? chosen.map(id=>{const item=availableSessions.find(candidate=>candidate.id===id); return `<button type="button" class="memory-session-chip" data-memory-session="${escapeHtml(id)}">${escapeHtml(item?.name || id)} ×</button>`;}).join("") : '<span class="memory-session-empty">未授权其他会话</span>'; options.innerHTML=candidates.length ? candidates.map(item=>`<button type="button" class="memory-session-option ${chosen.includes(item.id)?"selected":""}" data-memory-session="${escapeHtml(item.id)}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.id)}</small></button>`).join("") : '<p class="memory-session-empty">没有匹配的会话</p>'; document.querySelectorAll("[data-memory-session]").forEach(button=>button.addEventListener("click",()=>{const id=button.dataset.memorySession; const next=chosen.includes(id) ? chosen.filter(value=>value!==id) : [...chosen,id]; $("session-memory-sessions").value=next.join(","); persistSettings(); renderMemorySessionPicker();})); }
-const chatView = createChatView({ getAgentLabel: () => selectedAgent });
+const imageComposer = createImageComposer({
+  input: $("message"), picker: $("image-picker"), button: $("attach-image"),
+  previews: $("image-previews"), feedback: $("image-feedback"), dropTarget: $("composer"),
+  isRunning: () => runActive, resize: resizeComposer,
+  upload: async (id, file) => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}/attachments/images?filename=${encodeURIComponent(file.name)}`, {method:"POST", headers:{"Content-Type":file.type}, body:file});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "图片上传失败");
+    return payload;
+  },
+});
+const chatView = createChatView({ getAgentLabel: () => selectedAgent, getSessionId: () => sessionId });
 const traceView = createTraceView();
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
-function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??"", duration_ms:Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null})); }
+function liveTools(data) { const calls=data?.tool_calls||[]; if(!Array.isArray(calls)) return []; return calls.filter(item=>item && typeof item==="object").map(item=>({call_id:item.call_id,stream_call_id:item.stream_call_id,name:String(item.name||"unknown"), arguments:item.args??item.arguments??{}, result:item.result??item.output??"", duration_ms:Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null})); }
 /** Append a single transcript turn live (real-time path). */
 /** Append one completed turn with its per-round observation metadata intact. */
 function appendMessage(role, content, reasoning="", tools=[], agentName="", usage=null, modelDurationMs=null, roundDurationMs=null, timestamp=null) { if(role === "steer") return appendSteerMessage(content); chatView.append({role,content,reasoning,tools,usage,model_duration_ms:modelDurationMs,round_duration_ms:roundDurationMs,duration_ms:roundDurationMs,timestamp},agentName); }
 function streamKey(agent, round) { return `${agent || "coordinator"}:${round || ""}`; }
-function renderStreamDelta(agent, data) { const key=streamKey(agent,data?.round); let state=streamingMessages.get(key); if(!state){state={content:"",reasoning:"",view:chatView.beginStream(agent)};streamingMessages.set(key,state);} if(data?.channel==="reasoning")state.reasoning+=String(data.delta||"");else state.content+=String(data?.delta||"");state.view.update(state.content,state.reasoning); }
+function renderStreamDelta(agent, data) { const key=streamKey(agent,data?.round); let state=streamingMessages.get(key); if(!state){state={content:"",reasoning:"",tools:new Map(),view:chatView.beginStream(agent)};streamingMessages.set(key,state);} if(data?.channel==="reasoning")state.reasoning+=String(data.delta||"");else if(data?.channel==="tool_arguments"){const id=String(data.call_id||"tool");const previous=state.tools.get(id)||{};const next={...previous,call_id:id,raw_arguments:`${previous.raw_arguments||""}${String(data.delta||"")}`,status:"参数生成中"};state.tools.set(id,next);state.view.updateTool(next);}else state.content+=String(data?.delta||"");state.view.update(state.content,state.reasoning); }
+function renderStreamTool(agent, data, status) { const key=streamKey(agent,data?.round); let state=streamingMessages.get(key); if(!state){state={content:"",reasoning:"",tools:new Map(),view:chatView.beginStream(agent)};streamingMessages.set(key,state);} const id=String(data?.stream_call_id||data?.call_id||`${data?.round||""}:${data?.name||"tool"}`); const next={...(state.tools.get(id)||{}),...data,call_id:id,status:status||data?.status}; state.tools.set(id,next); state.view.updateTool(next); }
 function discardStream(agent, round) { const key=streamKey(agent,round); const state=streamingMessages.get(key); if(state){state.view.remove();streamingMessages.delete(key);} }
+function discardAgentStreams(agent) { const prefix=`${agent || "coordinator"}:`; for(const [key,state] of streamingMessages){ if(key.startsWith(prefix)){state.view.remove();streamingMessages.delete(key);} } }
 /** Display a durable run failure in the chat pane without hiding prior work. */
 function appendRunErrorBlock(title, message, rawContent="") { chatView.appendError(title, message, rawContent); }
 /** Render one durably applied steering message beside the original user input. */
-function appendSteerMessage(text, eventKey="") { if(eventKey && renderedSteerEvents.has(eventKey)) return; if(eventKey) renderedSteerEvents.add(eventKey); chatView.append({role:"steer",content:text}); }
+function upsertSteering(record) { if(!record?.id)return; steeringRecords.set(record.id,record); chatView.upsertSteer(record); }
 /** Load the canonical session transcript using the same detailed message UI. */
 /** Bulk-render a transcript into #chat in a single layout pass. */
 function messageForChat(message) {
@@ -201,7 +222,7 @@ function renderMessagesInto(messages, assistantLabel="coordinator") { chatView.r
 /** Restore the accessible history control if an older cached view removed it. */
 function ensureLoadMoreMessagesButton() { let button=$("load-more-messages"); if(button)return button; button=document.createElement("button"); button.id="load-more-messages"; button.className="load-more-messages"; button.type="button"; button.textContent="加载更早消息"; $("chat").prepend(button); return button; }
 function setMessageHistoryButton(hasMore, text="加载更早消息") { const button=ensureLoadMoreMessagesButton(); button.hidden=!hasMore; button.textContent=text; return button; }
-async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; renderedSteerEvents.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); setMessageHistoryButton(Boolean(page.has_more)); }
+async function loadAllAgentBehavior(snapshot) { const page=await apiJson(messagesUrl(null,snapshot.session,snapshot.agent)); if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return; messagesBefore=page.next_cursor ?? null; steeringRecords.clear(); renderedRoundEvents.clear(); pendingRoundTools.clear(); renderMessagesInto(page.messages || [], "coordinator"); (page.steering||[]).forEach(upsertSteering); setMessageHistoryButton(Boolean(page.has_more)); }
 function trace(title, message="", data=null, kind="") { traceView.append(title, message, data, kind); }
 function tracePayload(event, position="prepend") { traceView.appendEvent(event, position); }
 /** Present one server-initiated sampling or elicitation request for approval. */
@@ -219,7 +240,7 @@ async function apiPost(path, body={}) { const response=await fetch(path,{method:
 async function apiPut(path, body={}) { const response=await fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
-async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";imageComposer.setSession(sessionId);renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; imageComposer.setSession(sessionId); const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
 function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
 async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
@@ -268,10 +289,14 @@ async function saveMcpBinding(serverId) { const roles=[];if($("mcp-role-coordina
 /** Save structured server fields, keeping masked credentials server-side. */
 async function saveMcpServer(event) { event.preventDefault();const id=$("mcp-server-id").value;const payload={name:value("mcp-name"),transport:value("mcp-transport"),command:value("mcp-command"),args:$("mcp-args").value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),cwd:value("mcp-cwd"),url:value("mcp-url"),headers:mcpKeyValues("mcp-headers"),env:mcpKeyValues("mcp-env"),auth_type:value("mcp-auth-type"),bearer_token:$("mcp-bearer").value,oauth_authorize_url:value("mcp-oauth-authorize-url"),oauth_token_url:value("mcp-oauth-token-url"),oauth_client_id:value("mcp-oauth-client-id"),oauth_client_secret:$("mcp-oauth-client-secret").value,oauth_scopes:value("mcp-oauth-scopes")};const response=await fetch(id?`/api/mcp/servers/${id}`:"/api/mcp/servers",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const server=await response.json().catch(()=>({}));if(!response.ok)throw new Error(server.detail||response.statusText);await saveMcpBinding(server.id);await loadMcpConsole();selectMcpServer(server.id);setMcpFeedback(`${server.name} 已安全保存。`,"success"); }
 function sessionApi(path, selectedSession=sessionId) { if(!selectedSession) throw new Error("尚未选择会话"); return `/api/sessions/${encodeURIComponent(selectedSession)}${path}`; }
-function planUrl() { return `${sessionApi("/plan")}?agent=${encodeURIComponent(selectedPlanAgent)}`; }
-function messagesUrl(before=null, selectedSession=sessionId, agent=selectedAgent) { const params=new URLSearchParams({agent,limit:"200"}); if(before!=null) params.set("before",String(before)); return `${sessionApi("/messages",selectedSession)}?${params.toString()}`; }
+function planUrl() { return selectedPlanAgent === "coordinator" ? sessionApi("/plan") : `${sessionApi("/plan")}?agent=${encodeURIComponent(selectedPlanAgent)}`; }
+function messagesUrl(before=null, selectedSession=sessionId, agent=selectedAgent, limit=MESSAGES_PAGE_SIZE) { const params=new URLSearchParams({agent,limit:String(limit)}); if(before!=null) params.set("before",String(before)); return `${sessionApi("/messages",selectedSession)}?${params.toString()}`; }
 function graphUrl() { return sessionApi("/graph"); }
-function agentIcon(agent) { if(agent.id === "all") return ["purple", "✦"]; if(agent.id === "coordinator") return ["purple", "♛"]; if(agent.dynamic) return ["amber", "↳"]; return ["blue", "&lt;/&gt;"]; }
+function graphEventsUrl(cursor=0) { const params=new URLSearchParams({cursor:String(cursor)}); return `${sessionApi("/graph/events")}?${params}`; }
+function lifecycleEventsUrl(cursor=0) { const params=new URLSearchParams({cursor:String(cursor)}); return `${sessionApi("/events/stream")}?${params}`; }
+function workflowUrl() { return sessionApi("/workflow"); }
+function runNode(agentId) { return (currentRunGraph.nodes||[]).find(node=>node.id===agentId) || null; }
+function agentIcon(agent) { if(agent.id === "all") return ["purple", "✦"]; if(agent.id === "coordinator") return ["purple", "♛"]; if(agent.origin === "runtime") return ["amber", "↳"]; return ["blue", "&lt;/&gt;"]; }
 function acknowledgementKey() { return `llmfetcherAcknowledgedAgents:${sessionId}`; }
 function acknowledgedAgents() { try { return new Set(JSON.parse(localStorage.getItem(acknowledgementKey()) || "[]")); } catch { return new Set(); } }
 /** Resolve one canonical graph state for every Agent status surface. */
@@ -281,40 +306,28 @@ function agentStateView(agentId, agents=currentAgents) {
     const views=agentIds.map(id=>agentStateView(id,agents));
     if(views.some(view=>view.canonical==="running")) return stateView("running","当前会话：正在运行",agentId);
     if(views.some(view=>view.canonical==="queued")) return stateView("queued","当前会话：等待执行",agentId);
-    const terminal=String(currentGraph.run_status?.status||"");
-    if(!runActive && terminal==="completed") return stateView("completed","当前会话：运行完毕",agentId);
-    if(!runActive && terminal==="error") return stateView("failed","当前会话：运行错误",agentId);
-    if(!runActive && ["stopped","interrupted"].includes(terminal)) return stateView("interrupted","当前会话：已停止",agentId);
-    const priority=["failed","interrupted","completed"];
+    const terminal=String(currentRunGraph.state||"");
+    if(!runActive && terminal==="completed") return stateView("succeeded","当前会话：运行完毕",agentId);
+    if(!runActive && terminal==="failed") return stateView("failed","当前会话：运行错误",agentId);
+    if(!runActive && ["stopped","interrupted"].includes(terminal)) return stateView("stopped","当前会话：已停止",agentId);
+    const priority=["failed","stopped","succeeded"];
     const canonical=priority.find(state=>views.some(view=>view.canonical===state))||"idle";
     return stateView(canonical,canonical==="idle"?"当前会话待机":`当前会话：${stateLabel(canonical)}`,agentId);
   }
 
-  // The live/persisted trace is newer than a graph response already in the
-  // browser, so it wins until the refreshed graph snapshot arrives.
-  const event=traceEventIndex.get(agentId);
-  const persisted=currentGraph.node_states?.[agentId];
-  if(event&&(!persisted?.state||Number(event.timestamp||0)>=Number(persisted.updated_at||0))){
-    const type=String(event.type||"");
-    let canonical="running";
-    if(event.event==="error"||["agent:error","agent:failed"].includes(type)) canonical="failed";
-    else if(type==="agent:stopped") canonical="interrupted";
-    else if(type==="task:dispatched") canonical="queued";
-    else if(type==="task:report_missing") canonical="failed";
-    else if(["agent:complete","agent:completed"].includes(type)) canonical="completed";
-    else if(type==="task:reported"){
-      const status=String(event.data?.status||"").toLowerCase();
-      canonical=["completed","complete","success","succeeded","done"].includes(status)?"completed":["interrupted","stopped"].includes(status)?"interrupted":["cancelled","canceled"].includes(status)?"cancelled":"failed";
-    } else if(type==="task:finalized") canonical=String(event.data?.state||"interrupted");
-    return stateView(canonical,event.message||stateLabel(canonical),agentId);
+  const node=runNode(agentId);
+  if(node?.state) {
+    // The graph's initial `pending` placeholder is not the same as queued:
+    // a targeted turn leaves sibling nodes untouched for this execution.
+    if(node.state === "pending" && !node.updated_at) return stateView("idle", "本轮未开始", agentId);
+    return stateView(node.state,node.error||node.reason||node.message||stateLabel(node.state),agentId);
   }
-  if(persisted?.state) return stateView(persisted.state,persisted.message||stateLabel(persisted.state),agentId);
-  return stateView("idle","尚无执行事件",agentId);
+  return stateView("idle","本轮未参与",agentId);
 }
 /** Translate one canonical backend state into its Chinese UI label. */
-function stateLabel(state) { return ({idle:"待机",queued:"等待执行",running:"正在运行",completed:"运行完毕",failed:"运行错误",interrupted:"已中断",cancelled:"已取消"})[state] || state; }
+function stateLabel(state) { return ({idle:"待机",pending:"待执行",queued:"等待执行",running:"正在运行",succeeded:"运行完毕",completed:"运行完毕",failed:"运行错误",stopped:"已停止",interrupted:"已中断",cancelled:"已取消",skipped:"已跳过"})[state] || state; }
 /** Apply acknowledgement and color-class rules to a canonical Agent state. */
-function stateView(canonical, message, agentId) { const acknowledged=canonical==="completed" && acknowledgedAgents().has(agentId); const ui=acknowledged?"idle":canonical==="queued"?"pending":["failed","interrupted"].includes(canonical)?"error":canonical==="cancelled"?"idle":canonical; return {canonical,ui,message:acknowledged?"已确认完成":message}; }
+function stateView(canonical, message, agentId) { const acknowledged=canonical==="succeeded" && acknowledgedAgents().has(agentId); const ui=acknowledged?"idle":canonical==="succeeded"?"completed":["pending","queued"].includes(canonical)?"pending":canonical==="stopped"||canonical==="interrupted"?"stopped":canonical==="failed"?"error":["cancelled","skipped"].includes(canonical)?"idle":canonical; return {canonical,ui,message:acknowledged?"已确认完成":message}; }
 function agentRunState(agentId, agents=currentAgents) { return agentStateView(agentId,agents).ui; }
 /** Enable controls only when the selected scope has live or queued work. */
 function updateStopAvailability() { const state=agentStateView(selectedAgent).canonical; const actionable=runActive && (selectedAgent==="all" || ["running","queued"].includes(state)); $("stop").disabled=!actionable; $("force-stop").disabled=!actionable; const label=selectedAgent==="all"?"整个运行":selectedAgent; $("stop").title=`停止 ${label}`; $("force-stop").title=`强行停止 ${label}`; }
@@ -324,7 +337,7 @@ function agentCard(agent, selected, tone, icon, subtitle, view, title) {
   if (agent.id === "all") return `<button class="agent-filter ${selected?"selected active":""}" type="button" data-agent="all" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="agent-state ${view.ui}" data-ack-agent="all" title="${escapeHtml(title)}"></i></button>`;
   return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span></button><button class="agent-context-button" type="button" data-context-agent="${escapeHtml(agent.id)}" title="查看 ${escapeHtml(agent.name)} 的上下文" aria-label="查看 ${escapeHtml(agent.name)} 的上下文">◎</button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
 }
-function renderAgentSelector(agents=[]) { const row=$("agent-row"); const concrete=agents.filter(agent=>agent.id!=="all"); const visible=[{id:"all",name:"全部",kind:"filter"},...concrete]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"聚合全部 Agent":agent.dynamic?"动态子 Agent":agent.parent?`上级：${agent.parent}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.ui==="completed"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "completed") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
+function renderAgentSelector(agents=[]) { const row=$("agent-row"); const concrete=agents.filter(agent=>agent.id!=="all").map(agent=>({...agent,...(runNode(agent.id)||{})})); const visible=[{id:"all",name:"全部",kind:"filter"},...concrete]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"聚合全部 Agent":agent.origin==="runtime"?"动态子 Agent":agent.parent_id?`上级：${agent.parent_id}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.canonical==="succeeded"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentRunState(agentId) === "succeeded") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
 
 /** Map untrusted entity types to the finite visual palette used by the graph. */
 function contextNodeTone(type) { return ({file:"blue",tool:"amber",person:"pink",decision:"green",module:"purple",framework:"purple"})[String(type).toLowerCase()] || "slate"; }
@@ -423,7 +436,7 @@ function renderContextPrompt(payload) { const metadata=Array.isArray(payload.met
  * Returns:
  *   Promise that resolves after the context panel has rendered both results.
  */
-async function loadContextPrompt(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context`)); try { const preview=await apiPost(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/request-preview`),{message:$("context-preview-message").value}); payload.request=preview.request; payload.stats=preview.stats; } catch(error) { payload.preview_error=error.message; } renderContextPrompt(payload); }
+async function loadContextPrompt(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context`)); try { const preview=await apiPost(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/request-preview`),{message:""}); payload.request=preview.request; payload.stats=preview.stats; } catch(error) { payload.preview_error=error.message; } renderContextPrompt(payload); }
 /** Render one Agent's live compaction-input preview in the dialog's third tab. */
 function renderCompactionInput(payload) {
   const text=String(payload.text||""), characters=Number(payload.characters||0), threshold=Number(payload.threshold||0), round=Number(payload.round||0), messages=Number(payload.messages||0), omitted=Number(payload.omitted||0), estimatedTokens=Number(payload.estimated_tokens||0), preview=$("context-compaction-preview"), request=payload.request&&typeof payload.request==="object"?payload.request:null;
@@ -436,37 +449,43 @@ function renderCompactionInput(payload) {
 /** Fetch the exact compaction input the compactor would send for one Agent. */
 async function loadCompactionInput(agentId) { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context/compaction-input`));renderCompactionInput(payload); }
 /**
- * Open the Agent context inspector and request each independent panel in parallel.
+ * Hydrate one context-dialog tab on demand, once per dialog opening.
+ *
+ * The graph, prompt, and compaction payloads each rehydrate a full Agent
+ * context server-side, so they are fetched lazily only when the matching tab
+ * becomes active instead of all three in parallel on open.
  *
  * Args:
- *   agentId: Stable identifier of the Agent whose context is inspected.
+ *   tab: Requested graph, prompt, or compaction tab identifier.
  *
  * Returns:
- *   Promise that resolves after each available panel has rendered its own data or error.
+ *   None.
  */
+function ensureContextDialogTab(tab) {
+  const agentId=contextDialogAgent;
+  if(!agentId||contextDialogLoaded.has(tab))return;
+  contextDialogLoaded.add(tab);
+  if(tab==="graph") apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)).then(renderContextGraph).catch(error=>{ if(contextDialogAgent===agentId) $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; });
+  else if(tab==="prompt") loadContextPrompt(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-prompt-preview").textContent=error.message; $("context-prompt-status").textContent="读取失败"; } });
+  else if(tab==="compaction") loadCompactionInput(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-compaction-preview").textContent=error.message; $("context-compaction-status").textContent="读取失败"; } });
+}
 async function openAgentContextInspector(agentId) {
   const dialog=$("context-graph-dialog"); if(!dialog) return;
   contextDialogAgent=agentId;
+  contextDialogLoaded.clear();
   $("context-graph-summary").innerHTML=""; $("context-graph-canvas").innerHTML='<p class="empty">正在加载…</p>'; $("context-graph-nodes").innerHTML=""; $("context-graph-detail").innerHTML="";
-  selectContextDialogTab("graph");$("context-preview-message").value=$("message").value;$("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
+  $("context-prompt-preview").textContent="正在拼接下一次模型请求…";$("context-metadata-list").innerHTML='<tr><td colspan="5">正在读取…</td></tr>';$("context-prompt-status").textContent="读取中…";$("context-compaction-preview").textContent="正在拼接完整压缩请求…";$("context-compaction-status").textContent="读取中…";
   if(!dialog.open) dialog.showModal();
-  const [graph,prompt,compaction]=await Promise.allSettled([
-    apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)),
-    loadContextPrompt(agentId),
-    loadCompactionInput(agentId),
-  ]);
-  if(graph.status==="fulfilled") renderContextGraph(graph.value);
-  else $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(graph.reason.message)}</p>`;
-  if(prompt.status==="rejected") { $("context-prompt-preview").textContent=prompt.reason.message; $("context-prompt-status").textContent="读取失败"; }
-  if(compaction.status==="rejected") { $("context-compaction-preview").textContent=compaction.reason.message; $("context-compaction-status").textContent="读取失败"; }
+  selectContextDialogTab("graph");
+  ensureContextDialogTab("graph");
 }
 function hasSelectedSession() { return Boolean(sessionId); }
 function renderInspectorEmpty(message) { const target=$("trace"); if(target) target.innerHTML=`<p class="empty">${escapeHtml(message)}</p>`; }
 async function loadAgents() { if(!hasSelectedSession()) { renderAgentSelector(); return; } try { const payload=await apiJson(sessionApi("/agents")); renderAgentSelector(payload.agents); } catch(error) { trace("Agent 列表加载失败",error.message); renderAgentSelector(); } }
 async function selectAgent(agentId) { if(!agentId || agentId===selectedAgent) return; selectedAgent=agentId; try { await rehydrateSelectedView({reloadAgents:true}); } catch(error) { trace("Agent 会话加载失败",error.message); } }
-function renderGraph(graph) { const target=$("execution-graph"); const nodes=graph.nodes||[]; if(!nodes.length){target.innerHTML=`<p class="empty">当前 session 尚未启动 Swarm。</p>`;return;} const nodeIds=new Set(nodes.map(node=>node.id));const incoming={},outgoing={},parent={};for(const edge of graph.edges||[]){if(!nodeIds.has(edge.source)||!nodeIds.has(edge.target))continue;if((edge.kind||"dependency")==="dispatch"){if(edge.source!==edge.target)parent[edge.target]=edge.source;continue;}(incoming[edge.target]??=[]).push(edge.source);(outgoing[edge.source]??=[]).push(edge.target);}for(const node of nodes){if(node.parent&&nodeIds.has(node.parent)&&node.parent!==node.id)parent[node.id]=node.parent;}const children={};for(const [child,ancestor] of Object.entries(parent))(children[ancestor]??=[]).push(child);const byId=Object.fromEntries(nodes.map(node=>[node.id,node]));const rendered=new Set();const renderNode=(nodeId,depth=0,path=new Set())=>{const node=byId[nodeId];if(!node||path.has(nodeId))return "";rendered.add(nodeId);const nextPath=new Set(path).add(nodeId);const view=agentStateView(nodeId);const deps=incoming[nodeId]||[];const downstream=outgoing[nodeId]||[];const descendants=(children[nodeId]||[]).sort().map(child=>renderNode(child,depth+1,nextPath)).join("");return `<div class="graph-branch"><article class="graph-node ${view.ui}" style="--graph-depth:${depth}"><div class="graph-node-head"><strong>${escapeHtml(node.id)}</strong><i class="graph-node-state ${view.ui}"></i></div><span>${node.dynamic?"子智能体":node.kind==="routing"?"路由节点":"Agent"} · ${escapeHtml(stateLabel(view.canonical))}</span>${node.parent?`<small>调度者：${escapeHtml(node.parent)}</small>`:""}${deps.length?`<small>依赖：${escapeHtml(deps.join("、"))}</small>`:""}${downstream.length?`<small>下游：${escapeHtml(downstream.join("、"))}</small>`:""}${view.message?`<small>${escapeHtml(view.message)}</small>`:""}</article>${descendants?`<div class="graph-children">${descendants}</div>`:""}</div>`;};const roots=nodes.filter(node=>!parent[node.id]).map(node=>node.id).sort();const html=roots.map(id=>renderNode(id)).join("");const leftovers=nodes.filter(node=>!rendered.has(node.id)).map(node=>renderNode(node.id)).join("");target.innerHTML=html+leftovers; }
+function renderGraph(graph) { const target=$("execution-graph"); const nodes=graph.nodes||[]; if(!nodes.length){target.innerHTML=`<p class="empty">当前执行尚无节点。</p>`;return;} const nodeIds=new Set(nodes.map(node=>node.id));const incoming={},outgoing={},parent={};for(const edge of graph.edges||[]){if(!nodeIds.has(edge.source)||!nodeIds.has(edge.target))continue;(incoming[edge.target]??=[]).push(edge.source);(outgoing[edge.source]??=[]).push(edge.target);}for(const node of nodes){if(node.parent_id&&nodeIds.has(node.parent_id)&&node.parent_id!==node.id)parent[node.id]=node.parent_id;}const children={};for(const [child,ancestor] of Object.entries(parent))(children[ancestor]??=[]).push(child);const byId=Object.fromEntries(nodes.map(node=>[node.id,node]));const rendered=new Set();const renderNode=(nodeId,depth=0,path=new Set())=>{const node=byId[nodeId];if(!node||path.has(nodeId))return "";rendered.add(nodeId);const nextPath=new Set(path).add(nodeId);const view=agentStateView(nodeId);const deps=incoming[nodeId]||[];const downstream=outgoing[nodeId]||[];const descendants=(children[nodeId]||[]).sort().map(child=>renderNode(child,depth+1,nextPath)).join("");const detail=node.error||node.reason||node.message||"";return `<div class="graph-branch"><article class="graph-node ${view.ui}" style="--graph-depth:${depth}"><div class="graph-node-head"><strong>${escapeHtml(node.id)}</strong><i class="graph-node-state ${view.ui}"></i></div><span>${node.origin==="runtime"?"动态子 Agent":node.kind==="routing"?"路由节点":"Agent"} · ${escapeHtml(stateLabel(node.state))}</span>${node.parent_id?`<small>调度者：${escapeHtml(node.parent_id)}</small>`:""}${node.task_id?`<small>任务：${escapeHtml(node.task_id)}</small>`:""}${node.plan_task_id?`<small>计划：${escapeHtml(node.plan_task_id)}</small>`:""}${deps.length?`<small>依赖：${escapeHtml(deps.join("、"))}</small>`:""}${downstream.length?`<small>下游：${escapeHtml(downstream.join("、"))}</small>`:""}${detail?`<small>${escapeHtml(detail)}</small>`:""}</article>${descendants?`<div class="graph-children">${descendants}</div>`:""}</div>`;};const roots=nodes.filter(node=>!parent[node.id]).map(node=>node.id).sort();const html=roots.map(id=>renderNode(id)).join("");const leftovers=nodes.filter(node=>!rendered.has(node.id)).map(node=>renderNode(node.id)).join("");target.innerHTML=html+leftovers; }
 /** Refresh the graph data used by the selector, topology, and usage views. */
-async function loadGraph() { if(!hasSelectedSession()) { currentGraph={nodes:[],edges:[],assignments:{},task_states:{},node_states:{}}; renderAgentSelector(currentAgents); return; } const response=await fetch(graphUrl()); if(response.status===404){currentGraph={nodes:[],edges:[],assignments:{},task_states:{},node_states:{}};renderAgentSelector(currentAgents);return;} if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${graphUrl()})`); currentGraph=await response.json();renderAgentSelector(currentAgents); }
+async function loadGraph() { if(!hasSelectedSession()) { currentRunGraph={kind:"angelus.run-graph",state:"idle",nodes:[],edges:[]}; renderAgentSelector(currentAgents); return; } const response=await fetch(graphUrl()); if(response.status===404){currentRunGraph={kind:"angelus.run-graph",state:"idle",nodes:[],edges:[]};renderAgentSelector(currentAgents);return;} if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${graphUrl()})`); const payload=await response.json(); if(payload?.kind!=="angelus.run-graph") throw new Error("执行图响应 schema 无效"); currentRunGraph=payload;renderAgentSelector(currentAgents);renderGraph(currentRunGraph); }
 /** Build the cursor-paginated durable Trace request for the selected session. */
 function traceUrl(cursor=null) { const params=new URLSearchParams({limit:"200"}); if(cursor !== null) params.set("cursor",String(cursor)); return `${sessionApi("/events")}?${params}`; }
 /** Streaming deltas are transport-only; the completed round remains the trace record. */
@@ -504,20 +523,19 @@ function renderAgentTopology(agents, graph) {
   const target=$("inspector-agents-list");
   if(!agents.length){target.innerHTML=`<p class="empty">当前 session 尚未创建 Agent。</p>`;return;}
   const byId=Object.fromEntries(agents.map(agent=>[agent.id,agent])); const parent={}; const children={};
-  // Prefer explicit parents, then recover the same hierarchy from dispatch edges.
-  for(const agent of agents) if(agent.parent && byId[agent.parent] && agent.parent!==agent.id) parent[agent.id]=agent.parent;
-  for(const edge of graph.edges||[]) if(edge.kind==="dispatch" && byId[edge.source] && byId[edge.target] && edge.source!==edge.target) parent[edge.target]=edge.source;
+  // Delegation is explicit in the RunGraph and does not alter dependency edges.
+  for(const agent of agents) { const node=(graph.nodes||[]).find(item=>item.id===agent.id); if(node?.parent_id && byId[node.parent_id] && node.parent_id!==agent.id) parent[agent.id]=node.parent_id; }
   for(const [child,leader] of Object.entries(parent)) (children[leader]??=[]).push(child);
-  const taskByAgent={}; for(const [taskId,agentId] of Object.entries(graph.assignments||{})) (taskByAgent[agentId]??=[]).push(taskId);
-  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${agent.dynamic?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
+  const taskByAgent={}; for(const node of graph.nodes||[]) if(node.task_id) (taskByAgent[node.id]??=[]).push(node.task_id);
+  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const node=(graph.nodes||[]).find(item=>item.id===id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${node?.origin==="runtime"?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
   const roots=agents.filter(agent=>!parent[agent.id]).map(agent=>agent.id).sort((a,b)=>a==="coordinator"?-1:b==="coordinator"?1:a.localeCompare(b)); const html=roots.map(id=>render(id)).join("")+agents.filter(agent=>!rendered.has(agent.id)).map(agent=>render(agent.id)).join(""); target.innerHTML=html;
   target.querySelectorAll("[data-context-agent]").forEach(control=>{
     control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent));
     control.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openAgentContextInspector(control.dataset.contextAgent);}});
   });
 }
-async function loadInspectorAgents() { if(!hasSelectedSession()) { currentGraph={nodes:[],edges:[],assignments:{},task_states:{},node_states:{}}; renderAgentTopology([],currentGraph); renderAgentSelector(); return; } const [agentPayload,graphPayload]=await Promise.all([apiJson(sessionApi("/agents")),apiJson(graphUrl())]);currentGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,graphPayload);renderAgentSelector(agentPayload.agents); loadGraphEditInfo(); }
-function graphEditUrl() { return sessionApi("/graph"); }
+async function loadInspectorAgents() { if(!hasSelectedSession()) { currentRunGraph={kind:"angelus.run-graph",state:"idle",nodes:[],edges:[]}; renderAgentTopology([],currentRunGraph); renderAgentSelector(); return; } const [agentPayload,graphPayload]=await Promise.all([apiJson(sessionApi("/agents")),apiJson(graphUrl())]); if(graphPayload?.kind==="angelus.run-graph") currentRunGraph=graphPayload;const agents=(agentPayload.agents||[]).filter(agent=>agent.id!=="all");renderAgentTopology(agents,currentRunGraph);renderAgentSelector(agentPayload.agents); loadGraphEditInfo(); }
+function graphEditUrl() { return workflowUrl(); }
 let graphEditStatusTimer = null;
 function graphEditFeedback(text="", state="") { const el=$("graph-edit-status"); if(!el) return; el.textContent=text; el.className=state ? `graph-edit-status ${state}` : "graph-edit-status"; clearTimeout(graphEditStatusTimer); if(state) graphEditStatusTimer=setTimeout(()=>graphEditFeedback("",""),5000); }
 /** Reflect live-Swarm availability into the graph-edit toolbar controls. */
@@ -526,11 +544,13 @@ async function loadGraphEditInfo() {
   const allButtons=["graph-add-agent",...editableButtons];
   const setDisabled=(list,disabled)=>list.forEach(id=>{const el=$(id);if(el)el.disabled=disabled;});
   try {
-    const info=await apiJson(`${graphEditUrl()}/info`);
-    const nodes=info.nodes||[];
-    setDisabled(allButtons,false);
-    setDisabled(editableButtons,nodes.length===0);
-    graphEditFeedback(nodes.length ? `活动 Swarm · ${nodes.length} 节点${info.max_concurrency_agents ? ` · 并发 ${info.max_concurrency_agents}` : ""}` : "活动 Swarm · 仅协调者");
+    const [workflow,info]=await Promise.all([apiJson(workflowUrl()),apiJson(`${graphUrl()}/info`)]);
+    if(workflow?.kind!=="angelus.workflow") throw new Error("工作流响应 schema 无效");
+    currentWorkflow=workflow;
+    const nodes=workflow.nodes||[];
+    setDisabled(allButtons,Boolean(info.running));
+    setDisabled(editableButtons,Boolean(info.running)||nodes.length<=1);
+    graphEditFeedback(info.running?"运行中 · 工作流编辑已锁定":`工作流 · ${nodes.length} 节点`,info.running?"muted":"");
   } catch(error) {
     setDisabled(allButtons,true);
     graphEditFeedback("无活动 Swarm · 图编辑不可用","muted");
@@ -555,7 +575,7 @@ async function graphConnect() {
   await loadInspectorAgents();
 }
 async function graphRemoveAgent() {
-  const candidates=(currentGraph.nodes||[]).map(node=>node.id||"").filter(id=>id && id!=="coordinator");
+  const candidates=(currentWorkflow.nodes||[]).map(node=>node.id||"").filter(id=>id && id!=="coordinator");
   const name=(prompt(`删除哪个 Agent？（可用：${candidates.join("、") || "无"}）`)||"").trim();
   if(!name) return;
   if(name==="coordinator"){ graphEditFeedback("协调者节点不能删除","error"); return; }
@@ -604,12 +624,12 @@ function usageCells(usage={}, run=null) {
   return cells.join("");
 }
 /** Render per-Agent token totals with the same reconciled state lights as other Agent surfaces. */
-async function loadUsage() { if(!hasSelectedSession()) { $("usage-total").innerHTML=`<p class="empty">请先创建或选择一个会话。</p>`; $("usage-agents").innerHTML=""; return; } const [payload,graphPayload]=await Promise.all([apiJson(sessionApi("/usage")),apiJson(graphUrl()).catch(()=>null)]); if(graphPayload) currentGraph=graphPayload; const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage, payload.run).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>{const view=agentStateView(agent.id); return `<article class="usage-agent"><header><span class="usage-agent-title"><i class="agent-state ${escapeHtml(view.ui)}" title="${escapeHtml(view.message)}"></i><strong>${escapeHtml(agent.id)}</strong></span><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage, agent.run)}</div></article>`;}).join(""); }
+async function loadUsage() { if(!hasSelectedSession()) { $("usage-total").innerHTML=`<p class="empty">请先创建或选择一个会话。</p>`; $("usage-agents").innerHTML=""; return; } const [payload,graphPayload]=await Promise.all([apiJson(sessionApi("/usage")),apiJson(graphUrl()).catch(()=>null)]); if(graphPayload?.kind==="angelus.run-graph") currentRunGraph=graphPayload; const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage, payload.run).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>{const view=agentStateView(agent.id); return `<article class="usage-agent"><header><span class="usage-agent-title"><i class="agent-state ${escapeHtml(view.ui)}" title="${escapeHtml(view.message)}"></i><strong>${escapeHtml(agent.id)}</strong></span><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage, agent.run)}</div></article>`;}).join(""); }
 function selectInspectorPanel(panel, refresh=true) { const target=document.getElementById(panel); if(!target) return; activeInspectorPanel=panel; localStorage.llmfetcherInspectorPanel=panel; document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.classList.toggle("active",button.dataset.inspectorPanel===panel)); document.querySelectorAll(".inspector-panel").forEach(item=>item.classList.toggle("active",item===target)); if(!refresh) return; const loaders={"inspector-plan":loadPlan,"inspector-agents":loadInspectorAgents,"inspector-trace":()=>loadTrace(true),"inspector-usage":loadUsage}; loaders[panel]?.().catch(error=>trace("检查器加载失败",error.message)); }
 function initInspectorTabs() { document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.addEventListener("click",()=>selectInspectorPanel(button.dataset.inspectorPanel))); if(!document.getElementById(activeInspectorPanel)) activeInspectorPanel="inspector-plan"; selectInspectorPanel(activeInspectorPanel,false); }
-function knownPlanAgents() { const known=new Map([["coordinator",{id:"coordinator",name:"协调者（总计划）"}]]); for(const agent of currentAgents||[]) if(agent?.id && agent.id!=="all") known.set(agent.id,agent); for(const node of currentGraph.nodes||[]) if(node?.id) known.set(node.id,{id:node.id,name:node.id,dynamic:node.dynamic}); return [...known.values()]; }
+function knownPlanAgents() { const known=new Map([["coordinator",{id:"coordinator",name:"协调者（总计划）"}]]); for(const agent of currentAgents||[]) if(agent?.id && agent.id!=="all") known.set(agent.id,agent); for(const node of currentRunGraph.nodes||[]) if(node?.id) known.set(node.id,{id:node.id,name:node.id,origin:node.origin}); return [...known.values()]; }
 function renderPlanAgentPicker() { const select=$("plan-agent"); if(!select)return; const agents=knownPlanAgents(); if(!agents.some(agent=>agent.id===selectedPlanAgent)) selectedPlanAgent="coordinator"; select.innerHTML=agents.map(agent=>`<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.id==="coordinator"?"协调者（总计划）":agent.name||agent.id)}</option>`).join(""); select.value=selectedPlanAgent; }
-async function loadPlan() { renderPlanAgentPicker(); if(!hasSelectedSession()) { $("plan-summary").textContent="请先创建或选择一个会话。"; $("task-plan").innerHTML=`<p class="empty">尚无会话。</p>`; return; } const plan=await apiJson(planUrl()); const agentLabel=selectedPlanAgent==="coordinator"?"协调者":selectedPlanAgent; $("plan-summary").textContent=plan.goal ? `${agentLabel} · ${plan.goal}${plan.summary ? ` · ${plan.summary}` : ""}` : `${agentLabel} 尚未建立任务计划。`; $("task-plan").innerHTML=(plan.tasks||[]).map(task=>renderTaskPlanItem(task)).join("") || `<p class="empty">尚未建立任务计划。</p>`; }
+async function loadPlan() { renderPlanAgentPicker(); if(!hasSelectedSession()) { $("plan-summary").textContent="请先创建或选择一个会话。"; $("task-plan").innerHTML=`<p class="empty">尚无会话。</p>`; return; } const payload=await apiJson(planUrl()); const tasks=Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.plan) ? payload.plan : []); const agentLabel=selectedPlanAgent==="coordinator"?"协调者":selectedPlanAgent; const goal=payload.goal?` · ${payload.goal}`:""; $("plan-summary").textContent=tasks.length ? `${agentLabel} · ${tasks.length} 项根任务${goal}` : `${agentLabel} 尚未建立任务计划。`; $("task-plan").innerHTML=tasks.map(task=>renderTaskPlanItem(task)).join("") || `<p class="empty">尚未建立任务计划。</p>`; }
 /** Rehydrate the aggregate view or one Agent's durable trajectory and transcript. */
 async function loadHistory() {
   streamingMessages.clear();
@@ -620,13 +640,13 @@ async function loadHistory() {
   if(snapshot.generation!==historyGeneration||snapshot.session!==sessionId||snapshot.agent!==selectedAgent)return;
   const messages = page.messages || [];
   messagesBefore = page.next_cursor ?? null;
-  renderedSteerEvents.clear();
+  steeringRecords.clear();
   renderedRoundEvents.clear();
   pendingRoundTools.clear();
   const chat = $("chat");
   const loadMore=ensureLoadMoreMessagesButton();
   chat.replaceChildren(loadMore);
-  if (!messages.length) {
+  if (!messages.length && !(page.steering||[]).length) {
     loadMore.insertAdjacentHTML("afterend",`<div class="welcome"><div class="welcome-symbol">✦</div><h2>暂无 ${escapeHtml(selectedAgent)} 的轨迹</h2><p>此视图会展示该 Agent 的回复、思考和工具调用详情。</p></div>`);
     loadMore.hidden = true;
     return;
@@ -636,6 +656,7 @@ async function loadHistory() {
     fragment.append(chatView.buildMessage(messageForChat(message), selectedAgent));
   }
   loadMore.after(fragment);
+  (page.steering||[]).forEach(upsertSteering);
   chat.scrollTop = chat.scrollHeight;
   loadMore.hidden = !page.has_more;
 }
@@ -676,19 +697,25 @@ async function loadOlderMessages() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if(source && sourceSessionId !== selected){source.close();source=null;sourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
+async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if((source && sourceSessionId !== selected) || (lifecycleSource && lifecycleSourceSessionId !== selected)){source?.close();source=null;sourceSessionId=""; lifecycleSource?.close();lifecycleSource=null;lifecycleSourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0;lifecycleCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
 
-async function start(message) {
+async function start(message, images=[], targetSession=sessionId) {
   let runConfig;
-  try { runConfig=config(); } catch(error) { setStatus("MCP 配置无效", "error"); trace("MCP 配置无效", error.message); alert(error.message); return; }
+  try { runConfig=config(); } catch(error) { setStatus("MCP 配置无效", "error"); trace("MCP 配置无效", error.message); alert(error.message); return false; }
   // Show the submitted prompt immediately in every filter; the durable reload
   // after a result will replace this optimistic turn with canonical history.
-  sseCursor = 0; setRunning(true); runRetryCount = 0; setStatus("正在执行", "running"); appendMessage("user", message);
+  sseCursor = 0; lifecycleCursor = 0; runRetryCount = 0; setStatus("正在提交", "running");
   try {
-    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:sessionId, message})});
+    const targetAgent=selectedAgent === "all" ? null : selectedAgent;
+    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"})), target_agent:targetAgent})});
     const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
-    setWorkspaceIndicator(sessionId,"running"); await loadAgents(); connectRunEvents();
-  } catch(error) { const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("请先设置连接器", message); setStatus("请求失败", "error"); setRunning(false); }
+    setWorkspaceIndicator(targetSession,"running");
+    if (targetSession === sessionId) {
+      setRunning(true); setStatus("正在执行", "running"); chatView.append({role:"user",content:message,images});
+      connectRunGraphEvents(); connectLifecycleEvents(); loadAgents().catch(error=>trace("Agent 列表刷新失败",error.message));
+    }
+    return true;
+  } catch(error) { if(targetSession === sessionId){ const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("发送失败，草稿已保留", message); setStatus("请求失败", "error"); setRunning(false); } return false; }
 }
 let compactStatusTimer=null;
 function showCompactStatus(text, state="running", dismissMs=0) {
@@ -748,13 +775,21 @@ function handleEvent(event) {
     else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
     else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
   if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
-  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); } if(event.type === "agent:steer_applied") { setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); const eventKey=`${event.timestamp || ""}:${event.agent || "coordinator"}:${JSON.stringify(event.data?.messages || [])}`; if(selectedAgent === "all" || selectedAgent === (event.agent || "coordinator")) (event.data?.messages||[]).forEach((text,index)=>appendSteerMessage(text,`${eventKey}:${index}`)); } if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") updateHeaderMetrics(event.data); if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
-  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
-  if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); return; }
+  if(event.type === "agent:failed") { const agent=event.agent||"coordinator"; appendRunErrorBlock(`Agent ${agent} 运行失败`, String(event.data?.error || event.message || "未知错误")); scheduleGraphPlanReload(); }
+  if(event.type === "agent:control" && event.data?.action === "steer") { const data=event.data; upsertSteering({id:data.steer_id,text:event.message||"",scope:data.agent_id||"all",recipients:data.target_agents||[],applied_agents:[],submitted_at:event.timestamp}); }
+  if(event.type === "agent:tool_call_started") { const agent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,event.data||{},"参数生成中"); }
+  if(event.type === "agent:tool_call_ready") { const agent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,event.data||{},"准备执行"); }
+  if(event.type === "agent:tool_started") { const agent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,event.data||{},"执行中"); }
+  if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); }
+  if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); const agent=event.agent||"coordinator"; for(const tool of (event.data?.tool_calls||[])){ if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,{...tool,arguments:tool.args,status:tool.ok===false?"失败":"已完成"},tool.ok===false?"失败":"已完成"); } }
+  if(event.type === "agent:steer_applied") { const ids=event.data?.steer_ids||[]; const agent=event.agent||"coordinator"; ids.forEach(id=>{const current=steeringRecords.get(id); if(!current)return; const applied=new Set(current.applied_agents||[]); applied.add(agent); upsertSteering({...current,applied_agents:[...applied]});}); setSteerStatus(`已应用 ${(event.data?.messages||[]).length || 1} 条调整指令 ✓`,"applied"); }
+  if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") { discardAgentStreams(event.agent || "coordinator"); updateHeaderMetrics(event.data); } if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:")){ scheduleGraphPlanReload(); } return; }
+  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; discardAgentStreams(resultAgent); if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
+  if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); finish(); return; }
   if(event.event === "stopped") { setWorkspaceIndicator(sessionId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }
   if(event.event === "done") { setWorkspaceIndicator(sessionId,"done"); finish(); scheduleGraphPlanReload(); }
 }
-function finish() { clearCompactStatus(); source?.close(); source=null; sourceSessionId=""; setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
+function finish() { clearCompactStatus(); source?.close(); source=null; sourceSessionId=""; /* lifecycle SSE drains committed tail and closes itself */ setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
 /* ---- Slash commands -------------------------------------------------- */
 function showSlashHelp() {
   chatView.removeWelcome();
@@ -833,9 +868,25 @@ function dispatchSlashCommand(parsed) {
 
 /** Resize the composer to its content, restoring the compact size when empty. */
 function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,170)}px`; }
-function connectRunEvents() { source?.close(); const resume=sseCursor > 0 ? `?cursor=${sseCursor}` : ""; const eventSource=new EventSource(`/api/runs/${encodeURIComponent(sessionId)}/events${resume}`); source=eventSource; sourceSessionId=sessionId; eventSource.onmessage=(event)=>{ if(sessionId === sourceSessionId){ const cursor=Number(event.lastEventId); if(Number.isSafeInteger(cursor) && cursor >= 0) sseCursor=cursor; handleEvent(JSON.parse(event.data)); } }; eventSource.onerror=()=>{ if(source!==eventSource) return; if(eventSource.readyState===EventSource.CLOSED){ finish(); return; } if(eventSource.readyState!==EventSource.CONNECTING) return; if(sseStatusCheckPending) return; sseStatusCheckPending=true; apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`).then(state=>{ if(source!==eventSource) return; if(["running","stopping","force_stopping"].includes(state.state)) setStatus("连接中断，正在重连…", "running"); else finish(); }).catch(()=>{ if(source===eventSource) setStatus("连接中断，正在重连…", "running"); }).finally(()=>{sseStatusCheckPending=false;}); }; }
-async function restoreRunState() { if(!hasSelectedSession()) return; try { const state=await apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`); if(["running","stopping","force_stopping"].includes(state.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunEvents(); return; } if(["failed","interrupted"].includes(state.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",state.error||""); } else if(state.state === "completed") setStatus("已完成"); else if(state.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
-$("composer").addEventListener("submit", (event)=>{event.preventDefault(); const message=$("message").value; if(!message.trim()) return; if(runActive){ sendSteer(message).then(()=>{$("message").value="";resizeComposer();}).catch(error=>setSteerStatus(`发送失败：${error.message}`,"error")); return; } $("message").value=""; resizeComposer(); const parsed=parseSlashCommand(message); if(parsed){ dispatchSlashCommand(parsed); return; } start(message);});
+function applyRunGraphEvent(event) { if(event?.kind!=="angelus.run-graph-event") return; const data=event.data||{}; if(event.type==="run.state_changed" && data.to) currentRunGraph={...currentRunGraph,state:data.to,error:data.error||currentRunGraph.error,stop_reason:data.reason||currentRunGraph.stop_reason}; if(event.node_id){const nodes=[...(currentRunGraph.nodes||[])];let node=nodes.find(item=>item.id===event.node_id);if(!node){node={id:event.node_id,kind:"agent",origin:"runtime",parent_id:null,state:"pending",task_id:null,plan_task_id:null,message:"",error:null,reason:null,updated_at:null};nodes.push(node);}if(event.type==="node.state_changed"&&data.to){node.state=data.to;node.error=data.error||null;node.reason=data.reason||null;}if(data.message)node.message=data.message;node.updated_at=event.occurred_at||node.updated_at;currentRunGraph={...currentRunGraph,nodes};}renderAgentSelector(currentAgents);renderGraph(currentRunGraph); }
+function handleRunGraphEvent(event) { applyRunGraphEvent(event); scheduleGraphPlanReload(); if(event.type==="node.state_changed" && event.data?.to==="failed") appendRunErrorBlock(`Agent ${event.node_id||"未知"} 运行失败`,String(event.data?.error||event.data?.message||"未知错误")); if(event.type==="run.state_changed" && ["completed","failed","stopped","interrupted"].includes(event.data?.to)){ loadHistory().catch(error=>trace("会话历史刷新失败",error.message)); loadTrace(true).catch(error=>trace("Trace 刷新失败",error.message)); setWorkspaceIndicator(sessionId,event.data.to==="failed"?"error":"done"); finish(); } }
+function connectRunGraphEvents() { source?.close(); const eventSource=new EventSource(graphEventsUrl(sseCursor)); source=eventSource; sourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==sourceSessionId)return; const event=JSON.parse(message.data); const cursor=Number(event.sequence||message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)sseCursor=cursor; handleRunGraphEvent(event); }; eventSource.onerror=()=>{ if(source!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED){ if(!runActive) finish(); return; } if(sseStatusCheckPending)return; sseStatusCheckPending=true; apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`).then(state=>{ if(source!==eventSource)return; if(["running","stopping","force_stopping"].includes(state.state))setStatus("执行图连接中断，正在重连…","running");else finish(); }).catch(()=>{if(source===eventSource)setStatus("执行图连接中断，正在重连…","running");}).finally(()=>{sseStatusCheckPending=false;}); }; }
+function connectLifecycleEvents() { lifecycleSource?.close(); const eventSource=new EventSource(lifecycleEventsUrl(lifecycleCursor)); lifecycleSource=eventSource; lifecycleSourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==lifecycleSourceSessionId)return; const cursor=Number(message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)lifecycleCursor=cursor; try { handleEvent(JSON.parse(message.data)); } catch(error) { trace("生命周期事件格式无效",error.message); } }; eventSource.onerror=()=>{ if(lifecycleSource!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED) lifecycleSource=null; }; }
+async function restoreRunState() { if(!hasSelectedSession()) return; try { const graph=await apiJson(graphUrl()); if(graph?.kind==="angelus.run-graph") currentRunGraph=graph; if(["running","stopping","force_stopping"].includes(currentRunGraph.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunGraphEvents(); connectLifecycleEvents(); return; } if(["failed","interrupted"].includes(currentRunGraph.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",currentRunGraph.error||""); } else if(currentRunGraph.state === "completed") setStatus("已完成"); else if(currentRunGraph.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
+$("composer").addEventListener("submit", async event=>{
+  event.preventDefault();
+  const snapshot=imageComposer.beginSend(); if(!snapshot)return;
+  let accepted=false;
+  try {
+    if(runActive){ await sendSteer(snapshot.message); accepted=true; }
+    else {
+      const parsed=snapshot.images.length ? null : parseSlashCommand(snapshot.message);
+      if(parsed){ dispatchSlashCommand(parsed); accepted=true; }
+      else accepted=await start(snapshot.message,snapshot.images,snapshot.sessionId);
+    }
+  } catch(error){ if(snapshot.sessionId===sessionId)setSteerStatus(`发送失败：${error.message}`,"error"); }
+  finally { imageComposer.finishSend(snapshot,accepted); }
+});
 $("message").addEventListener("keydown", (event)=>{
   // Plain Enter submits; Shift/Alt+Enter insert a newline in the textarea.
   if(event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return;
@@ -846,17 +897,15 @@ $("message").addEventListener("input", resizeComposer);
 $("model").addEventListener("input",updateModelSummary); $("provider").addEventListener("change",()=>{applyProviderPreset(); updateModelSummary();});
 $("stop").addEventListener("click", ()=>runStop().catch(error=>trace("停止失败",error.message)));
 $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace("强行停止失败",error.message)));
-$("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";$("context-graph-dialog").close();});
-document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>selectContextDialogTab(button.dataset.contextDialogTab)));
-$("refresh-context-preview").addEventListener("click",()=>{if(contextDialogAgent)loadContextPrompt(contextDialogAgent).catch(error=>trace("下一次请求预览加载失败",error.message));});
+$("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";contextDialogLoaded.clear();$("context-graph-dialog").close();});
+document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>{const tab=button.dataset.contextDialogTab;selectContextDialogTab(tab);ensureContextDialogTab(tab);}));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
 /** Ask the loopback backend to show the host operating system's folder picker. */
 async function pickWorkspaceDirectory() { const payload=await apiPost("/api/workspace-directory/pick"); return payload.cancelled ? null : String(payload.path||""); }
 async function createAndSwitchSession(name, projectPath=null) {
   if(!name?.trim()) return;
   try {
-    const selectedPath=projectPath || await pickWorkspaceDirectory();
-    if(!selectedPath) return;
+    const selectedPath=projectPath || null;
     const response=await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,project_path:selectedPath})});
     const session=await response.json();
     if(!response.ok) throw new Error(session.detail || "无法创建会话");
@@ -892,7 +941,6 @@ $("new-session-form").addEventListener("submit", async event=>{
   const name=input.value.trim();
   if(!name) { input.focus(); return; }
   const projectPath=$("new-session-path").value.trim();
-  if(!projectPath){$("new-session-feedback").textContent="请先选择一个已有项目目录。";return;}
   $("new-session-dialog").close();
   await createAndSwitchSession(name,projectPath);
 });

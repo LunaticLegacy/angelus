@@ -68,24 +68,40 @@ class CheckpointStore:
     def commit(
         self,
         generation: str,
-        graph: dict[str, Any],
+        graph: dict[str, Any] | None,
         contexts: dict[str, dict[str, Any]],
         *,
         reason: str,
+        run_graph: dict[str, Any] | None = None,
+        recovery: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Write a complete generation and make it recoverable exactly once.
 
         Args:
             generation: Caller-defined, unique generation label for this attempt.
-            graph: Complete execution-graph snapshot at one safe boundary.
+            graph: Optional legacy llmfetcher view. ``None`` means this
+                execution did not materialize a swarm graph and must not
+                create a graph checkpoint.
             contexts: Complete per-Agent context snapshots at that boundary.
             reason: Boundary cause, retained for recovery and observability.
 
         Returns:
             Updated manifest containing the journal-committed checkpoint ref.
         """
-        graph_path = self.attempt_root / "graph" / f"{generation}.json"
-        graph_hash = _write_json_atomically(graph_path, graph)
+        graph_ref: dict[str, str] | None = None
+        if graph is not None:
+            graph_path = self.attempt_root / "graph" / f"{generation}.json"
+            graph_ref = {
+                "path": str(graph_path.relative_to(self.attempt_root)),
+                "sha256": _write_json_atomically(graph_path, graph),
+            }
+        run_graph_ref: dict[str, str] | None = None
+        if run_graph is not None:
+            path = self.attempt_root / "run-graph" / f"{generation}.json"
+            run_graph_ref = {
+                "path": str(path.relative_to(self.attempt_root)),
+                "sha256": _write_json_atomically(path, run_graph),
+            }
         context_refs: dict[str, dict[str, Any]] = {}
         for agent_id, context in contexts.items():
             path = self.attempt_root / "contexts" / agent_id / f"{generation}.json"
@@ -97,13 +113,15 @@ class CheckpointStore:
         checkpoint = {
             "generation": generation,
             "reason": reason,
-            "graph": {
-                "path": str(graph_path.relative_to(self.attempt_root)),
-                "sha256": graph_hash,
-            },
             "contexts": context_refs,
             "committed_at": time.time(),
         }
+        if graph_ref is not None:
+            checkpoint["graph"] = graph_ref
+        if run_graph_ref is not None:
+            checkpoint["run_graph"] = run_graph_ref
+        if recovery is not None:
+            checkpoint["recovery"] = recovery
         committed = self.journal.append("checkpoint_committed", checkpoint)
         try:
             existing = json.loads(self.manifest_path.read_text(encoding="utf-8"))

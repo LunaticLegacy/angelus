@@ -14,9 +14,16 @@ by storing mutable runtime state in an API adapter.
 | Conversation | [`conversation_module/INDEX.md`](conversation_module/INDEX.md) | Legacy transcript read/delete bridge during migration. |
 | Swarm adapter | [`swarm_module/INDEX.md`](swarm_module/INDEX.md) | Session-local execution boundary; no global swarm registry. |
 | Plugins | [`plugin_module/INDEX.md`](plugin_module/INDEX.md) | Controlled global package discovery, typed settings, and ToolRegistry-backed loading. |
+| Image attachments | [`attachment_module/INDEX.md`](attachment_module/INDEX.md) | Session-owned immutable image blobs, validated metadata, confined project import and provider-neutral byte resolution. |
 | Session console | [`console_module/INDEX.md`](console_module/INDEX.md) | Persisted task-plan/topology blueprints and Session projections. |
+| Run graph | [`run_graph_module/INDEX.md`](run_graph_module/INDEX.md) | Versioned read-only graph projection from attempt journals, checkpoints and live views. |
+| Knowledge | [`knowledge_module/INDEX.md`](knowledge_module/INDEX.md) | Session-isolated durable knowledge documents and explicit Agent retrieval tools. |
 | Unified tools | [`tool_module/INDEX.md`](tool_module/INDEX.md) | Canonical Tool identities, authorization policy and future runtime registry. |
 | External Agent Hub | [`external_agent_hub_module/INDEX.md`](external_agent_hub_module/INDEX.md) | Credential-free external Agent definitions and protocol adapter boundary. |
+| Platform integration | [`platform_module/INDEX.md`](platform_module/INDEX.md) | Operating-system desktop resource-manager dispatch; no browser or Tauri ownership. |
+| Managed MCP | [`mcp_module/INDEX.md`](mcp_module/INDEX.md) | Secret-separated servers, Session bindings, SDK transports and dynamic tools. |
+| Context versions | [`context_version_module/INDEX.md`](context_version_module/INDEX.md) | Caller-scoped immutable context revisions, edits and restores. |
+| Cross-Session memory | [`session_memory_module/INDEX.md`](session_memory_module/INDEX.md) | Allowlist-checked snapshots, handoffs and read-only artifact copies. |
 
 <!-- BEGIN GENERATED SYMBOL MAP -->
 

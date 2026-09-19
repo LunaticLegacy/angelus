@@ -8,7 +8,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Angelus · Agent Workbench</title>
-    <link rel="stylesheet" href="/static/app.css?v=workbench-82" />
+    <link rel="icon" type="image/svg+xml" href="/static/angelus-icon.svg?v=2" />
+    <link rel="stylesheet" href="/static/app.css?v=workbench-83" />
   </head>
   <body>
     <dialog id="mcp-approval-dialog" class="session-dialog" aria-labelledby="mcp-approval-title">
@@ -19,8 +20,8 @@
         <h2 id="new-session-title">新建会话</h2>
         <label for="new-session-name">会话名称</label>
         <input id="new-session-name" name="name" maxlength="80" required autocomplete="off" placeholder="例如：资料检索" />
-        <label for="new-session-path">已有项目目录</label>
-        <div class="session-path-picker"><input id="new-session-path" name="project_path" required placeholder="/absolute/path/to/project" /><button id="choose-session-directory" type="button" title="选择已有项目目录">选择目录</button></div>
+        <label for="new-session-path">已有项目目录（可选）</label>
+        <div class="session-path-picker"><input id="new-session-path" name="project_path" placeholder="留空则使用会话专属工作目录" /><button id="choose-session-directory" type="button" title="选择已有项目目录">选择目录</button></div>
         <p id="new-session-feedback" class="session-dialog-feedback" aria-live="polite"></p>
         <div class="session-dialog-actions"><button id="cancel-new-session" type="button">取消</button><button type="submit">创建并进入</button></div>
       </form>
@@ -55,7 +56,7 @@
         </section>
         <section data-settings-panel="agent" class="settings-page" role="tabpanel">
           <div class="settings-page-heading"><div><h3>Agent 执行</h3><p id="profile-status"><b>会话 Coordinator</b> · 正在加载持久化运行档案。</p></div><label>编辑<select id="profile-scope" aria-label="运行档案编辑范围"><option value="agent">当前会话 Coordinator</option><option value="global">全局默认</option></select></label><button id="restore-profile-inheritance" class="mini-button" type="button" title="恢复继承全局默认">↺</button></div>
-          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="16384" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label>
+          <div class="setting-grid"><label>最大输出 token<input id="max-tokens" type="number" min="1" value="16384" /></label><label>温度<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.4" /></label></div><div class="setting-grid"><label>请求超时 <em>秒；1–3600，默认 60</em><input id="request-timeout-seconds" type="number" min="1" max="3600" step="1" value="60" /></label><label>重试次数 <em>仅超时；额外尝试次数，默认 3</em><input id="max-retries" type="number" min="0" max="10" value="3" /></label></div>
           <label>最大轮次 <em>0 = 无限</em><input id="max-rounds" type="number" min="0" max="100" value="0" /></label><div class="setting-grid"><label>上下文压缩阈值 <em>字符；默认 262144</em><input id="max-context-threshold" type="number" min="1024" max="16777216" step="1024" value="262144" /></label><label>压缩输出 token 上限 <em>默认 8192；仅控制摘要</em><input id="compaction-output-max-tokens" type="number" min="1" max="131072" value="8192" /></label></div><label>Swarm 最大并发<input id="max-swarm-agents" type="number" min="1" max="16" value="4" /></label><label>系统提示词<textarea id="system-prompt" rows="4">You are a helpful, precise assistant.</textarea></label><section class="memory-session-picker" aria-labelledby="memory-session-title"><div><strong id="memory-session-title">会话检索授权</strong><p><b>当前会话独立</b> · 选择可供本次运行检索和读取的其他会话；当前会话始终可用。</p></div><input id="session-memory-sessions" type="hidden" value="" /><input id="session-memory-search" type="search" placeholder="搜索会话名称或 ID" autocomplete="off" /><div id="session-memory-selected" class="memory-session-selected"></div><div id="session-memory-options" class="memory-session-options" role="listbox" aria-label="可授权会话"></div></section>
         </section>
         <section data-settings-panel="permissions" class="settings-page" role="tabpanel">
@@ -89,7 +90,7 @@
         <header class="context-graph-dialog-head"><div><p class="eyebrow">AGENT CONTEXT</p><h2 id="context-dialog-title">Agent 上下文</h2><p id="context-dialog-subtitle">选择一种检查方式。</p></div><button id="close-context-graph" class="dialog-close" type="button" aria-label="关闭 Agent 上下文检查器">×</button></header>
         <div class="context-dialog-tabs" role="tablist" aria-label="Agent 上下文查看方式"><button type="button" role="tab" id="context-tab-graph" data-context-dialog-tab="graph" aria-controls="context-panel-graph" aria-selected="true">实体图</button><button type="button" role="tab" id="context-tab-prompt" data-context-dialog-tab="prompt" aria-controls="context-panel-prompt" aria-selected="false">上下文</button><button type="button" role="tab" id="context-tab-compaction" data-context-dialog-tab="compaction" aria-controls="context-panel-compaction" aria-selected="false">压缩输入</button></div>
         <section id="context-panel-graph" class="context-dialog-panel" role="tabpanel" aria-labelledby="context-tab-graph"><div id="context-graph-summary" class="context-graph-summary"></div><div id="context-graph-canvas" class="context-graph-canvas" aria-label="上下文实体关系图"></div><div class="context-graph-details"><section><h3>实体</h3><div id="context-graph-nodes" class="context-graph-nodes"></div></section><section><h3>详情</h3><div id="context-graph-detail" class="context-graph-detail"><p class="empty">点击图中的实体查看其摘要、出现时间和关联。</p></div></section></div></section>
-        <section id="context-panel-prompt" class="context-dialog-panel context-transcript" role="tabpanel" aria-labelledby="context-tab-prompt" hidden><header><div><p class="eyebrow">NEXT REQUEST PREVIEW</p><h3 id="context-transcript-title">下一次模型请求预览</h3><p id="context-request-note">临时拼接，不发送、不写入 checkpoint 或 journal；不保存 API key 或 endpoint。</p></div><span id="context-prompt-status" class="context-prompt-status">—</span></header><div class="context-preview-control"><label for="context-preview-message">下一条用户消息</label><textarea id="context-preview-message" rows="2" placeholder="输入要拼接到下一次请求的用户消息"></textarea><button id="refresh-context-preview" type="button">重新拼接</button></div><div id="context-request-stats" class="context-request-stats" aria-label="实时请求长度统计"></div><div class="context-metadata" aria-labelledby="context-metadata-title"><h4 id="context-metadata-title">上下文记录元数据</h4><div class="context-metadata-scroll"><table><thead><tr><th>索引</th><th>来源</th><th>类型</th><th>长度</th><th>时间线</th></tr></thead><tbody id="context-metadata-list"><tr><td colspan="5">正在读取…</td></tr></tbody></table></div></div><pre id="context-prompt-preview" class="context-prompt-preview"><span class="empty">选择 Agent 后读取当前上下文。</span></pre></section>
+        <section id="context-panel-prompt" class="context-dialog-panel context-transcript" role="tabpanel" aria-labelledby="context-tab-prompt" hidden><header><div><p class="eyebrow">NEXT REQUEST PREVIEW</p><h3 id="context-transcript-title">下一次模型请求预览</h3><p id="context-request-note">临时拼接，不发送、不写入 checkpoint 或 journal；不保存 API key 或 endpoint。</p></div><span id="context-prompt-status" class="context-prompt-status">—</span></header><div id="context-request-stats" class="context-request-stats" aria-label="实时请求长度统计"></div><div class="context-metadata" aria-labelledby="context-metadata-title"><h4 id="context-metadata-title">上下文记录元数据</h4><div class="context-metadata-scroll"><table><thead><tr><th>索引</th><th>来源</th><th>类型</th><th>长度</th><th>时间线</th></tr></thead><tbody id="context-metadata-list"><tr><td colspan="5">正在读取…</td></tr></tbody></table></div></div><pre id="context-prompt-preview" class="context-prompt-preview"><span class="empty">选择 Agent 后读取当前上下文。</span></pre></section>
         <section id="context-panel-compaction" class="context-dialog-panel context-transcript" role="tabpanel" aria-labelledby="context-tab-compaction" hidden><header><div><p class="eyebrow">COMPACTION REQUEST</p><h3 id="context-compaction-title">完整压缩模型请求预览</h3><p id="context-compaction-note">压缩触发时会发送给压缩模型的完整请求；实时从当前 checkpoint 重建，只拼接、不发送。</p></div><span id="context-compaction-status" class="context-prompt-status">—</span></header><div id="context-compaction-stats" class="context-request-stats" aria-label="压缩输入长度统计"></div><pre id="context-compaction-preview" class="context-prompt-preview"><span class="empty">选择 Agent 后拼接完整压缩请求。</span></pre></section>
       </div>
     </dialog>
@@ -98,7 +99,7 @@
       <div id="external-agent-hub-root" class="external-hub-root"></div>
     </dialog>
     <aside class="sidebar">
-      <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark">A</span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
+      <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark"><img src="/static/angelus-icon.svg?v=2" alt="" /></span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
 
       <section class="side-block">
         <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button danger" type="button" title="删除当前会话" aria-label="删除当前会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg></button></div></div>
@@ -122,7 +123,7 @@
 
       <section id="chat" class="chat"><button id="load-more-messages" class="load-more-messages" type="button" hidden>加载更早消息</button><div class="welcome"><div class="welcome-symbol">✦</div><h2>开始一个新对话</h2><p>配置模型后，把任务交给你的 Agent。<br />执行过程、任务计划和协作关系会实时显示。</p></div></section>
 
-      <form id="composer" class="composer"><div class="composer-box"><div class="steer-hint" id="steer-hint" hidden><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><textarea id="message" placeholder="给 Agent 一个任务… （/ 开头为指令，/help 查看）" rows="1" required></textarea><div class="composer-meta"><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
+      <form id="composer" class="composer"><div class="composer-box"><div class="steer-hint" id="steer-hint" hidden><i></i><span id="steer-status">运行中 — 指令会在安全的轮次边界生效</span></div><div id="image-previews" class="image-previews" hidden></div><textarea id="message" placeholder="给 Agent 一个任务… （/ 开头为指令，/help 查看）" rows="1"></textarea><p id="image-feedback" class="image-feedback" role="status" aria-live="polite" hidden></p><div class="composer-meta"><button id="attach-image" type="button" title="添加图片，也可粘贴或拖入">＋ 图片</button><input id="image-picker" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden /><span>⌘ Enter 发送</span><span>Shift / Alt + Enter 换行</span></div></div><button id="send" class="send-button" type="submit" aria-label="发送">➤</button></form>
     </main>
 
     <aside class="activity" aria-label="会话执行信息">
@@ -141,6 +142,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=external-hub-3"></script>
+    <script type="module" src="/static/app.js?v=external-hub-4"></script>
   </body>
 </html>

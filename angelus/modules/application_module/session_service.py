@@ -31,7 +31,7 @@ class SessionService:
         # Service dependency; it is the only route to cross-store operations.
         self._core = core
 
-    def create(self, session_id: str, name: str, project_path: Path) -> Workspace:
+    def create(self, session_id: str, name: str, project_path: Path | None = None) -> Workspace:
         """Register an empty Session and its durable workspace metadata.
 
         Agent configuration is deliberately a separate use case: a workspace
@@ -40,14 +40,20 @@ class SessionService:
         validate_session_id(session_id)
         if not name.strip():
             raise ValueError("name must not be blank")
-        resolved_project = project_path.expanduser().resolve()
-        if not resolved_project.is_dir():
-            raise ValueError("project_path must be an existing directory")
+        state_path = self._core.state_root / "sessions" / session_id
+        if project_path is None:
+            # Keep an unbound session usable without exposing the host CWD.
+            resolved_project = state_path / "workspace"
+            resolved_project.mkdir(parents=True, exist_ok=True)
+        else:
+            resolved_project = project_path.expanduser().resolve()
+            if not resolved_project.is_dir():
+                raise ValueError("project_path must be an existing directory")
         workspace = Workspace(
             session_id=session_id,
             name=name,
             project_path=resolved_project,
-            state_path=self._core.state_root / "sessions" / session_id,
+            state_path=state_path,
         )
         self._core.sessions.create(session_id, execution_root=workspace.state_path)
         try:
@@ -93,7 +99,8 @@ class SessionService:
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
             profile["provider"], profile["model"], profile["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
-            profile["max_retries"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
+            profile["max_retries"], profile["request_timeout_seconds"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
+            self._core.mcp_service.fingerprint(session_id, "coordinator"),
         )
         if session.coordinator_matches(fingerprint):
             return
@@ -107,9 +114,10 @@ class SessionService:
                 model=profile["model"],
                 api_key=api_key,
                 api_url=profile["api_url"] or None,
+                timeout=profile["request_timeout_seconds"],
                 max_retries=profile["max_retries"],
             )],
-            self._core.tool_registry.materialize(session, permissions, "coordinator"),
+            self._core.tool_registry.materialize(session, permissions, "coordinator", session.coordinator_name),
             system_prompt=profile["system_prompt"],
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
@@ -119,6 +127,7 @@ class SessionService:
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
+            image_resolver=session.attachments.resolve if session.attachments else None,
         )
         session.set_coordinator(coordinator, fingerprint)
         # Unit-test and alternate-host factories may supply a sentinel role;
@@ -187,9 +196,9 @@ class SessionService:
         return create_agent(
             [LLMBackendConfig(
                 name=name, provider=profile["provider"], model=profile["model"], api_key=api_key,
-                api_url=profile["api_url"] or None, max_retries=profile["max_retries"],
+                api_url=profile["api_url"] or None, timeout=profile["request_timeout_seconds"], max_retries=profile["max_retries"],
             )],
-            self._core.tool_registry.materialize(session, permissions, "worker"),
+            self._core.tool_registry.materialize(session, permissions, "worker", name),
             system_prompt=system_prompt or profile["system_prompt"],
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
@@ -199,6 +208,7 @@ class SessionService:
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
+            image_resolver=session.attachments.resolve if session.attachments else None,
         )
 
     def preview_agent(self, session_id: str, name: str) -> Agent:
@@ -242,9 +252,10 @@ class SessionService:
                 model=profile["model"],
                 api_key=api_key,
                 api_url=profile["api_url"] or None,
+                timeout=profile["request_timeout_seconds"],
                 max_retries=profile["max_retries"],
             )],
-            self._core.tool_registry.materialize(session, permissions, role),
+            self._core.tool_registry.materialize(session, permissions, role, name),
             system_prompt=system_prompt,
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
@@ -254,6 +265,7 @@ class SessionService:
             default_max_tokens=profile["max_tokens"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
+            image_resolver=session.attachments.resolve if session.attachments else None,
         )
 
     def delete(self, session_id: str, *, confirmation: str, wait_timeout: float = 5.0) -> Workspace:
@@ -277,6 +289,7 @@ class SessionService:
         sessions_root = (self._core.state_root / "sessions").resolve()
         if state_path.parent != sessions_root:
             raise ValueError("invalid session state path")
+        self._core.mcp_service.invalidate(session_id)
         if state_path.exists():
             shutil.rmtree(state_path)
         self._core.conversations.remove(session_id)

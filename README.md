@@ -908,31 +908,13 @@ Angelus 的目标，就是让这些问题成为 runtime 的一部分。
 
 # 许可证
 
-Angelus 使用 **AGPL-3.0-or-later**，并保留独立商业授权路径。
+Angelus 使用 **Apache-2.0**，允许商用、修改与分发，需保留版权声明与本许可文本。
 
 LLMFetcher 是独立仓库，遵循其自身的版权与许可证声明。
 
 请参阅：
 
 - [LICENSE](LICENSE)
-- [LICENSING.md](LICENSING.md)
-- [commercial-licensing.md](commercial-licensing.md)
-
----
-
-# 社区
-
-<div align="center">
-
-<img src="docs/assets/qq-group.png" alt="Angelus QQ 群" width="280" />
-
-### 月天使 · Angelus
-
-**QQ 群：1061368718**
-
-使用交流 · Agent Architecture · 插件开发 · Swarm Research
-
-</div>
 
 ---
 
