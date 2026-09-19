@@ -26,6 +26,7 @@ def create_agent(
     default_max_tokens: int = 32768,
     enable_stop_turn: bool = False,
     default_stream: bool = True,
+    output_reasoning: bool = True,
     tool_result_transformer: Callable[[str, str, str], str] | None = None,
     image_resolver: Callable[[dict[str, Any]], dict[str, str]] | None = None,
 ) -> Agent:
@@ -89,6 +90,7 @@ def create_agent(
         default_max_tokens=default_max_tokens,
         enable_stop_turn=enable_stop_turn,
         default_stream=default_stream,
+        output_reasoning=output_reasoning,
         context_path=context_path,
         context_handler=context_handler,
         tool_result_transformer=tool_result_transformer,

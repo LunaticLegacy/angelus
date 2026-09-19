@@ -31,7 +31,7 @@ class SessionService:
         # Service dependency; it is the only route to cross-store operations.
         self._core = core
 
-    def create(self, session_id: str, name: str, project_path: Path) -> Workspace:
+    def create(self, session_id: str, name: str, project_path: Path | None = None) -> Workspace:
         """Register an empty Session and its durable workspace metadata.
 
         Agent configuration is deliberately a separate use case: a workspace
@@ -40,14 +40,20 @@ class SessionService:
         validate_session_id(session_id)
         if not name.strip():
             raise ValueError("name must not be blank")
-        resolved_project = project_path.expanduser().resolve()
-        if not resolved_project.is_dir():
-            raise ValueError("project_path must be an existing directory")
+        state_path = self._core.state_root / "sessions" / session_id
+        if project_path is None:
+            # Keep an unbound session usable without exposing the host CWD.
+            resolved_project = state_path / "workspace"
+            resolved_project.mkdir(parents=True, exist_ok=True)
+        else:
+            resolved_project = project_path.expanduser().resolve()
+            if not resolved_project.is_dir():
+                raise ValueError("project_path must be an existing directory")
         workspace = Workspace(
             session_id=session_id,
             name=name,
             project_path=resolved_project,
-            state_path=self._core.state_root / "sessions" / session_id,
+            state_path=state_path,
         )
         self._core.sessions.create(session_id, execution_root=workspace.state_path)
         try:

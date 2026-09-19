@@ -38,21 +38,21 @@ Session or the global default out.
 |---|---|---|---|---|
 | [json_store.py](json_store.py#L11) | `read_json` | `path: Path, default: object` | `object` | Read one JSON document, returning ``default`` only when it is absent. |
 | [json_store.py](json_store.py#L29) | `write_json` | `path: Path, value: object` | `None` | Atomically replace one JSON document after flushing file and directory. |
-| [profile_store.py](profile_store.py#L67) | `RunProfileStore.global_profile` | `None` | `dict[str, Any]` | Return the complete global default profile with omitted fields filled. |
-| [profile_store.py](profile_store.py#L72) | `RunProfileStore.replace_global` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate and atomically replace global defaults. |
-| [profile_store.py](profile_store.py#L83) | `RunProfileStore.session_profile` | `session_id: str` | `dict[str, Any]` | Return effective settings and whether this Session has an override. |
-| [profile_store.py](profile_store.py#L99) | `RunProfileStore.replace_session` | `session_id: str, values: Mapping[str, Any]` | `dict[str, Any]` | Replace a Session override with validated complete future-run values. |
-| [profile_store.py](profile_store.py#L112) | `RunProfileStore.clear_session` | `session_id: str` | `dict[str, Any]` | Remove override file so the Session again resolves global defaults. |
-| [profile_store.py](profile_store.py#L125) | `RunProfileStore.effective` | `session_id: str` | `dict[str, Any]` | Return resolved values that execution creation will snapshot later. |
-| [profile_store.py](profile_store.py#L129) | `RunProfileStore.connector_references` | `connector_id: str, session_ids: tuple[str, ...]` | `tuple[str, ...]` | Return profile scopes whose effective setting references a connector. |
-| [profile_store.py](profile_store.py#L143) | `RunProfileStore._read` | `path: Path` | `Mapping[str, Any]` | Decode one optional profile envelope, rejecting malformed documents. |
-| [profile_store.py](profile_store.py#L153) | `RunProfileStore._session_path` | `session_id: str` | `Path` | Resolve a validated Session-local path without allowing traversal. |
-| [profile_store.py](profile_store.py#L159) | `RunProfileStore._validated` | `values: Mapping[str, Any], partial: bool` | `dict[str, Any]` | Normalize supported fields and reject unknown or ill-typed settings. |
+| [profile_store.py](profile_store.py#L72) | `RunProfileStore.global_profile` | `None` | `dict[str, Any]` | Return the complete global default profile with omitted fields filled. |
+| [profile_store.py](profile_store.py#L77) | `RunProfileStore.replace_global` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate and atomically replace global defaults. |
+| [profile_store.py](profile_store.py#L88) | `RunProfileStore.session_profile` | `session_id: str` | `dict[str, Any]` | Return effective settings and whether this Session has an override. |
+| [profile_store.py](profile_store.py#L104) | `RunProfileStore.replace_session` | `session_id: str, values: Mapping[str, Any]` | `dict[str, Any]` | Replace a Session override with validated complete future-run values. |
+| [profile_store.py](profile_store.py#L117) | `RunProfileStore.clear_session` | `session_id: str` | `dict[str, Any]` | Remove override file so the Session again resolves global defaults. |
+| [profile_store.py](profile_store.py#L130) | `RunProfileStore.effective` | `session_id: str` | `dict[str, Any]` | Return resolved values that execution creation will snapshot later. |
+| [profile_store.py](profile_store.py#L134) | `RunProfileStore.connector_references` | `connector_id: str, session_ids: tuple[str, ...]` | `tuple[str, ...]` | Return profile scopes whose effective setting references a connector. |
+| [profile_store.py](profile_store.py#L148) | `RunProfileStore._read` | `path: Path` | `Mapping[str, Any]` | Decode one optional profile envelope, rejecting malformed documents. |
+| [profile_store.py](profile_store.py#L158) | `RunProfileStore._session_path` | `session_id: str` | `Path` | Resolve a validated Session-local path without allowing traversal. |
+| [profile_store.py](profile_store.py#L164) | `RunProfileStore._validated` | `values: Mapping[str, Any], partial: bool` | `dict[str, Any]` | Normalize supported fields and reject unknown or ill-typed settings. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [profile_store.py](profile_store.py#L46) | `RunProfileStore` | `state_root: Path` | `object` | Persist global defaults and sparse per-session overrides. |
+| [profile_store.py](profile_store.py#L51) | `RunProfileStore` | `state_root: Path` | `object` | Persist global defaults and sparse per-session overrides. |
 
 <!-- END GENERATED SYMBOL MAP -->
