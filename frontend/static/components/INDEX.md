@@ -51,8 +51,11 @@
 | [chat-view.js](chat-view.js#L356) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
 | [chat-view.js](chat-view.js#L363) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
 | [chat-view.js](chat-view.js#L374) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
-| [chat-view.js](chat-view.js#L397) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
-| [chat-view.js](chat-view.js#L410) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L386) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
+| [chat-view.js](chat-view.js#L390) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
+| [chat-view.js](chat-view.js#L397) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
+| [chat-view.js](chat-view.js#L439) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
+| [chat-view.js](chat-view.js#L452) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |

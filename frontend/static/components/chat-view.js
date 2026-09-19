@@ -311,7 +311,7 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
     const contentClass = isAgentReply ? "markdown" : "plain-text";
     const messageTimestamp = timestamp ?? created_at;
     const completeDuration = round_duration_ms ?? duration_ms;
-    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<section class="reasoning" aria-label="思考过程"><h4>思考过程</h4><div class="markdown" data-message-reasoning></div></section>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, messageTimestamp, completeDuration) : ""}`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-${isUser ? "user" : "agent"}"><i></i><span>${escapeHtml(speaker)}</span></div><small>${isUser ? "用户输入" : "Agent 回复"}</small>${copy}</div>${reasoning ? '<details class="reasoning" aria-label="思考过程"><summary>思考过程</summary><div class="markdown" data-message-reasoning></div></details>' : ""}${content ? `<div class="bubble ${contentClass}" data-message-content></div>` : ""}${renderTools(tools)}${role === "assistant" ? buildTokenStats(usage, model_duration_ms, messageTimestamp, completeDuration) : ""}`;
     const contentTarget = element.querySelector("[data-message-content]");
     if (contentTarget) {
       if (isAgentReply) renderMarkdownInto(contentTarget, content);
@@ -378,20 +378,62 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
     const element = document.createElement("article");
     const speaker = agentName || getAgentLabel() || "Coordinator";
     element.className = "message assistant streaming";
-    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><section class="reasoning" aria-label="思考过程" hidden><h4>思考过程</h4><div class="markdown"></div></section><div class="bubble markdown"></div>`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><details class="reasoning" aria-label="思考过程" hidden open><summary>思考过程</summary><div class="markdown"></div></details><div class="bubble markdown"></div><details class="tool-calls streaming-tool-calls" hidden><summary>工具调用 · <span data-stream-tool-count>0</span></summary><div data-stream-tool-list></div></details>`;
     $("chat").append(element);
     scrollToLatestIfFollowing();
-    const reasoningRenderer = createMarkdownStream(element.querySelector(".reasoning .markdown"), scrollToLatestIfFollowing);
+    const reasoningTarget = element.querySelector(".reasoning .markdown");
+    let reasoningFollowsLatest = true;
+    const updateReasoningFollow = () => {
+      reasoningFollowsLatest = reasoningTarget.scrollHeight - reasoningTarget.clientHeight - reasoningTarget.scrollTop <= followTolerancePixels;
+    };
+    reasoningTarget.addEventListener("scroll", updateReasoningFollow, { passive: true });
+    const afterReasoningRender = () => {
+      if (reasoningFollowsLatest) reasoningTarget.scrollTop = reasoningTarget.scrollHeight;
+      scrollToLatestIfFollowing();
+    };
+    const reasoningRenderer = createMarkdownStream(reasoningTarget, afterReasoningRender);
     const contentRenderer = createMarkdownStream(element.querySelector(".bubble"), scrollToLatestIfFollowing);
+    const toolTimers = new Map();
+    function updateTool(tool = {}) {
+      const id = String(tool.call_id || `${tool.round || ""}:${tool.name || "tool"}`);
+      const tools = element.querySelector(".streaming-tool-calls");
+      const list = element.querySelector("[data-stream-tool-list]");
+      tools.hidden = false;
+      let card = list.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+      if (!card) {
+        card = document.createElement("article");
+        card.className = "tool-call";
+        card.dataset.toolCallId = id;
+        list.append(card);
+      }
+      element.querySelector("[data-stream-tool-count]").textContent = String(list.children.length);
+      const status = String(tool.status || "参数生成中");
+      const started = Number(tool.started_at || 0);
+      const elapsed = started > 0 ? Math.max(0, Date.now() / 1000 - started) * 1000 : null;
+      const duration = tool.duration_ms ?? elapsed;
+      const args = tool.arguments ?? tool.raw_arguments ?? "";
+      const result = tool.result;
+      card.innerHTML = `<header><strong>${escapeHtml(tool.name || "工具调用")}</strong><span class="tool-live-status">${escapeHtml(status)}</span>${duration != null ? `<span class="tool-duration">${escapeHtml(formatDuration(duration))}</span>` : ""}</header><p>参数</p>${renderToolPayload(args, "正在接收参数…")}${result !== undefined ? `<p>结果</p>${renderToolPayload(result, "无返回内容")}` : ""}`;
+      if (started > 0 && ["running", "执行中"].includes(status) && !toolTimers.has(id)) {
+        const timer = setInterval(() => updateTool({...tool, duration_ms: (Date.now() / 1000 - started) * 1000}), 250);
+        toolTimers.set(id, timer);
+      }
+      if (!["running", "执行中"].includes(status) && toolTimers.has(id)) {
+        clearInterval(toolTimers.get(id)); toolTimers.delete(id);
+      }
+      scrollToLatestIfFollowing();
+    }
     return {
       update(content, reasoning) {
         const reasoningSection = element.querySelector(".reasoning");
         reasoningSection.hidden = !reasoning;
+        if (reasoning) reasoningSection.open = true;
         reasoningRenderer.update(reasoning);
         contentRenderer.update(content);
       },
+      updateTool,
       flush() { reasoningRenderer.flush(); contentRenderer.flush(); },
-      remove() { reasoningRenderer.dispose(); contentRenderer.dispose(); element.remove(); },
+      remove() { for (const timer of toolTimers.values()) clearInterval(timer); toolTimers.clear(); reasoningTarget.removeEventListener("scroll", updateReasoningFollow); reasoningRenderer.dispose(); contentRenderer.dispose(); element.remove(); },
     };
   }
 
