@@ -83,7 +83,7 @@ class ExecutionService:
         self._core = core
 
     def start(self, session_id: str, message: str, *, recovery: dict[str, object] | None = None,
-              images: list[dict[str, Any]] | None = None) -> ExecutionSnapshot:
+              images: list[dict[str, Any]] | None = None, target_agent: str | None = None) -> ExecutionSnapshot:
         """Start the configured Session AgentSwarm under a fresh attempt.
 
         Args:
@@ -110,6 +110,10 @@ class ExecutionService:
         # Keep this defensive guard so a malformed custom Session cannot run.
         if not session.agents:
             raise RuntimeError("Session coordinator could not be constructed")
+        if target_agent is not None:
+            target_agent = str(target_agent).strip()
+            if not target_agent or target_agent == "all" or session.swarm.get_agent(target_agent) is None:
+                raise ValueError("Unknown Session Agent target")
         executor = session.execution
         if executor is None:
             raise RuntimeError("Session has no execution boundary")
@@ -233,8 +237,12 @@ class ExecutionService:
             session.run_control = run_control
             try:
                 user_input = UserMessage(text=message, images=image_refs) if image_refs else message
-                output = session.swarm.run(user_input, control=run_control)
-                root = output.get(session.coordinator_name) if isinstance(output, dict) else None
+                run_kwargs: dict[str, object] = {"control": run_control}
+                if target_agent is not None:
+                    run_kwargs["target_agent"] = target_agent
+                output = session.swarm.run(user_input, **run_kwargs)
+                root_name = target_agent or session.coordinator_name
+                root = output.get(root_name) if isinstance(output, dict) else None
                 if isinstance(root, AgentFailure):
                     raise RuntimeError(f"{root.agent_name} failed: {root.error}")
                 return output
@@ -243,7 +251,8 @@ class ExecutionService:
                 session.run_control = None
 
         attempt = executor.start(run_swarm, before_start=install_hook,
-                                 start_data={"message": message, "images": image_refs})
+                                 start_data={"message": message, "images": image_refs,
+                                             "target_agent": target_agent})
         return attempt.snapshot()
 
     @staticmethod

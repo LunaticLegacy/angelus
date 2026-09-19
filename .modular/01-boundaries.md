@@ -40,3 +40,16 @@
 - `frontend` edits the value only through the existing run-profile HTTP contract.
 - `llmfetcher` owns provider request timeout enforcement and normalization of
   native timeout exceptions; Angelus must not depend on provider SDK exceptions.
+
+## Targeted turn delivery and live lifecycle projection
+
+- `execution_service` owns the choice between a whole-workflow turn and a
+  one-Agent turn.  A concrete target is validated against the Session swarm
+  and is never expanded to other Agents.
+- `api.runs` owns validation and transport of the optional `target_agent`
+  command field; it does not choose routing policy.
+- `console_module` owns ordered, durable lifecycle-event pages.  Its SSE
+  adapter follows that projection; it does not derive chat content from the
+  RunGraph projection.
+- `frontend` owns the selected-Agent UI state and opens two read-only streams:
+  graph state for topology and lifecycle events for chat, trace, and deltas.

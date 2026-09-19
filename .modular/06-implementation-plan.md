@@ -25,3 +25,17 @@
     settings panel; files: `index.html`, `app.js`; depends on task 8.
 12. `request-timeout-verification`: run focused backend/frontend checks and
     synchronize only indexes whose configuration or runtime claims changed.
+
+13. `targeted-turn-domain`: add a validated, one-Agent execution path without
+    changing whole-workflow scheduling; files: `llmfetcher/swarm_module/*`,
+    `execution_service.py`; acceptance: a concrete target cannot reach any
+    other Agent; tests: focused execution/control tests.
+14. `lifecycle-sse-adapter`: expose ordered journal events as a followable SSE
+    stream; files: `session_console.py`, console tests; acceptance: committed
+    stream deltas reach SSE without a manual reload.
+15. `targeted-turn-ui`: send the selected concrete Agent on idle submission;
+    subscribe lifecycle SSE separately from graph SSE and dispatch it through
+    the existing live renderer; files: `frontend/static/app.js`; acceptance:
+    selected Agent receives a new turn alone and streaming text appears live.
+16. `targeted-turn-verification`: run focused Python tests and frontend syntax
+    checks; files allowed: tests and affected indexes only.

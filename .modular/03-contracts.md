@@ -37,3 +37,17 @@ Every profile-derived `LLMBackendConfig.timeout` receives the resolved value.
 typed timeout exceptions and provider/transport timeout class names win; known
 timeout wording is a compatibility fallback. Only a typed `LLMTimeoutError` is
 retryable, and streamed calls retry only before the first response delta.
+
+## Targeted turn and lifecycle stream
+
+`POST /api/runs` accepts `target_agent: string | null`.  `null` (and `all` at
+the browser boundary) keeps the existing whole-workflow behavior.  A concrete
+Agent ID executes only that Agent for the submitted turn; unknown IDs fail
+before an attempt begins.  The returned execution receipt echoes
+`target_agent`.
+
+`GET /api/sessions/{session_id}/events/stream?cursor=N` is SSE.  Every
+committed journal record after `N` is emitted exactly once as a JSON event with
+an increasing `id`; while the selected attempt is active it follows the file
+and sends SSE keep-alives.  The endpoint ends once the attempt is terminal.
+The RunGraph SSE contract remains topology-only.

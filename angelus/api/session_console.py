@@ -156,7 +156,11 @@ def graph_events(session_id: str, request: Request, cursor: int = 0, execution_i
                     time.sleep(0.25)
         except (KeyError, LookupError):
             return
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 @router.get("/workflow")
 def workflow(session_id: str, request: Request):
     """Return the persisted, editable Session workflow blueprint."""
@@ -212,6 +216,38 @@ def router_edit(session_id: str, body: RouterEdit, request: Request): return _ca
 def plan(session_id: str, request: Request, agent: str | None = None): return _call(lambda:_service(request).plan(session_id, agent))
 @router.get("/events")
 def events(session_id: str, request: Request, cursor: int = 0, limit: int = 200): return _call(lambda:_service(request).events(session_id,cursor,limit))
+
+
+@router.get("/events/stream")
+def events_stream(session_id: str, request: Request, cursor: int = 0, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
+    """Follow durable lifecycle facts so the browser renders live deltas."""
+    def stream() -> Iterator[str]:
+        try:
+            resumed_cursor = int(last_event_id) if last_event_id is not None else 0
+        except ValueError:
+            resumed_cursor = 0
+        next_cursor = max(0, cursor, resumed_cursor)
+        try:
+            while True:
+                page = _service(request).events(session_id, next_cursor, 500)
+                records = page["events"]
+                for event in records:
+                    next_cursor += 1
+                    yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                core = getattr(request.app.state, "angelus_core")
+                status = core.execution_service.status(session_id)
+                if str(status.state) not in {"running", "stopping", "force_stopping"}:
+                    return
+                if not records:
+                    yield ": keep-alive\n\n"
+                    time.sleep(0.25)
+        except (KeyError, LookupError):
+            return
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 @router.get("/usage")
 def usage(session_id: str, request: Request): return _call(lambda:_service(request).usage(session_id))
 @router.get("/agents/{agent}/context")

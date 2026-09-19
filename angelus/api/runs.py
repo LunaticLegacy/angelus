@@ -31,6 +31,7 @@ class RunRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=80)
     message: str = Field(default="", max_length=100_000)
     images: list[RunImageReference] = Field(default_factory=list, max_length=8)
+    target_agent: str | None = Field(default=None, min_length=1, max_length=80)
 
     @model_validator(mode="after")
     def require_input(self) -> "RunRequest":
@@ -82,6 +83,7 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
         snapshot = core.execution_service.start(
             payload.session_id, payload.message,
             images=[image.model_dump() for image in payload.images],
+            target_agent=payload.target_agent,
         )
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
@@ -94,6 +96,7 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
         "execution_id": snapshot.execution_id,
         "attempt": snapshot.attempt,
         "state": snapshot.state,
+        "target_agent": payload.target_agent,
     }
 
 

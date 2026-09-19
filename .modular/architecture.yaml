@@ -9,6 +9,8 @@ modules:
   frontend: {owns: [configuration_interaction]}
   settings_module: {owns: [future_run_profile, request_timeout_validation]}
   llmfetcher: {owns: [provider_dispatch, timeout_enforcement, retry_classification]}
+  execution_service: {owns: [turn_scope, execution_lifecycle]}
+  lifecycle_projection: {owns: [ordered_durable_lifecycle_events, sse_following]}
 allowed_edges:
   - tool_module -> capability_modules
   - api -> application_services
@@ -16,6 +18,9 @@ allowed_edges:
   - frontend -> api
   - api -> settings_module
   - application_services -> llmfetcher
+  - api -> lifecycle_projection
+  - frontend -> lifecycle_projection
+  - execution_service -> llmfetcher
 forbidden_edges:
   - frontend -> mcp_sdk
   - api -> credential_files
@@ -23,4 +28,5 @@ forbidden_edges:
   - session_memory_module -> implicit_context_injection
   - settings_module -> provider_sdk
   - frontend -> provider_sdk
+  - frontend -> execution_service
 validation: PASS
