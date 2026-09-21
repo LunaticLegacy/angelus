@@ -131,7 +131,7 @@ export function handleEvent(event) {
     const isTool = event.type.includes("tool");
     _eventHandlers?.onTrace?.(title, event.message, event.data, isTool);
     if (event.type === "agent:complete") _eventHandlers?.onMetrics?.(event.data);
-    if (event.source === "graph" || event.type.includes("task:"))
+    if (event.source === "graph" || event.type.includes("task:") || event.type.startsWith("plan:"))
       _eventHandlers?.onGraphChange?.();
     return;
   }
