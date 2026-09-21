@@ -363,6 +363,18 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 #context-panel-graph .context-graph-nodes,#context-panel-graph .context-graph-detail { flex:1 1 auto; min-height:0; max-height:none; overflow:auto; scrollbar-gutter:stable; }
 @media (max-width:650px) { .context-graph-dialog { width:calc(100vw - 16px); height:calc(100vh - 16px); max-height:calc(100vh - 16px); }.context-graph-dialog-body { gap:9px; padding:12px; }.context-metadata-scroll { max-height:150px; } }
 :root[data-theme="light"] .context-dialog-tabs,:root[data-theme="light"] .context-transcript { border-color:#d6dfef; background:#f7f9fd; }:root[data-theme="light"] .context-dialog-tabs button:hover,:root[data-theme="light"] .context-dialog-tabs button.active { border-color:#8d7ad4; background:#eeeaff; color:#493a83; }:root[data-theme="light"] .context-prompt-status { border-color:#bdcce2; background:#edf3fb; color:#43526d; }:root[data-theme="light"] .context-metadata,:root[data-theme="light"] .context-metadata h4 { border-color:#c9d5e8; }:root[data-theme="light"] .context-metadata th { background:#f7f9fd; color:#3e6385; }:root[data-theme="light"] .context-metadata th,:root[data-theme="light"] .context-metadata td { border-color:#dce5f1; color:#43526d; }:root[data-theme="light"] .context-prompt-preview { border-color:#c9d5e8; background:#f9fbff; color:#26364e; }
+/* Real-call ledger reuses the graph details grid; rows stay bounded and scrollable. */
+.context-calls-details { grid-template-columns:minmax(320px,1.35fr) minmax(240px,.85fr); min-height:0; }
+.context-calls-details section { display:flex; min-height:0; flex-direction:column; }
+.context-calls-scroll { flex:1 1 auto; min-height:0; max-height:280px; overflow:auto; scrollbar-gutter:stable; }
+.context-calls-table { width:100%; border-collapse:collapse; font:9px/1.45 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; text-align:left; }
+.context-calls-table th,.context-calls-table td { padding:5px 7px; border-bottom:1px solid #1d2e49; color:#cbd8ed; overflow-wrap:anywhere; }
+.context-calls-table th { position:sticky; top:0; z-index:1; background:#0d1727; color:#8ed9ff; font-weight:600; white-space:nowrap; }
+.context-calls-table tr:last-child td { border-bottom:0; }
+.context-calls-table tbody tr[data-call-kind="primary"] td:first-child { color:#b9a5ff; font-weight:600; }
+.context-calls-table tbody tr[data-call-kind="internal"] td:first-child { color:#c89548; }
+:root[data-theme="light"] .context-calls-table th,:root[data-theme="light"] .context-calls-table td { border-color:#dce5f1; color:#43526d; }
+:root[data-theme="light"] .context-calls-table th { background:#f7f9fd; color:#3e6385; }
 
 /* Parent plan rows are summaries; only leaves are editable execution states. */
 .task-state-derived { align-self:flex-start; padding:4px 6px; border:1px solid #405270; border-radius:5px; color:var(--muted); font-size:9px; white-space:nowrap; }
@@ -688,3 +700,57 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 .message-images a { min-width: 0; }
 #attach-image { border: 1px solid var(--border, #555); border-radius: 6px; padding: 3px 8px; color: inherit; background: transparent; cursor: pointer; }
 .tool-live-status { margin-left: 7px; color: var(--amber); font-size: 10px; }
+
+/* Compact tool blocks: names-only chips for "this round" and "agent can see". */
+.tool-round, .available-tools { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:7px; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:rgba(84,220,155,.04); }
+.available-tools { margin:0 auto 14px; max-width:780px; border-left:2px solid var(--green); background:rgba(84,220,155,.06); }
+.tool-round-label { color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.04em; }
+.tool-chips { display:inline-flex; flex-wrap:wrap; gap:5px; align-items:center; }
+.tool-chip { display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border:1px solid #2c4166; border-radius:999px; background:#0c1728; color:#9fe6c1; font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
+.tool-chip .tool-live-status { margin-left:0; }
+/* An empty available-tools pill (or any explicitly hidden panel) must occupy no layout. */
+.available-tools:empty, .available-tools[hidden], [hidden] { display:none !important; }
+/* Run-invariant request config + per-round content previews in the 调用 ledger. */
+.call-request-config-wrap { margin:0 auto 14px; max-width:780px; }
+.call-request-config, .call-round, .call-content { margin:6px 0; }
+.call-request-config > summary, .call-round > summary, .call-content > summary { cursor:pointer; color:#8ed9ff; font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
+.call-request-fields { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; margin:6px 0; font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
+.call-request-fields dt { color:var(--muted); }
+.call-request-fields dd { margin:0; overflow-wrap:anywhere; }
+.call-content-text { max-height:220px; margin:4px 0 0; padding:6px 8px; overflow:auto; border:1px solid #1d2e49; border-radius:6px; background:#0c1728; color:#cbd8ed; white-space:pre-wrap; overflow-wrap:anywhere; font:9px/1.5 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
+.call-tool-schemas { margin:4px 0 0; padding-left:16px; font:9px/1.5 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; color:#cbd8ed; }
+.call-tool-schemas span { display:block; color:var(--muted); }
+.call-round { min-width:220px; }
+
+/* ===== 聊天记录：回到底部浮动按钮 ===== */
+/* 作为 #chat 的兄弟节点定位到第 3 行网格单元并叠加在其底部。放在 #chat 内部会
+   被 chat-view.js / app.js 的 `replaceChildren` 重建流程清空，也会打乱追加内容；
+   叠加定位无需 JS 同步坐标。 */
+.main-panel > #chat { grid-row:3; grid-column:1; }
+.scroll-to-bottom {
+  grid-row:3;
+  grid-column:1;
+  align-self:end;
+  justify-self:center;
+  z-index:20;
+  display:grid;
+  place-items:center;
+  width:38px;
+  height:38px;
+  margin-bottom:14px;
+  border:1px solid var(--line2);
+  border-radius:50%;
+  background:var(--surface-raised);
+  color:var(--soft);
+  box-shadow:var(--shadow);
+  transition:opacity .16s ease, transform .16s ease, border-color .16s ease, color .16s ease;
+}
+.scroll-to-bottom svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.scroll-to-bottom:hover { border-color:var(--purple); color:var(--text); transform:translateY(-1px); }
+.scroll-to-bottom:active { transform:translateY(0); }
+.scroll-to-bottom:focus-visible { outline:2px solid var(--purple); outline-offset:2px; }
+.scroll-to-bottom[hidden] { display:none; }
+:root[data-theme="light"] .scroll-to-bottom { border-color:#ccd5e6; background:#ffffff; color:#475b7a; }
+@media (max-width:700px) {
+  .scroll-to-bottom { width:34px; height:34px; margin-bottom:10px; }
+}

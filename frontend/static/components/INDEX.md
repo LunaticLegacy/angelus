@@ -29,33 +29,38 @@
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [chat-view.js](chat-view.js#L15) | `createChatView` | `options: object` | `unknown` | Perform the browser runtime operation: create chat view. |
-| [chat-view.js](chat-view.js#L25) | `isAtLatest` | `None` | `unknown` | Perform the browser runtime operation: is at latest. |
-| [chat-view.js](chat-view.js#L36) | `updateFollowState` | `None` | `unknown` | Perform the browser runtime operation: update follow state. |
-| [chat-view.js](chat-view.js#L46) | `scrollToLatestIfFollowing` | `None` | `unknown` | Perform the browser runtime operation: scroll to latest if following. |
-| [chat-view.js](chat-view.js#L53) | `removeWelcome` | `None` | `unknown` | Perform the browser runtime operation: remove welcome. |
-| [chat-view.js](chat-view.js#L57) | `copyResult` | `text: unknown, button: unknown` | `Promise<unknown>` | Perform the browser runtime operation: copy result. |
-| [chat-view.js](chat-view.js#L74) | `legacyPythonContainerToJson` | `source: unknown` | `unknown` | Perform the browser runtime operation: legacy python container to json. |
-| [chat-view.js](chat-view.js#L131) | `decodeJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode json. |
-| [chat-view.js](chat-view.js#L165) | `decodeDisplayString` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode display string. |
-| [chat-view.js](chat-view.js#L187) | `renderJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: render json. |
-| [chat-view.js](chat-view.js#L209) | `renderToolPayload` | `value: unknown, emptyText: unknown` | `unknown` | Perform the browser runtime operation: render tool payload. |
-| [chat-view.js](chat-view.js#L217) | `formatDuration` | `durationMs: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
-| [chat-view.js](chat-view.js#L223) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |
-| [chat-view.js](chat-view.js#L238) | `formatClock` | `timestamp: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
-| [chat-view.js](chat-view.js#L243) | `pad` | `value: unknown` | `unknown` | Perform the browser runtime operation: pad. |
-| [chat-view.js](chat-view.js#L248) | `buildTokenStats` | `usage: unknown, modelDurationMs: unknown, timestamp: unknown, roundDurationMs: unknown` | `unknown` | Perform the browser runtime operation: build token stats. |
-| [chat-view.js](chat-view.js#L250) | `n` | `value: unknown` | `unknown` | Perform the browser runtime operation: n. |
-| [chat-view.js](chat-view.js#L254) | `fmt` | `value: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
-| [chat-view.js](chat-view.js#L295) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
-| [chat-view.js](chat-view.js#L337) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
-| [chat-view.js](chat-view.js#L356) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
-| [chat-view.js](chat-view.js#L363) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
-| [chat-view.js](chat-view.js#L374) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
-| [chat-view.js](chat-view.js#L386) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
-| [chat-view.js](chat-view.js#L390) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
-| [chat-view.js](chat-view.js#L397) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
-| [chat-view.js](chat-view.js#L439) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
-| [chat-view.js](chat-view.js#L452) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L39) | `isAtLatest` | `None` | `unknown` | Perform the browser runtime operation: is at latest. |
+| [chat-view.js](chat-view.js#L54) | `setFollowState` | `next: unknown` | `unknown` | Perform the browser runtime operation: set follow state. |
+| [chat-view.js](chat-view.js#L68) | `updateFollowState` | `None` | `unknown` | Perform the browser runtime operation: update follow state. |
+| [chat-view.js](chat-view.js#L86) | `scrollToLatestIfFollowing` | `None` | `unknown` | Perform the browser runtime operation: scroll to latest if following. |
+| [chat-view.js](chat-view.js#L101) | `scrollChatTo` | `top: unknown` | `unknown` | Perform the browser runtime operation: scroll chat to. |
+| [chat-view.js](chat-view.js#L113) | `followLatest` | `None` | `unknown` | Perform the browser runtime operation: follow latest. |
+| [chat-view.js](chat-view.js#L124) | `isFollowing` | `None` | `unknown` | Perform the browser runtime operation: is following. |
+| [chat-view.js](chat-view.js#L132) | `removeWelcome` | `None` | `unknown` | Perform the browser runtime operation: remove welcome. |
+| [chat-view.js](chat-view.js#L136) | `copyResult` | `text: unknown, button: unknown` | `Promise<unknown>` | Perform the browser runtime operation: copy result. |
+| [chat-view.js](chat-view.js#L153) | `legacyPythonContainerToJson` | `source: unknown` | `unknown` | Perform the browser runtime operation: legacy python container to json. |
+| [chat-view.js](chat-view.js#L210) | `decodeJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode json. |
+| [chat-view.js](chat-view.js#L244) | `decodeDisplayString` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode display string. |
+| [chat-view.js](chat-view.js#L266) | `renderJson` | `value: unknown` | `unknown` | Perform the browser runtime operation: render json. |
+| [chat-view.js](chat-view.js#L288) | `renderToolPayload` | `value: unknown, emptyText: unknown` | `unknown` | Perform the browser runtime operation: render tool payload. |
+| [chat-view.js](chat-view.js#L296) | `formatDuration` | `durationMs: unknown` | `unknown` | Perform the browser runtime operation: format duration. |
+| [chat-view.js](chat-view.js#L302) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |
+| [chat-view.js](chat-view.js#L317) | `formatClock` | `timestamp: unknown` | `unknown` | Perform the browser runtime operation: format clock. |
+| [chat-view.js](chat-view.js#L322) | `pad` | `value: unknown` | `unknown` | Perform the browser runtime operation: pad. |
+| [chat-view.js](chat-view.js#L327) | `buildTokenStats` | `usage: unknown, modelDurationMs: unknown, timestamp: unknown, roundDurationMs: unknown` | `unknown` | Perform the browser runtime operation: build token stats. |
+| [chat-view.js](chat-view.js#L329) | `n` | `value: unknown` | `unknown` | Perform the browser runtime operation: n. |
+| [chat-view.js](chat-view.js#L333) | `fmt` | `value: unknown` | `unknown` | Perform the browser runtime operation: fmt. |
+| [chat-view.js](chat-view.js#L374) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
+| [chat-view.js](chat-view.js#L416) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
+| [chat-view.js](chat-view.js#L435) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
+| [chat-view.js](chat-view.js#L442) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
+| [chat-view.js](chat-view.js#L453) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
+| [chat-view.js](chat-view.js#L465) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
+| [chat-view.js](chat-view.js#L469) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
+| [chat-view.js](chat-view.js#L476) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
+| [chat-view.js](chat-view.js#L518) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
+| [chat-view.js](chat-view.js#L531) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L537) | `applyScroll` | `None` | `unknown` | Perform the browser runtime operation: apply scroll. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |

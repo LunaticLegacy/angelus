@@ -12,9 +12,23 @@ import { attachmentImageUrl } from "./image-composer.js";
  *   DOM rendering operations. They mutate only `#chat`; persistent state remains
  *   owned by the Workbench controller.
  */
-export function createChatView({ getAgentLabel, getSessionId = () => null }) {
-  const followTolerancePixels = 8;
+export function createChatView({ getAgentLabel, getSessionId = () => null, onFollowChange = () => {} }) {
+  // A reader counts as following while the transcript end sits within this many
+  // pixels of the viewport. Streaming deltas, momentum scrolling and fractional
+  // device pixels routinely leave `scrollTop` a few pixels short of the exact
+  // maximum, so a tight window pinned the view just above the end and never
+  // resumed auto-scroll ("拉到最下方时并未自动滚动"). This slack absorbs that
+  // drift while still letting a deliberate scroll-up stop the follow.
+  const followTolerancePixels = 24;
   let followsLatest = true;
+  let renderedSessionId = getSessionId();
+  // `scroll` is dispatched asynchronously: by the time the handler runs the
+  // transcript may have grown (a streaming card revealing its reasoning) or we
+  // may have pinned the viewport ourselves. `scrollTop` then still matches the
+  // last position we know about, so that event is self-induced rather than a
+  // reader scrolling away and must not stop the follow. Remember the position we
+  // last observed or set so content growth cannot masquerade as a scroll-up.
+  let lastScrollTop = $("chat").scrollTop;
 
   /**
    * Return whether the viewport is effectively resting at the transcript end.
@@ -24,17 +38,43 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
    */
   function isAtLatest() {
     const chat = $("chat");
-    return chat.scrollHeight - chat.clientHeight - chat.scrollTop <= followTolerancePixels;
+    const distance = chat.scrollHeight - chat.clientHeight - chat.scrollTop;
+    return distance <= followTolerancePixels;
+  }
+
+  /**
+   * Record one follow-state transition and notify the owning controller.
+   *
+   * Args:
+   *   next: Whether the reader should now follow the latest turn.
+   *
+   * Returns:
+   *   None. Notifications are deduplicated so subscribers only see real changes.
+   */
+  function setFollowState(next) {
+    const value = Boolean(next);
+    if (value === followsLatest) return;
+    followsLatest = value;
+    onFollowChange(value);
   }
 
   /**
    * Keep the follow state in sync with deliberate user scrolling.
    *
    * Returns:
-   *   None. Moving even slightly above the latest content stops auto-scroll.
+   *   None. Reaching the transcript end resumes following; scrolling up away
+   *   from it stops the follow so a new delta no longer moves the viewport.
    */
   function updateFollowState() {
-    followsLatest = isAtLatest();
+    const chat = $("chat");
+    const top = chat.scrollTop;
+    // Content growth and our own `scrollTop` writes do not move the viewport, so
+    // an event whose position we already know carries no reader intent. Only a
+    // real position change (a wheel/touch/keyboard/drag scroll, or the browser
+    // re-clamping after the transcript shrank) may change the follow state.
+    if (Math.abs(top - lastScrollTop) < 1) return;
+    lastScrollTop = top;
+    setFollowState(isAtLatest());
   }
 
   /**
@@ -45,11 +85,50 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
    */
   function scrollToLatestIfFollowing() {
     if (!followsLatest) return;
+    scrollChatTo($("chat").scrollHeight);
+  }
+
+  /**
+   * Move the transcript viewport and record the position as self-induced.
+   *
+   * Args:
+   *   top: Requested scroll offset (clamped by the browser to the real maximum).
+   *
+   * Returns:
+   *   None. `lastScrollTop` mirrors the clamped value so the queued `scroll`
+   *   event it produces is recognized as our own and ignored.
+   */
+  function scrollChatTo(top) {
     const chat = $("chat");
-    chat.scrollTop = chat.scrollHeight;
+    chat.scrollTop = top;
+    lastScrollTop = chat.scrollTop;
+  }
+
+  /**
+   * Jump back to the transcript end and resume following.
+   *
+   * Returns:
+   *   None. Backs the transcript "scroll to bottom" affordance.
+   */
+  function followLatest() {
+    setFollowState(true);
+    scrollChatTo($("chat").scrollHeight);
+  }
+
+  /**
+   * Report the current follow state so a rebuild can preserve it.
+   *
+   * Returns:
+   *   Whether the reader is currently following the latest turn.
+   */
+  function isFollowing() {
+    return followsLatest;
   }
 
   $("chat").addEventListener("scroll", updateFollowState, { passive: true });
+  // `scrollend` catches momentum/scrollbar drags whose final frame lands exactly
+  // on the end, so following resumes even when no further scroll event queues.
+  $("chat").addEventListener("scrollend", updateFollowState, { passive: true });
 
   function removeWelcome() {
     $("chat").querySelector(".welcome")?.remove();
@@ -452,6 +531,18 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
 
   function render(messages, assistantLabel = "coordinator") {
     const chat = $("chat");
+    const previousTop = chat.scrollTop;
+    const wasFollowing = followsLatest;
+    const sessionChanged = getSessionId() !== renderedSessionId;
+    const applyScroll = () => {
+      if (sessionChanged || wasFollowing) {
+        setFollowState(true);
+        scrollChatTo(chat.scrollHeight);
+      } else {
+        scrollChatTo(previousTop);
+      }
+      renderedSessionId = getSessionId();
+    };
     let loadMore = $("load-more-messages");
     if (!loadMore) {
       loadMore = document.createElement("button");
@@ -463,6 +554,7 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
     chat.replaceChildren(loadMore);
     if (!messages.length) {
       loadMore.insertAdjacentHTML("afterend", '<div class="welcome"><div class="welcome-symbol">✦</div><h2>等待 Agent 回复</h2><p>用户输入和 Agent 回复会按时间顺序显示在这里。</p></div>');
+      applyScroll();
       return;
     }
     const fragment = document.createDocumentFragment();
@@ -470,11 +562,10 @@ export function createChatView({ getAgentLabel, getSessionId = () => null }) {
       fragment.append(buildMessage(message, message.role === "assistant" ? assistantLabel : ""));
     }
     loadMore.after(fragment);
-    // Rehydration is an explicit view replacement, so start it at the latest
-    // message and re-enable follow behaviour for the subsequent live stream.
-    followsLatest = true;
-    chat.scrollTop = chat.scrollHeight;
+    // Rehydration replaces the view, so restore the reader's prior position
+    // unless they were already following the latest turn (or switched sessions).
+    applyScroll();
   }
 
-  return { append, appendError, beginStream, buildMessage, removeWelcome, render, upsertSteer };
+  return { append, appendError, beginStream, buildMessage, followLatest, isFollowing, removeWelcome, render, scrollToLatestIfFollowing, upsertSteer };
 }

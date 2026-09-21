@@ -61,6 +61,11 @@ class Session:
         # Profile fingerprint used to avoid rebuilding coordinator/context on
         # a later run when its effective future-run configuration is unchanged.
         self._coordinator_fingerprint: tuple[object, ...] | None = None
+        # Set when a forced stop has closed the live provider clients owned by
+        # the cached runtime Agents.  The next run must rebuild them instead of
+        # reusing the dead clients; durable Agent context still carries the
+        # conversation forward, so this only refreshes transport resources.
+        self.runtime_agents_dirty: bool = False
         # The llmfetcher graph/configuration aggregate, retained across runs.
         self.swarm: AgentSwarm = AgentSwarm()
         # This is deliberately session-owned.  It is not an AgentSwarm: it

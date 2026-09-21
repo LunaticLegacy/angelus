@@ -102,7 +102,11 @@ class SessionService:
             profile["max_retries"], profile["request_timeout_seconds"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
             self._core.mcp_service.fingerprint(session_id, "coordinator"),
         )
-        if session.coordinator_matches(fingerprint):
+        # A forced stop closes the cached coordinator's clients, so rebuild
+        # even when the profile fingerprint is unchanged; otherwise the next
+        # run would reuse a closed provider client.  Durable context preserves
+        # conversation continuity across the rebuild.
+        if session.coordinator_matches(fingerprint) and not session.runtime_agents_dirty:
             return
         workspace = self._core.workspaces.get(session_id)
         if session.artifacts is None:
@@ -130,6 +134,7 @@ class SessionService:
             image_resolver=session.attachments.resolve if session.attachments else None,
         )
         session.set_coordinator(coordinator, fingerprint)
+        session.runtime_agents_dirty = False
         # Unit-test and alternate-host factories may supply a sentinel role;
         # only a concrete llmfetcher Agent is valid for graph registration.
         if isinstance(coordinator, Agent):
