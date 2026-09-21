@@ -94,3 +94,6 @@ plugins/**/__pycache__/
 
 # Spike generated ledger (real transcript data, not part of the repo).
 scripts/spike_product_adapters/out/
+
+# Generated tool-result index cache (regenerable, never commit)
+.tlb_cache*
