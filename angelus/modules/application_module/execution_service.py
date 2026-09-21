@@ -339,10 +339,18 @@ class ExecutionService:
         the same stopped outcome and journal/checkpoint lifecycle.
         """
         self._require_session(session_id)
-        executor = self._core.sessions.get(session_id).execution
+        session = self._core.sessions.get(session_id)
+        executor = session.execution
         if executor is None:
             return self.status(session_id)
-        return executor.request_stop(force=force, reason=reason)
+        snapshot = executor.request_stop(force=force, reason=reason)
+        if force:
+            # A forced stop tears down the live provider clients held by the
+            # cached coordinator/worker Agents.  Flag the runtime Agents dirty
+            # so the next run rebuilds them rather than reusing closed clients
+            # (which surfaces as a spurious `Connection error`).
+            session.runtime_agents_dirty = True
+        return snapshot
 
     def control(
         self,
@@ -387,6 +395,9 @@ class ExecutionService:
             queued = True
         elif action == "force_stop":
             targets = control.stop(agent_id, True, reason)
+            # Forced Agent control closes the same live provider clients; mark
+            # the runtime Agents dirty so the next run rebuilds them.
+            session.runtime_agents_dirty = True
             queued = False
         else:
             raise ValueError("action must be steer, stop, or force_stop")

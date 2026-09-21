@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -381,6 +382,164 @@ class ControlImageRejectionTests(unittest.TestCase):
                 text_response = client.post("/api/runs/demo/control", json=text_only)
                 self.assertEqual(text_response.status_code, 409)
                 self.assertIn("no active Agent control", text_response.json()["detail"])
+
+
+class _BlockingSwarm:
+    """Swarm facade that holds an attempt open until the test releases it."""
+
+    def __init__(self) -> None:
+        """Create a facade with hook accounting and one release gate."""
+        self.hooks: list[object] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def add_hook(self, hook: object) -> None:
+        """Retain the attempt journal hook supplied by the service.
+
+        Args:
+            hook: Callback to retain for this simulated run.
+
+        Returns:
+            None.
+        """
+        self.hooks.append(hook)
+
+    def remove_hook(self, hook: object) -> bool:
+        """Remove one retained hook.
+
+        Args:
+            hook: Exact callback to remove.
+
+        Returns:
+            Whether the callback was registered.
+        """
+        if hook not in self.hooks:
+            return False
+        self.hooks.remove(hook)
+        return True
+
+    def view_snapshot(self) -> dict[str, object]:
+        """Return a minimal live topology for control pre-registration.
+
+        Returns:
+            One coordinator Agent node so control commands resolve a target.
+        """
+        return {"nodes": [{"id": "coordinator", "kind": "agent"}]}
+
+    def run(self, _message: object, *, control: object) -> dict[str, object]:
+        """Signal entry and block until the test releases the attempt.
+
+        Args:
+            _message: Initial user input, unused by this deterministic double.
+            control: Attempt control registry proving ``run_control`` is live.
+
+        Returns:
+            Stopped coordinator output marker.
+        """
+        self.entered.set()
+        self.release.wait(5)
+        return {"coordinator": "stopped"}
+
+
+class RuntimeAgentDirtyTests(unittest.TestCase):
+    """Forced stops invalidate cached runtime Agents; graceful stops do not."""
+
+    def _session(self, directory: str) -> tuple[AngelusCore, object]:
+        """Create a runnable-shaped Session without building a real coordinator.
+
+        Args:
+            directory: Temporary directory owning project and state roots.
+
+        Returns:
+            The process core and the registered Session aggregate.
+        """
+        root = Path(directory)
+        (root / "project").mkdir()
+        core = AngelusCore(state_root=root / "state")
+        core.session_service.create("demo", "Demo", root / "project")
+        session = core.sessions.get("demo")
+        session.agents = [object()]  # type: ignore[list-item]
+        core.session_service.ensure_coordinator = lambda _session_id: None  # type: ignore[method-assign]
+        return core, session
+
+    def test_graceful_stop_keeps_runtime_agents_reusable(self) -> None:
+        """A graceful stop leaves the cached coordinator valid for reuse."""
+        with TemporaryDirectory() as directory:
+            core, session = self._session(directory)
+
+            core.execution_service.stop("demo", force=False, reason="graceful")
+
+            self.assertFalse(session.runtime_agents_dirty)
+
+    def test_forced_stop_marks_runtime_agents_dirty(self) -> None:
+        """A forced stop invalidates cached Agents so clients are rebuilt."""
+        with TemporaryDirectory() as directory:
+            core, session = self._session(directory)
+
+            core.execution_service.stop("demo", force=True, reason="forced")
+
+            self.assertTrue(session.runtime_agents_dirty)
+
+    def test_control_marks_runtime_agents_dirty_only_when_forced(self) -> None:
+        """Browser control invalidates Agents only for ``force_stop``."""
+        with TemporaryDirectory() as directory:
+            core, session = self._session(directory)
+
+            graceful = _BlockingSwarm()
+            session.swarm = graceful  # type: ignore[assignment]
+            core.execution_service.start("demo", "first")
+            self.assertTrue(graceful.entered.wait(5))
+            core.execution_service.control("demo", "all", "stop", "", "graceful")
+            self.assertFalse(session.runtime_agents_dirty)
+            graceful.release.set()
+            self.assertTrue(session.execution.wait(5))
+            self.assertEqual(session.execution.snapshot().state, ExecutionState.STOPPED)
+
+            forced = _BlockingSwarm()
+            session.swarm = forced  # type: ignore[assignment]
+            core.execution_service.start("demo", "second")
+            self.assertTrue(forced.entered.wait(5))
+            core.execution_service.control("demo", "all", "force_stop", "", "forced")
+            self.assertTrue(session.runtime_agents_dirty)
+            forced.release.set()
+            self.assertTrue(session.execution.wait(5))
+
+    def test_ensure_coordinator_rebuilds_dirty_agents_for_same_profile(self) -> None:
+        """A dirty flag defeats an unchanged fingerprint and resets on rebuild."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "project").mkdir()
+            core = AngelusCore(state_root=root / "state")
+            core.session_service.create("demo", "Demo", root / "project")
+            connector = core.settings_service.create_connector({
+                "name": "Test", "provider": "openai", "model": "test-model",
+                "api_url": "", "api_key": "secret",
+            })
+            profile = core.settings_service.session_profile("demo")["effective"]
+            profile["connector_id"] = connector["id"]
+            core.settings_service.replace_session_profile("demo", profile)
+            session = core.sessions.get("demo")
+            first, second = object(), object()
+
+            with patch(
+                "angelus.modules.application_module.session_service.create_agent",
+                side_effect=[first, second],
+            ) as factory:
+                core.session_service.ensure_coordinator("demo")
+                self.assertEqual(factory.call_count, 1)
+                self.assertIs(session.coordinator, first)
+
+                # A matching fingerprint with a clean flag reuses the Agent.
+                core.session_service.ensure_coordinator("demo")
+                self.assertEqual(factory.call_count, 1)
+
+                # A forced-stop flag must defeat the matching fingerprint.
+                session.runtime_agents_dirty = True
+                core.session_service.ensure_coordinator("demo")
+
+                self.assertEqual(factory.call_count, 2)
+                self.assertIs(session.coordinator, second)
+                self.assertFalse(session.runtime_agents_dirty)
 
 
 if __name__ == "__main__":
