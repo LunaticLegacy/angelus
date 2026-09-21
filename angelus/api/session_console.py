@@ -346,6 +346,23 @@ def request_preview(session_id: str, agent: str, body: RequestPreviewInput, requ
 @router.get("/agents/{agent}/context/compaction-input")
 def compaction_input(session_id: str, agent: str, request: Request): return _call(lambda:_service(request).compaction_input(session_id,agent))
 
+@router.get("/agents/{agent}/calls")
+def agent_calls(session_id: str, agent: str, request: Request, limit: int = 200):
+    """Return the journal-derived LLM call ledger for one Agent.
+
+    Args:
+        session_id: Stable Session identity owning the Agent.
+        agent: Valid coordinator or worker identity.
+        request: Incoming request carrying the application core.
+        limit: Maximum newest calls to return, bounded to a safe window.
+
+    Returns:
+        Primary and internal call records plus aggregate statistics.
+    """
+    return _call(lambda:_service(request).calls(session_id, agent, limit).as_wire())
+
+
+
 
 def _core_context_exchange(request: Request):
     """Resolve the application-owned portable context exchange service.

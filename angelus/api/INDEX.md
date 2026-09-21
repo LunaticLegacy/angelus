@@ -169,8 +169,9 @@ replaced solely by `settings.py`.
 | [session_console.py](session_console.py#L331) | `context_graph` | `session_id: str, agent: str, request: Request` | `Any` | Implement `context_graph`. |
 | [session_console.py](session_console.py#L333) | `request_preview` | `session_id: str, agent: str, body: RequestPreviewInput, request: Request` | `Any` | Compose the next dispatch-ready model request without sending it. |
 | [session_console.py](session_console.py#L347) | `compaction_input` | `session_id: str, agent: str, request: Request` | `Any` | Implement `compaction_input`. |
-| [session_console.py](session_console.py#L350) | `_core_context_exchange` | `request: Request` | `Any` | Resolve the application-owned portable context exchange service. |
-| [session_console.py](session_console.py#L368) | `_package` | `value: ContextPackage` | `dict[str, object]` | Serialize one portable package without exposing executable tool data. |
+| [session_console.py](session_console.py#L350) | `agent_calls` | `session_id: str, agent: str, request: Request, limit: int` | `Any` | Return the journal-derived LLM call ledger for one Agent. |
+| [session_console.py](session_console.py#L367) | `_core_context_exchange` | `request: Request` | `Any` | Resolve the application-owned portable context exchange service. |
+| [session_console.py](session_console.py#L385) | `_package` | `value: ContextPackage` | `dict[str, object]` | Serialize one portable package without exposing executable tool data. |
 | [sessions.py](sessions.py#L33) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without manufacturing application state. |
 | [sessions.py](sessions.py#L42) | `list_sessions` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List durable workspace identities, not process-local execution state. |
 | [sessions.py](sessions.py#L59) | `create_session` | `payload: CreateSessionRequest, request: Request` | `dict[str, Any]` | Create an empty session; Agent and graph configuration come afterwards. |
