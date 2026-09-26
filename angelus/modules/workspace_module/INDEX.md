@@ -34,7 +34,7 @@ source for which Session identities are selectable after process restart.
 | [workspace_catalog.py](workspace_catalog.py#L138) | `WorkspaceCatalog._read_document` | `None` | `dict[str, object]` | Read the validated catalog envelope while preserving migration metadata. |
 | [workspace_catalog.py](workspace_catalog.py#L147) | `WorkspaceCatalog._records` | `document: dict[str, object]` | `dict[str, Workspace]` | Decode workspace entries from one previously validated envelope. |
 | [workspace_catalog.py](workspace_catalog.py#L155) | `WorkspaceCatalog._write` | `records: dict[str, Workspace], legacy_workspace_imported: bool \| None` | `None` | Atomically replace the registry after flushing file and parent directory. |
-| [workspace_catalog.py](workspace_catalog.py#L186) | `WorkspaceCatalog._write_legacy_index` | `path: Path, entries: list[object]` | `None` | Atomically replace the old list-shaped index during explicit deletion. |
+| [workspace_catalog.py](workspace_catalog.py#L190) | `WorkspaceCatalog._write_legacy_index` | `path: Path, entries: list[object]` | `None` | Atomically replace the old list-shaped index during explicit deletion. |
 
 ## Class Map
 

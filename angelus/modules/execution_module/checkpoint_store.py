@@ -29,11 +29,14 @@ def _write_json_atomically(path: Path, payload: dict[str, Any]) -> str:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_name, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        # POSIX-only directory fsync; Windows cannot open directories and
+        # os.replace already committed the rename atomically there.
+        if os.name == "posix":
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         return hashlib.sha256(encoded).hexdigest()
     except BaseException:
         try:

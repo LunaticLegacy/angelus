@@ -47,7 +47,7 @@ Host deadline expiry writes `INTERRUPTED`; a late worker must not overwrite it.
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [checkpoint_store.py](checkpoint_store.py#L16) | `_write_json_atomically` | `path: Path, payload: dict[str, Any]` | `str` | Durably replace one JSON document and return its SHA-256 digest. |
-| [checkpoint_store.py](checkpoint_store.py#L68) | `CheckpointStore.commit` | `generation: str, graph: dict[str, Any] \| None, contexts: dict[str, dict[str, Any]], reason: str, run_graph: dict[str, Any] \| None, recovery: dict[str, Any] \| None` | `dict[str, Any]` | Write a complete generation and make it recoverable exactly once. |
+| [checkpoint_store.py](checkpoint_store.py#L71) | `CheckpointStore.commit` | `generation: str, graph: dict[str, Any] \| None, contexts: dict[str, dict[str, Any]], reason: str, run_graph: dict[str, Any] \| None, recovery: dict[str, Any] \| None` | `dict[str, Any]` | Write a complete generation and make it recoverable exactly once. |
 | [execution_attempt.py](execution_attempt.py#L101) | `ExecutionAttempt.start` | `operation: Callable[[ExecutionController], ResultT], start_data: dict[str, object] \| None` | `None` | Schedule exactly one operation under this attempt's controller. |
 | [execution_attempt.py](execution_attempt.py#L118) | `ExecutionAttempt.request_stop` | `force: bool, reason: str` | `ExecutionSnapshot` | Record one stop request and propagate it to every resource owner. |
 | [execution_attempt.py](execution_attempt.py#L138) | `ExecutionAttempt.wait` | `timeout: float \| None` | `bool` | Wait for worker terminal cleanup without attempting to join it. |
@@ -71,7 +71,7 @@ Host deadline expiry writes `INTERRUPTED`; a late worker must not overwrite it.
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [checkpoint_store.py](checkpoint_store.py#L46) | `CheckpointStore` | `attempt_root: Path, journal: ExecutionJournal` | `object` | Commit graph/context generations through one journal event. |
+| [checkpoint_store.py](checkpoint_store.py#L49) | `CheckpointStore` | `attempt_root: Path, journal: ExecutionJournal` | `object` | Commit graph/context generations through one journal event. |
 | [execution_attempt.py](execution_attempt.py#L23) | `ExecutionAttempt` | `session_id: str, attempt: int, root: Path` | `Generic[ResultT]` | Own the complete lifecycle of one concrete execution attempt. |
 | [journal.py](journal.py#L14) | `ExecutionJournal` | `path: Path, execution_id: str` | `object` | The sole append-only durable fact log for one execution attempt. |
 | [sigint_supervisor.py](sigint_supervisor.py#L12) | `SigintSupervisor` | `live_attempts: Callable[[], Iterable[ExecutionAttempt[object]]], deadline_seconds: float` | `object` | Translate Ctrl+C into a bounded forced shutdown of Session attempts. |

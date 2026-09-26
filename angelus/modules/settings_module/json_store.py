@@ -41,11 +41,14 @@ def write_json(path: Path, value: object) -> None:
             file.flush()
             os.fsync(file.fileno())
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        # POSIX-only directory fsync; Windows cannot open directories and
+        # os.replace already committed the rename atomically there.
+        if os.name == "posix":
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     except BaseException:
         try:
             os.unlink(temporary)

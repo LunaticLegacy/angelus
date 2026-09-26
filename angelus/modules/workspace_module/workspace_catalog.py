@@ -171,11 +171,15 @@ class WorkspaceCatalog:
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temporary, self.path)
-            directory = os.open(self.path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            # POSIX idiom: fsync the parent directory so the rename itself
+            # survives a crash.  Windows cannot open directories for fsync;
+            # os.replace already committed the rename atomically there.
+            if os.name == "posix":
+                directory = os.open(self.path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         except BaseException:
             try:
                 os.unlink(temporary)
@@ -193,11 +197,12 @@ class WorkspaceCatalog:
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temporary, path)
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            if os.name == "posix":
+                directory = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         except BaseException:
             try:
                 os.unlink(temporary)
