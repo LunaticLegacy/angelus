@@ -57,7 +57,7 @@ replaced solely by `settings.py`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [__init__.py](__init__.py#L23) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
+| [__init__.py](__init__.py#L34) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
 | [attachments.py](attachments.py#L13) | `_store` | `request: Request, session_id: str` | `Any` | Implement `_store`. |
 | [attachments.py](attachments.py#L21) | `upload_image` | `session_id: str, request: Request, filename: str` | `dict` | Accept bounded raw image bytes without requiring a multipart parser. |
 | [attachments.py](attachments.py#L37) | `download_image` | `session_id: str, attachment_id: str, request: Request` | `FileResponse` | Serve an existing validated image only within its owning Session. |

@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import mimetypes
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+
+# On Windows mimetypes.init() folds HKEY_CLASSES_ROOT "Content Type" values
+# over the builtin map; a polluted registry entry (e.g. .mjs -> text/plain)
+# then makes Starlette serve ES modules as text/plain, which the browser
+# refuses to execute and every module in the import graph fails to load.
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("application/json", ".map")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 from ..core import AngelusCore
 from .runs import router as runs_router
