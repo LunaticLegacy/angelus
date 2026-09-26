@@ -89,52 +89,6 @@
 | [example-tool/main.py](example-tool/main.py#L53) | `SearchProvider._search` | `query: str, limit: int` | `str` | Search the bounded local index and format matching documents. |
 | [example-tool/main.py](example-tool/main.py#L75) | `ExampleToolPlugin.setup` | `runtime: PluginRuntime` | `None` | Declare the search category and definition through the host runtime. |
 | [example-tool/main.py](example-tool/main.py#L90) | `ExampleToolPlugin.teardown` | `None` | `None` | Release no resources because the search index is immutable. |
-| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L10) | `bbox` | `value: dict[str, Any]` | `list[float]` | Implement `bbox`. |
-| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L18) | `centroid` | `value: dict[str, Any]` | `list[float]` | Implement `centroid`. |
-| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L23) | `measure` | `value: dict[str, Any]` | `dict[str, float]` | Implement `measure`. |
-| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L52) | `contains` | `value: dict[str, Any], point: tuple[float, float]` | `list[int]` | Implement `contains`. |
-| [geo-pack/geopack/analysis.py](geo-pack/geopack/analysis.py#L70) | `feature_distance` | `value: dict[str, Any], point: tuple[float, float]` | `list[dict[str, Any]]` | Implement `feature_distance`. |
-| [geo-pack/geopack/engine.py](geo-pack/geopack/engine.py#L17) | `GeoEngine.dispatch` | `tool: str, params: dict[str, Any] \| None` | `str` | Implement `GeoEngine.dispatch`. |
-| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L7) | `normalize` | `value: Any` | `dict[str, Any]` | Implement `normalize`. |
-| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L20) | `features` | `value: dict[str, Any]` | `list[dict[str, Any]]` | Implement `features`. |
-| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L32) | `geometries` | `value: dict[str, Any]` | `Iterator[dict[str, Any]]` | Implement `geometries`. |
-| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L45) | `coordinate_points` | `geometry: dict[str, Any]` | `Iterator[tuple[float, float]]` | Implement `coordinate_points`. |
-| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L64) | `_list` | `value: Any` | `list[Any]` | Implement `_list`. |
-| [geo-pack/geopack/geojson.py](geo-pack/geopack/geojson.py#L70) | `_point` | `value: Any` | `tuple[float, float]` | Implement `_point`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L11) | `haversine` | `a: tuple[float, float], b: tuple[float, float]` | `float` | Implement `haversine`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L18) | `line_length` | `points: list[tuple[float, float]]` | `float` | Implement `line_length`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L22) | `web_mercator` | `point: tuple[float, float]` | `tuple[float, float]` | Implement `web_mercator`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L30) | `inverse_web_mercator` | `point: tuple[float, float]` | `tuple[float, float]` | Implement `inverse_web_mercator`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L37) | `ring_area_m2` | `points: list[tuple[float, float]]` | `float` | Approximate geodesic polygon area using a spherical trapezoid sum. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L49) | `point_in_ring` | `point: tuple[float, float], ring: list[tuple[float, float]]` | `bool` | Implement `point_in_ring`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L63) | `centroid_of_points` | `points: list[tuple[float, float]]` | `tuple[float, float]` | Implement `centroid_of_points`. |
-| [geo-pack/geopack/mathgeo.py](geo-pack/geopack/mathgeo.py#L69) | `distance_to_segment_m` | `p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]` | `float` | Implement `distance_to_segment_m`. |
-| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L22) | `GeoToolRegistry.add` | `name: str, description: str, parameters: dict[str, str], handler: Handler` | `None` | Implement `GeoToolRegistry.add`. |
-| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L27) | `GeoToolRegistry.call` | `name: str, params: dict[str, Any]` | `Any` | Implement `GeoToolRegistry.call`. |
-| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L33) | `GeoToolRegistry.describe` | `None` | `list[dict[str, Any]]` | Implement `GeoToolRegistry.describe`. |
-| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L16) | `DatasetStore._safe_name` | `name: str` | `str` | Implement `DatasetStore._safe_name`. |
-| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L22) | `DatasetStore.save` | `name: str, geojson: dict[str, Any]` | `dict[str, Any]` | Implement `DatasetStore.save`. |
-| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L30) | `DatasetStore.load` | `name: str` | `dict[str, Any]` | Implement `DatasetStore.load`. |
-| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L39) | `DatasetStore.delete` | `name: str` | `bool` | Implement `DatasetStore.delete`. |
-| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L46) | `DatasetStore.list` | `None` | `list[dict[str, Any]]` | Implement `DatasetStore.list`. |
-| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L13) | `build_registry` | `store: DatasetStore` | `GeoToolRegistry` | Implement `build_registry`. |
-| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L79) | `_point` | `value: Any` | `tuple[float, float]` | Implement `_point`. |
-| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L86) | `_xy` | `value: Any` | `tuple[float, float]` | Implement `_xy`. |
-| [geo-pack/geopack/tools.py](geo-pack/geopack/tools.py#L92) | `_compare` | `actual: Any, expected: Any, op: str` | `bool` | Implement `_compare`. |
-| [geo-pack/main.py](geo-pack/main.py#L50) | `GeoPackProvider.materialize` | `session_id: str, policy: object, role: str` | `list[Tool]` | Implement `GeoPackProvider.materialize`. |
-| [geo-pack/main.py](geo-pack/main.py#L71) | `GeoPackPlugin.setup` | `runtime: PluginRuntime` | `None` | Implement `GeoPackPlugin.setup`. |
-| [geo-pack/main.py](geo-pack/main.py#L99) | `GeoPackPlugin._bridge` | `request: PluginUiActionRequest` | `PluginUiActionResult` | Implement `GeoPackPlugin._bridge`. |
-| [geo-pack/main.py](geo-pack/main.py#L113) | `GeoPackPlugin.teardown` | `None` | `None` | Implement `GeoPackPlugin.teardown`. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L6) | `el` | `tag: unknown, cls: unknown, text: unknown` | `unknown` | Perform the browser runtime operation: el. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L8) | `bridge` | `tool: unknown, params: unknown` | `Promise<unknown>` | Perform the browser runtime operation: bridge. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L16) | `features` | `g: unknown` | `unknown` | Perform the browser runtime operation: features. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L17) | `walkCoords` | `g: unknown, cb: unknown` | `unknown` | Perform the browser runtime operation: walk coords. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L18) | `calcBBox` | `g: unknown` | `unknown` | Perform the browser runtime operation: calc b box. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L19) | `fit` | `g: unknown` | `unknown` | Perform the browser runtime operation: fit. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L20) | `project` | `p: unknown, canvas: unknown` | `unknown` | Perform the browser runtime operation: project. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L21) | `drawGeom` | `ctx: unknown, g: unknown, c: unknown` | `unknown` | Perform the browser runtime operation: draw geom. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L22) | `draw` | `None` | `unknown` | Perform the browser runtime operation: draw. |
-| [geo-pack/plugin.js](geo-pack/plugin.js#L36) | `refresh` | `None` | `Promise<unknown>` | Perform the browser runtime operation: refresh. |
 | [token-burner/plugin.js](token-burner/plugin.js#L38) | `clamp` | `value: unknown, min: unknown, max: unknown` | `unknown` | Perform the browser runtime operation: clamp. |
 | [token-burner/plugin.js](token-burner/plugin.js#L42) | `finite` | `value: unknown, fallback: unknown` | `unknown` | Perform the browser runtime operation: finite. |
 | [token-burner/plugin.js](token-burner/plugin.js#L47) | `readUiState` | `None` | `unknown` | Perform the browser runtime operation: read ui state. |
@@ -178,11 +132,5 @@
 | [example-tool/main.py](example-tool/main.py#L12) | `SearchDocument` | `title: str, url: str, snippet: str` | `object` | One document in the plugin's intentionally offline demo index. |
 | [example-tool/main.py](example-tool/main.py#L27) | `SearchProvider` | `None` | `object` | Materialize the offline search Tool without external permissions. |
 | [example-tool/main.py](example-tool/main.py#L72) | `ExampleToolPlugin` | `None` | `object` | Publish one offline documentation search tool. |
-| [geo-pack/geopack/engine.py](geo-pack/geopack/engine.py#L12) | `GeoEngine` | `state_root: Path, session_id: str` | `object` | Provide `GeoEngine` behavior. |
-| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L11) | `GeoTool` | `name: str, description: str, parameters: dict[str, str], handler: Handler` | `object` | Provide `GeoTool` behavior. |
-| [geo-pack/geopack/registry.py](geo-pack/geopack/registry.py#L18) | `GeoToolRegistry` | `None` | `object` | Provide `GeoToolRegistry` behavior. |
-| [geo-pack/geopack/store.py](geo-pack/geopack/store.py#L9) | `DatasetStore` | `state_root: Path, session_id: str` | `object` | Provide `DatasetStore` behavior. |
-| [geo-pack/main.py](geo-pack/main.py#L44) | `GeoPackProvider` | `state_root: Path` | `object` | Materialize the one model-visible router tool. |
-| [geo-pack/main.py](geo-pack/main.py#L67) | `GeoPackPlugin` | `None` | `object` | Provide `GeoPackPlugin` behavior. |
 
 <!-- END GENERATED SYMBOL MAP -->
