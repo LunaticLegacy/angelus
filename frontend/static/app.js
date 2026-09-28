@@ -832,7 +832,16 @@ async function start(message, images=[], targetSession=sessionId) {
   } catch(error) { if(targetSession === sessionId){ const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("发送失败，草稿已保留", message); setStatus("请求失败", "error"); setRunning(false); } return false; }
 }
 const compactionCards = new Map();
+const compactionRenderFrames = new Map();
 function clearCompactStatus() { compactionCards.clear(); }
+function scheduleCompactionRender(key) {
+  if (compactionRenderFrames.has(key)) return;
+  compactionRenderFrames.set(key, requestAnimationFrame(() => {
+    compactionRenderFrames.delete(key);
+    const state = compactionCards.get(key);
+    if (state) chatView.upsertCompaction(state);
+  }));
+}
 function compactCardEvent(event, manual=false) {
   const data = event.data || event;
   const key = String(data.compaction_id || `${event.agent || data.agent || "coordinator"}:${data.round || "manual"}`);
@@ -843,7 +852,9 @@ function compactCardEvent(event, manual=false) {
   if(stageLabel && !stages.some(item => item.label === stageLabel)) stages.push({label:stageLabel, state});
   const preview = `${previous.preview || ""}${data.delta || ""}`.slice(-12000);
   const next = {...previous, state, detail:stageLabel, error:data.error || event.error || "", stages, preview, manual};
-  compactionCards.set(key, next); chatView.upsertCompaction(next);
+  compactionCards.set(key, next);
+  if (event.type === "context:compact_delta") scheduleCompactionRender(key);
+  else chatView.upsertCompaction(next);
 }
 async function stopCompaction(agent="coordinator", force=false) {
   const suffix = force ? "/force-stop" : "/stop";
@@ -892,7 +903,7 @@ function handleEvent(event) {
   // so an open inspector can safely refresh to the exact newest request.
   if(event.event === "lifecycle" && event.type === "agent:remote_request" && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) loadContextPrompt(contextDialogAgent).catch(error=>trace("上下文请求预览刷新失败",error.message));
   if(event.event === "lifecycle" && ["agent:remote_request","agent:llm_request","agent:retry","agent:usage","agent:internal_usage","agent:round","agent:tools_requested","agent:tools_completed"].includes(event.type) && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) refreshOpenContextCalls();
-  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
+  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } if(event.type === "context:compact_delta") { compactCardEvent(event); return; } pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
   if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator"; compactCardEvent(event);
     if(event.type==="context:compact_started") setStatus(`正在压缩 ${cagent} 的上下文…`, "running");
     else if(event.type==="context:compact_success") setStatus(`上下文压缩完成（${cagent}）`, "idle");

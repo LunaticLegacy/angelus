@@ -451,6 +451,12 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
       element.dataset.compactionId = id;
       chat.append(element);
     }
+    const existingPreview = element.querySelector(".compaction-preview");
+    if (existingPreview && event.preview) {
+      existingPreview.textContent = String(event.preview);
+      scrollToLatestIfFollowing();
+      return;
+    }
     const state = String(event.state || "running");
     const agent = String(event.agent || "coordinator");
     const title = state === "success" ? "上下文压缩完成" : state === "failed" ? "上下文压缩失败" : state === "cancelled" ? "压缩已停止" : "正在压缩上下文";
@@ -458,6 +464,12 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     const details = stages.map(stage => `<li class="${escapeHtml(String(stage.state || ""))}"><span>${escapeHtml(String(stage.label || stage.detail || ""))}</span>${stage.value ? `<small>${escapeHtml(String(stage.value))}</small>` : ""}</li>`).join("");
     const canStop = state === "running";
     element.innerHTML = `<div class="message-meta"><div class="role role-system"><i></i><span>系统 · ${escapeHtml(agent)}</span></div><small>${escapeHtml(event.manual ? "手动压缩" : "自动压缩")}</small></div><div class="compaction-head"><strong>${escapeHtml(title)}</strong><span class="compaction-state ${escapeHtml(state)}">${escapeHtml(String(event.detail || ""))}</span></div>${details ? `<ul class="compaction-stages">${details}</ul>` : ""}${event.error ? `<p class="compaction-error">${escapeHtml(String(event.error))}</p>` : ""}${canStop ? `<div class="compaction-actions"><button type="button" data-compact-stop>停止压缩</button></div>` : ""}`;
+    if (event.preview) {
+      const preview = document.createElement("pre");
+      preview.className = "compaction-preview";
+      preview.textContent = String(event.preview);
+      element.append(preview);
+    }
     element.querySelector("[data-compact-stop]")?.addEventListener("click", () => onCompactStop(agent));
     scrollToLatestIfFollowing();
   }
