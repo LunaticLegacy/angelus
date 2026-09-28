@@ -9,7 +9,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Angelus · Agent Workbench</title>
     <link rel="icon" type="image/svg+xml" href="/static/angelus-icon.svg?v=2" />
-    <link rel="stylesheet" href="/static/app.css?v=desktop-agent-1" />
+    <link rel="stylesheet" href="/static/app.css?v=desktop-agent-2" />
   </head>
   <body>
     <dialog id="mcp-approval-dialog" class="session-dialog" aria-labelledby="mcp-approval-title">
@@ -103,9 +103,10 @@
       <a class="brand" href="/" aria-label="Angelus 工作台首页"><span class="brand-mark"><img src="/static/angelus-icon.svg?v=2" alt="" /></span><span class="brand-copy"><strong>Angelus</strong><small>AGENT WORKBENCH</small></span></a>
 
       <section class="side-block">
-        <div class="side-heading"><span>会话</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="新建会话" aria-label="新建会话">＋</button><button id="delete-workspace" class="session-icon-button danger" type="button" title="删除当前会话" aria-label="删除当前会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg></button></div></div>
-        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="选择会话"></select><span>⌄</span></div></div>
-        <p id="workspace-open-hint" class="workspace-open-hint" aria-live="polite"></p>
+        <div class="side-heading"><span>Workspaces</span><div class="session-actions"><button id="new-workspace" class="plus-button" type="button" title="New task" aria-label="New task">＋</button><button id="delete-workspace" class="session-icon-button danger" type="button" title="Delete current session" aria-label="Delete current session"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg></button></div></div>
+        <label class="session-filter"><span aria-hidden="true">⌕</span><input id="session-filter" type="search" placeholder="Filter sessions" autocomplete="off" /></label>
+        <div class="workspace-picker"><div class="select-field"><select id="workspace" aria-label="Select session"></select><span>⌄</span></div></div>
+        <div class="workspace-current"><span class="workspace-current-dot"></span><div><strong>Current workspace</strong><small id="workspace-open-hint" aria-live="polite"></small></div></div>
         <div id="recent-sessions" class="recent-sessions"></div>
       </section>
 
@@ -130,12 +131,12 @@
     </main>
 
     <aside class="activity" aria-label="会话执行信息">
-      <div class="activity-heading"><div><p class="eyebrow">SESSION INSPECTOR</p><h2>任务控制台</h2></div><span class="activity-live"><i></i>LIVE</span></div>
+      <div class="activity-heading"><div><p class="eyebrow">SESSION INSPECTOR</p><h2>Control room</h2></div><span class="activity-live"><i></i>LIVE</span></div>
       <nav class="inspector-tabs" aria-label="执行信息模块">
-        <button class="active" type="button" data-inspector-panel="inspector-plan">任务计划</button>
+        <button class="active" type="button" data-inspector-panel="inspector-plan">Plan</button>
         <button type="button" data-inspector-panel="inspector-agents">Agents</button>
         <button type="button" data-inspector-panel="inspector-trace">Trace</button>
-        <button type="button" data-inspector-panel="inspector-usage">用量</button>
+        <button type="button" data-inspector-panel="inspector-usage">Usage</button>
       </nav>
       <div class="inspector-panels">
         <section id="inspector-plan" class="inspector-panel active"><div class="section-title"><div><p class="eyebrow">TASK PLAN</p><h3>任务计划</h3></div><button id="refresh-plan" class="refresh-button" type="button">↻</button></div><label class="plan-agent-picker" for="plan-agent"><span>计划所属 Agent</span><select id="plan-agent" aria-label="选择 Agent 的任务计划"><option value="coordinator">协调者（总计划）</option></select></label><p id="plan-summary" class="plan-summary">Agent 生成的任务计划会显示在这里。</p><div id="task-plan" class="task-plan"><p class="empty">尚未建立任务计划。</p></div></section>
@@ -145,6 +146,6 @@
       </div>
     </aside>
     <script src="/static/slash.js"></script>
-    <script type="module" src="/static/app.js?v=desktop-boundary-1"></script>
+    <script type="module" src="/static/app.js?v=desktop-boundary-2"></script>
   </body>
 </html>

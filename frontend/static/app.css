@@ -255,6 +255,53 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity
 @media (max-width:1100px) { body { grid-template-columns:220px minmax(0,1fr); } .activity { display:none; } .run-overview { right:18px; } .run-overview div,.overview-divider { display:none; } }
 @media (max-width:700px) { body { display:block; overflow:auto; } .sidebar { min-height:auto; } .main-panel { min-height:calc(100vh - 210px); } .topbar { height:auto; min-height:76px; } .run-overview { position:static; margin-left:auto; } .agent-row { padding-inline:16px; } .chat { padding-inline:16px; } .composer { padding-inline:16px; } }
 
+/* -------------------------------------------------------------------------
+   Desktop agent navigation pass
+   Sessions read as projects and threads; inspector navigation becomes a
+   vertical rail so the execution content gets the full horizontal canvas.
+   ------------------------------------------------------------------------- */
+.sidebar { padding:22px 13px 14px; }
+.brand { margin-bottom:27px; }
+.side-block { padding-bottom:12px; }
+.side-heading { margin-inline:7px; }
+.session-filter { position:relative; display:block; margin:0 6px 11px; }
+.session-filter > span { position:absolute; left:10px; top:7px; z-index:1; color:#8e9d8e; font-size:16px; line-height:1; pointer-events:none; }
+.session-filter input { height:34px; margin:0; padding:7px 9px 7px 29px; border-color:#303b31; border-radius:8px; background:#1a211b; color:var(--text); font-size:11px; }
+.session-filter input::placeholder { color:#718071; }
+.session-filter input:focus { border-color:#657555; box-shadow:0 0 0 3px #d8f36a14; }
+.workspace-picker { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.workspace-current { display:flex; align-items:center; gap:9px; min-height:48px; margin:0 6px 12px; padding:8px 10px; border:1px solid #455442; border-radius:9px; background:linear-gradient(135deg,#263126,#1b231c); }
+.workspace-current-dot { width:7px; height:7px; flex:none; border-radius:50%; background:var(--accent); box-shadow:0 0 10px #d8f36a88; }
+.workspace-current strong,.workspace-current small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-current strong { color:#e4eee2; font-size:10px; }
+.workspace-current small { max-width:178px; margin-top:2px; color:#9aa998; font-size:9px; }
+.recent-sessions { gap:3px; margin:0 0 5px; padding:0 3px 0 0; }
+.recent-session { position:relative; display:block; min-height:43px; padding:0; border:1px solid transparent; border-radius:8px; background:transparent; }
+.recent-session::before { position:absolute; top:18px; left:11px; z-index:2; width:6px; height:6px; margin:0; }
+.recent-session::after { content:attr(data-status); position:absolute; right:10px; top:15px; color:#718071; font:700 8px ui-monospace,monospace; letter-spacing:.04em; text-transform:uppercase; }
+.recent-session[data-status="running"]::after { color:var(--accent); }
+.recent-session[data-status="error"]::after { color:var(--red); }
+.recent-session[data-status="done"]::after { color:#7fb3e5; }
+.recent-session-select { display:block; width:100%; min-height:41px; padding:8px 48px 8px 25px; border-radius:8px; background:transparent; color:#9eaa9e; text-align:left; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.recent-session-select:hover { background:#1d271f; color:#edf3e9; }
+.recent-session.active { border-color:#485b45; background:#263126; box-shadow:none; }
+.recent-session.active .recent-session-select { color:#f0f5ed; font-weight:700; }
+.recent-session.active::before { background:var(--accent); }
+.side-footer { margin-top:10px; }
+
+.activity { position:relative; padding:24px 68px 16px 18px; }
+.activity-heading { min-height:44px; }
+.inspector-tabs { position:absolute; top:97px; right:12px; bottom:15px; z-index:3; display:flex; flex-direction:column; align-items:stretch; width:43px; height:auto; margin:0; padding:4px; border-color:#303b31; border-radius:10px; background:#1a211b; }
+.inspector-tabs button { flex:1 1 0; min-height:76px; width:100%; padding:9px 0; border-radius:7px; color:#839183; writing-mode:vertical-rl; text-orientation:mixed; letter-spacing:.08em; }
+.inspector-tabs button:hover { color:#eaf3e8; background:#243024; }
+.inspector-tabs button.active { background:#d8f36a; color:#172015; box-shadow:0 3px 12px #d8f36a2b; }
+.inspector-panels { min-height:0; padding-top:16px; }
+.inspector-panel { min-height:0; }
+.activity .section-title h3 { font-size:18px; }
+
+@media (max-width:1100px) { .activity { display:none; } }
+@media (max-width:700px) { .sidebar { padding-inline:10px; } .workspace-current small { max-width:calc(100vw - 88px); } }
+
 /* ================================================================
    Light theme — toggled via <html data-theme="light">
    Default (no attribute) remains the dark theme above.
