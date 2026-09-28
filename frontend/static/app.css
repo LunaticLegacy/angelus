@@ -302,6 +302,14 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity
 @media (max-width:1100px) { .activity { display:none; } }
 @media (max-width:700px) { .sidebar { padding-inline:10px; } .workspace-current small { max-width:calc(100vw - 88px); } }
 
+/* Reserve real layout space for the inspector rail. The earlier absolute
+   positioning made the rail float over the panel heading and task cards. */
+.activity { display:grid; grid-template-columns:minmax(0,1fr) 45px; grid-template-rows:auto minmax(0,1fr); column-gap:12px; padding:24px 12px 16px 18px; }
+.activity-heading { grid-column:1; grid-row:1; }
+.inspector-tabs { position:static; grid-column:2; grid-row:1 / span 2; align-self:stretch; width:45px; height:auto; margin:0; }
+.inspector-panels { grid-column:1; grid-row:2; min-width:0; min-height:0; padding-top:16px; }
+@media (max-width:1100px) { .activity { display:none; } }
+
 /* ================================================================
    Light theme — toggled via <html data-theme="light">
    Default (no attribute) remains the dark theme above.
