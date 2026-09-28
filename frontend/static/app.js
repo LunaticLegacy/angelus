@@ -8,6 +8,7 @@ import { createExternalAgentHubView } from "./components/external-agent-hub-view
 import { loadPlugins, unloadPlugin } from "./plugins.js";
 import { apiJson, apiPost, apiPut } from "./runtime/backend-bridge.js";
 import { element as shellElement } from "./ui/shell.js";
+import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js";
 
 /* ================================================================
  *  Theme (light / dark) — wired to the ☾ sidebar-footer button.
@@ -20,7 +21,7 @@ function applyTheme(theme) {
   const btn = shellElement("theme-toggle");
   if (btn) {
     btn.textContent = theme === "light" ? "☀" : "☾";
-    btn.title = theme === "light" ? "切换到深色主题" : "切换到浅色主题";
+    btn.title = theme === "light" ? (currentLocale() === "zh-CN" ? "切换到深色主题" : "Switch to dark theme") : (currentLocale() === "zh-CN" ? "切换到浅色主题" : "Switch to light theme");
   }
   try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* private mode etc. */ }
 }
@@ -173,11 +174,11 @@ function renderToolPermissions(policy) {
     applyProfile(profile);
   }));
 }
-function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
+function setStatus(text, state="idle") { const el=$("status"); el.dataset.runtimeText=String(text ?? ""); el.textContent=translateRuntime(text); el.className=`status ${state}`; }
 function providerLabel(provider) { return provider===KIMI_CODE_PROVIDER ? "Kimi Code" : provider; }
 function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。该模型只接受温度 1，已自动锁定。" : ""; }
 function applyProviderPreset() { const temperature=$("temperature"), isKimi=$("provider").value===KIMI_CODE_PROVIDER; temperature.disabled=isKimi; if(!isKimi) { updateProviderHint(); return; } const apiUrl=$("api-url"), model=$("model"); if(!apiUrl.value.trim() || apiUrl.value.trim()==="https://api.openai.com/v1") apiUrl.value=KIMI_CODE_BASE_URL; if(!model.value.trim() || model.value.trim()==="gpt-4.1-mini") model.value=KIMI_CODE_DEFAULT_MODEL; temperature.value=KIMI_CODE_TEMPERATURE; updateProviderHint(); }
-function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || "模型配置"; $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; updateProviderHint(); }
+function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || t("settings.modelConfig"); $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; updateProviderHint(); }
 /** Return explicitly selected, non-current session IDs for run-scoped memory grants. */
 function selectedMemorySessions() { return [...new Set($("session-memory-sessions").value.split(",").map(value=>value.trim()).filter(value=>value && value !== sessionId))]; }
 /** Render searchable session choices and removable selections without exposing session content. */
@@ -235,9 +236,10 @@ function openMcpApproval(event) { $("mcp-approval-id").value=event.id; $("mcp-ap
 /** Submit a decision; elicited values travel only in this response body. */
 async function answerMcpApproval() { throw new Error("MCP approval is not available in the Session console"); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
-function setRunning(running) { runActive=running; updateStopAvailability(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? "调整正在执行的 Agent…" : "给 Agent 一个任务… （/ 开头为指令，/help 查看）"; if(running){ resizeComposer(); setSteerStatus("运行中 — 指令会在安全的轮次边界生效"); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
+function setRunning(running) { runActive=running; updateStopAvailability(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? t("runtime.adjustPlaceholder") : t("composer.placeholder"); if(running){ resizeComposer(); setSteerStatus(t("runtime.steering")); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
 let steerStatusTimer = null;
-const steerHintText = "运行中 — 指令会在安全的轮次边界生效";
+let steerHintText = "运行中 — 指令会在安全的轮次边界生效";
+onLocaleChange(() => { steerHintText = t("runtime.steering"); if (runActive) setSteerStatus(steerHintText); });
 function setSteerStatus(text, state="") { const el=$("steer-status"); if(!el) return; const hint=el.closest(".steer-hint"); el.textContent=text; el.className=state ? `steer-status ${state}` : "steer-status"; if(hint) hint.className=`steer-hint ${state || ""}`.trim(); clearTimeout(steerStatusTimer); if(state) steerStatusTimer=setTimeout(()=>{ el.textContent=steerHintText; el.className="steer-status"; if(hint) hint.className="steer-hint"; }, 6000); }
 async function sendSteer(message) { const receipt=await apiPost(`/api/runs/${encodeURIComponent(sessionId)}/control`,{agent_id:selectedAgent,action:"steer",message,reason:"user_steer"}); const target=selectedAgent==="all"?"全部活跃 Agent":selectedAgent; setSteerStatus(`已发送给 ${target}（${(receipt.target_agents||[]).length} 个目标）`,"applied"); }
 /** Load every session into the select and independently scrollable quick list. */
@@ -1105,6 +1107,7 @@ $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
 async function initializeConsole() {
+  await initI18n();
   initInspectorTabs();
   bindSettingsPersistence();
   // The rebuilt backend currently owns only provider discovery and durable

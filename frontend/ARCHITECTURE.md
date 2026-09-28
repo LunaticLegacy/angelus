@@ -26,3 +26,10 @@ The initial boundary is implemented by:
 
 This keeps the current API contract intact while making a future Tauri/native
 transport replaceable without reworking the interface.
+
+## Localization
+
+`static/i18n.js` loads locale data from `static/locales/*.json`. The selected
+locale is stored as `angelusLocale`; unsupported or failed locale loads fall
+back to English. Adding a language means adding a JSON file and registering its
+locale code in `LOCALE_FILES`, without adding language branches to components.
