@@ -6,6 +6,8 @@ import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { createExternalAgentHubView } from "./components/external-agent-hub-view.js?v=context-exchange-1";
 import { loadPlugins, unloadPlugin } from "./plugins.js";
+import { apiJson, apiPost, apiPut } from "./runtime/backend-bridge.js";
+import { element as shellElement } from "./ui/shell.js";
 
 /* ================================================================
  *  Theme (light / dark) — wired to the ☾ sidebar-footer button.
@@ -15,7 +17,7 @@ import { loadPlugins, unloadPlugin } from "./plugins.js";
 const THEME_KEY = "llmfetcherTheme";
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  const btn = $("theme-toggle");
+  const btn = shellElement("theme-toggle");
   if (btn) {
     btn.textContent = theme === "light" ? "☀" : "☾";
     btn.title = theme === "light" ? "切换到深色主题" : "切换到浅色主题";
@@ -26,7 +28,7 @@ function initTheme() {
   let theme = "dark";
   try { theme = localStorage.getItem(THEME_KEY) || "dark"; } catch (e) {}
   applyTheme(theme);
-  const btn = $("theme-toggle");
+  const btn = shellElement("theme-toggle");
   if (btn) btn.addEventListener("click", () =>
     applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
 }
@@ -238,9 +240,6 @@ let steerStatusTimer = null;
 const steerHintText = "运行中 — 指令会在安全的轮次边界生效";
 function setSteerStatus(text, state="") { const el=$("steer-status"); if(!el) return; const hint=el.closest(".steer-hint"); el.textContent=text; el.className=state ? `steer-status ${state}` : "steer-status"; if(hint) hint.className=`steer-hint ${state || ""}`.trim(); clearTimeout(steerStatusTimer); if(state) steerStatusTimer=setTimeout(()=>{ el.textContent=steerHintText; el.className="steer-status"; if(hint) hint.className="steer-hint"; }, 6000); }
 async function sendSteer(message) { const receipt=await apiPost(`/api/runs/${encodeURIComponent(sessionId)}/control`,{agent_id:selectedAgent,action:"steer",message,reason:"user_steer"}); const target=selectedAgent==="all"?"全部活跃 Agent":selectedAgent; setSteerStatus(`已发送给 ${target}（${(receipt.target_agents||[]).length} 个目标）`,"applied"); }
-async function apiJson(path) { const response=await fetch(path); if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${path})`); return response.json(); }
-async function apiPost(path, body={}) { const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
-async function apiPut(path, body={}) { const response=await fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
 async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";imageComposer.setSession(sessionId);renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; imageComposer.setSession(sessionId); const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
