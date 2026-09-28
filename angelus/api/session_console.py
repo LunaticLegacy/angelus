@@ -228,12 +228,22 @@ def events_stream(session_id: str, request: Request, cursor: int = 0, last_event
             resumed_cursor = 0
         next_cursor = max(0, cursor, resumed_cursor)
         try:
+            ephemeral_cursor = _service(request).ephemeral_cursor(session_id)
+        except (KeyError, LookupError):
+            ephemeral_cursor = 0
+        try:
             while True:
                 page = _service(request).events(session_id, next_cursor, 500)
                 records = page["events"]
                 for event in records:
                     next_cursor += 1
                     yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                live = _service(request).ephemeral_events(session_id, ephemeral_cursor)
+                for event in live["events"]:
+                    ephemeral_cursor = int(event["ephemeral_sequence"])
+                    # No SSE id: ephemeral frames must never advance the
+                    # durable Last-Event-ID/cursor used for reconnect replay.
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 core = getattr(request.app.state, "angelus_core")
                 status = core.execution_service.status(session_id)
                 if str(status.state) not in {"running", "stopping", "force_stopping"}:

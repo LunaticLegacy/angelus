@@ -481,6 +481,22 @@ class ConsoleProjectionService:
         next_cursor=start+len(page)
         return {"events": page, "next_cursor": next_cursor if has_more else None, "has_more": has_more, "durable_offset": page[-1].get("offset", 0) if page else 0}
 
+    def ephemeral_cursor(self, session_id: str) -> int:
+        """Return the current live-only cursor for a new SSE subscriber."""
+        session = self._session(session_id)
+        attempt = session.execution.attempt if session.execution else None
+        return attempt.ephemeral_cursor() if attempt is not None else 0
+
+    def ephemeral_events(self, session_id: str, cursor: int = 0) -> dict[str, object]:
+        """Return token-level events that exist only for attached clients."""
+        session = self._session(session_id)
+        attempt = session.execution.attempt if session.execution else None
+        if attempt is None:
+            return {"events": [], "next_cursor": cursor}
+        events = attempt.ephemeral_events(cursor)
+        next_cursor = max([cursor, *(int(item.get("ephemeral_sequence", cursor)) for item in events)])
+        return {"events": events, "next_cursor": next_cursor}
+
     def _rebuild_after_edit(self, session_id: str) -> dict[str, object]:
         """Rebuild the concrete swarm after a persisted static graph change.
 

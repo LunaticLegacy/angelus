@@ -8,7 +8,7 @@ import uuid
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from llmfetcher.execution import ExecutionController, StopMode
 
@@ -95,8 +95,52 @@ class ExecutionAttempt(Generic[ResultT]):
         self._result: ResultT | None = None
         # Cross-thread signal that a worker reached confirmed terminal cleanup.
         self._done = threading.Event()
+        # Live-only events are intentionally not part of the durable journal.
+        # They are useful to an attached SSE client, but replaying token-level
+        # deltas after reconnect is both wasteful and visually confusing.
+        self._ephemeral_events: list[dict[str, Any]] = []
+        self._ephemeral_sequence = 0
         # Serializes lifecycle fields, journal ordering, and manifest updates.
         self._lock = threading.RLock()
+
+    def publish_ephemeral(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        agent: str = "",
+        message: str = "",
+        usage: dict[str, Any] | None = None,
+    ) -> None:
+        """Publish one live-only event without appending it to the journal."""
+        with self._lock:
+            self._ephemeral_sequence += 1
+            self._ephemeral_events.append({
+                "event": "lifecycle",
+                "type": event_type,
+                "agent": agent,
+                "message": message,
+                "usage": usage or {},
+                "data": data,
+                "ephemeral": True,
+                "ephemeral_sequence": self._ephemeral_sequence,
+            })
+            # Keep a bounded tail in case a client disappears mid-run.
+            if len(self._ephemeral_events) > 4096:
+                del self._ephemeral_events[:-2048]
+
+    def ephemeral_cursor(self) -> int:
+        """Return the current live-only sequence for a new SSE subscriber."""
+        with self._lock:
+            return self._ephemeral_sequence
+
+    def ephemeral_events(self, after: int = 0) -> list[dict[str, Any]]:
+        """Return live-only events after an in-process subscriber cursor."""
+        with self._lock:
+            return [
+                dict(event) for event in self._ephemeral_events
+                if int(event.get("ephemeral_sequence", 0)) > after
+            ]
 
     def start(self, operation: Callable[[ExecutionController], ResultT], *, start_data: dict[str, object] | None = None) -> None:
         """Schedule exactly one operation under this attempt's controller.
