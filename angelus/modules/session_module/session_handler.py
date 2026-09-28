@@ -76,6 +76,10 @@ class Session:
         # deliberately never persisted: only durable Agent context survives a
         # process restart, not an in-flight provider request.
         self.run_control: SessionRunControl | None = None
+        # Explicit context compaction is a session-owned operation so the UI
+        # can cancel the same in-flight provider request safely.
+        self.compaction_control: Any | None = None
+        self.compaction_lock = threading.RLock()
         # Durable console-only state (plans and safe graph blueprints).  It is
         # attached when the session receives its durable state root.
         self.console: ConsoleState | None = None

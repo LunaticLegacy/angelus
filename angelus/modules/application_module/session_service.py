@@ -12,6 +12,7 @@ from ..execution_module import ExecutionState
 from ..session_module import create_agent, validate_session_id
 from ..tool_module import ToolPolicy
 from llmfetcher import Agent, LLMBackendConfig
+from llmfetcher.execution import ExecutionController, StopMode
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -139,6 +140,55 @@ class SessionService:
         # only a concrete llmfetcher Agent is valid for graph registration.
         if isinstance(coordinator, Agent):
             self.rebuild_swarm(session_id)
+
+    def compact(self, session_id: str, agent_name: str = "coordinator") -> tuple[ExecutionController, Agent]:
+        """Start one explicit compaction using the session's live Agent.
+
+        The returned controller is published on the Session while the caller
+        performs the operation, allowing the HTTP stop endpoint to cancel the
+        provider request without constructing a second connector.
+        """
+        session = self._core.sessions.get(session_id)
+        if session.execution is not None:
+            state = session.execution.snapshot().state
+            if state in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
+                raise RuntimeError("Cannot compact while a run is active in this session")
+        self.ensure_coordinator(session_id)
+        agent = next(
+            (candidate for candidate in session.agents
+             if getattr(candidate, "_agent_name_in_graph", "") == agent_name),
+            session.coordinator if agent_name == session.coordinator_name else None,
+        )
+        if agent is None:
+            raise RuntimeError(f"Session agent is not configured: {agent_name}")
+        control = ExecutionController()
+        with session.compaction_lock:
+            if session.compaction_control is not None:
+                raise RuntimeError("Compaction is already running")
+            session.compaction_control = control
+        try:
+            context_path = getattr(agent, "context_path", None)
+            if context_path is not None and Path(context_path).exists():
+                if not agent.context_handler.load(context_path):
+                    raise RuntimeError("Could not load context checkpoint")
+            profile = self._core.run_profiles.effective(session_id)
+            linear = getattr(agent.context_handler, "linear", agent.context_handler)
+            if hasattr(linear, "compress_threshold"):
+                linear.compress_threshold = profile["max_context_threshold"]
+            agent.compact_context(control=control)
+            return control, agent
+        finally:
+            with session.compaction_lock:
+                session.compaction_control = None
+
+    def stop_compaction(self, session_id: str, *, force: bool = False, reason: str = "user_requested") -> bool:
+        session = self._core.sessions.get(session_id)
+        with session.compaction_lock:
+            control = session.compaction_control
+        if control is None:
+            return False
+        control.request_stop(StopMode.FORCE if force else StopMode.GRACEFUL, reason=reason)
+        return True
 
     def rebuild_swarm(self, session_id: str) -> None:
         """Materialize the safe console blueprint into the Session's one swarm.
