@@ -194,7 +194,7 @@ const imageComposer = createImageComposer({
     return payload;
   },
 });
-const chatView = createChatView({ getAgentLabel: () => selectedAgent, getSessionId: () => sessionId, onFollowChange: setScrollToBottomVisible });
+const chatView = createChatView({ getAgentLabel: () => selectedAgent, getSessionId: () => sessionId, onFollowChange: setScrollToBottomVisible, onCompactStop: (agent) => stopCompaction(agent).catch(error => trace("停止压缩失败", error.message)) });
 const traceView = createTraceView();
 /** Append a single transcript turn live (real-time path). */
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
@@ -831,14 +831,25 @@ async function start(message, images=[], targetSession=sessionId) {
     return true;
   } catch(error) { if(targetSession === sessionId){ const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("发送失败，草稿已保留", message); setStatus("请求失败", "error"); setRunning(false); } return false; }
 }
-let compactStatusTimer=null;
-function showCompactStatus(text, state="running", dismissMs=0) {
-  const el=$("compact-status"); if(!el) return;
-  clearTimeout(compactStatusTimer);
-  el.textContent=text; el.className=`compact-status ${state}`; el.hidden=false;
-  if(dismissMs>0) compactStatusTimer=setTimeout(()=>{ el.hidden=true; el.className="compact-status"; }, dismissMs);
+const compactionCards = new Map();
+function clearCompactStatus() { compactionCards.clear(); }
+function compactCardEvent(event, manual=false) {
+  const data = event.data || event;
+  const key = String(data.compaction_id || `${event.agent || data.agent || "coordinator"}:${data.round || "manual"}`);
+  const previous = compactionCards.get(key) || {id:key, agent:event.agent || data.agent || "coordinator", manual, stages:[]};
+  const state = event.type?.endsWith("success") || data.stage === "done" ? "success" : event.type?.endsWith("failed") || data.kind === "error" ? "failed" : event.type?.endsWith("cancelled") ? "cancelled" : "running";
+  const stageLabel = event.message || data.detail || (state === "running" ? "处理中…" : "");
+  const stages = previous.stages.slice();
+  if(stageLabel && !stages.some(item => item.label === stageLabel)) stages.push({label:stageLabel, state});
+  const preview = `${previous.preview || ""}${data.delta || ""}`.slice(-12000);
+  const next = {...previous, state, detail:stageLabel, error:data.error || event.error || "", stages, preview, manual};
+  compactionCards.set(key, next); chatView.upsertCompaction(next);
 }
-function clearCompactStatus() { clearTimeout(compactStatusTimer); const el=$("compact-status"); if(el){ el.hidden=true; el.className="compact-status"; } }
+async function stopCompaction(agent="coordinator", force=false) {
+  const suffix = force ? "/force-stop" : "/stop";
+  const response = await fetch(sessionApi(`/compact${suffix}`), {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({reason:"user_requested"})});
+  if(!response.ok) throw new Error((await response.json().catch(()=>({}))).detail || "压缩尚未运行");
+}
 /** Coalesce a burst of SSE-driven refreshes into one trailing call. */
 function debounce(fn, wait=150) {
   let timer = null;
@@ -882,13 +893,11 @@ function handleEvent(event) {
   if(event.event === "lifecycle" && event.type === "agent:remote_request" && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) loadContextPrompt(contextDialogAgent).catch(error=>trace("上下文请求预览刷新失败",error.message));
   if(event.event === "lifecycle" && ["agent:remote_request","agent:llm_request","agent:retry","agent:usage","agent:internal_usage","agent:round","agent:tools_requested","agent:tools_completed"].includes(event.type) && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) refreshOpenContextCalls();
   if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
-  if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator";
-    if(event.type==="context:compact_started"){ const ratio=typeof cd.ratio==="number"?` ${cd.ratio}%`:"";
-      const csize=cd.context_size?` · ${cd.context_size} 字符`:"";
-      showCompactStatus(`正在压缩 ${cagent} 的上下文…${csize}${ratio}`,"running"); }
-    else if(event.type==="context:compact_success"){ showCompactStatus(`上下文压缩完成（${cagent}）：${cd.archived_messages??"N"} 条消息 → 1 条摘要`,"success",4000); }
-    else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
-    else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
+  if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator"; compactCardEvent(event);
+    if(event.type==="context:compact_started") setStatus(`正在压缩 ${cagent} 的上下文…`, "running");
+    else if(event.type==="context:compact_success") setStatus(`上下文压缩完成（${cagent}）`, "idle");
+    else if(event.type==="context:compact_failed") setStatus(`上下文压缩失败（${cagent}）`, "error");
+    else if(event.type==="context:compact_skipped") setStatus("上下文压缩已跳过", "idle"); }
   if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
   if(event.type === "agent:failed") { const agent=event.agent||"coordinator"; appendRunErrorBlock(`Agent ${agent} 运行失败`, String(event.data?.error || event.message || "未知错误")); scheduleGraphPlanReload(); }
   if(event.type === "agent:control" && event.data?.action === "steer") { const data=event.data; upsertSteering({id:data.steer_id,text:event.message||"",scope:data.agent_id||"all",recipients:data.target_agents||[],applied_agents:[],submitted_at:event.timestamp}); }
@@ -934,16 +943,13 @@ async function runStop() { const receipt=await apiPost(`/api/runs/${encodeURICom
 async function runForceStop() { const label=selectedAgent==="all"?"整个运行":selectedAgent;if(!confirm(`强行停止 ${label}？`)) return; $("force-stop").disabled=true; $("stop").disabled=true; return apiPost(`/api/runs/${encodeURIComponent(sessionId)}/control`,{agent_id:selectedAgent,action:"force_stop",reason:"user_requested"}); }
 let compacting=false;
 async function runCompact(agent="coordinator") {
-  setStatus("手动压缩 API 尚未接入当前 Session 后端", "error");
-  trace("上下文压缩不可用", `Agent ${agent} 的手动压缩端点尚未挂载。`);
-  return;
   if(compacting){ setStatus("压缩已在进行中…", "running"); return; }
   if($("composer").hidden){ setStatus("运行结束后才能压缩上下文", "error"); return; }
   compacting=true; $("message").disabled=true;
   const startedSession=sessionId;
   try {
     setStatus("正在压缩上下文…", "running"); trace("上下文压缩", `开始压缩 ${agent} 的上下文…`);
-    const response=await fetch(sessionApi("/compact"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent, config: config()})});
+    const response=await fetch(sessionApi("/compact"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent})});
     if(!response.ok || !response.body){ const payload=await response.json().catch(()=>({})); const detail=payload.detail||`${response.status} ${response.statusText}`; setStatus(`压缩失败：${detail}`, "error"); trace("压缩失败", detail); return; }
     const reader=response.body.getReader(); const decoder=new TextDecoder(); let buffer="";
     while(true){ const {done, value}=await reader.read(); if(done) break; buffer+=decoder.decode(value,{stream:true}); const lines=buffer.split("\n"); buffer=lines.pop()||""; for(const line of lines){ if(!line.trim()) continue; let record; try{ record=JSON.parse(line); }catch{ continue; } handleCompactStage(record, startedSession); } }
@@ -953,6 +959,7 @@ async function runCompact(agent="coordinator") {
 function handleCompactStage(record, startedSession) {
   if(sessionId!==startedSession) return; /* 切换会话后忽略旧压缩流 */
   const {stage, detail, kind, error="", raw_content:rawContent=""}=record;
+  compactCardEvent({agent, data:{stage, detail, kind, error, compaction_id:`manual:${startedSession}:${agent}`}}, true);
   if(kind==="error"){ const diagnostic=error ? `${detail}\n原因：${error}` : detail; setStatus(detail,"error"); trace("压缩失败", diagnostic); appendRunErrorBlock("上下文压缩失败", diagnostic, rawContent); }
   else if(stage==="done"){ setStatus(detail,"idle"); trace("上下文压缩", detail); loadInspectorAgents().catch(()=>{}); }
   else setStatus(detail,"running");

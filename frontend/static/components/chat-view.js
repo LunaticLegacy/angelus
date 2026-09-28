@@ -12,7 +12,7 @@ import { attachmentImageUrl } from "./image-composer.js";
  *   DOM rendering operations. They mutate only `#chat`; persistent state remains
  *   owned by the Workbench controller.
  */
-export function createChatView({ getAgentLabel, getSessionId = () => null, onFollowChange = () => {} }) {
+export function createChatView({ getAgentLabel, getSessionId = () => null, onFollowChange = () => {}, onCompactStop = () => {} }) {
   // A reader counts as following while the transcript end sits within this many
   // pixels of the viewport. Streaming deltas, momentum scrolling and fractional
   // device pixels routinely leave `scrollTop` a few pixels short of the exact
@@ -440,6 +440,28 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     scrollToLatestIfFollowing();
   }
 
+  function upsertCompaction(event = {}) {
+    removeWelcome();
+    const chat = $("chat");
+    const id = String(event.id || `${event.agent || "coordinator"}:${event.round || "manual"}`);
+    let element = chat.querySelector(`[data-compaction-id="${CSS.escape(id)}"]`);
+    if (!element) {
+      element = document.createElement("article");
+      element.className = "message compaction-card";
+      element.dataset.compactionId = id;
+      chat.append(element);
+    }
+    const state = String(event.state || "running");
+    const agent = String(event.agent || "coordinator");
+    const title = state === "success" ? "上下文压缩完成" : state === "failed" ? "上下文压缩失败" : state === "cancelled" ? "压缩已停止" : "正在压缩上下文";
+    const stages = Array.isArray(event.stages) ? event.stages : [];
+    const details = stages.map(stage => `<li class="${escapeHtml(String(stage.state || ""))}"><span>${escapeHtml(String(stage.label || stage.detail || ""))}</span>${stage.value ? `<small>${escapeHtml(String(stage.value))}</small>` : ""}</li>`).join("");
+    const canStop = state === "running";
+    element.innerHTML = `<div class="message-meta"><div class="role role-system"><i></i><span>系统 · ${escapeHtml(agent)}</span></div><small>${escapeHtml(event.manual ? "手动压缩" : "自动压缩")}</small></div><div class="compaction-head"><strong>${escapeHtml(title)}</strong><span class="compaction-state ${escapeHtml(state)}">${escapeHtml(String(event.detail || ""))}</span></div>${details ? `<ul class="compaction-stages">${details}</ul>` : ""}${event.error ? `<p class="compaction-error">${escapeHtml(String(event.error))}</p>` : ""}${canStop ? `<div class="compaction-actions"><button type="button" data-compact-stop>停止压缩</button></div>` : ""}`;
+    element.querySelector("[data-compact-stop]")?.addEventListener("click", () => onCompactStop(agent));
+    scrollToLatestIfFollowing();
+  }
+
   function upsertSteer(steering) {
     removeWelcome();
     const chat = $("chat");
@@ -567,5 +589,5 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     applyScroll();
   }
 
-  return { append, appendError, beginStream, buildMessage, followLatest, isFollowing, removeWelcome, render, scrollToLatestIfFollowing, upsertSteer };
+  return { append, appendError, beginStream, buildMessage, followLatest, isFollowing, removeWelcome, render, scrollToLatestIfFollowing, upsertSteer, upsertCompaction };
 }
