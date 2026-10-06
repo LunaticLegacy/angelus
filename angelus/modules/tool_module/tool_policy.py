@@ -41,7 +41,8 @@ class ToolPolicy:
         raw_categories = value.get("categories")
         raw_tools = value.get("tools")
         categories = frozenset(
-            name for name, enabled in raw_categories.items()
+            "context_version" if name == "context" else name
+            for name, enabled in raw_categories.items()
             if isinstance(name, str) and enabled is True
         ) if isinstance(raw_categories, dict) else frozenset()
         migrated: set[str] = set()

@@ -30,11 +30,24 @@ class ContextVersionToolProvider:
             ("inspect_agent_context", inspect, ToolSchema()),
             ("edit_agent_context", edit, ToolSchema(properties=[ToolParameter("expected_revision_id", required=False), ToolParameter("operations", type="array"), ToolParameter("reason", required=False, default="")])),
             ("restore_agent_context", restore, ToolSchema(properties=[ToolParameter("expected_revision_id", required=False), ToolParameter("revision_id"), ToolParameter("reason", required=False, default="")]))]
-        return [Tool(name, "Versioned operation on this Agent's own active context.", schema, handler) for name, handler, schema in candidates if policy.allows("context_version", name)]
+        descriptions = {
+            "inspect_agent_context": "检视当前 Agent 的上下文记录、当前修订和历史版本；只读。",
+            "edit_agent_context": "按记录替换、删除或插入上下文内容，并创建新的修订版本。",
+            "restore_agent_context": "从指定历史修订创建新的恢复版本；不会覆盖历史修订。",
+        }
+        return [Tool(name, descriptions[name], schema, handler) for name, handler, schema in candidates if policy.allows("context_version", name)]
 
 
 def context_version_tool_registration(core: "AngelusCore") -> ToolProviderRegistration:
     names = ("inspect_agent_context", "edit_agent_context", "restore_agent_context")
     return ToolProviderRegistration("context_version", ContextVersionToolProvider(core),
         (ToolCategory("context_version", "上下文版本", "检查、编辑并向前恢复当前 Agent 上下文。"),),
-        tuple(ToolDefinition(name, "context_version", name, "当前 Agent 的版本化上下文操作。", "context_version", frozenset({"coordinator", "worker"})) for name in names))
+        tuple(ToolDefinition(name, "context_version", {
+            "inspect_agent_context": "检视当前上下文",
+            "edit_agent_context": "编辑上下文",
+            "restore_agent_context": "恢复上下文版本",
+        }[name], {
+            "inspect_agent_context": "检视当前 Agent 的上下文记录、当前修订和历史版本；只读。",
+            "edit_agent_context": "按记录替换、删除或插入上下文内容，并创建新的修订版本。",
+            "restore_agent_context": "从指定历史修订创建新的恢复版本；不会覆盖历史修订。",
+        }[name], "context_version", frozenset({"coordinator", "worker"})) for name in names))
