@@ -47,7 +47,7 @@
 
 **Steps:** 测试工具标题、描述和旧 `context` 分类迁移；保留内部 ID，增加显示名称；将旧分类归一化为 `context_version`；运行 capability/context-store 测试；提交 `feat: expose named context version tools`。
 
-### Task 5: Angelus 静态工作台 Agent 监视入口
+### Task 5: 核验 Angelus 静态工作台 Agent 监视入口
 
 **Files:**
 - Modify: `frontend/static/app.js`
@@ -55,7 +55,7 @@
 - Modify: `frontend/static/app.css`
 - Test: `tests/test_session_console.py` and frontend smoke checks
 
-**Steps:** 增加 Agent 选择/监视模型；右侧显示状态、最近事件、用量和选中 Agent 上下文；保留 coordinator 默认对话；补充加载、空状态、已移除 Agent 和错误状态；手动验证；提交 `feat: add agent monitor to static workbench`。
+**Steps:** 核验现有 `frontend/static/app.js`、`frontend/templates/index.html` 和 `frontend/static/components/chat-view.js` 已提供 Agent 选择、拓扑卡片、上下文检查器、按 Agent 消息读取和 `target_agent` 提交；仅在接口不兼容时补充最小修复，不重复移植 POFP React 右侧栏；运行静态语法检查并记录结果。
 
 ### Task 6: 文档与交付
 
