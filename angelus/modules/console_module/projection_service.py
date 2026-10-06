@@ -366,14 +366,92 @@ class ConsoleProjectionService:
             Input, output, total, cached, and reasoning token totals.
         """
         swarm = self._session(session_id).swarm
-        per_agent = swarm.agent_usage()
+        persisted = self._persisted_usage(session_id)
+        if persisted is None:
+            total = swarm.total_usage()
+            per_agent = swarm.agent_usage()
+        else:
+            total, per_agent = persisted
         return {
-            "usage": swarm.total_usage(),
+            "usage": total,
             "agents": [
                 {"id": agent_id, "usage": usage}
                 for agent_id, usage in sorted(per_agent.items())
             ],
         }
+
+    @staticmethod
+    def _usage_values(value: object) -> dict[str, int] | None:
+        """Normalize one persisted usage mapping without trusting its types."""
+        if not isinstance(value, dict):
+            return None
+        result: dict[str, int] = {}
+        for key in ("input", "output", "total", "cached", "reasoning"):
+            try:
+                result[key] = max(0, int(value.get(key, 0)))
+            except (TypeError, ValueError):
+                result[key] = 0
+        return result
+
+    @classmethod
+    def _add_usage(cls, target: dict[str, int], value: object) -> bool:
+        usage = cls._usage_values(value)
+        if usage is None:
+            return False
+        for key, amount in usage.items():
+            target[key] += amount
+        return any(usage.values())
+
+    def _persisted_usage(self, session_id: str) -> tuple[dict[str, int], dict[str, dict[str, int]]] | None:
+        """Rebuild usage from durable execution journals after restart."""
+        root = self._core.workspaces.get(session_id).state_path
+        total = {key: 0 for key in ("input", "output", "total", "cached", "reasoning")}
+        agents: dict[str, dict[str, int]] = {}
+        found = False
+        for journal_path in (root / "executions").glob("*/execution.events.ndjson"):
+            try:
+                lines = journal_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(event, dict) or event.get("type") not in {"agent:usage", "agent:internal_usage"}:
+                    continue
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                value = data.get("usage") if isinstance(data, dict) else None
+                value = value if value is not None else event.get("usage")
+                agent = str(event.get("agent") or "unknown")
+                bucket = agents.setdefault(agent, {key: 0 for key in total})
+                if self._add_usage(total, value):
+                    self._add_usage(bucket, value)
+                    found = True
+        if found:
+            return total, agents
+
+        # Compatibility fallback for old checkpoints without usage journal
+        # facts; archived context rows may contain the original usage fields.
+        for context_path in (root / "agents").glob("*/context.json"):
+            before: int | None = None
+            while True:
+                try:
+                    page, next_before, _ = read_persisted_context_page(
+                        context_path, before_timeline=before, limit=200, include_archive=True
+                    )
+                except (OSError, ValueError, TypeError):
+                    break
+                bucket = agents.setdefault(context_path.parent.name, {key: 0 for key in total})
+                for item in page:
+                    value = getattr(item, "usage", None)
+                    if self._add_usage(total, value):
+                        self._add_usage(bucket, value)
+                        found = True
+                if next_before is None:
+                    break
+                before = next_before
+        return (total, agents) if found else None
 
     # Index-only keys permitted in an ``agent:remote_request`` projection.  A
     # legacy journal recorded the full ``{model,messages,...,tools}`` request
