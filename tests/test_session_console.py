@@ -1209,11 +1209,17 @@ class FrontendContextLoadTests(unittest.TestCase):
         self.assertNotIn("chat-view.js?v=native-vision-3", app)
 
     def test_static_cache_buster_is_bumped(self) -> None:
+        """Guard that the shell assets carry the tokens the template ships.
+
+        Both tokens were bumped by earlier asset changes (app.js: ``...-boundary-2``
+        then ``i18n-1``; app.css: ``desktop-agent-1`` then ``desktop-agent-2``), so
+        the expectations follow ``index.html`` rather than one particular change.
+        """
         html = self._read("frontend/templates/index.html")
         self.assertIn("/static/app.js?v=i18n-1", html)
-        self.assertNotIn("/static/app.js?v=external-hub-9", html)
-        self.assertIn("/static/app.css?v=workbench-86", html)
-        self.assertNotIn("/static/app.css?v=workbench-85", html)
+        self.assertNotIn("/static/app.js?v=desktop-boundary-2", html)
+        self.assertIn("/static/app.css?v=desktop-agent-2", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-1", html)
 
     def test_plan_mutations_trigger_a_plan_reload(self) -> None:
         """``plan:*`` lifecycle facts must schedule the debounced plan reload.
