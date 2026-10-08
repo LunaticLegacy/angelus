@@ -1212,13 +1212,13 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ``i18n-2``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ``desktop-agent-2``). Expectations follow
+        ``i18n-1`` -> ``i18n-2`` -> ``i18n-3``); the stylesheet token tracks the
+        layout (``desktop-agent-1`` -> ``desktop-agent-2``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-2", html)
-        self.assertNotIn("/static/app.js?v=i18n-1", html)
+        self.assertIn("/static/app.js?v=i18n-3", html)
+        self.assertNotIn("/static/app.js?v=i18n-2", html)
         self.assertIn("/static/app.css?v=desktop-agent-2", html)
         self.assertNotIn("/static/app.css?v=desktop-agent-1", html)
 

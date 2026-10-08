@@ -6,7 +6,7 @@ import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { createExternalAgentHubView } from "./components/external-agent-hub-view.js?v=context-exchange-1";
 import { loadPlugins, unloadPlugin } from "./plugins.js";
-import { apiJson, apiPost, apiPut } from "./runtime/backend-bridge.js";
+import { apiJson, apiPost, apiPut, apiDelete } from "./runtime/backend-bridge.js";
 import { element as shellElement, initShellLayout } from "./ui/shell.js";
 import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js";
 
@@ -256,7 +256,7 @@ function connectorPayload(name) { return {name, provider:value("provider"), mode
 /** Give connector saves a visible local result instead of relying on hidden Trace. */
 function connectorFeedback(text, state="") { const button=$("save-connector"); button.textContent=text; button.dataset.state=state; clearTimeout(connectorFeedback.timer); connectorFeedback.timer=setTimeout(()=>{button.textContent="保存";button.dataset.state="";},1800); }
 /** Persist the current fields as a new globally available connector. */
-async function createConnector(name) { const response=await fetch("/api/connectors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(connectorPayload(name))}); const connector=await response.json(); if(!response.ok) throw new Error(connector.detail||"无法保存连接"); await loadConnectors(connector.id); await persistSettings(); trace("已保存连接并绑定到当前运行档案",connector.name); connectorFeedback("已保存","success"); }
+async function createConnector(name) { const connector=await apiPost("/api/connectors",connectorPayload(name)); await loadConnectors(connector.id); await persistSettings(); trace("已保存连接并绑定到当前运行档案",connector.name); connectorFeedback("已保存","success"); }
 /** Replace the selected connector while keeping its global identity. */
 async function saveSelectedConnector() { if(!connectorId){openConnectorDialog();return;} const name=$("connector").selectedOptions[0]?.text||"当前连接"; const response=await fetch(`/api/connectors/${connectorId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(connectorPayload(name))}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||"无法更新连接");} trace("已更新连接",name); connectorFeedback("已保存","success"); }
 /** Open the document-native name dialog used by both new and unsaved connectors. */
@@ -825,8 +825,9 @@ async function start(message, images=[], targetSession=sessionId) {
   sseCursor = 0; lifecycleCursor = 0; runRetryCount = 0; setStatus("正在提交", "running");
   try {
     const targetAgent=selectedAgent === "all" ? null : selectedAgent;
-    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"})), target_agent:targetAgent})});
-    const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
+    // apiPost turns a non-JSON failure body into its HTTP status; a bare
+    // response.json() would report a plain-text 500 as a parse error instead.
+    await apiPost("/api/runs", {session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"})), target_agent:targetAgent});
     setWorkspaceIndicator(targetSession,"running");
     if (targetSession === sessionId) {
       setRunning(true); setStatus("正在执行", "running"); chatView.append({role:"user",content:message,images});
@@ -1090,7 +1091,7 @@ $("connector").addEventListener("change", event=>{connectorId=event.target.value
 // is loaded. Optional profile controls must not prevent every later event
 // binding in that mixed-version window.
 $("profile-scope")?.addEventListener("change",()=>restoreSettings().then(()=>loadConnectors(connectorId)).catch(error=>trace("加载运行档案失败",error.message)));
-$("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profile-scope")?.value==="global")return;try{const target=profileWorkspaceId||sessionId;const response=await fetch(`/api/sessions/${encodeURIComponent(target)}/run-profile`,{method:"DELETE"});const profile=await response.json();if(!response.ok)throw new Error(profile.detail||response.statusText);applyProfile(profile);await loadConnectors(connectorId);}catch(error){trace("恢复默认档案失败",error.message);}});
+$("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profile-scope")?.value==="global")return;try{const target=profileWorkspaceId||sessionId;const profile=await apiDelete(`/api/sessions/${encodeURIComponent(target)}/run-profile`);applyProfile(profile);await loadConnectors(connectorId);}catch(error){trace("恢复默认档案失败",error.message);}});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
