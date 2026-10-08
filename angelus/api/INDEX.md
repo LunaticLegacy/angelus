@@ -57,7 +57,7 @@ replaced solely by `settings.py`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [__init__.py](__init__.py#L35) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
+| [__init__.py](__init__.py#L36) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
 | [attachments.py](attachments.py#L13) | `_store` | `request: Request, session_id: str` | `Any` | Implement `_store`. |
 | [attachments.py](attachments.py#L21) | `upload_image` | `session_id: str, request: Request, filename: str` | `dict` | Accept bounded raw image bytes without requiring a multipart parser. |
 | [attachments.py](attachments.py#L37) | `download_image` | `session_id: str, attachment_id: str, request: Request` | `FileResponse` | Serve an existing validated image only within its owning Session. |
@@ -66,6 +66,8 @@ replaced solely by `settings.py`.
 | [compact.py](compact.py#L38) | `compact_session` | `session_id: str, payload: CompactRequest, request: Request` | `StreamingResponse` | Run explicit compaction through the session's existing Agent handler. |
 | [compact.py](compact.py#L63) | `stop_compaction` | `session_id: str, payload: CompactStopRequest, request: Request` | `dict[str, Any]` | Implement `stop_compaction`. |
 | [compact.py](compact.py#L71) | `force_stop_compaction` | `session_id: str, payload: CompactStopRequest, request: Request` | `dict[str, Any]` | Implement `force_stop_compaction`. |
+| [error_reporting.py](error_reporting.py#L20) | `write_failure` | `state_root: Path, request: Request, exc: Exception` | `Path` | Append one failure and its traceback to the state-root log. |
+| [error_reporting.py](error_reporting.py#L44) | `install_error_reporting` | `app: FastAPI, state_root: Path` | `None` | Answer unhandled exceptions with JSON detail and log their traceback. |
 | [external_agent_hub.py](external_agent_hub.py#L41) | `_core` | `request: Request` | `AngelusCore` | Resolve the application composition root from FastAPI state. |
 | [external_agent_hub.py](external_agent_hub.py#L60) | `list_external_agents` | `request: Request` | `dict[str, object]` | List all durable external Agent definitions. |
 | [external_agent_hub.py](external_agent_hub.py#L73) | `discover_external_agent_processes` | `request: Request` | `dict[str, object]` | Read local known Agent processes without attaching or persisting one. |

@@ -50,6 +50,8 @@ node --check frontend/static/app.js
 | [test_agent_control.py](test_agent_control.py#L57) | `AgentControlTests.test_targeted_force_stop_cancels_only_target_resources` | `None` | `None` | Invoke only the selected Agent's registered resource canceller. |
 | [test_agent_control.py](test_agent_control.py#L75) | `AgentControlTests.test_effective_stop_request_prefers_force_across_scopes` | `None` | `None` | Expose the force request required by LLMFetcher cancellation checks. |
 | [test_agent_defaults.py](test_agent_defaults.py#L16) | `AgentDefaultTests.test_agents_stream_by_default` | `None` | `None` | The factory opts every Session-created Agent into streaming. |
+| [test_api_error_reporting.py](test_api_error_reporting.py#L22) | `ApiErrorReportingTests.test_unhandled_exception_returns_json_detail_and_logs_traceback` | `None` | `None` | The answer names the exception; the state root keeps the traceback. |
+| [test_api_error_reporting.py](test_api_error_reporting.py#L42) | `ApiErrorReportingTests.test_a_successful_response_is_untouched` | `None` | `None` | The handler must not disturb ordinary routes. |
 | [test_capability_migrations.py](test_capability_migrations.py#L20) | `CapabilityMigrationTests.test_nested_plan_is_atomic_and_derives_parent_status` | `None` | `None` | Implement `CapabilityMigrationTests.test_nested_plan_is_atomic_and_derives_parent_status`. |
 | [test_capability_migrations.py](test_capability_migrations.py#L41) | `CapabilityMigrationTests.test_flat_schema_one_plan_is_migrated_to_coordinator` | `None` | `None` | Implement `CapabilityMigrationTests.test_flat_schema_one_plan_is_migrated_to_coordinator`. |
 | [test_capability_migrations.py](test_capability_migrations.py#L47) | `CapabilityMigrationTests.test_context_edit_requires_revision_and_restore_is_forward_only` | `None` | `None` | Implement `CapabilityMigrationTests.test_context_edit_requires_revision_and_restore_is_forward_only`. |
@@ -328,6 +330,7 @@ node --check frontend/static/app.js
 |---|---|---|---|---|
 | [test_agent_control.py](test_agent_control.py#L10) | `AgentControlTests` | `None` | `unittest.TestCase` | Verify scope isolation while preserving Session-wide cancellation. |
 | [test_agent_defaults.py](test_agent_defaults.py#L13) | `AgentDefaultTests` | `None` | `unittest.TestCase` | Ensure product defaults reach llmfetcher instead of remaining UI-only. |
+| [test_api_error_reporting.py](test_api_error_reporting.py#L19) | `ApiErrorReportingTests` | `None` | `unittest.TestCase` | One raising route must produce reportable detail and a log entry. |
 | [test_capability_migrations.py](test_capability_migrations.py#L19) | `CapabilityMigrationTests` | `None` | `unittest.TestCase` | Provide `CapabilityMigrationTests` behavior. |
 | [test_claude_sdk_adapter.py](test_claude_sdk_adapter.py#L19) | `FakeClaudeDiscovery` | `ready: bool, records: tuple[ClaudeSdkSessionRecord, ...]` | `object` | Injected Claude facade that records read-only discovery calls. |
 | [test_claude_sdk_adapter.py](test_claude_sdk_adapter.py#L50) | `ClaudeSdkAdapterTests` | `None` | `unittest.TestCase` | Verify Claude SDK adapter availability and non-executing discovery. |
