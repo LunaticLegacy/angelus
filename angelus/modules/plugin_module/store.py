@@ -13,15 +13,20 @@ from .models import PluginPermission, PluginRecord, PluginSettingScalar, PluginS
 class PluginStore:
     """Own global plugin registration state below the Angelus state root."""
 
-    def __init__(self, state_root: Path) -> None:
+    def __init__(self, state_root: Path, package_root: Path | None = None) -> None:
         """Create one store with a managed package directory.
 
         Args:
             state_root: Angelus-owned durable state root.
         """
-        self.package_root = state_root / "plugins" / "packages"
-        self.data_root = state_root / "plugins" / "data"
-        self._path = state_root / "plugins" / "registry.json"
+        default_root = state_root / "plugins"
+        self.package_root = (package_root or default_root).resolve()
+        # In portable mode ``package_root`` is the plugin directory itself:
+        # <install>/.angelus-state/plugins/<plugin-id>. Keep its registry and
+        # runtime data beside those plugin directories.
+        plugin_root = self.package_root
+        self.data_root = plugin_root / "data"
+        self._path = plugin_root / "registry.json"
         self._lock = threading.RLock()
 
     def records(self) -> tuple[PluginRecord, ...]:

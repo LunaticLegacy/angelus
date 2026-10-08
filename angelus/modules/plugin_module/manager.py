@@ -101,6 +101,7 @@ class PluginManager:
         state_root: Path,
         tool_registry: ToolRegistry,
         development_root: Path | None = None,
+        managed_root: Path | None = None,
     ) -> None:
         """Create an initially unloaded plugin manager.
 
@@ -109,14 +110,17 @@ class PluginManager:
             tool_registry: Existing global tool registry receiving loaded tools.
             development_root: Optional read-only source package directory. When
                 omitted, Angelus discovers repository ``plugins/`` packages.
+            managed_root: Optional portable package directory. Its registry,
+                runtime data, and editable package copies share that root.
         """
-        self.store = PluginStore(state_root)
+        self.store = PluginStore(state_root, managed_root)
         self._tool_registry = tool_registry
         source_root = development_root if development_root is not None else Path.cwd() / "plugins"
-        self._discovery_roots = (
-            self.store.package_root.resolve(),
-            source_root.resolve(),
-        )
+        roots = [self.store.package_root.resolve()]
+        resolved_source = source_root.resolve()
+        if resolved_source not in roots:
+            roots.append(resolved_source)
+        self._discovery_roots = tuple(roots)
         self._loaded: dict[str, LoadedPlugin] = {}
         self._lock = threading.RLock()
 
@@ -234,6 +238,7 @@ class PluginManager:
             record = self.store.get(plugin_id)
             if record is None:
                 raise KeyError(plugin_id)
+            record = self._refresh_record_path(record)
             manifest = self._manifest_for_record(record)
             missing = tuple(permission for permission in manifest.permissions if permission not in record.permissions_granted)
             if missing and not grant_permissions:
@@ -262,6 +267,7 @@ class PluginManager:
             record = self.store.get(plugin_id)
             if record is None:
                 raise KeyError(plugin_id)
+            record = self._refresh_record_path(record)
             manifest = self._manifest_for_record(record)
             loaded = self._loaded.pop(manifest.name, None)
             if loaded is not None:
@@ -293,10 +299,18 @@ class PluginManager:
         record = self.store.get(plugin_id)
         if record is None:
             raise KeyError(plugin_id)
+        record = self._refresh_record_path(record)
         manifest = self._manifest_for_record(record)
         if not manifest.settings_enabled:
             raise KeyError(plugin_id)
-        return {"id": record.id, "name": manifest.name, "settings": _settings_json(record.settings), "settings_schema": [_field_json(field) for field in manifest.settings_schema]}
+        settings_schema = {field.key: _field_json(field) for field in manifest.settings_schema}
+        return {
+            "id": record.id,
+            "name": manifest.name,
+            "settings": _settings_json(record.settings),
+            "settings_schema": settings_schema,
+            "panels": [_panel_json(panel) for panel in manifest.panels],
+        }
 
     def replace_settings(self, plugin_id: str, values: Mapping[str, object]) -> dict[str, object]:
         """Validate and persist non-secret scalar settings for one plugin.
@@ -315,6 +329,7 @@ class PluginManager:
         record = self.store.get(plugin_id)
         if record is None:
             raise KeyError(plugin_id)
+        record = self._refresh_record_path(record)
         manifest = self._manifest_for_record(record)
         if not manifest.settings_enabled:
             raise KeyError(plugin_id)
@@ -348,6 +363,7 @@ class PluginManager:
         record = self.store.get(plugin_id)
         if record is None:
             raise KeyError(plugin_id)
+        record = self._refresh_record_path(record)
         loaded = self._loaded.get(record.name)
         if loaded is None:
             raise KeyError(plugin_id)
@@ -431,6 +447,36 @@ class PluginManager:
         if manifest.name != record.name or not self._is_discovery_package(path):
             raise KeyError(record.id)
         return manifest
+
+    def _refresh_record_path(self, record: PluginRecord) -> PluginRecord:
+        """Rebind a durable record after a onefile bundle has been re-extracted.
+
+        Nuitka onefile data lives below a new temporary directory on every
+        launch. Older registries therefore can contain a package path that no
+        longer exists. Re-discover the same manifest name only within the
+        already trusted roots, then persist the current resolved path while
+        retaining the user's permissions, settings, and enabled state.
+        """
+        current_path = Path(record.package_path).resolve()
+        if current_path.exists() and self._is_discovery_package(current_path):
+            return record
+        try:
+            discovered = self._discovery(record.name)
+        except KeyError:
+            return record
+        if discovered.manifest is None:
+            return record
+        refreshed = PluginRecord(
+            record.id,
+            record.name,
+            str(discovered.package_path),
+            record.enabled,
+            record.permissions_granted,
+            record.settings,
+        )
+        if refreshed.package_path != record.package_path:
+            self.store.put(refreshed)
+        return refreshed
 
     def _is_discovery_package(self, package_path: Path) -> bool:
         """Return whether a record points at a direct child of a trusted root.
@@ -665,7 +711,7 @@ def _field_json(value: object) -> dict[str, object]:
     """
     return {
         "key": value.key, "type": value.value_type, "title": value.title, "description": value.description,
-        "required": value.required, "default": value.default, "enum": list(value.choices), "minimum": value.minimum,
+        "required": value.required, "default": value.default, "enum": list(value.choices) or None, "minimum": value.minimum,
         "maximum": value.maximum, "format": value.value_format, "placeholder": value.placeholder,
         "sensitive": isinstance(value, PluginPanelField) and value.sensitive,
     }
