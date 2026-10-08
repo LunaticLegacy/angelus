@@ -89,6 +89,17 @@ class SystemResourceManagerTests(unittest.TestCase):
         self.assertIn("BrowseForFolder", command[-1])
         self.assertIn("Project''s folder", command[-1])
 
+    def test_open_directory_dispatches_to_file_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            calls: list[list[str]] = []
+            manager = SystemResourceManager(
+                system_name="Linux",
+                which=lambda name: "/usr/bin/xdg-open" if name == "xdg-open" else None,
+                runner=lambda command, **_kwargs: calls.append(command),
+            )
+            self.assertEqual(manager.open_directory(temporary), Path(temporary).resolve())
+            self.assertEqual(calls, [["/usr/bin/xdg-open", str(Path(temporary).resolve())]])
+
 
 if __name__ == "__main__":
     unittest.main()
