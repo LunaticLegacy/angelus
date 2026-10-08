@@ -25,6 +25,8 @@ from angelus.modules.tool_module import ToolPolicy
 from angelus.modules.execution_module.journal import ExecutionJournal
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
 from llmfetcher.llm_types import LLMOutput, LLMToolCall, TokenUsage
+from angelus.modules.application_module.agent_control import SessionRunControl
+from llmfetcher.execution import ExecutionController
 
 
 class _Journal:
@@ -1208,8 +1210,8 @@ class FrontendContextLoadTests(unittest.TestCase):
 
     def test_static_cache_buster_is_bumped(self) -> None:
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=external-hub-9", html)
-        self.assertNotIn("/static/app.js?v=external-hub-8", html)
+        self.assertIn("/static/app.js?v=i18n-1", html)
+        self.assertNotIn("/static/app.js?v=external-hub-9", html)
         self.assertIn("/static/app.css?v=workbench-86", html)
         self.assertNotIn("/static/app.css?v=workbench-85", html)
 
@@ -1268,6 +1270,92 @@ class FrontendContextLoadTests(unittest.TestCase):
         self.assertIn('calls:{title:"调用"', app)
         self.assertIn("refreshOpenContextCalls", app)
         self.assertIn('$("context-panel-calls").hidden=chrome.selected!=="calls"', app)
+
+
+
+class _ControlSwarm:
+    "Minimal TaskBus fake recording dynamic Agent registration."
+    def __init__(self) -> None: self.dispatched: list[str] = []
+    def dynamic_add_agent(self, name: str, worker: object) -> str:
+        return "Connected: " + name
+    def dispatch_task(self, **kwargs: object) -> SimpleNamespace:
+        name = str(kwargs.get("agent_name"))
+        self.dispatched.append(name)
+        return SimpleNamespace(id="task-" + name, recipient=name)
+    def redispatch_task(self, **kwargs: object) -> SimpleNamespace:
+        name = str(kwargs.get("agent_name"))
+        return SimpleNamespace(id="task-" + name, recipient=name)
+
+
+class _ControlWorker:
+    "Worker fake accepting the report Tool added before dispatch."
+    def add_tools(self, tools: list[object]) -> None:
+        self.tools = list(tools)
+
+
+class _ControlConsole:
+    "Console fake modelling worker registration and bindability."
+    def __init__(self) -> None: self.workers: list[str] = []
+    def add_worker(self, name: str, system_prompt: str = "") -> None:
+        self.workers.append(name)
+    def remove_worker(self, name: str) -> None:
+        if name in self.workers:
+            self.workers.remove(name)
+    def is_bindable_leaf(self, plan_task_id: str) -> bool:
+        return True
+    def bind_execution(self, task_id: str, assignment_id: str) -> None:
+        return None
+
+
+class _ControlExecution:
+    "Execution boundary exposing the session identity only."
+    def __init__(self) -> None:
+        self.session_id = "session-1"
+        self.attempt = None
+
+
+class _ControlSession:
+    "Session aggregate containing only the fields console tools touch."
+    def __init__(self, run_control: SessionRunControl | None) -> None:
+        self.console = _ControlConsole()
+        self.swarm = _ControlSwarm()
+        self.agents: list[object] = []
+        self.execution = _ControlExecution()
+        self.run_control = run_control
+
+
+class DynamicAgentControlRegistrationTests(unittest.TestCase):
+    "Prove dynamically created console agents register with live run control."
+
+    def _tools(self, run_control: SessionRunControl | None) -> tuple[SessionConsoleTools, _ControlSession]:
+        session = _ControlSession(run_control)
+
+        def factory(_session_id: str, _name: str, _prompt: str) -> _ControlWorker:
+            return _ControlWorker()
+
+        permissions = ToolPermissionPolicy(
+            frozenset({"swarm"}), frozenset({"swarm_add_worker", "dispatch_subagent", "revive_agent"}),
+        )
+        tools = SessionConsoleTools(session, permissions, worker_factory=factory)
+        return tools, session
+
+    def test_dynamic_tools_register_agents_for_targeted_control(self) -> None:
+        control = SessionRunControl(ExecutionController())
+        tools, session = self._tools(control)
+        tools.swarm_add_worker("worker-a", "inspect")
+        tools.dispatch_subagent("worker-b", "inspect", "objective-b")
+        tools.revive_agent("worker-a", "objective-c")
+        self.assertIs(session.run_control, control)
+        for name in ("worker-a", "worker-b"):
+            self.assertEqual(control.steer(name, "focus").target_agents, (name,))
+            self.assertEqual(control.stop(name, False, "done"), (name,))
+
+    def test_dynamic_tools_noop_without_run_control(self) -> None:
+        tools, session = self._tools(None)
+        tools.swarm_add_worker("worker-a", "inspect")
+        tools.dispatch_subagent("worker-b", "inspect", "objective-b")
+        tools.revive_agent("worker-a", "objective-c")
+        self.assertEqual(session.console.workers, ["worker-a", "worker-b"])
 
 
 if __name__ == "__main__":

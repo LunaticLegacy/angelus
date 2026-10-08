@@ -120,7 +120,14 @@ def apply_journal_event(graph: RunGraph, event: Mapping[str, Any], *, cursor: in
         return
     if not agent:
         return
-    node = graph.ensure_node(agent, origin="runtime" if _text(data.get("task_id")) else "blueprint")
+    node = graph.ensure_node(
+        agent,
+        origin="runtime" if _text(data.get("task_id")) else "blueprint",
+        # Dispatch facts carry the TaskBus reply_to; restoring it here rebuilds
+        # parent/child topology on post-restart journal replay even with no
+        # live snapshot (ensure_node ignores None, so it never clobbers).
+        parent_id=_text(data.get("reply_to")),
+    )
     node.task_id = _text(data.get("task_id")) or node.task_id
     node.plan_task_id = _text(data.get("plan_task_id")) or node.plan_task_id
     node.message = message or node.message

@@ -203,6 +203,20 @@ class SessionConsoleTools:
         attempt = self._session.execution.attempt if self._session.execution else None
         if attempt is not None:
             attempt.journal.append(event_type, data, agent="", message=message)
+    def _register_control(self, name: str) -> None:
+        """Register one dynamically created Agent with live run control.
+
+        Pre-registration at run start cannot know about Agents created mid-run
+        by console tools, so a targeted steer/stop would otherwise raise
+        KeyError.  The run-control registry only exists during an active
+        attempt; its absence is a normal no-op.
+
+        Args:
+            name: Agent identity that just entered the live swarm.
+        """
+        control = getattr(self._session, "run_control", None)
+        if control is not None:
+            control.for_agent(name)
 
     def set_task_plan(self, goal: str, tasks: list[dict[str, object]], summary: str = "") -> dict[str, object]:
         """Atomically validate and replace the caller's complete task tree."""
@@ -313,6 +327,7 @@ class SessionConsoleTools:
             self._session.console.remove_worker(name)
             raise
         self._session.agents.append(worker)
+        self._register_control(name)
         self._journal("console:add_worker", result, {"name": name})
         return result
 
@@ -392,6 +407,7 @@ class SessionConsoleTools:
             self._session.console.remove_worker(name)
             raise
         self._session.agents.append(worker)
+        self._register_control(name)
         payload = {"agent_name": assignment.recipient, "task_id": assignment.id}
         self._journal("swarm:dispatch", f"Task {assignment.id} dispatched to {name}", payload)
         return json.dumps(payload, ensure_ascii=False)
@@ -461,6 +477,7 @@ class SessionConsoleTools:
         )
         if plan_task_id:
             self._session.console.bind_execution(plan_task_id, assignment.id)
+        self._register_control(name)
         payload = {"agent_name": assignment.recipient, "task_id": assignment.id}
         self._journal("swarm:revive", f"Task {assignment.id} revived on {name}", payload)
         return json.dumps(payload, ensure_ascii=False)
