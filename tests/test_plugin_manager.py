@@ -6,12 +6,13 @@ import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from angelus.core import AngelusCore, _bundled_plugin_root, _development_plugin_root
 from angelus.modules.plugin_module import PluginManager, PluginRecord, PluginUiActionResult
-from angelus.modules.tool_module import ToolRegistry
+from angelus.modules.tool_module import ToolPolicy, ToolRegistry
 
 
 class PluginManagerTests(unittest.TestCase):
@@ -134,6 +135,48 @@ class PluginManagerTests(unittest.TestCase):
             self.assertEqual(["plugin.echo-tools.echo"], [item.id for item in registry.definitions()])
             manager.unload("echo-tools")
             self.assertEqual((), registry.definitions())
+
+    def test_plugin_tools_obey_the_session_policy(self) -> None:
+        """Revoking a plugin category must remove its Tools from the Agent.
+
+        Returns:
+            ``None`` after asserting the host filters a plugin's Tools by the
+            session grants instead of trusting the plugin to do it.
+        """
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "plugins" / "echo-tools"
+            package.mkdir(parents=True)
+            _json(package / "manifest.json", {
+                "name": "echo-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
+                "frontend": {"assets": [], "settings": False},
+            })
+            (package / "main.py").write_text(
+                "from llmfetcher import Tool, ToolSchema\n"
+                "from angelus.modules.plugin_module import PluginToolCategory, PluginToolContribution, PluginToolDefinition\n"
+                "class Provider:\n"
+                "    def materialize(self, session_id, policy, role):\n"
+                "        return [Tool('plugin.echo-tools.echo', 'Echo', ToolSchema(), lambda **_: 'ok')]\n"
+                "class Plugin:\n"
+                "    def setup(self, runtime):\n"
+                "        runtime.register_tool_provider(PluginToolContribution(Provider(), (PluginToolCategory('utility', 'Echo', 'Echo helpers'),), (PluginToolDefinition('echo', 'utility', 'Echo', 'Echo safely', frozenset({'coordinator'})),)))\n"
+                "    def teardown(self): pass\n"
+                "angelus_plugin = Plugin()\n",
+                encoding="utf-8",
+            )
+            registry = ToolRegistry()
+            manager = PluginManager(root, registry)
+            manager.register("echo-tools")
+            manager.load("echo-tools", grant_permissions=False)
+            session = SimpleNamespace(execution=None)
+            granted = ToolPolicy(frozenset({"plugin.echo-tools.utility"}), frozenset({"plugin.echo-tools.echo"}))
+            revoked = ToolPolicy(frozenset(), frozenset())
+
+            granted_names = [tool.name for tool in registry.materialize(session, granted, "coordinator")]
+            revoked_names = [tool.name for tool in registry.materialize(session, revoked, "coordinator")]
+
+            self.assertEqual(["plugin.echo-tools.echo"], granted_names)
+            self.assertEqual([], revoked_names)
 
     def test_settings_schema_exposes_user_parameters_to_runtime(self) -> None:
         """Persist declared user parameters and expose them through runtime access.

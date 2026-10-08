@@ -555,7 +555,7 @@ class PluginManager:
                 ) for item in contribution.definitions)
                 if not categories or any(item.category_id not in category_ids for item in contribution.definitions):
                     raise RuntimeError("plugin contribution has invalid categories")
-                self._tool_registry.register(ToolProviderRegistration(provider_id, _PluginProvider(manifest.name, contribution.provider), categories, definitions))
+                self._tool_registry.register(ToolProviderRegistration(provider_id, _PluginProvider(manifest.name, contribution.provider, definitions), categories, definitions))
                 provider_ids.append(provider_id)
             return tuple(provider_ids)
         except Exception:
@@ -567,18 +567,26 @@ class PluginManager:
 class _PluginProvider:
     """Adapt a package-local provider to the host Session tool protocol."""
 
-    def __init__(self, name: str, provider: object) -> None:
-        """Retain plugin identity and its declared provider.
+    def __init__(self, name: str, provider: object, definitions: tuple[ToolDefinition, ...] = ()) -> None:
+        """Retain plugin identity, its provider, and its declared Tools.
 
         Args:
             name: Owning manifest name for tool namespace validation.
             provider: Plugin-supplied provider implementing ``materialize``.
+            definitions: Tools this contribution declared; each returned Tool
+                resolves through them to the category that authorizes it.
         """
         self._name = name
         self._provider = provider
+        self._definitions = definitions
 
     def materialize(self, session: "Session", policy: "ToolPolicy", role: str, agent_name: str | None = None) -> list["Tool"]:
         """Create namespaced concrete Tools for one Agent.
+
+        The host owns authorization: a plugin may return whatever Tools it
+        likes, but only those the Session actually granted reach the model, so
+        revoking a plugin category removes its Tools even from a plugin that
+        ignores the policy.
 
         Args:
             session: Owning Session aggregate.
@@ -586,17 +594,22 @@ class _PluginProvider:
             role: Receiving Agent role.
 
         Returns:
-            Plugin-provided concrete Tools matching the plugin namespace.
+            Plugin-provided concrete Tools matching the plugin namespace and
+            the Session's grants.
 
         Raises:
-            RuntimeError: If the plugin returns an un-namespaced Tool.
+            RuntimeError: If the plugin returns an un-namespaced Tool or a Tool
+                it never declared.
         """
         session_id = session.execution.session_id if session.execution is not None else ""
         tools = self._provider.materialize(session_id, policy, role)
         prefix = f"plugin.{self._name}."
         if any(not tool.name.startswith(prefix) for tool in tools):
             raise RuntimeError("plugin emitted a Tool outside its namespace")
-        return tools
+        declared = {item.id: item.category_id for item in self._definitions}
+        if any(tool.name not in declared for tool in tools):
+            raise RuntimeError("plugin emitted an undeclared Tool")
+        return [tool for tool in tools if policy.allows(declared[tool.name], tool.name)]
 
 
 def _remove_plugin_modules(module_name: str) -> None:

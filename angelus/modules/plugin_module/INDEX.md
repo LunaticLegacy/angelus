@@ -80,19 +80,19 @@ namespaced `ToolProviderRegistration` values to `tool_module.ToolRegistry`.
 | [manager.py](manager.py#L481) | `PluginManager._is_discovery_package` | `package_path: Path` | `bool` | Return whether a record points at a direct child of a trusted root. |
 | [manager.py](manager.py#L493) | `PluginManager._load` | `manifest: PluginManifest, record: PluginRecord` | `LoadedPlugin` | Execute one approved tool plugin and atomically publish providers. |
 | [manager.py](manager.py#L534) | `PluginManager._publish` | `manifest: PluginManifest, contributions: list[PluginToolContribution]` | `tuple[str, ...]` | Namespace and publish setup contributions after complete validation. |
-| [manager.py](manager.py#L580) | `_PluginProvider.materialize` | `session: 'Session', policy: 'ToolPolicy', role: str, agent_name: str \| None` | `list['Tool']` | Create namespaced concrete Tools for one Agent. |
-| [manager.py](manager.py#L602) | `_remove_plugin_modules` | `module_name: str` | `None` | Remove a plugin entry namespace and its relative-import children. |
-| [manager.py](manager.py#L617) | `_entrypoint` | `module: ModuleType` | `PluginEntrypoint` | Extract a valid module-level plugin lifecycle object. |
-| [manager.py](manager.py#L637) | `_status` | `manifest: PluginManifest, record: PluginRecord \| None, state: str, error: str` | `dict[str, object]` | Build a non-secret plugin projection for browser controls. |
-| [manager.py](manager.py#L661) | `_permission_json` | `value: PluginPermission` | `dict[str, str]` | Serialize one permission to its public JSON shape. |
-| [manager.py](manager.py#L673) | `_theme_json` | `value: object` | `dict[str, str]` | Serialize one typed theme without exposing package filesystem paths. |
-| [manager.py](manager.py#L685) | `_panel_json` | `value: PluginPanel` | `dict[str, object]` | Serialize one declarative panel for the generic browser renderer. |
-| [manager.py](manager.py#L703) | `_field_json` | `value: object` | `dict[str, object]` | Serialize one typed schema field for form rendering. |
-| [manager.py](manager.py#L720) | `_settings_json` | `values: tuple[PluginSettingValue, ...]` | `dict[str, PluginSettingScalar]` | Serialize typed settings into an API object. |
-| [manager.py](manager.py#L732) | `_validate_settings` | `manifest: PluginManifest, values: Mapping[str, object]` | `tuple[PluginSettingValue, ...]` | Validate a submitted object against the plugin's declared schema. |
-| [manager.py](manager.py#L748) | `_validate_fields` | `declared: tuple[PluginSettingField, ...], values: Mapping[str, object], defaults: bool` | `tuple[PluginSettingValue, ...]` | Validate typed persisted or transient values against declared fields. |
-| [manager.py](manager.py#L792) | `_validate_ui_actions` | `manifest: PluginManifest, actions: list[PluginUiActionRegistration]` | `tuple[PluginUiActionRegistration, ...]` | Ensure loaded code registered every and only manifest panel action. |
-| [manager.py](manager.py#L819) | `_setting_type` | `value: object, kind: str` | `bool` | Check an API scalar against one schema scalar type. |
+| [manager.py](manager.py#L583) | `_PluginProvider.materialize` | `session: 'Session', policy: 'ToolPolicy', role: str, agent_name: str \| None` | `list['Tool']` | Create namespaced concrete Tools for one Agent. |
+| [manager.py](manager.py#L615) | `_remove_plugin_modules` | `module_name: str` | `None` | Remove a plugin entry namespace and its relative-import children. |
+| [manager.py](manager.py#L630) | `_entrypoint` | `module: ModuleType` | `PluginEntrypoint` | Extract a valid module-level plugin lifecycle object. |
+| [manager.py](manager.py#L650) | `_status` | `manifest: PluginManifest, record: PluginRecord \| None, state: str, error: str` | `dict[str, object]` | Build a non-secret plugin projection for browser controls. |
+| [manager.py](manager.py#L674) | `_permission_json` | `value: PluginPermission` | `dict[str, str]` | Serialize one permission to its public JSON shape. |
+| [manager.py](manager.py#L686) | `_theme_json` | `value: object` | `dict[str, str]` | Serialize one typed theme without exposing package filesystem paths. |
+| [manager.py](manager.py#L698) | `_panel_json` | `value: PluginPanel` | `dict[str, object]` | Serialize one declarative panel for the generic browser renderer. |
+| [manager.py](manager.py#L716) | `_field_json` | `value: object` | `dict[str, object]` | Serialize one typed schema field for form rendering. |
+| [manager.py](manager.py#L733) | `_settings_json` | `values: tuple[PluginSettingValue, ...]` | `dict[str, PluginSettingScalar]` | Serialize typed settings into an API object. |
+| [manager.py](manager.py#L745) | `_validate_settings` | `manifest: PluginManifest, values: Mapping[str, object]` | `tuple[PluginSettingValue, ...]` | Validate a submitted object against the plugin's declared schema. |
+| [manager.py](manager.py#L761) | `_validate_fields` | `declared: tuple[PluginSettingField, ...], values: Mapping[str, object], defaults: bool` | `tuple[PluginSettingValue, ...]` | Validate typed persisted or transient values against declared fields. |
+| [manager.py](manager.py#L805) | `_validate_ui_actions` | `manifest: PluginManifest, actions: list[PluginUiActionRegistration]` | `tuple[PluginUiActionRegistration, ...]` | Ensure loaded code registered every and only manifest panel action. |
+| [manager.py](manager.py#L832) | `_setting_type` | `value: object, kind: str` | `bool` | Check an API scalar against one schema scalar type. |
 | [manifest.py](manifest.py#L32) | `load_manifest` | `package_path: Path` | `PluginManifest` | Decode one package manifest without importing plugin code. |
 | [manifest.py](manifest.py#L55) | `_text` | `raw: Mapping[str, object], key: str, required: bool, maximum: int` | `str` | Read one bounded manifest text field. |
 | [manifest.py](manifest.py#L76) | `_decode_manifest` | `raw: Mapping[str, object]` | `PluginManifest` | Validate supported v1 fields and assemble the immutable manifest. |
@@ -128,7 +128,7 @@ namespaced `ToolProviderRegistration` values to `tool_module.ToolRegistry`.
 | [manager.py](manager.py#L61) | `DiscoveredPlugin` | `manifest: PluginManifest \| None, package_path: Path, error: str` | `object` | A manifest-validated package that has not necessarily been registered. |
 | [manager.py](manager.py#L76) | `LoadedPlugin` | `manifest: PluginManifest, record: PluginRecord, module_name: str, entrypoint: PluginEntrypoint \| None, provider_ids: tuple[str, ...], ui_actions: tuple[PluginUiActionRegistration, ...]` | `object` | In-process runtime state for an explicitly enabled plugin. |
 | [manager.py](manager.py#L96) | `PluginManager` | `state_root: Path, tool_registry: ToolRegistry, development_root: Path \| None, managed_root: Path \| None` | `object` | Single process authority for plugin package lifecycle and settings. |
-| [manager.py](manager.py#L567) | `_PluginProvider` | `name: str, provider: object` | `object` | Adapt a package-local provider to the host Session tool protocol. |
+| [manager.py](manager.py#L567) | `_PluginProvider` | `name: str, provider: object, definitions: tuple[ToolDefinition, ...]` | `object` | Adapt a package-local provider to the host Session tool protocol. |
 | [manifest.py](manifest.py#L28) | `ManifestError` | `None` | `ValueError` | Raised when a plugin package fails declarative manifest validation. |
 | [models.py](models.py#L18) | `PluginPermission` | `action: str, scope: str` | `object` | One capability a plugin requests before its code can be loaded. |
 | [models.py](models.py#L31) | `PluginSettingField` | `key: str, value_type: Literal['string', 'integer', 'number', 'boolean'], title: str, description: str, required: bool, default: PluginSettingScalar \| None, choices: tuple[PluginSettingScalar, ...], minimum: int \| float \| None, maximum: int \| float \| None, value_format: Literal['uri', 'path', 'textarea'] \| None, placeholder: str` | `object` | One typed, non-secret field displayed in a plugin settings form. |
