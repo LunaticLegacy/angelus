@@ -20,12 +20,13 @@ depend on FastAPI, browser APIs, Tauri APIs, or workspace persistence.
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [system_resource_manager.py](system_resource_manager.py#L38) | `SystemResourceManager.select_directory` | `title: str` | `Path \| None` | Return one existing directory selected by the host desktop shell. |
-| [system_resource_manager.py](system_resource_manager.py#L74) | `SystemResourceManager._picker_command` | `title: str` | `list[str]` | Build the command for the current host without invoking it. |
-| [system_resource_manager.py](system_resource_manager.py#L102) | `SystemResourceManager._linux_picker_command` | `title: str` | `list[str]` | Use an installed desktop chooser belonging to the Linux session. |
-| [system_resource_manager.py](system_resource_manager.py#L117) | `SystemResourceManager._first_available` | `*names: str` | `str` | Implement `SystemResourceManager._first_available`. |
-| [system_resource_manager.py](system_resource_manager.py#L126) | `SystemResourceManager._is_cancelled` | `returncode: int, stderr: str` | `bool` | Implement `SystemResourceManager._is_cancelled`. |
-| [system_resource_manager.py](system_resource_manager.py#L134) | `_powershell_literal` | `value: str` | `str` | Escape a value for a single-quoted PowerShell literal. |
-| [system_resource_manager.py](system_resource_manager.py#L139) | `_applescript_literal` | `value: str` | `str` | Escape a value embedded in an AppleScript string literal. |
+| [system_resource_manager.py](system_resource_manager.py#L74) | `SystemResourceManager.open_directory` | `path: str \| Path` | `Path` | Open an existing directory in the host file manager. |
+| [system_resource_manager.py](system_resource_manager.py#L93) | `SystemResourceManager._picker_command` | `title: str` | `list[str]` | Build the command for the current host without invoking it. |
+| [system_resource_manager.py](system_resource_manager.py#L121) | `SystemResourceManager._linux_picker_command` | `title: str` | `list[str]` | Use an installed desktop chooser belonging to the Linux session. |
+| [system_resource_manager.py](system_resource_manager.py#L136) | `SystemResourceManager._first_available` | `*names: str` | `str` | Implement `SystemResourceManager._first_available`. |
+| [system_resource_manager.py](system_resource_manager.py#L145) | `SystemResourceManager._is_cancelled` | `returncode: int, stderr: str` | `bool` | Implement `SystemResourceManager._is_cancelled`. |
+| [system_resource_manager.py](system_resource_manager.py#L153) | `_powershell_literal` | `value: str` | `str` | Escape a value for a single-quoted PowerShell literal. |
+| [system_resource_manager.py](system_resource_manager.py#L158) | `_applescript_literal` | `value: str` | `str` | Escape a value embedded in an AppleScript string literal. |
 
 ## Class Map
 

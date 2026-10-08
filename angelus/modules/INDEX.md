@@ -31,12 +31,36 @@ by storing mutable runtime state in an API adapter.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| — | — | `None` | `None` | 本索引范围不直接拥有可执行函数；沿 Route Map 进入下级索引。 |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L22) | `ComputerBackend.screenshot` | `None` | `ScreenCapture` | Implement `ComputerBackend.screenshot`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L23) | `ComputerBackend.screen_size` | `None` | `tuple[int, int]` | Implement `ComputerBackend.screen_size`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L24) | `ComputerBackend.click` | `x: int, y: int, button: str` | `None` | Implement `ComputerBackend.click`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L25) | `ComputerBackend.double_click` | `x: int, y: int, button: str` | `None` | Implement `ComputerBackend.double_click`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L26) | `ComputerBackend.type_text` | `text: str` | `None` | Implement `ComputerBackend.type_text`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L27) | `ComputerBackend.press_key` | `key: str` | `None` | Implement `ComputerBackend.press_key`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L28) | `ComputerBackend.scroll` | `dx: int, dy: int` | `None` | Implement `ComputerBackend.scroll`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L31) | `backend_for_host` | `None` | `ComputerBackend` | Implement `backend_for_host`. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L40) | `_UnavailableBackend._raise` | `None` | `None` | Implement `_UnavailableBackend._raise`. |
+| [computer_use_module/provider.py](computer_use_module/provider.py#L23) | `ComputerUseProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `ComputerUseProvider.materialize`. |
+| [computer_use_module/provider.py](computer_use_module/provider.py#L79) | `ComputerUseProvider._validate_point` | `backend: ComputerBackend, x: int, y: int` | `None` | Implement `ComputerUseProvider._validate_point`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L30) | `WindowsComputerBackend.screenshot` | `None` | `ScreenCapture` | Implement `WindowsComputerBackend.screenshot`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L39) | `WindowsComputerBackend.screen_size` | `None` | `tuple[int, int]` | Implement `WindowsComputerBackend.screen_size`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L42) | `WindowsComputerBackend._move` | `x: int, y: int` | `None` | Implement `WindowsComputerBackend._move`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L46) | `WindowsComputerBackend.click` | `x: int, y: int, button: str` | `None` | Implement `WindowsComputerBackend.click`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L55) | `WindowsComputerBackend.double_click` | `x: int, y: int, button: str` | `None` | Implement `WindowsComputerBackend.double_click`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L59) | `WindowsComputerBackend.type_text` | `text: str` | `None` | Implement `WindowsComputerBackend.type_text`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L66) | `WindowsComputerBackend._unicode_key` | `char: str, key_up: bool` | `None` | Implement `WindowsComputerBackend._unicode_key`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L71) | `WindowsComputerBackend.press_key` | `key: str` | `None` | Implement `WindowsComputerBackend.press_key`. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L84) | `WindowsComputerBackend.scroll` | `dx: int, dy: int` | `None` | Implement `WindowsComputerBackend.scroll`. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| — | — | `None` | `object` | 本索引范围不直接声明类；沿 Route Map 进入下级索引。 |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L9) | `ComputerUseUnavailable` | `None` | `RuntimeError` | Raised when the host cannot provide desktop interaction. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L14) | `ScreenCapture` | `png_bytes: bytes, width: int, height: int, scale: float` | `object` | Provide `ScreenCapture` behavior. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L21) | `ComputerBackend` | `None` | `Protocol` | Provide `ComputerBackend` behavior. |
+| [computer_use_module/backend.py](computer_use_module/backend.py#L39) | `_UnavailableBackend` | `None` | `object` | Provide `_UnavailableBackend` behavior. |
+| [computer_use_module/provider.py](computer_use_module/provider.py#L18) | `ComputerUseProvider` | `core: 'AngelusCore', backend: ComputerBackend \| None` | `object` | Provide `ComputerUseProvider` behavior. |
+| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L11) | `WindowsComputerBackend` | `None` | `object` | Provide `WindowsComputerBackend` behavior. |
 
 <!-- END GENERATED SYMBOL MAP -->

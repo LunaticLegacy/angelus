@@ -59,20 +59,22 @@ changes coordinator identity and therefore applies on the next materialization.
 | [agent_control.py](agent_control.py#L230) | `SessionRunControl.stop` | `agent_id: str, force: bool, reason: str` | `tuple[str, ...]` | Request stop for all Agents or one active Agent. |
 | [execution_service.py](execution_service.py#L35) | `_remove_journal_hook` | `swarm: object, hook: object` | `None` | Best-effort remove an attempt-local hook across supported swarm builds. |
 | [execution_service.py](execution_service.py#L85) | `ExecutionService.start` | `session_id: str, message: str, recovery: dict[str, object] \| None, images: list[dict[str, Any]] \| None, target_agent: str \| None` | `ExecutionSnapshot` | Start the configured Session AgentSwarm under a fresh attempt. |
-| [execution_service.py](execution_service.py#L259) | `ExecutionService._validate_images` | `session: Any, images: list[dict[str, Any]]` | `list[dict[str, Any]]` | Resolve ownership and metadata before an execution can start. |
-| [execution_service.py](execution_service.py#L288) | `ExecutionService.recover` | `session_id: str, execution_id: str \| None` | `ExecutionSnapshot` | Start a safe, guided continuation from a verified RunGraph checkpoint. |
-| [execution_service.py](execution_service.py#L322) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
-| [execution_service.py](execution_service.py#L335) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
-| [execution_service.py](execution_service.py#L355) | `ExecutionService.control` | `session_id: str, agent_id: str, action: str, message: str, reason: str` | `AgentControlReceipt` | Route one typed browser command to all or one active Agent. |
-| [execution_service.py](execution_service.py#L414) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
-| [execution_service.py](execution_service.py#L428) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
-| [session_service.py](session_service.py#L34) | `SessionService.create` | `session_id: str, name: str, project_path: Path \| None` | `Workspace` | Register an empty Session and its durable workspace metadata. |
-| [session_service.py](session_service.py#L66) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
-| [session_service.py](session_service.py#L74) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |
-| [session_service.py](session_service.py#L143) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
-| [session_service.py](session_service.py#L171) | `SessionService.create_runtime_worker` | `session_id: str, name: str, system_prompt: str` | `Agent` | Build one worker using the effective Session profile and ToolRegistry. |
-| [session_service.py](session_service.py#L219) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
-| [session_service.py](session_service.py#L276) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
+| [execution_service.py](execution_service.py#L271) | `ExecutionService._validate_images` | `session: Any, images: list[dict[str, Any]]` | `list[dict[str, Any]]` | Resolve ownership and metadata before an execution can start. |
+| [execution_service.py](execution_service.py#L300) | `ExecutionService.recover` | `session_id: str, execution_id: str \| None` | `ExecutionSnapshot` | Start a safe, guided continuation from a verified RunGraph checkpoint. |
+| [execution_service.py](execution_service.py#L334) | `ExecutionService.status` | `session_id: str` | `ExecutionSnapshot` | Return current in-process execution state, or synthetic idle state. |
+| [execution_service.py](execution_service.py#L347) | `ExecutionService.stop` | `session_id: str, force: bool, reason: str` | `ExecutionSnapshot` | Request graceful or forced cancellation through the same controller. |
+| [execution_service.py](execution_service.py#L367) | `ExecutionService.control` | `session_id: str, agent_id: str, action: str, message: str, reason: str` | `AgentControlReceipt` | Route one typed browser command to all or one active Agent. |
+| [execution_service.py](execution_service.py#L426) | `ExecutionService.events` | `session_id: str` | `Iterator[dict[str, Any]]` | Yield durable events from the most recent in-process attempt. |
+| [execution_service.py](execution_service.py#L440) | `ExecutionService._require_session` | `session_id: str` | `None` | Raise ``UnknownSession`` before an operation reaches Session state. |
+| [session_service.py](session_service.py#L35) | `SessionService.create` | `session_id: str, name: str, project_path: Path \| None` | `Workspace` | Register an empty Session and its durable workspace metadata. |
+| [session_service.py](session_service.py#L67) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
+| [session_service.py](session_service.py#L75) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |
+| [session_service.py](session_service.py#L144) | `SessionService.compact` | `session_id: str, agent_name: str` | `tuple[ExecutionController, Agent]` | Start one explicit compaction using the session's live Agent. |
+| [session_service.py](session_service.py#L184) | `SessionService.stop_compaction` | `session_id: str, force: bool, reason: str` | `bool` | Implement `SessionService.stop_compaction`. |
+| [session_service.py](session_service.py#L193) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
+| [session_service.py](session_service.py#L221) | `SessionService.create_runtime_worker` | `session_id: str, name: str, system_prompt: str` | `Agent` | Build one worker using the effective Session profile and ToolRegistry. |
+| [session_service.py](session_service.py#L269) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
+| [session_service.py](session_service.py#L326) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
 | [settings_service.py](settings_service.py#L32) | `SettingsService.global_profile` | `None` | `dict[str, Any]` | Read future-attempt defaults shared by all Sessions. |
 | [settings_service.py](settings_service.py#L40) | `SettingsService.replace_global_profile` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate connector ownership then atomically replace global defaults. |
 | [settings_service.py](settings_service.py#L49) | `SettingsService.session_profile` | `session_id: str` | `dict[str, Any]` | Read effective future-attempt settings for an existing Session. |
@@ -98,7 +100,7 @@ changes coordinator identity and therefore applies on the next materialization.
 | [execution_service.py](execution_service.py#L20) | `UnknownSession` | `None` | `LookupError` | Raised when a lifecycle request does not name a registered session. |
 | [execution_service.py](execution_service.py#L25) | `_JournalBinding` | `attempt: ExecutionAttempt[object] \| None` | `object` | Attempt-scoped target used by a swarm hook before worker scheduling. |
 | [execution_service.py](execution_service.py#L68) | `ExecutionService` | `core: 'AngelusCore'` | `object` | Perform Session execution lifecycle use cases without transport code. |
-| [session_service.py](session_service.py#L21) | `SessionService` | `core: 'AngelusCore'` | `object` | Create Sessions and materialize their required coordinator when runnable. |
+| [session_service.py](session_service.py#L22) | `SessionService` | `core: 'AngelusCore'` | `object` | Create Sessions and materialize their required coordinator when runnable. |
 | [settings_service.py](settings_service.py#L14) | `SettingsService` | `core: 'AngelusCore'` | `object` | Apply settings transactions without letting HTTP handlers own policy. |
 
 <!-- END GENERATED SYMBOL MAP -->

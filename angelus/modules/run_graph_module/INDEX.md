@@ -47,7 +47,7 @@ and a safe live snapshot seed the projection.
 | [reducer.py](reducer.py#L24) | `apply_live_snapshot` | `graph: RunGraph, snapshot: Mapping[str, Any]` | `None` | Seed or refresh a graph from llmfetcher's safe view snapshot. |
 | [reducer.py](reducer.py#L60) | `apply_run_graph_snapshot` | `graph: RunGraph, snapshot: Mapping[str, Any]` | `None` | Hydrate a graph from a previously committed RunGraph checkpoint. |
 | [reducer.py](reducer.py#L88) | `apply_journal_event` | `graph: RunGraph, event: Mapping[str, Any], cursor: int` | `None` | Apply one durable execution-journal record without side effects. |
-| [reducer.py](reducer.py#L146) | `_run_state` | `value: object, fallback: RunState` | `RunState` | Implement `_run_state`. |
+| [reducer.py](reducer.py#L153) | `_run_state` | `value: object, fallback: RunState` | `RunState` | Implement `_run_state`. |
 
 ## Class Map
 
