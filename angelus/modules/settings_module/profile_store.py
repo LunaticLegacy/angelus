@@ -8,6 +8,8 @@ from pathlib import Path
 import threading
 from typing import Any
 
+from llmfetcher.context_handlers import DEFAULT_CONTEXT_HANDLER
+
 from .json_store import read_json, write_json
 
 
@@ -25,6 +27,9 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "request_timeout_seconds": 60.0,
     "max_context_threshold": 262144,
     "compaction_output_max_tokens": 8192,
+    # Which context handler a future attempt builds for its Agents. The library
+    # registry owns the default and the selectable list.
+    "context_handler": DEFAULT_CONTEXT_HANDLER,
     "max_swarm_agents": 4,
     "session_memory_search_sessions": [],
     "session_memory_read_sessions": [],
@@ -205,6 +210,15 @@ class RunProfileStore:
                     raise ValueError(f"{key} must be a non-negative integer")
                 if key in {"max_tokens", "compaction_output_max_tokens"} and value < 1:
                     raise ValueError(f"{key} must be at least 1")
+                result[key] = value
+            elif key == "context_handler":
+                # Deliberately not checked against the library registry here: a
+                # stored value that a later llmfetcher version drops must not
+                # make an existing settings document unreadable, which would
+                # also block the UI that could fix it. An unknown id is
+                # rejected by create_context_handler() when it is built.
+                if not isinstance(value, str) or not value:
+                    raise ValueError("context_handler must be a non-empty string")
                 result[key] = value
             elif key.endswith("_sessions"):
                 if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):

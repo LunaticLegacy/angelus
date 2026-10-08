@@ -180,18 +180,19 @@ replaced solely by `settings.py`.
 | [sessions.py](sessions.py#L80) | `delete_session` | `session_id: str, payload: DeleteSessionRequest, request: Request` | `dict[str, str]` | Delete one confirmed Session after its active execution has stopped. |
 | [sessions.py](sessions.py#L94) | `open_workspace_directory` | `session_id: str, request: Request` | `dict[str, str]` | Open the selected project directory in the host file manager. |
 | [sessions.py](sessions.py#L110) | `get_session_messages` | `session_id: str, request: Request, before: int \| None, limit: int, agent: str \| None` | `dict[str, Any]` | Return one Agent's durable context as a chronological chat page. |
-| [settings.py](settings.py#L48) | `_core` | `request: Request` | `AngelusCore` | Resolve host-owned core without creating a second settings store. |
-| [settings.py](settings.py#L61) | `tool_registry` | `request: Request` | `ToolCatalog` | Return categories and tools actually registered by backend providers. |
-| [settings.py](settings.py#L74) | `version` | `None` | `RuntimeVersions` | Return independent Angelus and llmfetcher runtime versions. |
-| [settings.py](settings.py#L84) | `list_connectors` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List global connectors without serializing credentials in HTTP output. |
-| [settings.py](settings.py#L90) | `create_connector` | `payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Create one globally reusable connector and return its public projection. |
-| [settings.py](settings.py#L99) | `replace_connector` | `connector_id: str, payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Replace metadata, retaining a secret when the supplied API key is blank. |
-| [settings.py](settings.py#L110) | `delete_connector` | `connector_id: str, request: Request` | `None` | Delete connector only when no effective run profile references it. |
-| [settings.py](settings.py#L127) | `get_global_profile` | `request: Request` | `dict[str, Any]` | Return global defaults for future Session attempts, not a live config. |
-| [settings.py](settings.py#L133) | `put_global_profile` | `payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace global defaults for later attempts. |
-| [settings.py](settings.py#L142) | `get_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Return one Session's effective future-attempt profile and inheritance. |
-| [settings.py](settings.py#L151) | `put_session_profile` | `session_id: str, payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace one Session's future-run override. |
-| [settings.py](settings.py#L162) | `delete_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Discard a Session override and return its now-inherited effective profile. |
+| [settings.py](settings.py#L50) | `_core` | `request: Request` | `AngelusCore` | Resolve host-owned core without creating a second settings store. |
+| [settings.py](settings.py#L63) | `tool_registry` | `request: Request` | `ToolCatalog` | Return categories and tools actually registered by backend providers. |
+| [settings.py](settings.py#L76) | `version` | `None` | `RuntimeVersions` | Return independent Angelus and llmfetcher runtime versions. |
+| [settings.py](settings.py#L86) | `list_connectors` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List global connectors without serializing credentials in HTTP output. |
+| [settings.py](settings.py#L92) | `create_connector` | `payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Create one globally reusable connector and return its public projection. |
+| [settings.py](settings.py#L101) | `replace_connector` | `connector_id: str, payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Replace metadata, retaining a secret when the supplied API key is blank. |
+| [settings.py](settings.py#L112) | `delete_connector` | `connector_id: str, request: Request` | `None` | Delete connector only when no effective run profile references it. |
+| [settings.py](settings.py#L129) | `get_global_profile` | `request: Request` | `dict[str, Any]` | Return global defaults for future Session attempts, not a live config. |
+| [settings.py](settings.py#L135) | `put_global_profile` | `payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace global defaults for later attempts. |
+| [settings.py](settings.py#L144) | `get_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Return one Session's effective future-attempt profile and inheritance. |
+| [settings.py](settings.py#L153) | `put_session_profile` | `session_id: str, payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace one Session's future-run override. |
+| [settings.py](settings.py#L164) | `delete_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Discard a Session override and return its now-inherited effective profile. |
+| [settings.py](settings.py#L173) | `list_context_handlers` | `None` | `dict[str, Any]` | Return the selectable context handlers for the run-profile form. |
 | [workspace_directory.py](workspace_directory.py#L19) | `pick_workspace_directory` | `None` | `dict[str, bool \| str \| None]` | Ask the system resource manager to select one absolute directory. |
 
 ## Class Map
@@ -214,7 +215,7 @@ replaced solely by `settings.py`.
 | [session_console.py](session_console.py#L75) | `RecoveryRequest` | `execution_id: str \| None` | `object` | Optional source execution selected for safe guided recovery. |
 | [sessions.py](sessions.py#L21) | `CreateSessionRequest` | `session_id: str \| None, name: str, project_path: str \| None` | `BaseModel` | HTTP input for an empty logical Session and its workspace. |
 | [sessions.py](sessions.py#L29) | `DeleteSessionRequest` | `confirmation: str` | `BaseModel` | Explicit confirmation for an irreversible session-data deletion. |
-| [settings.py](settings.py#L19) | `ConnectorPayload` | `name: str, provider: str, model: str, api_url: str, api_key: str` | `BaseModel` | Public connector metadata plus an optional write-only API key. |
-| [settings.py](settings.py#L37) | `ProfilePayload` | `settings: dict[str, Any]` | `BaseModel` | A complete profile document for global defaults or one Session override. |
+| [settings.py](settings.py#L21) | `ConnectorPayload` | `name: str, provider: str, model: str, api_url: str, api_key: str` | `BaseModel` | Public connector metadata plus an optional write-only API key. |
+| [settings.py](settings.py#L39) | `ProfilePayload` | `settings: dict[str, Any]` | `BaseModel` | A complete profile document for global defaults or one Session override. |
 
 <!-- END GENERATED SYMBOL MAP -->
