@@ -17,6 +17,7 @@ from angelus.modules.attachment_module.tool_provider import (
 )
 from angelus.modules.tool_module import ToolPolicy
 from angelus.modules.workspace_module.workspace import Workspace
+from angelus.modules.session_module.session_handler import Session
 from llmfetcher.multimodal import ImageToolResult
 
 
@@ -117,5 +118,11 @@ class ImageToolProviderTests(unittest.TestCase):
         self.assertEqual(registration.id, "vision")
         self.assertEqual([category.id for category in registration.categories], ["vision"])
         self.assertEqual([(item.id, item.category_id) for item in registration.definitions],
-                         [("view_image", "vision")])
+                         [("view_image", "vision"), ("computer", "vision")])
         self.assertEqual(registration.definitions[0].roles, frozenset({"coordinator", "worker"}))
+
+    def test_session_image_store_uses_images_directory(self):
+        session = Session()
+        session.configure_execution("s1", self.tmp / "session")
+        metadata = session.attachments.put(image_bytes())
+        self.assertTrue((self.tmp / "session" / "images" / metadata["attachment_id"]).is_dir())

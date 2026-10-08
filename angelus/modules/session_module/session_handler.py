@@ -111,7 +111,9 @@ class Session:
         self.execution = SessionExecutor(session_id, root)
         self.console = ConsoleState(root)
         self.artifacts = SessionArtifactStore(session_id, root, self.execution)
-        self.attachments = ImageAttachmentStore(root)
+        # Keep user-facing Session state grouped by concern. Image blobs are
+        # content-addressed, but they belong under the explicit images area.
+        self.attachments = ImageAttachmentStore(root / "images")
 
     def set_coordinator(self, agent: Agent, fingerprint: tuple[object, ...]) -> None:
         """Install the required coordinator and retain it as ``agents[0]``.

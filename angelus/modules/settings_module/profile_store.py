@@ -41,6 +41,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
             "search_session_artifacts": True, "open_session_artifact": True,
             "create_session_handoff": True, "read_session_handoff": True,
             "view_image": True,
+            "computer": False,
             "shell": True,
             "set_task_plan": True, "update_task_status": True, "read_task_plan": True,
         },
