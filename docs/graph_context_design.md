@@ -15,7 +15,7 @@ llmfetcher/
 ├── context_handlers/
 │   ├── base.py        # ContextHandler ABC（add_user_message / add_assistant_message /
 │   │                  #   build_messages / save / load / clear_context）
-│   ├── linear.py      # ContextHandlerLinear：扁平消息列表 + LLM 摘要压缩（XML 协议）
+│   ├── linear/        # ContextHandlerLinear：扁平消息列表 + LLM 摘要压缩（XML 协议）
 │   └── retrieved.py   # RetrievedContextHandler：linear + TLB-RAG 长期记忆
 ├── rag_module_tlb/    # TLB-RAG：目录树 + INDEX.md 页表 + 运行时校验的检索
 └── rag_module/knowledge/  # 旧 RAG：HybridRetriever（关键词 + Chroma 向量 + 任务策略）

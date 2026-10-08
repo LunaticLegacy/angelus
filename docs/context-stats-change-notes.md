@@ -9,7 +9,7 @@
   `messages / characters / tool_schemas / tool_schema_characters / estimated_tokens`。
 - `estimate_context_length(messages, tool_schemas=None)`：纯函数。
   - 字符基准：`len(json.dumps(x, ensure_ascii=False, default=str))`（与 F3
-    `llmfetcher/context_handlers/linear.py::_estimate_context_size` 同一口径）。
+    `llmfetcher/context_handlers/linear/handler.py::_estimate_context_size` 同一口径）。
   - token 估算：`estimated_tokens = (characters + 3) // 4`，仅以消息字符为基数；
     tool schema 字符单独统计，不混入 token 估算。
   - 防御：非 dict 条目被跳过，畸形 checkpoint 不会导致估算崩溃。
