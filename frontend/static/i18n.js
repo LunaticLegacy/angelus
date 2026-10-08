@@ -129,8 +129,8 @@ export function applyTranslations() {
   if (welcome) welcome.innerHTML = t("chat.welcome.body").replace("\n", "<br />");
   const tabs = [["[data-inspector-panel=inspector-plan]", "inspector.plan"], ["[data-inspector-panel=inspector-agents]", "inspector.agents"], ["[data-inspector-panel=inspector-trace]", "inspector.trace"], ["[data-inspector-panel=inspector-usage]", "inspector.usage"]];
   tabs.forEach(([selector, key]) => setText(selector, key));
-  setTexts("[data-settings-section]", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcp", "settings.plugins", "settings.future"]);
-  setTexts("#settings-dialog .settings-page-heading h3", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcpServers", "settings.plugins", "settings.future"]);
+  setTexts("[data-settings-section]", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcp", "settings.plugins", "settings.language", "settings.future"]);
+  setTexts("#settings-dialog .settings-page-heading h3", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcpServers", "settings.plugins", "settings.language", "settings.future"]);
   setTexts("[data-context-dialog-tab]", ["context.graph", "context.prompt", "context.compaction", "context.calls"]);
   setText("#cancel-new-session", "dialog.cancel");
   setText("#choose-session-directory", "dialog.chooseDirectory");
@@ -175,13 +175,13 @@ export function applyTranslations() {
   const meta = document.querySelectorAll(".composer-meta span");
   if (meta[0]) meta[0].textContent = t("composer.enter");
   if (meta[1]) meta[1].textContent = t("composer.newline");
-  const footerToggle = document.querySelector("#language-toggle");
-  if (footerToggle) { footerToggle.textContent = locale === "zh-CN" ? "EN" : "中"; footerToggle.title = locale === "zh-CN" ? "Switch to English" : "切换到简体中文"; }
+  const languageSelect = document.querySelector("#settings-language");
+  if (languageSelect) languageSelect.value = locale;
 }
 
 function bindLocaleToggle() {
-  const toggle = document.querySelector("#language-toggle");
+  const toggle = document.querySelector("#settings-language");
   if (!toggle || toggle.dataset.bound) return;
   toggle.dataset.bound = "true";
-  toggle.addEventListener("click", () => setLocale(locale === "zh-CN" ? "en" : "zh-CN"));
+  toggle.addEventListener("change", () => setLocale(toggle.value));
 }
