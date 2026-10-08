@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from llmfetcher import LLMBackendConfig
-from llmfetcher.context_handlers import SageContext
+from llmfetcher.context_handlers import (
+    SageContext,
+    available_context_handlers,
+)
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
 from llmfetcher.graph_memory import GraphContextHandler
 
@@ -109,6 +113,33 @@ class ContextHandlerSelectionTests(unittest.TestCase):
 
         self.assertIn("nonexistent", str(context.exception))
         self.assertIn("sage", str(context.exception))
+
+
+class ContextHandlerSelectionUiTests(unittest.TestCase):
+    """The settings form and its labels must cover the selectable set."""
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def test_settings_form_ships_the_handler_field(self) -> None:
+        """The profile key needs a control carrying exactly this id."""
+        html = (self.ROOT / "frontend" / "templates" / "index.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="context-handler"', html)
+
+    def test_every_selectable_handler_has_a_localized_label(self) -> None:
+        """A new registry entry must not ship as a raw i18n key."""
+        for locale in ("en", "zh-CN"):
+            document = json.loads(
+                (
+                    self.ROOT / "frontend" / "static" / "locales" / f"{locale}.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertIn("settings.contextHandler", document)
+            for name in available_context_handlers():
+                with self.subTest(locale=locale, handler=name):
+                    self.assertIn(f"settings.contextHandlers.{name}", document)
 
 
 if __name__ == "__main__": unittest.main()

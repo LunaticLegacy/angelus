@@ -105,7 +105,7 @@ const config = () => ({
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "context-handler", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
 function profileSettings(overrides={}) { return {
@@ -116,6 +116,9 @@ function profileSettings(overrides={}) { return {
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value),
   max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), max_swarm_agents: Number($("max-swarm-agents").value),
+  // Falls back to the stored value so a save raised before the handler catalog
+  // is rendered cannot overwrite the user's choice with an empty string.
+  context_handler: value("context-handler") || currentProfile?.effective?.context_handler || "",
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
   ...overrides,
@@ -1127,6 +1130,12 @@ $("scroll-to-bottom")?.addEventListener("click",()=>chatView.followLatest());
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
+let contextHandlerSpecs = [];
+function contextHandlerLabel(spec) { const key=`settings.contextHandlers.${spec.id}`; const label=t(key); return label===key ? spec.title : label; }
+function renderContextHandlerOptions() { const select=$("context-handler"); if(!select) return; const chosen=select.value||currentProfile?.effective?.context_handler||""; select.innerHTML=contextHandlerSpecs.map(spec=>`<option value="${escapeHtml(spec.id)}">${escapeHtml(contextHandlerLabel(spec))}</option>`).join(""); select.value=contextHandlerSpecs.some(spec=>spec.id===chosen)?chosen:contextHandlerSpecs[0]?.id||""; }
+/** Load the selectable context handlers once; the labels follow the locale. */
+async function loadContextHandlers() { try { const {handlers}=await apiJson("/api/context-handlers"); contextHandlerSpecs=Array.isArray(handlers)?handlers:[]; renderContextHandlerOptions(); } catch(error) { trace("上下文管理器列表加载失败", error.message); } }
+onLocaleChange(() => renderContextHandlerOptions());
 async function initializeConsole() {
   await initI18n();
   initInspectorTabs();
@@ -1135,6 +1144,7 @@ async function initializeConsole() {
   // session identity. Plugins, connectors, profiles, graph inspection, and
   // transcript projections are not mounted until their new services exist.
   await loadProviders();
+  await loadContextHandlers();
   await loadPlugins();
   await loadToolRegistry();
   await loadWorkspaces();
