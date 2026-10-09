@@ -1226,15 +1226,32 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-13``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-12``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-14``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-13``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-13", html)
-        self.assertNotIn("/static/app.js?v=i18n-12", html)
-        self.assertIn("/static/app.css?v=desktop-agent-12", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-11", html)
+        self.assertIn("/static/app.js?v=i18n-14", html)
+        self.assertNotIn("/static/app.js?v=i18n-13", html)
+        self.assertIn("/static/app.css?v=desktop-agent-13", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-12", html)
+
+    def test_the_session_row_is_one_click_target(self) -> None:
+        """The visible row and the clickable row must be the same box.
+
+        Only the name inside the row used to switch sessions, so most of the
+        bordered surface did nothing when clicked. The state dot is now the
+        only status cue: the row stopped printing its label.
+        """
+        app = self._read("frontend/static/app.js")
+        self.assertIn('recent.querySelectorAll(".recent-session")', app)
+        self.assertIn('closest(".recent-session-action")', app)
+        css = self._read("frontend/static/app.css")
+        row = next(line for line in css.splitlines() if line.startswith(".recent-session {") and "display:flex" in line)
+        self.assertIn("cursor:pointer", row)
+        self.assertNotIn("attr(data-status)", css)
+        # The card that used to frame the (screen-reader-only) session select.
+        self.assertNotIn('class="workspace-card"', self._read("frontend/templates/index.html"))
 
     def test_the_theme_toggle_swaps_its_icon_instead_of_writing_text(self) -> None:
         """Writing a glyph into the button leaves it carrying two.
