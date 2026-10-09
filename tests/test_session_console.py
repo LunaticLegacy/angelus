@@ -1212,15 +1212,43 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-7``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-5``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-8``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-6``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-7", html)
-        self.assertNotIn("/static/app.js?v=i18n-6", html)
-        self.assertIn("/static/app.css?v=desktop-agent-5", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-4", html)
+        self.assertIn("/static/app.js?v=i18n-8", html)
+        self.assertNotIn("/static/app.js?v=i18n-7", html)
+        self.assertIn("/static/app.css?v=desktop-agent-6", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-5", html)
+
+    def test_the_inspector_reserve_matches_its_columns(self) -> None:
+        """The body reserves business+rail; a leftover gap made the grid wider.
+
+        A ``column-gap`` the reserve does not pay for silently steals width from
+        the panel column and leaves a dead channel beside the rail.
+        """
+        css = self._read("frontend/static/app.css")
+        self.assertIn(
+            "calc(var(--inspector-business-width) + var(--inspector-rail-width))", css
+        )
+        for line in css.splitlines():
+            if ".activity" in line and "column-gap" in line:
+                self.assertIn("column-gap:0", line, line.strip()[:90])
+
+    def test_no_dead_activity_heading_rules_survive(self) -> None:
+        """The heading wrapper left the DOM; its rules must not linger."""
+        self.assertNotIn("activity-heading", self._read("frontend/static/app.css"))
+        self.assertNotIn("activity-heading", self._read("frontend/templates/index.html"))
+
+    def test_a_plugin_tab_cannot_ship_as_a_blank_slot(self) -> None:
+        """The rail paints ``data-icon`` and hides button text, so tabs need one."""
+        plugins = self._read("frontend/static/plugins.js")
+        self.assertIn("button.dataset.icon = PLUGIN_TAB_ICON", plugins)
+        self.assertIn("PLUGIN_TAB_ICON = ", plugins)
+        # A cached copy of the module would hide the new tab from a browser that
+        # had already loaded the shell.
+        self.assertIn("./plugins.js?v=plugin-tab-1", self._read("frontend/static/app.js"))
 
     def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
         """`/help` and the palette render the catalog; dispatch uses the map.

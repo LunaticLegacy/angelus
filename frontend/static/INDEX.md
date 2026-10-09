@@ -318,25 +318,25 @@ not introduce a second transcript renderer.
 | [main.js](main.js#L103) | `_restoreRunState` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore run state. |
 | [main.js](main.js#L315) | `initialize` | `None` | `Promise<unknown>` | Perform the browser runtime operation: initialize. |
 | [main.js](main.js#L329) | `_loadProviders` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load providers. |
-| [plugins.js](plugins.js#L70) | `_warn` | `plugin: unknown, message: unknown` | `unknown` | Perform the browser runtime operation: warn. |
-| [plugins.js](plugins.js#L74) | `_validName` | `name: unknown` | `unknown` | Perform the browser runtime operation: valid name. |
-| [plugins.js](plugins.js#L80) | `_safeId` | `value: unknown` | `unknown` | Perform the browser runtime operation: safe id. |
-| [plugins.js](plugins.js#L87) | `_assertLoaded` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: assert loaded. |
-| [plugins.js](plugins.js#L96) | `_injectScript` | `src: unknown, pluginName: unknown` | `unknown` | Perform the browser runtime operation: inject script. |
-| [plugins.js](plugins.js#L108) | `_injectStylesheet` | `src: unknown, pluginName: unknown` | `unknown` | Perform the browser runtime operation: inject stylesheet. |
-| [plugins.js](plugins.js#L120) | `_pluginAssetUrl` | `pluginName: unknown, asset: unknown` | `unknown` | Perform the browser runtime operation: plugin asset url. |
-| [plugins.js](plugins.js#L124) | `_loadPluginAssets` | `plugin: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load plugin assets. |
-| [plugins.js](plugins.js#L146) | `unloadPlugin` | `pluginName: unknown` | `unknown` | Perform the browser runtime operation: unload plugin. |
-| [plugins.js](plugins.js#L167) | `_panelContainers` | `None` | `unknown` | Perform the browser runtime operation: panel containers. |
-| [plugins.js](plugins.js#L174) | `_fillPanel` | `body: unknown, render: unknown` | `unknown` | Perform the browser runtime operation: fill panel. |
-| [plugins.js](plugins.js#L184) | `_renderPanel` | `registration: unknown` | `unknown` | Perform the browser runtime operation: render panel. |
-| [plugins.js](plugins.js#L234) | `_panelFieldControl` | `field: unknown` | `unknown` | Perform the browser runtime operation: panel field control. |
-| [plugins.js](plugins.js#L280) | `_panelFieldValue` | `field: unknown, control: unknown` | `unknown` | Perform the browser runtime operation: panel field value. |
-| [plugins.js](plugins.js#L288) | `_registerDeclarativePanel` | `plugin: unknown, panel: unknown` | `unknown` | Perform the browser runtime operation: register declarative panel. |
-| [plugins.js](plugins.js#L347) | `_bindPanelTabs` | `None` | `unknown` | Perform the browser runtime operation: bind panel tabs. |
-| [plugins.js](plugins.js#L367) | `_createBridge` | `None` | `unknown` | Perform the browser runtime operation: create bridge. |
-| [plugins.js](plugins.js#L487) | `loadPlugins` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load plugins. |
-| [plugins.js](plugins.js#L525) | `initPlugins` | `None` | `Promise<unknown>` | Perform the browser runtime operation: init plugins. |
+| [plugins.js](plugins.js#L72) | `_warn` | `plugin: unknown, message: unknown` | `unknown` | Perform the browser runtime operation: warn. |
+| [plugins.js](plugins.js#L76) | `_validName` | `name: unknown` | `unknown` | Perform the browser runtime operation: valid name. |
+| [plugins.js](plugins.js#L82) | `_safeId` | `value: unknown` | `unknown` | Perform the browser runtime operation: safe id. |
+| [plugins.js](plugins.js#L89) | `_assertLoaded` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: assert loaded. |
+| [plugins.js](plugins.js#L98) | `_injectScript` | `src: unknown, pluginName: unknown` | `unknown` | Perform the browser runtime operation: inject script. |
+| [plugins.js](plugins.js#L110) | `_injectStylesheet` | `src: unknown, pluginName: unknown` | `unknown` | Perform the browser runtime operation: inject stylesheet. |
+| [plugins.js](plugins.js#L122) | `_pluginAssetUrl` | `pluginName: unknown, asset: unknown` | `unknown` | Perform the browser runtime operation: plugin asset url. |
+| [plugins.js](plugins.js#L126) | `_loadPluginAssets` | `plugin: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load plugin assets. |
+| [plugins.js](plugins.js#L148) | `unloadPlugin` | `pluginName: unknown` | `unknown` | Perform the browser runtime operation: unload plugin. |
+| [plugins.js](plugins.js#L169) | `_panelContainers` | `None` | `unknown` | Perform the browser runtime operation: panel containers. |
+| [plugins.js](plugins.js#L176) | `_fillPanel` | `body: unknown, render: unknown` | `unknown` | Perform the browser runtime operation: fill panel. |
+| [plugins.js](plugins.js#L186) | `_renderPanel` | `registration: unknown` | `unknown` | Perform the browser runtime operation: render panel. |
+| [plugins.js](plugins.js#L244) | `_panelFieldControl` | `field: unknown` | `unknown` | Perform the browser runtime operation: panel field control. |
+| [plugins.js](plugins.js#L290) | `_panelFieldValue` | `field: unknown, control: unknown` | `unknown` | Perform the browser runtime operation: panel field value. |
+| [plugins.js](plugins.js#L298) | `_registerDeclarativePanel` | `plugin: unknown, panel: unknown` | `unknown` | Perform the browser runtime operation: register declarative panel. |
+| [plugins.js](plugins.js#L357) | `_bindPanelTabs` | `None` | `unknown` | Perform the browser runtime operation: bind panel tabs. |
+| [plugins.js](plugins.js#L377) | `_createBridge` | `None` | `unknown` | Perform the browser runtime operation: create bridge. |
+| [plugins.js](plugins.js#L497) | `loadPlugins` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load plugins. |
+| [plugins.js](plugins.js#L535) | `initPlugins` | `None` | `Promise<unknown>` | Perform the browser runtime operation: init plugins. |
 | [runtime/backend-bridge.js](runtime/backend-bridge.js#L10) | `openEventStream` | `url: unknown, { onMessage: unknown, onError: unknown, onOpen }: unknown` | `unknown` | Perform the browser runtime operation: open event stream. |
 | [sessions.js](sessions.js#L10) | `loadAll` | `selectedId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load all. |
 | [sessions.js](sessions.js#L30) | `renderSelect` | `sessions: unknown, selectedId: unknown` | `unknown` | Perform the browser runtime operation: render select. |

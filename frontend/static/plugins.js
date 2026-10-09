@@ -51,6 +51,8 @@ const PLUGIN_NAME_RE = /^[a-z][a-z0-9_-]{1,63}$/;
 /** Optional UI mount points (present in the workbench index.html). */
 const TABS_SELECTOR = ".inspector-tabs";
 const PANELS_SELECTOR = ".inspector-panels";
+/** Placeholder glyph for a plugin tab until the plugin can supply its own. */
+const PLUGIN_TAB_ICON = "❖";
 
 /* ================================================================
  * Bridge registries — module-private; plugin scripts can only touch
@@ -191,7 +193,15 @@ function _renderPanel(registration) {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.inspectorPanel = panelId;
-    button.textContent = registration.title;
+    // The rail paints its glyph from `data-icon` and hides any text the button
+    // carries, so a plugin tab without one renders as a blank slot. Keep the
+    // title in a span: that is what the rail's tooltip reveals on hover.
+    button.dataset.icon = PLUGIN_TAB_ICON;
+    button.setAttribute("title", registration.title);
+    button.setAttribute("aria-label", registration.title);
+    const label = document.createElement("span");
+    label.textContent = registration.title;
+    button.append(label);
     tabs.appendChild(button);
 
     const section = document.createElement("section");

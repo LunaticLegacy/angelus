@@ -6,7 +6,7 @@ import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { createExternalAgentHubView } from "./components/external-agent-hub-view.js?v=context-exchange-1";
-import { loadPlugins, unloadPlugin } from "./plugins.js";
+import { loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-tab-1";
 import { apiJson, apiPost, apiPut, apiDelete } from "./runtime/backend-bridge.js";
 import { element as shellElement, initShellLayout } from "./ui/shell.js";
 import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js";
