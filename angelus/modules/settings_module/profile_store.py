@@ -27,6 +27,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "request_timeout_seconds": 60.0,
     "max_context_threshold": 262144,
     "compaction_output_max_tokens": 8192,
+    "compaction_keep_recent": 0,
     # Which context handler a future attempt builds for its Agents. The library
     # registry owns the default and the selectable list.
     "context_handler": DEFAULT_CONTEXT_HANDLER,
@@ -205,7 +206,7 @@ class RunProfileStore:
                 ):
                     raise ValueError("request_timeout_seconds must be between 1 and 3600")
                 result[key] = float(value)
-            elif key in {"max_tokens", "max_retries", "max_context_threshold", "compaction_output_max_tokens", "max_swarm_agents", "max_rounds"}:
+            elif key in {"max_tokens", "max_retries", "max_context_threshold", "compaction_output_max_tokens", "compaction_keep_recent", "max_swarm_agents", "max_rounds"}:
                 if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                     raise ValueError(f"{key} must be a non-negative integer")
                 if key in {"max_tokens", "compaction_output_max_tokens"} and value < 1:

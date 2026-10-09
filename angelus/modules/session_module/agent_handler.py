@@ -23,6 +23,7 @@ def create_agent(
     max_concurrency: int = 3,
     max_context_threshold: int = 262144,
     compaction_output_max_tokens: int = 8192,
+    keep_recent: int = 0,
     context_path: Optional[str | Path] = "",
     context_handler_name: str = DEFAULT_CONTEXT_HANDLER,
     context_handler: Optional[ContextHandler] = None,
@@ -45,6 +46,9 @@ def create_agent(
         max_context_threshold: Context size at which compaction starts.
         compaction_output_max_tokens: Maximum generated tokens for one
             compactor summary request.
+        keep_recent: Number of newest active entries compaction keeps verbatim
+            instead of summarising. ``0`` summarises the whole active
+            transcript.
         context_path: Optional persisted context file path.
         context_handler_name: Registered handler id to build when
             ``context_handler`` is omitted. The selectable ids come from
@@ -88,6 +92,7 @@ def create_agent(
             fetcher=fetcher,
             max_context_threshold=max_context_threshold,
             compaction_output_max_tokens=compaction_output_max_tokens,
+            keep_recent=keep_recent,
         )
     if context_path:
         Path(context_path).parent.mkdir(parents=True, exist_ok=True)

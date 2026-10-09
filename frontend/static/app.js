@@ -105,7 +105,7 @@ const config = () => ({
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "context-handler", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "compaction-keep-recent", "context-handler", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
 function profileSettings(overrides={}) { return {
@@ -115,7 +115,7 @@ function profileSettings(overrides={}) { return {
   system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value),
-  max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), max_swarm_agents: Number($("max-swarm-agents").value),
+  max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), compaction_keep_recent: Number($("compaction-keep-recent").value), max_swarm_agents: Number($("max-swarm-agents").value),
   // Falls back to the stored value so a save raised before the handler catalog
   // is rendered cannot overwrite the user's choice with an empty string.
   context_handler: value("context-handler") || currentProfile?.effective?.context_handler || "",

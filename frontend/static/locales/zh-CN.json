@@ -43,6 +43,8 @@
   "settings.agent": "Agent 执行",
   "settings.contextHandler": "上下文管理器",
   "settings.contextHandler.hint": "每次新运行生效",
+  "settings.compactionKeepRecent": "压缩保留最近",
+  "settings.compactionKeepRecent.hint": "条；0 = 全部归档",
   "settings.contextHandlers.graph": "图记忆",
   "settings.contextHandlers.linear": "线性转录",
   "settings.contextHandlers.sage": "Sage 树索引",

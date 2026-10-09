@@ -43,6 +43,8 @@
   "settings.agent": "Agent execution",
   "settings.contextHandler": "Context handler",
   "settings.contextHandler.hint": "applies to each new run",
+  "settings.compactionKeepRecent": "Retain newest messages",
+  "settings.compactionKeepRecent.hint": "0 = archive everything",
   "settings.contextHandlers.graph": "Graph memory",
   "settings.contextHandlers.linear": "Linear transcript",
   "settings.contextHandlers.sage": "Sage tree index",
