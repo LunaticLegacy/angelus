@@ -1208,19 +1208,33 @@ class FrontendContextLoadTests(unittest.TestCase):
         self.assertNotIn("chat-view.js?v=native-vision-5", app)
         self.assertNotIn("chat-view.js?v=native-vision-4", app)
 
+    def test_the_session_row_lays_its_children_out_in_a_line(self) -> None:
+        """A row that aligns its children must also be a flex container.
+
+        The row carried ``align-items``/``gap`` and flex children long before it
+        carried ``display:flex``; while the status and the dots were absolutely
+        positioned that cost nothing, and the moment the status became a normal
+        item every row stacked name, dot, status and actions onto four lines.
+        """
+        css = self._read("frontend/static/app.css")
+        rows = [line for line in css.splitlines() if line.startswith(".recent-session {") and "align-items" in line]
+        self.assertTrue(rows, "expected a flex row rule for the session list")
+        for line in rows:
+            self.assertIn("display:flex", line)
+
     def test_static_cache_buster_is_bumped(self) -> None:
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
         ``i18n-1`` -> ... -> ``i18n-11``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-9``). Expectations follow
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-10``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
         self.assertIn("/static/app.js?v=i18n-11", html)
         self.assertNotIn("/static/app.js?v=i18n-10", html)
-        self.assertIn("/static/app.css?v=desktop-agent-9", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-8", html)
+        self.assertIn("/static/app.css?v=desktop-agent-10", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-9", html)
 
     def test_each_session_row_carries_its_own_actions(self) -> None:
         """The list's rows must offer open-workspace and delete themselves.
