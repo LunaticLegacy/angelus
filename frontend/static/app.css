@@ -965,7 +965,7 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 .composer-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .composer-chip b { color:var(--muted); font-weight:600; }
 .composer-chip .icon { width:14px; height:14px; }
-.composer-popover { position:absolute; z-index:31; bottom:calc(100% + 8px); left:0; width:min(720px,100%); max-height:min(340px,45vh); overflow:auto; padding:10px 12px 12px; border:1px solid var(--line2); border-radius:11px; background:var(--panel); box-shadow:0 18px 48px rgba(0,0,0,.44); }
+.composer-popover { position:absolute; z-index:31; bottom:calc(100% + 8px); left:0; width:clamp(240px,100%,720px); max-height:min(340px,45vh); overflow:auto; padding:10px 12px 12px; border:1px solid var(--line2); border-radius:11px; background:var(--panel); box-shadow:0 18px 48px rgba(0,0,0,.44); }
 .composer-popover[hidden] { display:none; }
 .composer-popover input[type="checkbox"] { flex:none; margin:0; accent-color:var(--purple); }
 .composer-popover-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:6px; }
@@ -980,13 +980,17 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 .tool-panel-head small { color:var(--muted); font-size:var(--fs-micro); }
 .tool-panel-group { margin-top:9px; padding-top:9px; border-top:1px solid var(--line); }
 .tool-panel-master { display:flex; align-items:center; gap:7px; padding:3px 2px; color:var(--text); font-size:var(--fs-body); }
-.tool-panel-master strong { flex:1 1 auto; min-width:0; font-weight:600; }
+.tool-panel-master strong { flex:1 1 auto; min-width:96px; font-weight:600; }
 /* One to three columns, decided by the width the popover actually got; a fixed
-   count either wastes the wide window or breaks the labels when it is narrow. */
-.tool-panel-tools { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:2px 10px; padding:2px 2px 0 24px; }
+   count either wastes the wide window or breaks the labels when it is narrow.
+   ``min(210px,100%)`` stops a track from exceeding its container, which is how
+   a label could end up narrower than a single character. */
+.tool-panel-tools { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(210px,100%),1fr)); gap:2px 10px; padding:2px 2px 0 24px; }
 .tool-panel-tool { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:4px 6px; border-radius:6px; }
 .tool-panel-tool:hover { background:#ffffff08; }
-.tool-panel-tool > span { flex:1 1 auto; min-width:0; }
+/* The floor is the point: a squeezed label used to collapse into a column of
+   single characters instead of wrapping at a readable width. */
+.tool-panel-tool > span { flex:1 1 210px; min-width:140px; }
 .tool-panel-tool strong { display:block; color:var(--soft); font-size:var(--fs-small); }
 /* break-word, never anywhere: anywhere shrinks the min-content width to a single
    character, which is what turned every label into a vertical column of glyphs. */

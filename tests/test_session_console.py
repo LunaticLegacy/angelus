@@ -1227,14 +1227,14 @@ class FrontendContextLoadTests(unittest.TestCase):
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
         ``i18n-1`` -> ... -> ``i18n-16``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-16``). Expectations follow
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-17``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
         self.assertIn("/static/app.js?v=i18n-16", html)
         self.assertNotIn("/static/app.js?v=i18n-15", html)
-        self.assertIn("/static/app.css?v=desktop-agent-16", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-15", html)
+        self.assertIn("/static/app.css?v=desktop-agent-17", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-16", html)
 
     def test_the_composer_offers_the_session_connector_and_toolset(self) -> None:
         """Both controls edit run-profile keys the Agent page also edits.
