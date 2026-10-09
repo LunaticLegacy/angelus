@@ -62,11 +62,12 @@
 | [chat-view.js](chat-view.js#L556) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
 | [chat-view.js](chat-view.js#L569) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
 | [chat-view.js](chat-view.js#L575) | `applyScroll` | `None` | `unknown` | Perform the browser runtime operation: apply scroll. |
-| [composer-scope.js](composer-scope.js#L11) | `summarize` | `state: unknown` | `unknown` | Perform the browser runtime operation: summarize. |
-| [composer-scope.js](composer-scope.js#L23) | `panelMarkup` | `state: unknown` | `unknown` | Perform the browser runtime operation: panel markup. |
-| [composer-scope.js](composer-scope.js#L62) | `createComposerScope` | `options: object` | `unknown` | Perform the browser runtime operation: create composer scope. |
-| [composer-scope.js](composer-scope.js#L66) | `setOpen` | `next: unknown` | `unknown` | Perform the browser runtime operation: set open. |
-| [composer-scope.js](composer-scope.js#L75) | `refresh` | `None` | `unknown` | Perform the browser runtime operation: refresh. |
+| [composer-scope.js](composer-scope.js#L15) | `summarize` | `state: unknown` | `unknown` | Perform the browser runtime operation: summarize. |
+| [composer-scope.js](composer-scope.js#L27) | `connectorMarkup` | `state: unknown` | `unknown` | Perform the browser runtime operation: connector markup. |
+| [composer-scope.js](composer-scope.js#L41) | `toolMarkup` | `state: unknown` | `unknown` | Perform the browser runtime operation: tool markup. |
+| [composer-scope.js](composer-scope.js#L81) | `createComposerScope` | `options: object` | `unknown` | Perform the browser runtime operation: create composer scope. |
+| [composer-scope.js](composer-scope.js#L95) | `setOpen` | `target: unknown` | `unknown` | Perform the browser runtime operation: set open. |
+| [composer-scope.js](composer-scope.js#L111) | `refresh` | `None` | `unknown` | Perform the browser runtime operation: refresh. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |

@@ -1226,15 +1226,15 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-15``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-14``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-16``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-15``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-15", html)
-        self.assertNotIn("/static/app.js?v=i18n-14", html)
-        self.assertIn("/static/app.css?v=desktop-agent-14", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-13", html)
+        self.assertIn("/static/app.js?v=i18n-16", html)
+        self.assertNotIn("/static/app.js?v=i18n-15", html)
+        self.assertIn("/static/app.css?v=desktop-agent-15", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-14", html)
 
     def test_the_composer_offers_the_session_connector_and_toolset(self) -> None:
         """Both controls edit run-profile keys the Agent page also edits.
@@ -1244,15 +1244,15 @@ class FrontendContextLoadTests(unittest.TestCase):
         editors cannot disagree about a value.
         """
         html = self._read("frontend/templates/index.html")
-        for control in ('id="composer-connector"', 'id="composer-tools"', 'id="composer-tool-panel"'):
+        for control in ('id="composer-connector"', 'id="composer-connector-panel"', 'id="composer-tools"', 'id="composer-tool-panel"'):
             self.assertIn(control, html)
 
         css = self._read("frontend/static/app.css")
-        self.assertIn("min-height:88px", css)
+        self.assertIn("min-height:58px", css)
         self.assertIn("max-height:220px", css)
 
         app = self._read("frontend/static/app.js")
-        self.assertIn("./components/composer-scope.js?v=composer-scope-1", app)
+        self.assertIn("./components/composer-scope.js?v=composer-scope-2", app)
         self.assertIn("async function applyToolPermission", app)
         # One writer, two callers: the settings grid and the composer panel.
         self.assertGreaterEqual(app.count("applyToolPermission("), 3)

@@ -2,7 +2,7 @@
 import { $, escapeHtml } from "./components/dom.js";
 import { createChatView } from "./components/chat-view.js?v=native-vision-6";
 import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
-import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-1";
+import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-2";
 import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
@@ -160,6 +160,7 @@ async function loadToolRegistry() {
     tools: (category.tools || []).map((tool) => [tool.id, tool.title, tool.description]),
   }));
   if (currentProfile) renderToolPermissions(currentProfile.effective?.tool_permissions || {});
+  composerScope?.refresh();
 }
 
 function renderToolPermissions(policy) {
@@ -1059,7 +1060,8 @@ slashPalette = createSlashPalette({
 // run profile - the same keys the Agent settings page edits - so this component
 // only ever reads a snapshot and reports changes.
 composerScope = createComposerScope({
-  connector: $("composer-connector"),
+  connectorChip: $("composer-connector"),
+  connectorPanel: $("composer-connector-panel"),
   chip: $("composer-tools"),
   summary: $("composer-tools-summary"),
   panel: $("composer-tool-panel"),
