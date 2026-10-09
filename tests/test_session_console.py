@@ -1212,15 +1212,33 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-8``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-6``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-9``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-7``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-8", html)
-        self.assertNotIn("/static/app.js?v=i18n-7", html)
-        self.assertIn("/static/app.css?v=desktop-agent-6", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-5", html)
+        self.assertIn("/static/app.js?v=i18n-9", html)
+        self.assertNotIn("/static/app.js?v=i18n-8", html)
+        self.assertIn("/static/app.css?v=desktop-agent-7", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-6", html)
+
+    def test_the_type_scale_has_one_owner(self) -> None:
+        """Every size in the sheet must come off the ladder it declares.
+
+        The workbench carried 266 absolute px sizes clustered at 8-11px, so the
+        smallest tier read as cramped and nothing could be rescaled at once.
+        The ladder lives in ``--fs-*``; this keeps a stray size from drifting
+        back in, and pins that the declarations actually resolve through it.
+        """
+        css = self._read("frontend/static/app.css")
+        for token in ("micro", "small", "body", "lede", "heading", "title", "large", "display"):
+            self.assertIn(f"--fs-{token}:", css)
+        self.assertGreaterEqual(css.count("font-size:var(--fs-"), 200)
+        ladder = {"11px", "12px", "13px", "15px", "17px", "19px", "22px", "26px"}
+        literal = set(re.findall(r"font-size:\s*([0-9.]+px)", css))
+        self.assertEqual(set(), literal - ladder, f"font-size off the ladder: {sorted(literal - ladder)}")
+        shorthand = set(re.findall(r"font:[^;{}]*?([0-9.]+px)", css))
+        self.assertEqual(set(), shorthand - ladder, f"font shorthand off the ladder: {sorted(shorthand - ladder)}")
 
     def test_the_inspector_reserve_matches_its_columns(self) -> None:
         """The body reserves business+rail; a leftover gap made the grid wider.
