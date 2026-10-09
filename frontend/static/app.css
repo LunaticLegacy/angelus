@@ -267,7 +267,7 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity
 .recent-sessions { gap:3px; margin:0 0 5px; padding:0 3px 0 0; }
 .recent-session { position:relative; display:block; min-height:43px; padding:0; border:1px solid transparent; border-radius:8px; background:transparent; }
 .recent-session::before { position:absolute; top:18px; left:11px; z-index:2; width:6px; height:6px; margin:0; }
-.recent-session::after { content:attr(data-status); position:absolute; right:10px; top:15px; color:#718071; font:700 11px ui-monospace,monospace; letter-spacing:.04em; text-transform:uppercase; }
+.recent-session::after { content:attr(data-status); order:2; flex:0 0 auto; color:#718071; font:700 11px ui-monospace,monospace; letter-spacing:.04em; text-transform:uppercase; transition:opacity .15s ease; }
 .recent-session[data-status="running"]::after { color:var(--accent); }
 .recent-session[data-status="error"]::after { color:var(--red); }
 .recent-session[data-status="done"]::after { color:#7fb3e5; }
@@ -280,7 +280,7 @@ body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity
 
 .activity { position:relative; padding:24px 68px 16px 18px; }
 .inspector-tabs { position:absolute; top:97px; right:12px; bottom:15px; z-index:3; display:flex; flex-direction:column; align-items:stretch; width:43px; height:auto; margin:0; padding:4px; border-color:#303b31; border-radius:10px; background:#1a211b; }
-.inspector-tabs button { flex:1 1 0; min-height:76px; width:100%; padding:9px 0; border-radius:7px; color:#839183; writing-mode:vertical-rl; text-orientation:mixed; letter-spacing:.08em; }
+.inspector-tabs button { flex:1 1 0; min-height:76px; width:100%; padding:9px 0; border-radius:7px; color:#839183; }
 .inspector-tabs button:hover { color:#eaf3e8; background:#243024; }
 .inspector-tabs button.active { background:#d8f36a; color:#172015; box-shadow:0 3px 12px #d8f36a2b; }
 .inspector-panels { min-height:0; padding-top:16px; }
@@ -618,12 +618,16 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 .recent-session::before { left:8px; }
 .recent-session { align-items:center; gap:5px; padding:3px 4px 3px 21px; }
 .recent-session::before { top:50%; transform:translateY(-50%); }
-.recent-session-select { min-width:0; flex:1; padding:6px 0; overflow:hidden; background:transparent; color:inherit; text-align:left; font:inherit; }
+.recent-session-select { min-width:0; flex:1; order:1; padding:6px 0; overflow:hidden; background:transparent; color:inherit; text-align:left; font:inherit; }
 .recent-session-select span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.recent-session-actions { display:flex; flex:0 0 auto; gap:2px; opacity:0; pointer-events:none; transition:opacity .15s ease; }
+.recent-session-actions { display:flex; flex:0 0 auto; order:3; gap:2px; opacity:0; pointer-events:none; transition:opacity .15s ease; }
 .recent-session:hover .recent-session-actions,.recent-session.active .recent-session-actions,.recent-session:focus-within .recent-session-actions { opacity:1; pointer-events:auto; }
+/* The actions replace the status text rather than squeezing beside it: the
+   status keeps its box (opacity only) so the row never shifts on hover. */
+.recent-session:hover::after,.recent-session.active::after,.recent-session:focus-within::after { opacity:0; }
 .recent-session-action { width:24px; height:24px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font-size:var(--fs-lede); line-height:1; }
 .recent-session-action:hover,.recent-session-action:focus-visible { border-color:var(--line2); background:var(--surface-raised); color:var(--text); }
+.recent-session-action.danger:hover,.recent-session-action.danger:focus-visible { border-color:#8b4a58; background:#291923; color:var(--red); }
 .recent-session-select:focus-visible,.recent-session-action:focus-visible { outline:2px solid var(--purple); outline-offset:1px; }
 
 /* Use a real trash glyph: the previous backspace character resembled mail. */
@@ -1002,6 +1006,8 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
    colour from currentColor, so an icon needs no rule of its own. */
 .icon { display:inline-block; width:1em; height:1em; flex:none; vertical-align:-.14em; }
 .side-block-icon { display:none; }
+/* An icon-only control has to centre, since an svg sits on the text baseline. */
+.mini-button,.dialog-close,.plus-button,.refresh-button,.side-footer button,.recent-session-action { display:grid; place-items:center; }
 /* FINAL OVERRIDES: stable sidebars, click-only expansion. */
 @media (min-width:1021px) {
   body { grid-template-columns:var(--sidebar-width) minmax(0,1fr) calc(var(--inspector-business-width) + var(--inspector-rail-width)) !important; }

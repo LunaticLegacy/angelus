@@ -1212,15 +1212,34 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-10``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-8``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-11``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-9``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-10", html)
-        self.assertNotIn("/static/app.js?v=i18n-9", html)
-        self.assertIn("/static/app.css?v=desktop-agent-8", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-7", html)
+        self.assertIn("/static/app.js?v=i18n-11", html)
+        self.assertNotIn("/static/app.js?v=i18n-10", html)
+        self.assertIn("/static/app.css?v=desktop-agent-9", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-8", html)
+
+    def test_each_session_row_carries_its_own_actions(self) -> None:
+        """The list's rows must offer open-workspace and delete themselves.
+
+        The stylesheet has described ``.recent-session-actions`` for
+        generations, but the row template never emitted them, so the affordance
+        only existed on paper.
+        """
+        app = self._read("frontend/static/app.js")
+        row = app[app.index('class="recent-session-actions"') - 400 :]
+        self.assertIn('data-session-open="', row[:800])
+        self.assertIn('data-session-delete="', row[:800])
+        # Dynamically built rows need hydrating, or the buttons render empty.
+        self.assertIn("hydrateIcons(recent)", app)
+        self.assertIn("openSessionWorkspace(", app)
+        self.assertIn("deleteSession(", app)
+        html = self._read("frontend/templates/index.html")
+        self.assertNotIn('id="delete-workspace"', html)
+        self.assertNotIn('id="open-workspace-directory"', html)
 
     def test_the_type_scale_has_one_owner(self) -> None:
         """Every size in the sheet must come off the ladder it declares.
@@ -1287,9 +1306,9 @@ class FrontendContextLoadTests(unittest.TestCase):
 
         # The module is new, so every importer carries a token: a cached copy
         # would leave the whole shell without icons.
-        self.assertIn("./ui/icons.js?v=icon-1", self._read("frontend/static/app.js"))
-        self.assertIn("./icons.js?v=icon-1", self._read("frontend/static/ui/shell.js"))
-        self.assertIn("./ui/icons.js?v=icon-1", self._read("frontend/static/plugins.js"))
+        self.assertIn("./ui/icons.js?v=icon-2", self._read("frontend/static/app.js"))
+        self.assertIn("./icons.js?v=icon-2", self._read("frontend/static/ui/shell.js"))
+        self.assertIn("./ui/icons.js?v=icon-2", self._read("frontend/static/plugins.js"))
 
     def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
         """`/help` and the palette render the catalog; dispatch uses the map.

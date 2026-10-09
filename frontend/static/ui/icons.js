@@ -24,6 +24,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
   close: '<path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"/>',
   sidebar: '<path d="M3.5 5.5h17v13h-17z"/><path d="M9.5 5.5v13"/>',
   search: '<circle cx="11" cy="11" r="6.2"/><path d="M15.6 15.6 20 20"/>',
   chevron: '<path d="M6.5 9.5 12 15l5.5-5.5"/>',
