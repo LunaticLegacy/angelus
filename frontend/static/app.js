@@ -9,7 +9,7 @@ import { createExternalAgentHubView } from "./components/external-agent-hub-view
 import { loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-tab-2";
 import { apiJson, apiPost, apiPut, apiDelete } from "./runtime/backend-bridge.js";
 import { element as shellElement, initShellLayout } from "./ui/shell.js?v=shell-icons-1";
-import { hydrateIcons } from "./ui/icons.js?v=icon-2";
+import { hydrateIcons, setIcon } from "./ui/icons.js?v=icon-3";
 import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js?v=i18n-tabs-1";
 
 /* ================================================================
@@ -22,7 +22,7 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const btn = shellElement("theme-toggle");
   if (btn) {
-    btn.textContent = theme === "light" ? "☀" : "☾";
+    setIcon(btn, theme === "light" ? "sun" : "moon");
     btn.title = theme === "light" ? (currentLocale() === "zh-CN" ? "切换到深色主题" : "Switch to dark theme") : (currentLocale() === "zh-CN" ? "切换到浅色主题" : "Switch to light theme");
   }
   try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* private mode etc. */ }

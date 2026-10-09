@@ -1226,15 +1226,42 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-11``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-10``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-12``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-11``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-11", html)
-        self.assertNotIn("/static/app.js?v=i18n-10", html)
-        self.assertIn("/static/app.css?v=desktop-agent-10", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-9", html)
+        self.assertIn("/static/app.js?v=i18n-12", html)
+        self.assertNotIn("/static/app.js?v=i18n-11", html)
+        self.assertIn("/static/app.css?v=desktop-agent-11", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-10", html)
+
+    def test_the_theme_toggle_swaps_its_icon_instead_of_writing_text(self) -> None:
+        """Writing a glyph into the button leaves it carrying two.
+
+        ``applyTheme`` runs before ``hydrateIcons`` at load, so a text glyph it
+        wrote survived and the hydrated svg landed beside it: the toggle showed
+        a moon inside its box and another one under it, and toggling wiped the
+        svg instead.
+        """
+        app = self._read("frontend/static/app.js")
+        self.assertIn('setIcon(btn, theme === "light" ? "sun" : "moon")', app)
+        self.assertNotIn("btn.textContent", app)
+        self.assertIn("export function setIcon(", self._read("frontend/static/ui/icons.js"))
+
+    def test_the_sidebar_never_hides_its_content_on_hover(self) -> None:
+        """Only the collapse button may hide the sidebar's contents.
+
+        The 901px band used to hide them until the pointer entered the column,
+        so the filter, the workspace card and the session list appeared and
+        vanished with the mouse.
+        """
+        css = self._read("frontend/static/app.css")
+        hiders = [line for line in css.splitlines() if ".side-block > *" in line and "visibility:hidden" in line]
+        self.assertTrue(hiders, "the explicit collapse rule must remain")
+        for line in hiders:
+            self.assertIn("sidebar-collapsed", line, line.strip()[:90])
+        self.assertNotIn('class="brand"', self._read("frontend/templates/index.html"))
 
     def test_each_session_row_carries_its_own_actions(self) -> None:
         """The list's rows must offer open-workspace and delete themselves.
@@ -1320,9 +1347,9 @@ class FrontendContextLoadTests(unittest.TestCase):
 
         # The module is new, so every importer carries a token: a cached copy
         # would leave the whole shell without icons.
-        self.assertIn("./ui/icons.js?v=icon-2", self._read("frontend/static/app.js"))
-        self.assertIn("./icons.js?v=icon-2", self._read("frontend/static/ui/shell.js"))
-        self.assertIn("./ui/icons.js?v=icon-2", self._read("frontend/static/plugins.js"))
+        self.assertIn("./ui/icons.js?v=icon-3", self._read("frontend/static/app.js"))
+        self.assertIn("./icons.js?v=icon-3", self._read("frontend/static/ui/shell.js"))
+        self.assertIn("./ui/icons.js?v=icon-3", self._read("frontend/static/plugins.js"))
 
     def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
         """`/help` and the palette render the catalog; dispatch uses the map.

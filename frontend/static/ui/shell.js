@@ -4,7 +4,7 @@
  * and navigation between inspector surfaces. It deliberately knows nothing
  * about API payloads or backend URLs.
  */
-import { hydrateIcons } from "./icons.js?v=icon-2";
+import { hydrateIcons } from "./icons.js?v=icon-3";
 export function element(id) { return document.getElementById(id); }
 export function setTheme(theme) {
   document.documentElement.dataset.theme = theme;

@@ -364,8 +364,9 @@ not introduce a second transcript renderer.
 | [state.js](state.js#L21) | `getState` | `key: unknown` | `unknown` | Perform the browser runtime operation: get state. |
 | [state.js](state.js#L25) | `setState` | `partial: unknown` | `unknown` | Perform the browser runtime operation: set state. |
 | [state.js](state.js#L34) | `subscribe` | `key: unknown, fn: unknown` | `unknown` | Perform the browser runtime operation: subscribe. |
-| [ui/icons.js](ui/icons.js#L46) | `icon` | `name: unknown` | `unknown` | Perform the browser runtime operation: icon. |
-| [ui/icons.js](ui/icons.js#L64) | `hydrateIcons` | `root: unknown` | `unknown` | Perform the browser runtime operation: hydrate icons. |
+| [ui/icons.js](ui/icons.js#L47) | `icon` | `name: unknown` | `unknown` | Perform the browser runtime operation: icon. |
+| [ui/icons.js](ui/icons.js#L65) | `hydrateIcons` | `root: unknown` | `unknown` | Perform the browser runtime operation: hydrate icons. |
+| [ui/icons.js](ui/icons.js#L84) | `setIcon` | `host: unknown, name: unknown` | `unknown` | Perform the browser runtime operation: set icon. |
 | [ui/shell.js](ui/shell.js#L8) | `element` | `id: unknown` | `unknown` | Perform the browser runtime operation: element. |
 | [ui/shell.js](ui/shell.js#L9) | `setTheme` | `theme: unknown` | `unknown` | Perform the browser runtime operation: set theme. |
 | [ui/shell.js](ui/shell.js#L13) | `readTheme` | `fallback: unknown` | `unknown` | Perform the browser runtime operation: read theme. |

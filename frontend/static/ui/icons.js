@@ -31,7 +31,8 @@ const ICONS = {
   external:
     '<path d="M13.5 4.5H20v6.5"/><path d="M20 4.5 11 13.5"/><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5H5.5A1.5 1.5 0 0 1 4 18.5V7.5A1.5 1.5 0 0 1 5.5 6H10"/>',
   settings: '<path d="M4 7h9M17 7h3M4 17h4M12 17h8"/><path d="M15 4.5v5M10 14.5v5"/>',
-  theme: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2 7 7M17 17l1.8 1.8M18.8 5.2 17 7M7 17l-1.8 1.8"/>',
   model: '<path d="M12 3.2 20.8 12 12 20.8 3.2 12z"/>',
   collapse: '<path d="M14.5 6.5 9 12l5.5 5.5"/>',
 };
@@ -67,6 +68,24 @@ export function hydrateIcons(root = document) {
     if (host.querySelector(":scope > .icon")) return;
     host.insertAdjacentHTML("afterbegin", icon(host.dataset.icon));
   });
+}
+
+/**
+ * Swap one host's icon in place.
+ *
+ * `hydrateIcons` skips a host that already carries an icon, so a control whose
+ * glyph depends on state - the theme toggle - has to drop the old svg first.
+ * Writing text into such a host instead is how it ends up with two glyphs.
+ *
+ * @param {Element} host Element carrying `data-icon`.
+ * @param {string} name New icon name.
+ * @returns {void}
+ */
+export function setIcon(host, name) {
+  if (!host) return;
+  host.dataset.icon = name;
+  host.querySelector(":scope > .icon")?.remove();
+  hydrateIcons(host);
 }
 
 /** Names the set answers for, so tooling can check a template. */

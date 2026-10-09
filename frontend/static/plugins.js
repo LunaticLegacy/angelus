@@ -30,7 +30,7 @@
  */
 
 import { apiJson, apiPost } from "./api.js";
-import { hydrateIcons } from "./ui/icons.js?v=icon-2";
+import { hydrateIcons } from "./ui/icons.js?v=icon-3";
 
 /* ================================================================
  * Constants
