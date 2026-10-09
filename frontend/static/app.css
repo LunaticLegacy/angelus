@@ -956,11 +956,12 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
   .sidebar .side-block { height:auto; padding-bottom:18px; margin-bottom:18px; border-bottom:1px solid var(--line); }
   .sidebar .side-block-icon { display:none; }
   .sidebar-collapsed .sidebar { width:72px; padding:18px 10px 15px; overflow:visible; }
-  .sidebar-collapsed .sidebar .side-block > *,.sidebar-collapsed .sidebar .privacy { visibility:hidden; opacity:0; pointer-events:none; }
+  .sidebar-collapsed .sidebar .brand { justify-content:center; margin:0 0 25px; }
+  .sidebar-collapsed .sidebar .brand-copy,.sidebar-collapsed .sidebar .side-block > *,.sidebar-collapsed .sidebar .privacy { visibility:hidden; opacity:0; pointer-events:none; }
   .sidebar-collapsed .sidebar .side-block { position:relative; height:46px; padding:0; margin:0 0 9px; border:0; }
   .sidebar-collapsed .sidebar .side-block-icon { display:grid; place-items:center; width:40px; height:40px; margin:auto; border:1px solid #263550; border-radius:9px; color:#73c9ee; font-size:var(--fs-large); }
   .sidebar-collapsed .sidebar:hover,.sidebar-collapsed .sidebar:focus-within { width:72px; padding:18px 10px 15px; box-shadow:none; }
-  .sidebar-collapsed .sidebar:hover .side-block > *, .sidebar-collapsed .sidebar:hover .privacy { visibility:hidden; opacity:0; pointer-events:none; }
+  .sidebar-collapsed .sidebar:hover .brand-copy,.sidebar-collapsed .sidebar:hover .side-block > *, .sidebar-collapsed .sidebar:hover .privacy { visibility:hidden; opacity:0; pointer-events:none; }
   .resize-handle { position:relative; z-index:30; cursor:col-resize; }
   .resize-handle::after { content:""; position:absolute; inset:0 2px; border-radius:5px; background:transparent; }
   .resize-handle:hover::after,.resize-handle:focus-visible::after,.resize-handle.dragging::after { background:var(--purple); opacity:.75; }
