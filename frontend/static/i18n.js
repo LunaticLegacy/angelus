@@ -174,9 +174,12 @@ export function applyTranslations() {
   if (forceStop) forceStop.textContent = t("run.forceStop");
   document.querySelectorAll(".run-overview small")[0]?.replaceChildren(document.createTextNode(t("run.tokens")));
   document.querySelectorAll(".run-overview small")[1]?.replaceChildren(document.createTextNode(t("run.duration")));
-  const meta = document.querySelectorAll(".composer-meta span");
-  if (meta[0]) meta[0].textContent = t("composer.enter");
-  if (meta[1]) meta[1].textContent = t("composer.newline");
+  // Target the hints by id: the meta row now holds chips whose own spans would
+  // otherwise take these two slots and print one hint twice.
+  const enterHint = document.querySelector("#composer-hint-enter");
+  if (enterHint) enterHint.textContent = t("composer.enter");
+  const newlineHint = document.querySelector("#composer-hint-newline");
+  if (newlineHint) newlineHint.textContent = t("composer.newline");
   const languageSelect = document.querySelector("#settings-language");
   if (languageSelect) languageSelect.value = locale;
 }

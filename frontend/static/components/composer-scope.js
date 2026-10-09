@@ -8,6 +8,11 @@
  * Both controls are chips over upward popovers rather than native selects: the
  * composer sits at the bottom of the window, where a native dropdown opens
  * downwards and off-screen, and its direction is not something CSS can fix.
+ *
+ * The tool panel follows the workbench reference: one card per category in a
+ * grid whose column count comes from the width it gets, a category switch that
+ * opens or closes every tool it owns, per-tool switches that appear only while
+ * their category is on, and the system prompt the run will use.
  */
 import { escapeHtml } from "./dom.js";
 
@@ -37,29 +42,43 @@ function connectorMarkup(state) {
     .join("");
 }
 
-/** One checkbox list: every category, each with the tools it owns. */
-function toolMarkup(state) {
+/** The system prompt the next run will use, beside the toolset that governs it. */
+function promptMarkup() {
+  return '<label class="tool-panel-prompt"><span>系统提示词（仅下次运行生效）</span><textarea id="composer-system-prompt" rows="4" spellcheck="false"></textarea></label>';
+}
+
+/**
+ * One card per category: a switch for the whole category, then its tools.
+ *
+ * A tool is allowed only while its category is, so a category that is off hides
+ * its tools instead of showing switches that cannot take effect.
+ */
+function cardMarkup(state) {
   const groups = state.catalog || [];
   const categories = state.policy?.categories || {};
   const tools = state.policy?.tools || {};
-  return groups
-    .map(
-      (group) => `<section class="tool-panel-group">
-        <label class="tool-panel-master"><input type="checkbox" data-composer-category="${escapeHtml(group.id)}"${
-        categories[group.id] === true ? " checked" : ""
-      } /><strong>${escapeHtml(group.title)}</strong></label>
-        <div class="tool-panel-tools">${group.tools
-          .map(
-            ([id, title, note]) => `<label class="tool-panel-tool"><span><strong>${escapeHtml(
-              title
-            )}</strong><small>${escapeHtml(note || "")}</small></span><input type="checkbox" data-composer-tool="${escapeHtml(
-              id
-            )}"${tools[id] === true ? " checked" : ""} aria-label="${escapeHtml(title)}" /></label>`
-          )
-          .join("")}</div>
-      </section>`
-    )
-    .join("");
+  return `<div class="tool-cards">${groups
+    .map((group) => {
+      const on = categories[group.id] === true;
+      const rows = group.tools
+        .map(
+          ([id, title]) => `<label class="toggle-line tool-row"><span>${escapeHtml(
+            title
+          )}</span><input type="checkbox" data-composer-tool="${escapeHtml(id)}"${
+            tools[id] === true ? " checked" : ""
+          } aria-label="${escapeHtml(title)}" /><i></i></label>`
+        )
+        .join("");
+      return `<section class="tool-card${on ? " is-on" : ""}">
+          <label class="toggle-line tool-card-head"><span>${escapeHtml(
+            group.title
+          )}</span><input type="checkbox" data-composer-category="${escapeHtml(group.id)}"${
+            on ? " checked" : ""
+          } aria-label="${escapeHtml(group.title)}" /><i></i></label>
+          ${on && rows ? `<div class="tool-card-tools">${rows}</div>` : ""}
+        </section>`;
+    })
+    .join("")}</div>`;
 }
 
 /**
@@ -70,11 +89,12 @@ function toolMarkup(state) {
  * @param {HTMLElement} options.connectorPanel Popover listing the connectors.
  * @param {HTMLButtonElement} options.chip Tool chip, carrying the counts.
  * @param {HTMLElement} options.summary Chip's count slot.
- * @param {HTMLElement} options.panel Popover holding both permission axes.
+ * @param {HTMLElement} options.panel Popover holding the prompt and both axes.
  * @param {() => object} options.readState Returns `{connectors, connectorId,
- *   policy, catalog}` - everything a render needs, read fresh each time.
+ *   policy, catalog, systemPrompt}` - everything a render needs, read fresh.
  * @param {(id: string) => void} options.onConnector Chosen connector id.
  * @param {(patch: object) => void} options.onPermission `{category|tool, enabled}`.
+ * @param {(text: string) => void} options.onSystemPrompt Committed prompt text.
  * @param {() => void} [options.onOpen] Called before a popover is shown.
  * @returns {{refresh: Function, close: Function}}
  */
@@ -87,6 +107,7 @@ export function createComposerScope({
   readState,
   onConnector,
   onPermission,
+  onSystemPrompt,
   onOpen,
 }) {
   let openPopover = null;
@@ -100,7 +121,6 @@ export function createComposerScope({
     panel.hidden = target !== "tools";
     chip.setAttribute("aria-expanded", String(target === "tools"));
     chip.classList.toggle("is-open", target === "tools");
-    connectorChip.setAttribute("aria-controls", "composer-connector-panel");
     if (!target) return;
     onOpen?.();
     // A popover is only ever filled while it is up, so opening it has to paint.
@@ -123,9 +143,12 @@ export function createComposerScope({
       )}`;
     }
     if (openPopover === "tools") {
-      panel.innerHTML = `<div class="tool-panel-head"><strong>当前会话工具集</strong><small>类别与单工具须同时开启；改动立即写入本会话档案</small></div><div class="tool-panel-body">${
-        (state.catalog || []).length ? toolMarkup(state) : '<p class="tool-panel-empty">正在读取后端注册的工具…</p>'
-      }</div>`;
+      panel.innerHTML = `<div class="tool-panel-head"><strong>本条消息的工具集</strong><small>类别与单工具须同时开启；改动立即写入本会话档案</small></div>${promptMarkup()}${
+        (state.catalog || []).length ? cardMarkup(state) : '<p class="tool-panel-empty">正在读取后端注册的工具…</p>'
+      }`;
+      // The prompt is prose: assign it as a value rather than into markup.
+      const field = panel.querySelector("#composer-system-prompt");
+      if (field) field.value = state.systemPrompt || "";
     }
   }
 
@@ -139,7 +162,8 @@ export function createComposerScope({
   });
   panel.addEventListener("change", (event) => {
     const input = event.target;
-    if (input.dataset.composerCategory) onPermission({ category: input.dataset.composerCategory, enabled: input.checked });
+    if (input.id === "composer-system-prompt") onSystemPrompt(input.value);
+    else if (input.dataset.composerCategory) onPermission({ category: input.dataset.composerCategory, enabled: input.checked });
     else if (input.dataset.composerTool) onPermission({ tool: input.dataset.composerTool, enabled: input.checked });
   });
   // A click anywhere else, or Escape, closes without changing anything.

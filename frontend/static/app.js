@@ -2,7 +2,7 @@
 import { $, escapeHtml } from "./components/dom.js";
 import { createChatView } from "./components/chat-view.js?v=native-vision-6";
 import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
-import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-2";
+import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-3";
 import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
@@ -11,7 +11,7 @@ import { loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-tab-2";
 import { apiJson, apiPost, apiPut, apiDelete } from "./runtime/backend-bridge.js";
 import { element as shellElement, initShellLayout } from "./ui/shell.js?v=shell-icons-1";
 import { hydrateIcons, setIcon } from "./ui/icons.js?v=icon-3";
-import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js?v=i18n-tabs-1";
+import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js?v=i18n-tabs-2";
 
 /* ================================================================
  *  Theme (light / dark) — wired to the ☾ sidebar-footer button.
@@ -1065,9 +1065,10 @@ composerScope = createComposerScope({
   chip: $("composer-tools"),
   summary: $("composer-tools-summary"),
   panel: $("composer-tool-panel"),
-  readState: () => ({ connectors: connectorChoices, connectorId, policy: currentProfile?.effective?.tool_permissions || {}, catalog: toolRegistryGroups }),
+  readState: () => ({ connectors: connectorChoices, connectorId, policy: currentProfile?.effective?.tool_permissions || {}, catalog: toolRegistryGroups, systemPrompt: $("system-prompt")?.value ?? "" }),
   onConnector: (id) => { connectorId = id; const dialogSelect = $("connector"); if (dialogSelect) dialogSelect.value = id; persistSettings().catch((error) => trace("保存运行档案失败", error.message)); },
   onPermission: (patch) => applyToolPermission(patch).catch((error) => trace("保存工具权限失败", error.message)),
+  onSystemPrompt: (text) => { const field = $("system-prompt"); if (field) field.value = text; persistSettings().catch((error) => trace("保存运行档案失败", error.message)); },
   onOpen: () => slashPalette?.close(),
 });
 composerScope.refresh();

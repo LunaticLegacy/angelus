@@ -259,13 +259,13 @@ not introduce a second transcript renderer.
 | [app.js](app.js#L1051) | `connectRunGraphEvents` | `None` | `unknown` | Perform the browser runtime operation: connect run graph events. |
 | [app.js](app.js#L1052) | `connectLifecycleEvents` | `None` | `unknown` | Perform the browser runtime operation: connect lifecycle events. |
 | [app.js](app.js#L1053) | `restoreRunState` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore run state. |
-| [app.js](app.js#L1106) | `pickWorkspaceDirectory` | `None` | `Promise<unknown>` | Perform the browser runtime operation: pick workspace directory. |
-| [app.js](app.js#L1107) | `createAndSwitchSession` | `name: unknown, projectPath: unknown` | `Promise<unknown>` | Perform the browser runtime operation: create and switch session. |
-| [app.js](app.js#L1193) | `loadProviders` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load providers. |
-| [app.js](app.js#L1195) | `contextHandlerLabel` | `spec: unknown` | `unknown` | Perform the browser runtime operation: context handler label. |
-| [app.js](app.js#L1196) | `renderContextHandlerOptions` | `None` | `unknown` | Perform the browser runtime operation: render context handler options. |
-| [app.js](app.js#L1198) | `loadContextHandlers` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load context handlers. |
-| [app.js](app.js#L1200) | `initializeConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: initialize console. |
+| [app.js](app.js#L1107) | `pickWorkspaceDirectory` | `None` | `Promise<unknown>` | Perform the browser runtime operation: pick workspace directory. |
+| [app.js](app.js#L1108) | `createAndSwitchSession` | `name: unknown, projectPath: unknown` | `Promise<unknown>` | Perform the browser runtime operation: create and switch session. |
+| [app.js](app.js#L1194) | `loadProviders` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load providers. |
+| [app.js](app.js#L1196) | `contextHandlerLabel` | `spec: unknown` | `unknown` | Perform the browser runtime operation: context handler label. |
+| [app.js](app.js#L1197) | `renderContextHandlerOptions` | `None` | `unknown` | Perform the browser runtime operation: render context handler options. |
+| [app.js](app.js#L1199) | `loadContextHandlers` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load context handlers. |
+| [app.js](app.js#L1201) | `initializeConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: initialize console. |
 | [chat.js](chat.js#L12) | `removeWelcome` | `None` | `unknown` | Perform the browser runtime operation: remove welcome. |
 | [chat.js](chat.js#L16) | `appendMessage` | `role: unknown, content: unknown, reasoning: unknown, contentHtml: unknown, reasoningHtml: unknown, tools: unknown` | `unknown` | Perform the browser runtime operation: append message. |
 | [chat.js](chat.js#L57) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |
@@ -315,7 +315,7 @@ not introduce a second transcript renderer.
 | [i18n.js](i18n.js#L83) | `setTexts` | `selector: unknown, keys: unknown` | `unknown` | Perform the browser runtime operation: set texts. |
 | [i18n.js](i18n.js#L90) | `setAttribute` | `selector: unknown, attribute: unknown, key: unknown` | `unknown` | Perform the browser runtime operation: set attribute. |
 | [i18n.js](i18n.js#L95) | `applyTranslations` | `None` | `unknown` | Perform the browser runtime operation: apply translations. |
-| [i18n.js](i18n.js#L183) | `bindLocaleToggle` | `None` | `unknown` | Perform the browser runtime operation: bind locale toggle. |
+| [i18n.js](i18n.js#L186) | `bindLocaleToggle` | `None` | `unknown` | Perform the browser runtime operation: bind locale toggle. |
 | [main.js](main.js#L84) | `switchSession` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: switch session. |
 | [main.js](main.js#L97) | `_reloadConnectorsKeepId` | `None` | `Promise<unknown>` | Perform the browser runtime operation: reload connectors keep id. |
 | [main.js](main.js#L103) | `_restoreRunState` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore run state. |

@@ -1226,15 +1226,15 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-16``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-17``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-17``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-18``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-16", html)
-        self.assertNotIn("/static/app.js?v=i18n-15", html)
-        self.assertIn("/static/app.css?v=desktop-agent-17", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-16", html)
+        self.assertIn("/static/app.js?v=i18n-17", html)
+        self.assertNotIn("/static/app.js?v=i18n-16", html)
+        self.assertIn("/static/app.css?v=desktop-agent-18", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-17", html)
 
     def test_the_composer_offers_the_session_connector_and_toolset(self) -> None:
         """Both controls edit run-profile keys the Agent page also edits.
@@ -1252,10 +1252,23 @@ class FrontendContextLoadTests(unittest.TestCase):
         self.assertIn("max-height:220px", css)
 
         app = self._read("frontend/static/app.js")
-        self.assertIn("./components/composer-scope.js?v=composer-scope-2", app)
+        self.assertIn("./components/composer-scope.js?v=composer-scope-3", app)
         self.assertIn("async function applyToolPermission", app)
         # One writer, two callers: the settings grid and the composer panel.
         self.assertGreaterEqual(app.count("applyToolPermission("), 3)
+
+        # The panel is a card grid with a category switch per card, and it edits
+        # the system prompt beside it.
+        scope = self._read("frontend/static/components/composer-scope.js")
+        self.assertIn("tool-cards", scope)
+        self.assertIn("composer-system-prompt", scope)
+        self.assertIn("onSystemPrompt", scope)
+
+        # The hints are addressed by id: a positional lookup put one hint in the
+        # connector chip's span and printed the other twice.
+        for hint in ('id="composer-hint-enter"', 'id="composer-hint-newline"'):
+            self.assertIn(hint, html)
+        self.assertNotIn('querySelectorAll(".composer-meta span")', self._read("frontend/static/i18n.js"))
 
     def test_the_session_row_is_one_click_target(self) -> None:
         """The visible row and the clickable row must be the same box.
