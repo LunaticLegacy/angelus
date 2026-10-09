@@ -321,22 +321,24 @@ node --check frontend/static/app.js
 | [test_session_console.py](test_session_console.py#L1190) | `FrontendContextLoadTests.test_chat_view_renders_tool_payloads` | `None` | `None` | Implement `FrontendContextLoadTests.test_chat_view_renders_tool_payloads`. |
 | [test_session_console.py](test_session_console.py#L1205) | `FrontendContextLoadTests.test_chat_view_cache_buster_is_bumped` | `None` | `None` | Implement `FrontendContextLoadTests.test_chat_view_cache_buster_is_bumped`. |
 | [test_session_console.py](test_session_console.py#L1211) | `FrontendContextLoadTests.test_static_cache_buster_is_bumped` | `None` | `None` | Guard that the shell assets carry the tokens the template ships. |
-| [test_session_console.py](test_session_console.py#L1225) | `FrontendContextLoadTests.test_the_compaction_card_streams_and_de_duplicates` | `None` | `None` | Pin the seams the manual-compaction card depends on. |
-| [test_session_console.py](test_session_console.py#L1240) | `FrontendContextLoadTests.test_plan_mutations_trigger_a_plan_reload` | `None` | `None` | ``plan:*`` lifecycle facts must schedule the debounced plan reload. |
-| [test_session_console.py](test_session_console.py#L1256) | `FrontendContextLoadTests.test_legacy_chat_handler_also_reloads_on_plan_mutations` | `None` | `None` | The legacy chat.js handler must mirror the plan-prefix guard. |
-| [test_session_console.py](test_session_console.py#L1267) | `FrontendContextLoadTests.test_round_content_renders_readable_request_messages` | `None` | `None` | The per-round input block renders the literal model:/messages: layout. |
-| [test_session_console.py](test_session_console.py#L1284) | `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger` | `None` | `None` | Implement `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger`. |
-| [test_session_console.py](test_session_console.py#L1301) | `_ControlSwarm.dynamic_add_agent` | `name: str, worker: object` | `str` | Implement `_ControlSwarm.dynamic_add_agent`. |
-| [test_session_console.py](test_session_console.py#L1303) | `_ControlSwarm.dispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.dispatch_task`. |
-| [test_session_console.py](test_session_console.py#L1307) | `_ControlSwarm.redispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.redispatch_task`. |
-| [test_session_console.py](test_session_console.py#L1314) | `_ControlWorker.add_tools` | `tools: list[object]` | `None` | Implement `_ControlWorker.add_tools`. |
-| [test_session_console.py](test_session_console.py#L1321) | `_ControlConsole.add_worker` | `name: str, system_prompt: str` | `None` | Implement `_ControlConsole.add_worker`. |
-| [test_session_console.py](test_session_console.py#L1323) | `_ControlConsole.remove_worker` | `name: str` | `None` | Implement `_ControlConsole.remove_worker`. |
-| [test_session_console.py](test_session_console.py#L1326) | `_ControlConsole.is_bindable_leaf` | `plan_task_id: str` | `bool` | Implement `_ControlConsole.is_bindable_leaf`. |
-| [test_session_console.py](test_session_console.py#L1328) | `_ControlConsole.bind_execution` | `task_id: str, assignment_id: str` | `None` | Implement `_ControlConsole.bind_execution`. |
-| [test_session_console.py](test_session_console.py#L1352) | `DynamicAgentControlRegistrationTests._tools` | `run_control: SessionRunControl \| None` | `tuple[SessionConsoleTools, _ControlSession]` | Implement `DynamicAgentControlRegistrationTests._tools`. |
-| [test_session_console.py](test_session_console.py#L1364) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control`. |
-| [test_session_console.py](test_session_console.py#L1375) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control`. |
+| [test_session_console.py](test_session_console.py#L1225) | `FrontendContextLoadTests.test_the_slash_catalog_matches_the_dispatchable_commands` | `None` | `None` | `/help` and the palette render the catalog; dispatch uses the map. |
+| [test_session_console.py](test_session_console.py#L1243) | `FrontendContextLoadTests.test_the_slash_palette_is_wired_to_the_composer` | `None` | `None` | The palette must own the composer keys and be closed by the shell. |
+| [test_session_console.py](test_session_console.py#L1257) | `FrontendContextLoadTests.test_the_compaction_card_streams_and_de_duplicates` | `None` | `None` | Pin the seams the manual-compaction card depends on. |
+| [test_session_console.py](test_session_console.py#L1272) | `FrontendContextLoadTests.test_plan_mutations_trigger_a_plan_reload` | `None` | `None` | ``plan:*`` lifecycle facts must schedule the debounced plan reload. |
+| [test_session_console.py](test_session_console.py#L1288) | `FrontendContextLoadTests.test_legacy_chat_handler_also_reloads_on_plan_mutations` | `None` | `None` | The legacy chat.js handler must mirror the plan-prefix guard. |
+| [test_session_console.py](test_session_console.py#L1299) | `FrontendContextLoadTests.test_round_content_renders_readable_request_messages` | `None` | `None` | The per-round input block renders the literal model:/messages: layout. |
+| [test_session_console.py](test_session_console.py#L1316) | `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger` | `None` | `None` | Implement `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger`. |
+| [test_session_console.py](test_session_console.py#L1333) | `_ControlSwarm.dynamic_add_agent` | `name: str, worker: object` | `str` | Implement `_ControlSwarm.dynamic_add_agent`. |
+| [test_session_console.py](test_session_console.py#L1335) | `_ControlSwarm.dispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.dispatch_task`. |
+| [test_session_console.py](test_session_console.py#L1339) | `_ControlSwarm.redispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.redispatch_task`. |
+| [test_session_console.py](test_session_console.py#L1346) | `_ControlWorker.add_tools` | `tools: list[object]` | `None` | Implement `_ControlWorker.add_tools`. |
+| [test_session_console.py](test_session_console.py#L1353) | `_ControlConsole.add_worker` | `name: str, system_prompt: str` | `None` | Implement `_ControlConsole.add_worker`. |
+| [test_session_console.py](test_session_console.py#L1355) | `_ControlConsole.remove_worker` | `name: str` | `None` | Implement `_ControlConsole.remove_worker`. |
+| [test_session_console.py](test_session_console.py#L1358) | `_ControlConsole.is_bindable_leaf` | `plan_task_id: str` | `bool` | Implement `_ControlConsole.is_bindable_leaf`. |
+| [test_session_console.py](test_session_console.py#L1360) | `_ControlConsole.bind_execution` | `task_id: str, assignment_id: str` | `None` | Implement `_ControlConsole.bind_execution`. |
+| [test_session_console.py](test_session_console.py#L1384) | `DynamicAgentControlRegistrationTests._tools` | `run_control: SessionRunControl \| None` | `tuple[SessionConsoleTools, _ControlSession]` | Implement `DynamicAgentControlRegistrationTests._tools`. |
+| [test_session_console.py](test_session_console.py#L1396) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control`. |
+| [test_session_console.py](test_session_console.py#L1407) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control`. |
 | [test_settings_service.py](test_settings_service.py#L16) | `SettingsServiceTests.test_connector_secret_never_appears_in_public_catalog` | `None` | `None` | Connector metadata is readable while its API key stays separate. |
 | [test_settings_service.py](test_settings_service.py#L32) | `SettingsServiceTests.test_session_profile_is_session_owned_and_can_restore_inheritance` | `None` | `None` | A full Session override survives global changes until explicitly cleared. |
 | [test_settings_service.py](test_settings_service.py#L55) | `SettingsServiceTests.test_saved_connector_materializes_required_coordinator_before_run` | `None` | `None` | Every Session reserves coordinator and builds it from saved profile state. |
@@ -432,12 +434,12 @@ node --check frontend/static/app.js
 | [test_session_console.py](test_session_console.py#L658) | `_LedgerCore` | `session: _LedgerSession` | `object` | Minimal composition root exposing one durable Session lookup. |
 | [test_session_console.py](test_session_console.py#L665) | `CallLedgerProjectionTests` | `None` | `unittest.TestCase` | The journal-derived call ledger must expose real calls without prompts. |
 | [test_session_console.py](test_session_console.py#L1125) | `FrontendContextLoadTests` | `None` | `unittest.TestCase` | Static guards for the payload and lazy-tab frontend regressions. |
-| [test_session_console.py](test_session_console.py#L1298) | `_ControlSwarm` | `None` | `object` | Minimal TaskBus fake recording dynamic Agent registration. |
-| [test_session_console.py](test_session_console.py#L1312) | `_ControlWorker` | `None` | `object` | Worker fake accepting the report Tool added before dispatch. |
-| [test_session_console.py](test_session_console.py#L1318) | `_ControlConsole` | `None` | `object` | Console fake modelling worker registration and bindability. |
-| [test_session_console.py](test_session_console.py#L1332) | `_ControlExecution` | `None` | `object` | Execution boundary exposing the session identity only. |
-| [test_session_console.py](test_session_console.py#L1339) | `_ControlSession` | `run_control: SessionRunControl \| None` | `object` | Session aggregate containing only the fields console tools touch. |
-| [test_session_console.py](test_session_console.py#L1349) | `DynamicAgentControlRegistrationTests` | `None` | `unittest.TestCase` | Prove dynamically created console agents register with live run control. |
+| [test_session_console.py](test_session_console.py#L1330) | `_ControlSwarm` | `None` | `object` | Minimal TaskBus fake recording dynamic Agent registration. |
+| [test_session_console.py](test_session_console.py#L1344) | `_ControlWorker` | `None` | `object` | Worker fake accepting the report Tool added before dispatch. |
+| [test_session_console.py](test_session_console.py#L1350) | `_ControlConsole` | `None` | `object` | Console fake modelling worker registration and bindability. |
+| [test_session_console.py](test_session_console.py#L1364) | `_ControlExecution` | `None` | `object` | Execution boundary exposing the session identity only. |
+| [test_session_console.py](test_session_console.py#L1371) | `_ControlSession` | `run_control: SessionRunControl \| None` | `object` | Session aggregate containing only the fields console tools touch. |
+| [test_session_console.py](test_session_console.py#L1381) | `DynamicAgentControlRegistrationTests` | `None` | `unittest.TestCase` | Prove dynamically created console agents register with live run control. |
 | [test_settings_service.py](test_settings_service.py#L13) | `SettingsServiceTests` | `None` | `unittest.TestCase` | Verify the new settings path has one durable authority per concern. |
 | [test_system_resource_manager.py](test_system_resource_manager.py#L17) | `SystemResourceManagerTests` | `None` | `unittest.TestCase` | Keep folder selection out of browser and Tauri runtimes. |
 | [test_tool_result_prompt_budget.py](test_tool_result_prompt_budget.py#L10) | `ToolResultPromptBudgetTests` | `None` | `unittest.TestCase` | Ensure historical tool output remains cache-stable across rounds. |

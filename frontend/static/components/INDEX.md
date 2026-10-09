@@ -104,6 +104,16 @@
 | [markdown-renderer.js](markdown-renderer.js#L61) | `renderMarkdownInto` | `target: unknown, source: unknown` | `unknown` | Perform the browser runtime operation: render markdown into. |
 | [markdown-renderer.js](markdown-renderer.js#L83) | `createMarkdownStream` | `target: unknown, afterRender: unknown` | `unknown` | Perform the browser runtime operation: create markdown stream. |
 | [markdown-renderer.js](markdown-renderer.js#L87) | `flush` | `None` | `unknown` | Perform the browser runtime operation: flush. |
+| [slash-palette.js](slash-palette.js#L10) | `label` | `state: unknown, match: unknown` | `unknown` | Perform the browser runtime operation: label. |
+| [slash-palette.js](slash-palette.js#L16) | `signature` | `state: unknown, matches: unknown` | `unknown` | Perform the browser runtime operation: signature. |
+| [slash-palette.js](slash-palette.js#L33) | `createSlashPalette` | `options: object` | `unknown` | Perform the browser runtime operation: create slash palette. |
+| [slash-palette.js](slash-palette.js#L38) | `close` | `None` | `unknown` | Perform the browser runtime operation: close. |
+| [slash-palette.js](slash-palette.js#L48) | `highlight` | `None` | `unknown` | Perform the browser runtime operation: highlight. |
+| [slash-palette.js](slash-palette.js#L57) | `render` | `None` | `unknown` | Perform the browser runtime operation: render. |
+| [slash-palette.js](slash-palette.js#L87) | `accept` | `index: unknown` | `unknown` | Perform the browser runtime operation: accept. |
+| [slash-palette.js](slash-palette.js#L106) | `refresh` | `None` | `unknown` | Perform the browser runtime operation: refresh. |
+| [slash-palette.js](slash-palette.js#L122) | `enterCompletes` | `None` | `unknown` | Perform the browser runtime operation: enter completes. |
+| [slash-palette.js](slash-palette.js#L135) | `handleKeydown` | `event: unknown` | `unknown` | Perform the browser runtime operation: handle keydown. |
 | [task-plan-view.js](task-plan-view.js#L14) | `renderTaskPlanItem` | `task: unknown, depth: unknown` | `unknown` | Perform the browser runtime operation: render task plan item. |
 | [trace-view.js](trace-view.js#L9) | `createTraceView` | `None` | `unknown` | Perform the browser runtime operation: create trace view. |
 | [trace-view.js](trace-view.js#L10) | `kindFor` | `event: unknown` | `unknown` | Perform the browser runtime operation: kind for. |

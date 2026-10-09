@@ -1212,15 +1212,47 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-6``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-4``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-7``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-5``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-6", html)
-        self.assertNotIn("/static/app.js?v=i18n-5", html)
-        self.assertIn("/static/app.css?v=desktop-agent-4", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-3", html)
+        self.assertIn("/static/app.js?v=i18n-7", html)
+        self.assertNotIn("/static/app.js?v=i18n-6", html)
+        self.assertIn("/static/app.css?v=desktop-agent-5", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-4", html)
+
+    def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
+        """`/help` and the palette render the catalog; dispatch uses the map.
+
+        Neither list may name a command the other cannot answer. The two had
+        already drifted apart while `/help` still advertised combined rows, so
+        this pins the invariant in both directions.
+        """
+        source = self._read("frontend/static/slash.js")
+        start = source.index("const SLASH_COMMANDS = [")
+        catalog = re.findall(r'command: "([^"]+)"', source[start:source.index("\n];", start)])
+        self.assertTrue(catalog, "the catalog must not be empty")
+
+        app = self._read("frontend/static/app.js")
+        handlers = app[app.index("const slashHandlers = {"):]
+        dispatched = re.findall(r'^\s*"?([A-Za-z][\w-]*)"?\s*:', handlers[:handlers.index("\n};")], re.M)
+
+        self.assertEqual(sorted(catalog), sorted(dispatched))
+
+    def test_the_slash_palette_is_wired_to_the_composer(self) -> None:
+        """The palette must own the composer keys and be closed by the shell."""
+        app = self._read("frontend/static/app.js")
+        self.assertIn("./components/slash-palette.js?v=slash-palette-1", app)
+        self.assertIn("slashPalette?.handleKeydown(event)", app)
+        self.assertIn("slashPalette?.close()", app)
+        self.assertIn('let slashPalette = null', app)
+
+        html = self._read("frontend/templates/index.html")
+        self.assertIn('id="slash-palette"', html)
+        # The parser module ships no token until now, so a cached copy could
+        # hide a catalog change from every browser that had already loaded it.
+        self.assertIn("/static/slash.js?v=slash-1", html)
 
     def test_the_compaction_card_streams_and_de_duplicates(self) -> None:
         """Pin the seams the manual-compaction card depends on.

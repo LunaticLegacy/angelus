@@ -1,6 +1,7 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
 import { createChatView } from "./components/chat-view.js?v=native-vision-6";
+import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
 import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
@@ -46,6 +47,8 @@ let source = null;
 let sourceSessionId = "";
 let lifecycleSource = null;
 let lifecycleSourceSessionId = "";
+/** Composer slash palette; assigned once the composer exists. */
+let slashPalette = null;
 let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
@@ -240,7 +243,7 @@ function openMcpApproval(event) { $("mcp-approval-id").value=event.id; $("mcp-ap
 /** Submit a decision; elicited values travel only in this response body. */
 async function answerMcpApproval() { throw new Error("MCP approval is not available in the Session console"); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
-function setRunning(running) { runActive=running; updateStopAvailability(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? t("runtime.adjustPlaceholder") : t("composer.placeholder"); if(running){ resizeComposer(); setSteerStatus(t("runtime.steering")); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
+function setRunning(running) { runActive=running; updateStopAvailability(); slashPalette?.close(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? t("runtime.adjustPlaceholder") : t("composer.placeholder"); if(running){ resizeComposer(); setSteerStatus(t("runtime.steering")); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
 let steerStatusTimer = null;
 let steerHintText = "运行中 — 指令会在安全的轮次边界生效";
 onLocaleChange(() => { steerHintText = t("runtime.steering"); if (runActive) setSteerStatus(steerHintText); });
@@ -815,7 +818,7 @@ async function loadOlderMessages() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if((source && sourceSessionId !== selected) || (lifecycleSource && lifecycleSourceSessionId !== selected)){source?.close();source=null;sourceSessionId=""; lifecycleSource?.close();lifecycleSource=null;lifecycleSourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0;lifecycleCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
+async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); slashPalette?.close(); profileWorkspaceId=selected; historyGeneration+=1; if((source && sourceSessionId !== selected) || (lifecycleSource && lifecycleSourceSessionId !== selected)){source?.close();source=null;sourceSessionId=""; lifecycleSource?.close();lifecycleSource=null;lifecycleSourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0;lifecycleCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
 
 async function start(message, images=[], targetSession=sessionId) {
   let runConfig;
@@ -936,23 +939,15 @@ function finish() { clearCompactStatus(); source?.close(); source=null; sourceSe
 /* ---- Slash commands -------------------------------------------------- */
 function showSlashHelp() {
   chatView.removeWelcome();
-  const rows=[
-    ["/help","显示本帮助"],
-    ["/new <会话名>","创建并切换到新会话"],
-    ["/switch <会话名>","切换到已有会话"],
-    ["/clear","清空聊天区视图（会话记录仍保留）"],
-    ["/connectors","打开连接设置"],
-    ["/settings [--panel=…]","打开设置对话框"],
-    ["/plan /agents /usage /trace","切换右侧检查器面板"],
-    ["/stop /force-stop","停止 / 强行停止当前运行"],
-    ["/agent <agentId>","查看指定 Agent 会话"],
-    ["/delete <会话名>","删除会话（需确认）"],
-    ["/compact [--agent=<id>]","手动压缩上下文为摘要"],
-    ["","参数支持引号、转义与 --key=value"],
-  ];
+  // Rendered from the catalog so `/help` and the composer palette cannot drift.
+  const body=SLASH_COMMANDS.map((entry,index)=>{
+    const previous=SLASH_COMMANDS[index-1];
+    const heading=!previous || previous.group!==entry.group ? `<tr class="slash-help-group"><td colspan="2">${escapeHtml(entry.group)}</td></tr>` : "";
+    const command=`/${escapeHtml(entry.command)}${entry.args?` ${escapeHtml(entry.args)}`:""}`;
+    return `${heading}<tr><td>${command}</td><td>${escapeHtml(entry.description)}</td></tr>`;
+  }).join("");
   const el=document.createElement("article"); el.className="message assistant";
-  const body=rows.map(([cmd,desc])=>`<tr><td>${escapeHtml(cmd)}</td><td>${escapeHtml(desc)}</td></tr>`).join("");
-  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助</small></div><div class="bubble markdown"><table><thead><tr><th>指令</th><th>说明</th></tr></thead><tbody>${body}</tbody></table><p>参数支持引号分组、反斜杠转义与 <code>--key=value</code> 命名参数。</p></div>`;
+  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助 · 输入 / 唤起面板</small></div><div class="bubble markdown"><table><thead><tr><th>指令</th><th>说明</th></tr></thead><tbody>${body}</tbody></table><p>参数支持引号分组、反斜杠转义与 <code>--key=value</code> 命名参数。</p></div>`;
   $("chat").append(el); chatView.scrollToLatestIfFollowing();
 }
 function sessionByName(name) { return availableSessions.find(item=>item.name===name || item.id===name); }
@@ -1023,6 +1018,11 @@ function handleRunGraphEvent(event) { applyRunGraphEvent(event); scheduleGraphPl
 function connectRunGraphEvents() { source?.close(); const eventSource=new EventSource(graphEventsUrl(sseCursor)); source=eventSource; sourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==sourceSessionId)return; const event=JSON.parse(message.data); const cursor=Number(event.sequence||message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)sseCursor=cursor; handleRunGraphEvent(event); }; eventSource.onerror=()=>{ if(source!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED){ if(!runActive) finish(); return; } if(sseStatusCheckPending)return; sseStatusCheckPending=true; apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`).then(state=>{ if(source!==eventSource)return; if(["running","stopping","force_stopping"].includes(state.state))setStatus("执行图连接中断，正在重连…","running");else finish(); }).catch(()=>{if(source===eventSource)setStatus("执行图连接中断，正在重连…","running");}).finally(()=>{sseStatusCheckPending=false;}); }; }
 function connectLifecycleEvents() { lifecycleSource?.close(); const eventSource=new EventSource(lifecycleEventsUrl(lifecycleCursor)); lifecycleSource=eventSource; lifecycleSourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==lifecycleSourceSessionId)return; const cursor=Number(message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)lifecycleCursor=cursor; try { handleEvent(JSON.parse(message.data)); } catch(error) { trace("生命周期事件格式无效",error.message); } }; eventSource.onerror=()=>{ if(lifecycleSource!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED) lifecycleSource=null; }; }
 async function restoreRunState() { if(!hasSelectedSession()) return; try { const graph=await apiJson(graphUrl()); if(graph?.kind==="angelus.run-graph") currentRunGraph=graph; if(["running","stopping","force_stopping"].includes(currentRunGraph.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunGraphEvents(); connectLifecycleEvents(); return; } if(["failed","interrupted"].includes(currentRunGraph.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",currentRunGraph.error||""); } else if(currentRunGraph.state === "completed") setStatus("已完成"); else if(currentRunGraph.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
+slashPalette = createSlashPalette({
+  input: $("message"),
+  root: $("slash-palette"),
+  describeAvailability: (entry) => slashAvailability(entry, { running: runActive, hasSession: hasSelectedSession() }),
+});
 $("composer").addEventListener("submit", async event=>{
   event.preventDefault();
   const snapshot=imageComposer.beginSend(); if(!snapshot)return;
@@ -1035,9 +1035,12 @@ $("composer").addEventListener("submit", async event=>{
       else accepted=await start(snapshot.message,snapshot.images,snapshot.sessionId);
     }
   } catch(error){ if(snapshot.sessionId===sessionId)setSteerStatus(`发送失败：${error.message}`,"error"); }
-  finally { imageComposer.finishSend(snapshot,accepted); }
+  finally { imageComposer.finishSend(snapshot,accepted); slashPalette?.refresh(); }
 });
 $("message").addEventListener("keydown", (event)=>{
+  // The palette owns ↑↓/Tab/Esc while it is open, and consumes Enter only
+  // while it has something left to complete.
+  if(slashPalette?.handleKeydown(event)) return;
   // Plain Enter submits; Shift/Alt+Enter insert a newline in the textarea.
   if(event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return;
   event.preventDefault();
