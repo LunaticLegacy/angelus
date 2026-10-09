@@ -1212,15 +1212,15 @@ class FrontendContextLoadTests(unittest.TestCase):
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-9``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-7``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-10``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-8``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-9", html)
-        self.assertNotIn("/static/app.js?v=i18n-8", html)
-        self.assertIn("/static/app.css?v=desktop-agent-7", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-6", html)
+        self.assertIn("/static/app.js?v=i18n-10", html)
+        self.assertNotIn("/static/app.js?v=i18n-9", html)
+        self.assertIn("/static/app.css?v=desktop-agent-8", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-7", html)
 
     def test_the_type_scale_has_one_owner(self) -> None:
         """Every size in the sheet must come off the ladder it declares.
@@ -1262,11 +1262,34 @@ class FrontendContextLoadTests(unittest.TestCase):
     def test_a_plugin_tab_cannot_ship_as_a_blank_slot(self) -> None:
         """The rail paints ``data-icon`` and hides button text, so tabs need one."""
         plugins = self._read("frontend/static/plugins.js")
-        self.assertIn("button.dataset.icon = PLUGIN_TAB_ICON", plugins)
-        self.assertIn("PLUGIN_TAB_ICON = ", plugins)
+        self.assertIn('button.dataset.icon = "plugin"', plugins)
+        self.assertIn("hydrateIcons(button)", plugins)
         # A cached copy of the module would hide the new tab from a browser that
         # had already loaded the shell.
-        self.assertIn("./plugins.js?v=plugin-tab-1", self._read("frontend/static/app.js"))
+        self.assertIn("./plugins.js?v=plugin-tab-2", self._read("frontend/static/app.js"))
+
+    def test_every_requested_icon_exists(self) -> None:
+        """A ``data-icon`` name with no entry in the set renders as nothing.
+
+        The template asks the icon module by name, so the two vocabularies have
+        to agree; a typo would otherwise show up only as an empty control.
+        """
+        icons = self._read("frontend/static/ui/icons.js")
+        start = icons.index("const ICONS = {")
+        known = set(re.findall(r"^\s*(\w+):", icons[start : icons.index("\n};", start)], re.M))
+        self.assertGreaterEqual(len(known), 15)
+
+        used = set(re.findall(r'data-icon="([^"]+)"', self._read("frontend/templates/index.html")))
+        self.assertGreaterEqual(len(used), 12)
+        self.assertEqual(set(), used - known, f"unknown icons in the template: {sorted(used - known)}")
+        for name in ("plugin", "collapse"):
+            self.assertIn(name, known, name)
+
+        # The module is new, so every importer carries a token: a cached copy
+        # would leave the whole shell without icons.
+        self.assertIn("./ui/icons.js?v=icon-1", self._read("frontend/static/app.js"))
+        self.assertIn("./icons.js?v=icon-1", self._read("frontend/static/ui/shell.js"))
+        self.assertIn("./ui/icons.js?v=icon-1", self._read("frontend/static/plugins.js"))
 
     def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
         """`/help` and the palette render the catalog; dispatch uses the map.

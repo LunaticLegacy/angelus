@@ -127,7 +127,9 @@ export function applyTranslations() {
   if (runtimeStatus) document.querySelector("#status").textContent = translateRuntime(runtimeStatus);
   const welcome = document.querySelector("#chat .welcome p");
   if (welcome) welcome.innerHTML = t("chat.welcome.body").replace("\n", "<br />");
-  const tabs = [["[data-inspector-panel=inspector-plan]", "inspector.plan"], ["[data-inspector-panel=inspector-agents]", "inspector.agents"], ["[data-inspector-panel=inspector-trace]", "inspector.trace"], ["[data-inspector-panel=inspector-usage]", "inspector.usage"]];
+  // The rail's glyph is an svg inside the button, so a localized label has to
+  // land on the tooltip span: setting the button's text would erase its icon.
+  const tabs = [["[data-inspector-panel=inspector-plan] span", "inspector.plan"], ["[data-inspector-panel=inspector-agents] span", "inspector.agents"], ["[data-inspector-panel=inspector-trace] span", "inspector.trace"], ["[data-inspector-panel=inspector-usage] span", "inspector.usage"]];
   tabs.forEach(([selector, key]) => setText(selector, key));
   setTexts("[data-settings-section]", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcp", "settings.plugins", "settings.language", "settings.future"]);
   setTexts("#settings-dialog .settings-page-heading h3", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcpServers", "settings.plugins", "settings.language", "settings.future"]);

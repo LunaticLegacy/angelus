@@ -1,12 +1,11 @@
-/**
- * Presentation frontier for the desktop client.
+/** Presentation frontier for the desktop client.
  *
  * This module owns shell-level concerns only: DOM lookup, theme preference,
  * and navigation between inspector surfaces. It deliberately knows nothing
  * about API payloads or backend URLs.
  */
+import { hydrateIcons } from "./icons.js?v=icon-1";
 export function element(id) { return document.getElementById(id); }
-
 export function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   return theme;
@@ -71,7 +70,8 @@ export function initShellLayout() {
   sidebarToggle.id = "toggle-sidebar";
   sidebarToggle.className = "shell-toggle sidebar-toggle";
   sidebarToggle.type = "button";
-  sidebarToggle.innerHTML = '<span aria-hidden="true">‹</span>';
+  sidebarToggle.innerHTML = '<span aria-hidden="true" data-icon="collapse"></span>';
+  hydrateIcons(sidebarToggle);
   sidebarToggle.setAttribute("aria-controls", sidebar.id);
   if (!sidebarToggle.parentElement) sidebar.append(sidebarToggle);
   const sidebarCollapsed = readStored("angelus.sidebarCollapsed") === "true";
