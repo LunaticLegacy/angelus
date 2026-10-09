@@ -54,14 +54,14 @@
 | [chat-view.js](chat-view.js#L416) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
 | [chat-view.js](chat-view.js#L435) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
 | [chat-view.js](chat-view.js#L442) | `upsertCompaction` | `event: unknown` | `unknown` | Perform the browser runtime operation: upsert compaction. |
-| [chat-view.js](chat-view.js#L476) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
-| [chat-view.js](chat-view.js#L487) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
-| [chat-view.js](chat-view.js#L499) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
-| [chat-view.js](chat-view.js#L503) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
-| [chat-view.js](chat-view.js#L510) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
-| [chat-view.js](chat-view.js#L552) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
-| [chat-view.js](chat-view.js#L565) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
-| [chat-view.js](chat-view.js#L571) | `applyScroll` | `None` | `unknown` | Perform the browser runtime operation: apply scroll. |
+| [chat-view.js](chat-view.js#L480) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
+| [chat-view.js](chat-view.js#L491) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
+| [chat-view.js](chat-view.js#L503) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
+| [chat-view.js](chat-view.js#L507) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
+| [chat-view.js](chat-view.js#L514) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
+| [chat-view.js](chat-view.js#L556) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
+| [chat-view.js](chat-view.js#L569) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L575) | `applyScroll` | `None` | `unknown` | Perform the browser runtime operation: apply scroll. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |

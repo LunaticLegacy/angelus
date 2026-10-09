@@ -1,6 +1,6 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=native-vision-5";
+import { createChatView } from "./components/chat-view.js?v=native-vision-6";
 import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
@@ -854,7 +854,10 @@ function compactCardEvent(event, manual=false) {
   const state = event.type?.endsWith("success") || data.stage === "done" ? "success" : event.type?.endsWith("failed") || data.kind === "error" ? "failed" : event.type?.endsWith("cancelled") ? "cancelled" : "running";
   const stageLabel = event.message || data.detail || (state === "running" ? "处理中…" : "");
   const stages = previous.stages.slice();
-  if(stageLabel && !stages.some(item => item.label === stageLabel)) stages.push({label:stageLabel, state});
+  /* Streamed summary chunks carry no stage of their own; without this guard
+     every chunk would append a "处理中…" step to the card's step list. */
+  const isDelta = data.kind === "delta" || event.type === "context:compact_delta";
+  if(!isDelta && stageLabel && !stages.some(item => item.label === stageLabel)) stages.push({label:stageLabel, state});
   const preview = `${previous.preview || ""}${data.delta || ""}`.slice(-12000);
   const next = {...previous, state, detail:stageLabel, error:data.error || event.error || "", stages, preview, manual};
   compactionCards.set(key, next);
@@ -974,9 +977,17 @@ async function runCompact(agent="coordinator") {
 }
 function handleCompactStage(record, startedSession, requestedAgent="coordinator") {
   if(sessionId!==startedSession) return; /* 切换会话后忽略旧压缩流 */
-  const {stage, detail, kind, error="", raw_content:rawContent=""}=record;
+  const {stage, detail, kind, error="", delta="", raw_content:rawContent=""}=record;
   const eventAgent=record.agent||requestedAgent||"coordinator";
-  compactCardEvent({agent:eventAgent, data:{stage, detail, kind, error, compaction_id:`manual:${startedSession}:${eventAgent}`}}, true);
+  const compactionId=`manual:${startedSession}:${eventAgent}`;
+  if(kind==="delta"){
+    /* The compactor streams its summary; route chunks through the same
+       coalesced path the automatic (in-run) events already use so the card is
+       not rebuilt once per chunk. */
+    compactCardEvent({type:"context:compact_delta", agent:eventAgent, data:{stage, detail, kind, error, delta, compaction_id:compactionId}}, true);
+    return;
+  }
+  compactCardEvent({agent:eventAgent, data:{stage, detail, kind, error, compaction_id:compactionId}}, true);
   if(kind==="error"){ const diagnostic=error ? `${detail}\n原因：${error}` : detail; setStatus(detail,"error"); trace("压缩失败", diagnostic); appendRunErrorBlock("上下文压缩失败", diagnostic, rawContent); }
   else if(stage==="done"){ setStatus(detail,"idle"); trace("上下文压缩", detail); loadInspectorAgents().catch(()=>{}); }
   else setStatus(detail,"running");

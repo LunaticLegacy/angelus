@@ -1204,23 +1204,38 @@ class FrontendContextLoadTests(unittest.TestCase):
 
     def test_chat_view_cache_buster_is_bumped(self) -> None:
         app = self._read("frontend/static/app.js")
-        self.assertIn("chat-view.js?v=native-vision-5", app)
+        self.assertIn("chat-view.js?v=native-vision-6", app)
+        self.assertNotIn("chat-view.js?v=native-vision-5", app)
         self.assertNotIn("chat-view.js?v=native-vision-4", app)
-        self.assertNotIn("chat-view.js?v=native-vision-3", app)
 
     def test_static_cache_buster_is_bumped(self) -> None:
         """Guard that the shell assets carry the tokens the template ships.
 
         The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-5``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-3``). Expectations follow
+        ``i18n-1`` -> ... -> ``i18n-6``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-4``). Expectations follow
         ``index.html`` rather than one particular change.
         """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-5", html)
-        self.assertNotIn("/static/app.js?v=i18n-4", html)
-        self.assertIn("/static/app.css?v=desktop-agent-3", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-2", html)
+        self.assertIn("/static/app.js?v=i18n-6", html)
+        self.assertNotIn("/static/app.js?v=i18n-5", html)
+        self.assertIn("/static/app.css?v=desktop-agent-4", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-3", html)
+
+    def test_the_compaction_card_streams_and_de_duplicates(self) -> None:
+        """Pin the seams the manual-compaction card depends on.
+
+        The route relays chunks as ``delta`` frames, so the shell must route
+        them through the coalesced ``context:compact_delta`` path instead of
+        appending a step per chunk, and the card must not print the terminal
+        stage's text next to the identical title.
+        """
+        app = self._read("frontend/static/app.js")
+        self.assertIn('kind==="delta"', app)
+        self.assertIn('type:"context:compact_delta"', app)
+        self.assertIn('data.kind === "delta"', app)
+        chat_view = self._read("frontend/static/components/chat-view.js")
+        self.assertIn("detail !== title", chat_view)
 
     def test_plan_mutations_trigger_a_plan_reload(self) -> None:
         """``plan:*`` lifecycle facts must schedule the debounced plan reload.

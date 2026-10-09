@@ -73,6 +73,24 @@ node --check frontend/static/app.js
 | [test_codex_app_server_adapter.py](test_codex_app_server_adapter.py#L160) | `CodexAppServerAdapterTests.test_non_stdio_endpoint_is_explicitly_unavailable` | `None` | `None` | The first adapter release does not open experimental remote transports. |
 | [test_codex_app_server_adapter.py](test_codex_app_server_adapter.py#L174) | `CodexAppServerAdapterTests.test_read_context_uses_thread_read_without_resuming` | `None` | `None` | Read text items through the documented non-resuming thread endpoint. |
 | [test_codex_app_server_adapter.py](test_codex_app_server_adapter.py#L187) | `_definition` | `None` | `ExternalAgentDefinition` | Create the supported local Codex declaration shared by tests. |
+| [test_compaction_stream.py](test_compaction_stream.py#L33) | `_NoopCompactor.fetch_stream` | `**_kwargs: object` | `Any` | Yield nothing; a real compactor call must not happen here. |
+| [test_compaction_stream.py](test_compaction_stream.py#L38) | `_collect` | `response: object` | `str` | Drain a streaming response body into one decoded string. |
+| [test_compaction_stream.py](test_compaction_stream.py#L46) | `_frames` | `response: object` | `list[dict]` | Parse a drained NDJSON body into its stage records. |
+| [test_compaction_stream.py](test_compaction_stream.py#L64) | `_StubCompactService.compact` | `session_id: str, agent_name: str, observer: Any` | `Any` | Replay the scripted chunks through the caller's observer. |
+| [test_compaction_stream.py](test_compaction_stream.py#L75) | `_request` | `core: object` | `SimpleNamespace` | Build the minimal request façade the route's ``_core`` lookup needs. |
+| [test_compaction_stream.py](test_compaction_stream.py#L83) | `CompactionStreamTests._run` | `service: _StubCompactService` | `list[dict]` | Implement `CompactionStreamTests._run`. |
+| [test_compaction_stream.py](test_compaction_stream.py#L91) | `CompactionStreamTests.test_streamed_chunks_survive_as_delta_frames` | `None` | `None` | Every compactor chunk reaches the wire in order. |
+| [test_compaction_stream.py](test_compaction_stream.py#L104) | `CompactionStreamTests.test_only_delta_events_become_delta_frames` | `None` | `None` | A started/success event must not masquerade as a streamed chunk. |
+| [test_compaction_stream.py](test_compaction_stream.py#L112) | `CompactionStreamTests.test_the_terminal_frame_reports_the_summary_accounting` | `None` | `None` | The done frame keeps the archive/abstract counts the card shows. |
+| [test_compaction_stream.py](test_compaction_stream.py#L123) | `CompactionStreamTests.test_a_failed_compaction_reports_the_error_frame` | `None` | `None` | A failing compaction ends with the error frame, never a done frame. |
+| [test_compaction_stream.py](test_compaction_stream.py#L143) | `_ObservingAgent.compact_context` | `control: object` | `bool` | Publish one streamed chunk to whichever observer is installed. |
+| [test_compaction_stream.py](test_compaction_stream.py#L153) | `_session` | `agent: _ObservingAgent` | `SimpleNamespace` | Build the session façade ``SessionService.compact`` reaches into. |
+| [test_compaction_stream.py](test_compaction_stream.py#L169) | `CompactionObserverBorrowTests._recorder` | `seen: list[tuple[str, str, dict]]` | `Any` | Adapt the observer contract ``(event_type, message, data)`` onto a list. |
+| [test_compaction_stream.py](test_compaction_stream.py#L173) | `CompactionObserverBorrowTests._compact` | `agent: _ObservingAgent, seen: list[tuple[str, str, dict]]` | `Any` | Run one explicit compaction against a stubbed coordinator factory. |
+| [test_compaction_stream.py](test_compaction_stream.py#L187) | `CompactionObserverBorrowTests.test_the_observer_receives_the_streamed_chunk` | `None` | `None` | The borrowed observer sees what the compactor published. |
+| [test_compaction_stream.py](test_compaction_stream.py#L196) | `CompactionObserverBorrowTests.test_the_borrowed_observer_chains_the_installed_hook` | `None` | `None` | An already-installed observer keeps receiving every event. |
+| [test_compaction_stream.py](test_compaction_stream.py#L208) | `CompactionObserverBorrowTests.test_the_installed_hook_is_restored_afterwards` | `None` | `None` | A borrowed observer cannot outlive the call that asked for it. |
+| [test_compaction_stream.py](test_compaction_stream.py#L218) | `CompactionObserverBorrowTests.test_a_failing_compaction_still_restores_the_installed_hook` | `None` | `None` | A raised compaction must not leave the borrowed observer attached. |
 | [test_computer_use_provider.py](test_computer_use_provider.py#L19) | `FakeBackend.screenshot` | `None` | `Any` | Implement `FakeBackend.screenshot`. |
 | [test_computer_use_provider.py](test_computer_use_provider.py#L24) | `FakeBackend.screen_size` | `None` | `Any` | Implement `FakeBackend.screen_size`. |
 | [test_computer_use_provider.py](test_computer_use_provider.py#L27) | `FakeBackend.click` | `x: Any, y: Any, button: Any` | `Any` | Implement `FakeBackend.click`. |
@@ -303,21 +321,22 @@ node --check frontend/static/app.js
 | [test_session_console.py](test_session_console.py#L1190) | `FrontendContextLoadTests.test_chat_view_renders_tool_payloads` | `None` | `None` | Implement `FrontendContextLoadTests.test_chat_view_renders_tool_payloads`. |
 | [test_session_console.py](test_session_console.py#L1205) | `FrontendContextLoadTests.test_chat_view_cache_buster_is_bumped` | `None` | `None` | Implement `FrontendContextLoadTests.test_chat_view_cache_buster_is_bumped`. |
 | [test_session_console.py](test_session_console.py#L1211) | `FrontendContextLoadTests.test_static_cache_buster_is_bumped` | `None` | `None` | Guard that the shell assets carry the tokens the template ships. |
-| [test_session_console.py](test_session_console.py#L1225) | `FrontendContextLoadTests.test_plan_mutations_trigger_a_plan_reload` | `None` | `None` | ``plan:*`` lifecycle facts must schedule the debounced plan reload. |
-| [test_session_console.py](test_session_console.py#L1241) | `FrontendContextLoadTests.test_legacy_chat_handler_also_reloads_on_plan_mutations` | `None` | `None` | The legacy chat.js handler must mirror the plan-prefix guard. |
-| [test_session_console.py](test_session_console.py#L1252) | `FrontendContextLoadTests.test_round_content_renders_readable_request_messages` | `None` | `None` | The per-round input block renders the literal model:/messages: layout. |
-| [test_session_console.py](test_session_console.py#L1269) | `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger` | `None` | `None` | Implement `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger`. |
-| [test_session_console.py](test_session_console.py#L1286) | `_ControlSwarm.dynamic_add_agent` | `name: str, worker: object` | `str` | Implement `_ControlSwarm.dynamic_add_agent`. |
-| [test_session_console.py](test_session_console.py#L1288) | `_ControlSwarm.dispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.dispatch_task`. |
-| [test_session_console.py](test_session_console.py#L1292) | `_ControlSwarm.redispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.redispatch_task`. |
-| [test_session_console.py](test_session_console.py#L1299) | `_ControlWorker.add_tools` | `tools: list[object]` | `None` | Implement `_ControlWorker.add_tools`. |
-| [test_session_console.py](test_session_console.py#L1306) | `_ControlConsole.add_worker` | `name: str, system_prompt: str` | `None` | Implement `_ControlConsole.add_worker`. |
-| [test_session_console.py](test_session_console.py#L1308) | `_ControlConsole.remove_worker` | `name: str` | `None` | Implement `_ControlConsole.remove_worker`. |
-| [test_session_console.py](test_session_console.py#L1311) | `_ControlConsole.is_bindable_leaf` | `plan_task_id: str` | `bool` | Implement `_ControlConsole.is_bindable_leaf`. |
-| [test_session_console.py](test_session_console.py#L1313) | `_ControlConsole.bind_execution` | `task_id: str, assignment_id: str` | `None` | Implement `_ControlConsole.bind_execution`. |
-| [test_session_console.py](test_session_console.py#L1337) | `DynamicAgentControlRegistrationTests._tools` | `run_control: SessionRunControl \| None` | `tuple[SessionConsoleTools, _ControlSession]` | Implement `DynamicAgentControlRegistrationTests._tools`. |
-| [test_session_console.py](test_session_console.py#L1349) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control`. |
-| [test_session_console.py](test_session_console.py#L1360) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control`. |
+| [test_session_console.py](test_session_console.py#L1225) | `FrontendContextLoadTests.test_the_compaction_card_streams_and_de_duplicates` | `None` | `None` | Pin the seams the manual-compaction card depends on. |
+| [test_session_console.py](test_session_console.py#L1240) | `FrontendContextLoadTests.test_plan_mutations_trigger_a_plan_reload` | `None` | `None` | ``plan:*`` lifecycle facts must schedule the debounced plan reload. |
+| [test_session_console.py](test_session_console.py#L1256) | `FrontendContextLoadTests.test_legacy_chat_handler_also_reloads_on_plan_mutations` | `None` | `None` | The legacy chat.js handler must mirror the plan-prefix guard. |
+| [test_session_console.py](test_session_console.py#L1267) | `FrontendContextLoadTests.test_round_content_renders_readable_request_messages` | `None` | `None` | The per-round input block renders the literal model:/messages: layout. |
+| [test_session_console.py](test_session_console.py#L1284) | `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger` | `None` | `None` | Implement `FrontendContextLoadTests.test_calls_tab_is_wired_to_the_journal_ledger`. |
+| [test_session_console.py](test_session_console.py#L1301) | `_ControlSwarm.dynamic_add_agent` | `name: str, worker: object` | `str` | Implement `_ControlSwarm.dynamic_add_agent`. |
+| [test_session_console.py](test_session_console.py#L1303) | `_ControlSwarm.dispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.dispatch_task`. |
+| [test_session_console.py](test_session_console.py#L1307) | `_ControlSwarm.redispatch_task` | `**kwargs: object` | `SimpleNamespace` | Implement `_ControlSwarm.redispatch_task`. |
+| [test_session_console.py](test_session_console.py#L1314) | `_ControlWorker.add_tools` | `tools: list[object]` | `None` | Implement `_ControlWorker.add_tools`. |
+| [test_session_console.py](test_session_console.py#L1321) | `_ControlConsole.add_worker` | `name: str, system_prompt: str` | `None` | Implement `_ControlConsole.add_worker`. |
+| [test_session_console.py](test_session_console.py#L1323) | `_ControlConsole.remove_worker` | `name: str` | `None` | Implement `_ControlConsole.remove_worker`. |
+| [test_session_console.py](test_session_console.py#L1326) | `_ControlConsole.is_bindable_leaf` | `plan_task_id: str` | `bool` | Implement `_ControlConsole.is_bindable_leaf`. |
+| [test_session_console.py](test_session_console.py#L1328) | `_ControlConsole.bind_execution` | `task_id: str, assignment_id: str` | `None` | Implement `_ControlConsole.bind_execution`. |
+| [test_session_console.py](test_session_console.py#L1352) | `DynamicAgentControlRegistrationTests._tools` | `run_control: SessionRunControl \| None` | `tuple[SessionConsoleTools, _ControlSession]` | Implement `DynamicAgentControlRegistrationTests._tools`. |
+| [test_session_console.py](test_session_console.py#L1364) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_register_agents_for_targeted_control`. |
+| [test_session_console.py](test_session_console.py#L1375) | `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control` | `None` | `None` | Implement `DynamicAgentControlRegistrationTests.test_dynamic_tools_noop_without_run_control`. |
 | [test_settings_service.py](test_settings_service.py#L16) | `SettingsServiceTests.test_connector_secret_never_appears_in_public_catalog` | `None` | `None` | Connector metadata is readable while its API key stays separate. |
 | [test_settings_service.py](test_settings_service.py#L32) | `SettingsServiceTests.test_session_profile_is_session_owned_and_can_restore_inheritance` | `None` | `None` | A full Session override survives global changes until explicitly cleared. |
 | [test_settings_service.py](test_settings_service.py#L55) | `SettingsServiceTests.test_saved_connector_materializes_required_coordinator_before_run` | `None` | `None` | Every Session reserves coordinator and builds it from saved profile state. |
@@ -348,6 +367,11 @@ node --check frontend/static/app.js
 | [test_codex_app_server_adapter.py](test_codex_app_server_adapter.py#L31) | `RecordedNotification` | `method: str, params: Mapping[str, object]` | `object` | One JSON-RPC notification captured by the deterministic transport. |
 | [test_codex_app_server_adapter.py](test_codex_app_server_adapter.py#L44) | `FakeCodexTransport` | `thread_result: Mapping[str, object], thread_read_result: Mapping[str, object], fail_initialize: bool, requests: list[RecordedRequest], notifications: list[RecordedNotification], closed: bool` | `CodexAppServerTransport` | In-memory App Server transport which never starts a process. |
 | [test_codex_app_server_adapter.py](test_codex_app_server_adapter.py#L105) | `CodexAppServerAdapterTests` | `None` | `unittest.TestCase` | Verify the fixed App Server inspection exchange without a Codex binary. |
+| [test_compaction_stream.py](test_compaction_stream.py#L30) | `_NoopCompactor` | `None` | `object` | Minimal compactor placeholder because these tests never summarise. |
+| [test_compaction_stream.py](test_compaction_stream.py#L52) | `_StubCompactService` | `deltas: list[str], error: Exception \| None` | `object` | Session service whose compaction publishes a scripted chunk sequence. |
+| [test_compaction_stream.py](test_compaction_stream.py#L80) | `CompactionStreamTests` | `None` | `unittest.TestCase` | The explicit-compaction route must relay the compactor's chunks. |
+| [test_compaction_stream.py](test_compaction_stream.py#L133) | `_ObservingAgent` | `handler: ContextHandlerLinear, error: Exception \| None` | `object` | Agent façade whose compaction publishes through the handler's observer. |
+| [test_compaction_stream.py](test_compaction_stream.py#L165) | `CompactionObserverBorrowTests` | `None` | `unittest.TestCase` | Borrowing the observer must add a listener, never replace one. |
 | [test_computer_use_provider.py](test_computer_use_provider.py#L15) | `FakeBackend` | `None` | `object` | Provide `FakeBackend` behavior. |
 | [test_computer_use_provider.py](test_computer_use_provider.py#L34) | `ComputerUseProviderTests` | `None` | `unittest.TestCase` | Provide `ComputerUseProviderTests` behavior. |
 | [test_context_handler_selection.py](test_context_handler_selection.py#L27) | `_StubFetcher` | `configs: list[LLMBackendConfig]` | `object` | Minimal fetcher so these tests never build a provider client. |
@@ -408,12 +432,12 @@ node --check frontend/static/app.js
 | [test_session_console.py](test_session_console.py#L658) | `_LedgerCore` | `session: _LedgerSession` | `object` | Minimal composition root exposing one durable Session lookup. |
 | [test_session_console.py](test_session_console.py#L665) | `CallLedgerProjectionTests` | `None` | `unittest.TestCase` | The journal-derived call ledger must expose real calls without prompts. |
 | [test_session_console.py](test_session_console.py#L1125) | `FrontendContextLoadTests` | `None` | `unittest.TestCase` | Static guards for the payload and lazy-tab frontend regressions. |
-| [test_session_console.py](test_session_console.py#L1283) | `_ControlSwarm` | `None` | `object` | Minimal TaskBus fake recording dynamic Agent registration. |
-| [test_session_console.py](test_session_console.py#L1297) | `_ControlWorker` | `None` | `object` | Worker fake accepting the report Tool added before dispatch. |
-| [test_session_console.py](test_session_console.py#L1303) | `_ControlConsole` | `None` | `object` | Console fake modelling worker registration and bindability. |
-| [test_session_console.py](test_session_console.py#L1317) | `_ControlExecution` | `None` | `object` | Execution boundary exposing the session identity only. |
-| [test_session_console.py](test_session_console.py#L1324) | `_ControlSession` | `run_control: SessionRunControl \| None` | `object` | Session aggregate containing only the fields console tools touch. |
-| [test_session_console.py](test_session_console.py#L1334) | `DynamicAgentControlRegistrationTests` | `None` | `unittest.TestCase` | Prove dynamically created console agents register with live run control. |
+| [test_session_console.py](test_session_console.py#L1298) | `_ControlSwarm` | `None` | `object` | Minimal TaskBus fake recording dynamic Agent registration. |
+| [test_session_console.py](test_session_console.py#L1312) | `_ControlWorker` | `None` | `object` | Worker fake accepting the report Tool added before dispatch. |
+| [test_session_console.py](test_session_console.py#L1318) | `_ControlConsole` | `None` | `object` | Console fake modelling worker registration and bindability. |
+| [test_session_console.py](test_session_console.py#L1332) | `_ControlExecution` | `None` | `object` | Execution boundary exposing the session identity only. |
+| [test_session_console.py](test_session_console.py#L1339) | `_ControlSession` | `run_control: SessionRunControl \| None` | `object` | Session aggregate containing only the fields console tools touch. |
+| [test_session_console.py](test_session_console.py#L1349) | `DynamicAgentControlRegistrationTests` | `None` | `unittest.TestCase` | Prove dynamically created console agents register with live run control. |
 | [test_settings_service.py](test_settings_service.py#L13) | `SettingsServiceTests` | `None` | `unittest.TestCase` | Verify the new settings path has one durable authority per concern. |
 | [test_system_resource_manager.py](test_system_resource_manager.py#L17) | `SystemResourceManagerTests` | `None` | `unittest.TestCase` | Keep folder selection out of browser and Tauri runtimes. |
 | [test_tool_result_prompt_budget.py](test_tool_result_prompt_budget.py#L10) | `ToolResultPromptBudgetTests` | `None` | `unittest.TestCase` | Ensure historical tool output remains cache-stable across rounds. |

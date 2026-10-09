@@ -882,6 +882,29 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 }
 
 .compaction-preview { max-height:220px; overflow:auto; margin:8px 0 0; padding:8px; border:1px solid #554a86; border-radius:6px; background:#0b1020; color:#d9d4ff; font:10px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.compaction-card { margin-right:auto; }
+.compaction-head { display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line2); border-radius:7px; background:var(--surface-raised); }
+.compaction-head strong { color:var(--soft); font-size:11px; font-weight:700; }
+.compaction-state { margin-left:auto; padding:2px 7px; border:1px solid var(--line2); border-radius:999px; color:var(--muted); font-size:9px; }
+.compaction-state.running { border-color:#6b5bc4; color:#c8bcff; }
+.compaction-state.success { border-color:#2f7d59; color:#8fe5b8; }
+.compaction-state.failed { border-color:#9d4854; color:#ffadb5; }
+.compaction-state.cancelled { border-color:#7a6b39; color:#e8d489; }
+.compaction-stages { display:grid; gap:1px; margin:8px 0 0; padding:0; list-style:none; }
+.compaction-stages li { display:flex; align-items:baseline; gap:7px; padding:5px 2px; color:var(--soft); font-size:10px; }
+.compaction-stages li::before { content:""; flex:none; width:5px; height:5px; border-radius:50%; background:var(--line2); transform:translateY(-1px); }
+.compaction-stages li.running::before { background:var(--purple); box-shadow:0 0 6px #a995ff66; }
+.compaction-stages li.success::before { background:var(--green); box-shadow:0 0 6px #a4f03d66; }
+.compaction-stages li.failed::before { background:var(--red); box-shadow:0 0 6px #ff657366; }
+.compaction-stages li small { margin-left:auto; color:var(--muted); font-size:9px; }
+.compaction-error { margin:8px 0 0; padding:8px 10px; border:1px solid #7b3645; border-left:3px solid var(--red); border-radius:6px; background:#2a151d; color:#f1c7ce; font-size:10px; overflow-wrap:anywhere; }
+.compaction-actions { margin-top:8px; }
+.compaction-actions button { padding:4px 9px; border:1px solid var(--line2); border-radius:6px; background:var(--panel2); color:var(--soft); font-size:10px; }
+.compaction-actions button:hover { border-color:#9d4854; color:#ffadb5; }
+:root[data-theme="light"] .compaction-head { border-color:#ccd5e6; background:#f7f9fd; }
+:root[data-theme="light"] .compaction-stages li::before { background:#9aa7c0; }
+:root[data-theme="light"] .compaction-error { border-color:#e8b4c0; background:#fdeef1; color:#8a4a52; }
+:root[data-theme="light"] .compaction-preview { border-color:#c6bdf2; background:#f8f7ff; color:#463c7d; }
 .activity { position:relative; padding-right:15px; }
 .inspector-tabs { position:absolute; z-index:2; top:0; right:0; bottom:0; width:54px; display:flex; flex-direction:column; gap:8px; margin:0; padding:14px 7px; border-top:0; border-right:0; border-bottom:0; border-left:1px solid var(--line); background:#090f19; }
 .inspector-tabs button { position:relative; display:grid; flex:0 0 58px; place-items:center; width:40px; height:58px; min-height:58px; padding:7px 2px; border:1px solid transparent; border-radius:8px; background:transparent; color:#66758c; font-size:0; }

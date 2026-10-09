@@ -463,7 +463,11 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     const stages = Array.isArray(event.stages) ? event.stages : [];
     const details = stages.map(stage => `<li class="${escapeHtml(String(stage.state || ""))}"><span>${escapeHtml(String(stage.label || stage.detail || ""))}</span>${stage.value ? `<small>${escapeHtml(String(stage.value))}</small>` : ""}</li>`).join("");
     const canStop = state === "running";
-    element.innerHTML = `<div class="message-meta"><div class="role role-system"><i></i><span>系统 · ${escapeHtml(agent)}</span></div><small>${escapeHtml(event.manual ? "手动压缩" : "自动压缩")}</small></div><div class="compaction-head"><strong>${escapeHtml(title)}</strong><span class="compaction-state ${escapeHtml(state)}">${escapeHtml(String(event.detail || ""))}</span></div>${details ? `<ul class="compaction-stages">${details}</ul>` : ""}${event.error ? `<p class="compaction-error">${escapeHtml(String(event.error))}</p>` : ""}${canStop ? `<div class="compaction-actions"><button type="button" data-compact-stop>停止压缩</button></div>` : ""}`;
+    // The terminal stage repeats the title ("上下文压缩完成"), so the status chip
+    // only renders when it adds something the title does not already say.
+    const detail = String(event.detail || "");
+    const status = detail && detail !== title ? `<span class="compaction-state ${escapeHtml(state)}">${escapeHtml(detail)}</span>` : "";
+    element.innerHTML = `<div class="message-meta"><div class="role role-system"><i></i><span>系统 · ${escapeHtml(agent)}</span></div><small>${escapeHtml(event.manual ? "手动压缩" : "自动压缩")}</small></div><div class="compaction-head"><strong>${escapeHtml(title)}</strong>${status}</div>${details ? `<ul class="compaction-stages">${details}</ul>` : ""}${event.error ? `<p class="compaction-error">${escapeHtml(String(event.error))}</p>` : ""}${canStop ? `<div class="compaction-actions"><button type="button" data-compact-stop>停止压缩</button></div>` : ""}`;
     if (event.preview) {
       const preview = document.createElement("pre");
       preview.className = "compaction-preview";

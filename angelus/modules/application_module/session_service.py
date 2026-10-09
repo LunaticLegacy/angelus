@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from ..workspace_module import Workspace
 from ..execution_module import ExecutionState
@@ -143,12 +143,27 @@ class SessionService:
         if isinstance(coordinator, Agent):
             self.rebuild_swarm(session_id)
 
-    def compact(self, session_id: str, agent_name: str = "coordinator") -> tuple[ExecutionController, Agent]:
+    def compact(
+        self,
+        session_id: str,
+        agent_name: str = "coordinator",
+        *,
+        observer: Callable[[str, str, dict], None] | None = None,
+    ) -> tuple[ExecutionController, Agent]:
         """Start one explicit compaction using the session's live Agent.
 
         The returned controller is published on the Session while the caller
         performs the operation, allowing the HTTP stop endpoint to cancel the
         provider request without constructing a second connector.
+
+        Args:
+            session_id: Session whose Agent compacts its own context.
+            agent_name: Graph name of the Agent to compact.
+            observer: Optional synchronous observer for this compaction's
+                lifecycle events (started / delta / success / failed). It is
+                chained behind the handler's existing observer rather than
+                replacing it, so borrowing the hook never silences the durable
+                event path.
         """
         session = self._core.sessions.get(session_id)
         if session.execution is not None:
@@ -177,7 +192,23 @@ class SessionService:
             linear = getattr(agent.context_handler, "linear", agent.context_handler)
             if hasattr(linear, "compress_threshold"):
                 linear.compress_threshold = profile["max_context_threshold"]
-            agent.compact_context(control=control)
+            install = getattr(linear, "set_compaction_event_hook", None)
+            previous_hook = getattr(linear, "event_hook", None)
+            borrowing = observer is not None and callable(install)
+            if borrowing:
+                def relay(event_type: str, message: str, data: dict) -> None:
+                    if callable(previous_hook):
+                        previous_hook(event_type, message, data)
+                    observer(event_type, message, data)
+
+                install(relay)
+            try:
+                agent.compact_context(control=control)
+            finally:
+                # An un-restored borrowed hook would keep routing this
+                # compaction's events to a caller that has already returned.
+                if borrowing:
+                    install(previous_hook)
             return control, agent
         finally:
             with session.compaction_lock:
