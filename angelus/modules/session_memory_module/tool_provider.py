@@ -62,7 +62,22 @@ class SessionMemoryToolProvider:
 
 
 def session_memory_tool_registration(core: "AngelusCore") -> ToolProviderRegistration:
-    names = ("search_session_memory", "read_session_memory", "search_session_artifacts", "open_session_artifact", "create_session_handoff", "read_session_handoff")
+    titles = {
+        "search_session_memory": "搜索记忆",
+        "read_session_memory": "读取记忆",
+        "search_session_artifacts": "搜索附件",
+        "open_session_artifact": "取用附件",
+        "create_session_handoff": "创建交接",
+        "read_session_handoff": "读取交接",
+    }
+    descriptions = {
+        "search_session_memory": "在其他会话的已归档记忆中检索证据；可附带附件与交接。",
+        "read_session_memory": "按证据 ID 读取指定会话的记忆条目。",
+        "search_session_artifacts": "按名称检索指定会话的附件清单。",
+        "open_session_artifact": "把指定会话的附件复制到当前会话。",
+        "create_session_handoff": "为后续会话写入一份结构化交接记录。",
+        "read_session_handoff": "按 ID 读取指定会话的交接记录。",
+    }
     return ToolProviderRegistration("session_memory", SessionMemoryToolProvider(core),
         (ToolCategory("session_memory", "跨对话记忆", "显式授权的会话快照、交接与只读附件访问。"),),
-        tuple(ToolDefinition(name, "session_memory", name, "显式授权的跨对话操作。", "session_memory", frozenset({"coordinator", "worker"})) for name in names))
+        tuple(ToolDefinition(name, "session_memory", titles[name], descriptions[name], "session_memory", frozenset({"coordinator", "worker"})) for name in titles))
