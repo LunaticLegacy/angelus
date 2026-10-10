@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from ..workspace_module import Workspace
 from ..execution_module import ExecutionState
 from ..session_module import create_agent, validate_session_id
 from ..tool_module import ToolPolicy
 from llmfetcher import Agent, LLMBackendConfig
+from llmfetcher.execution import ExecutionController, StopMode
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -126,6 +127,8 @@ class SessionService:
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
             compaction_output_max_tokens=profile["compaction_output_max_tokens"],
+            keep_recent=profile["compaction_keep_recent"],
+            context_handler_name=profile["context_handler"],
             context_path=workspace.state_path / "agents" / session.coordinator_name / "context.json",
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
@@ -139,6 +142,86 @@ class SessionService:
         # only a concrete llmfetcher Agent is valid for graph registration.
         if isinstance(coordinator, Agent):
             self.rebuild_swarm(session_id)
+
+    def compact(
+        self,
+        session_id: str,
+        agent_name: str = "coordinator",
+        *,
+        observer: Callable[[str, str, dict], None] | None = None,
+    ) -> tuple[ExecutionController, Agent]:
+        """Start one explicit compaction using the session's live Agent.
+
+        The returned controller is published on the Session while the caller
+        performs the operation, allowing the HTTP stop endpoint to cancel the
+        provider request without constructing a second connector.
+
+        Args:
+            session_id: Session whose Agent compacts its own context.
+            agent_name: Graph name of the Agent to compact.
+            observer: Optional synchronous observer for this compaction's
+                lifecycle events (started / delta / success / failed). It is
+                chained behind the handler's existing observer rather than
+                replacing it, so borrowing the hook never silences the durable
+                event path.
+        """
+        session = self._core.sessions.get(session_id)
+        if session.execution is not None:
+            state = session.execution.snapshot().state
+            if state in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
+                raise RuntimeError("Cannot compact while a run is active in this session")
+        self.ensure_coordinator(session_id)
+        agent = next(
+            (candidate for candidate in session.agents
+             if getattr(candidate, "_agent_name_in_graph", "") == agent_name),
+            session.coordinator if agent_name == session.coordinator_name else None,
+        )
+        if agent is None:
+            raise RuntimeError(f"Session agent is not configured: {agent_name}")
+        control = ExecutionController()
+        with session.compaction_lock:
+            if session.compaction_control is not None:
+                raise RuntimeError("Compaction is already running")
+            session.compaction_control = control
+        try:
+            context_path = getattr(agent, "context_path", None)
+            if context_path is not None and Path(context_path).exists():
+                if not agent.context_handler.load(context_path):
+                    raise RuntimeError("Could not load context checkpoint")
+            profile = self._core.run_profiles.effective(session_id)
+            linear = getattr(agent.context_handler, "linear", agent.context_handler)
+            if hasattr(linear, "compress_threshold"):
+                linear.compress_threshold = profile["max_context_threshold"]
+            install = getattr(linear, "set_compaction_event_hook", None)
+            previous_hook = getattr(linear, "event_hook", None)
+            borrowing = observer is not None and callable(install)
+            if borrowing:
+                def relay(event_type: str, message: str, data: dict) -> None:
+                    if callable(previous_hook):
+                        previous_hook(event_type, message, data)
+                    observer(event_type, message, data)
+
+                install(relay)
+            try:
+                agent.compact_context(control=control)
+            finally:
+                # An un-restored borrowed hook would keep routing this
+                # compaction's events to a caller that has already returned.
+                if borrowing:
+                    install(previous_hook)
+            return control, agent
+        finally:
+            with session.compaction_lock:
+                session.compaction_control = None
+
+    def stop_compaction(self, session_id: str, *, force: bool = False, reason: str = "user_requested") -> bool:
+        session = self._core.sessions.get(session_id)
+        with session.compaction_lock:
+            control = session.compaction_control
+        if control is None:
+            return False
+        control.request_stop(StopMode.FORCE if force else StopMode.GRACEFUL, reason=reason)
+        return True
 
     def rebuild_swarm(self, session_id: str) -> None:
         """Materialize the safe console blueprint into the Session's one swarm.
@@ -208,6 +291,8 @@ class SessionService:
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
             compaction_output_max_tokens=profile["compaction_output_max_tokens"],
+            keep_recent=profile["compaction_keep_recent"],
+            context_handler_name=profile["context_handler"],
             context_path=workspace.state_path / "agents" / name / "context.json",
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
@@ -265,6 +350,8 @@ class SessionService:
             max_concurrency=profile["max_swarm_agents"],
             max_context_threshold=profile["max_context_threshold"],
             compaction_output_max_tokens=profile["compaction_output_max_tokens"],
+            keep_recent=profile["compaction_keep_recent"],
+            context_handler_name=profile["context_handler"],
             context_path=workspace.state_path / "agents" / name / "context.json",
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],

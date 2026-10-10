@@ -1,11 +1,17 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=native-vision-5";
+import { createChatView } from "./components/chat-view.js?v=native-vision-6";
+import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
+import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-3";
 import { createImageComposer } from "./components/image-composer.js";
 import { createTraceView } from "./components/trace-view.js";
 import { renderTaskPlanItem } from "./components/task-plan-view.js";
 import { createExternalAgentHubView } from "./components/external-agent-hub-view.js?v=context-exchange-1";
-import { loadPlugins, unloadPlugin } from "./plugins.js";
+import { loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-tab-2";
+import { apiJson, apiPost, apiPut, apiDelete } from "./runtime/backend-bridge.js";
+import { element as shellElement, initShellLayout } from "./ui/shell.js?v=shell-icons-1";
+import { hydrateIcons, setIcon } from "./ui/icons.js?v=icon-3";
+import { initI18n, t, onLocaleChange, translateRuntime, currentLocale } from "./i18n.js?v=i18n-tabs-2";
 
 /* ================================================================
  *  Theme (light / dark) — wired to the ☾ sidebar-footer button.
@@ -15,10 +21,10 @@ import { loadPlugins, unloadPlugin } from "./plugins.js";
 const THEME_KEY = "llmfetcherTheme";
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  const btn = $("theme-toggle");
+  const btn = shellElement("theme-toggle");
   if (btn) {
-    btn.textContent = theme === "light" ? "☀" : "☾";
-    btn.title = theme === "light" ? "切换到深色主题" : "切换到浅色主题";
+    setIcon(btn, theme === "light" ? "sun" : "moon");
+    btn.title = theme === "light" ? (currentLocale() === "zh-CN" ? "切换到深色主题" : "Switch to dark theme") : (currentLocale() === "zh-CN" ? "切换到浅色主题" : "Switch to light theme");
   }
   try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* private mode etc. */ }
 }
@@ -26,11 +32,13 @@ function initTheme() {
   let theme = "dark";
   try { theme = localStorage.getItem(THEME_KEY) || "dark"; } catch (e) {}
   applyTheme(theme);
-  const btn = $("theme-toggle");
+  const btn = shellElement("theme-toggle");
   if (btn) btn.addEventListener("click", () =>
     applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
 }
 initTheme();
+initShellLayout();
+hydrateIcons();
 
 const storedSessionId = localStorage.llmfetcherSession || null;
 let sessionId = storedSessionId || null;
@@ -42,6 +50,12 @@ let source = null;
 let sourceSessionId = "";
 let lifecycleSource = null;
 let lifecycleSourceSessionId = "";
+/** Composer slash palette; assigned once the composer exists. */
+let slashPalette = null;
+/** Composer connector/toolset controls; assigned once the composer exists. */
+let composerScope = null;
+/** Connector choices last read from the backend, shared by both selectors. */
+let connectorChoices = [];
 let selectedAgent = "all";
 let activeInspectorPanel = localStorage.llmfetcherInspectorPanel || "inspector-plan";
 let traceBefore = null;
@@ -101,7 +115,7 @@ const config = () => ({
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "compaction-keep-recent", "context-handler", "max-swarm-agents", "session-memory-sessions"];
 const connectionDraftIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
 function profileSettings(overrides={}) { return {
@@ -111,14 +125,17 @@ function profileSettings(overrides={}) { return {
   system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value),
-  max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), max_swarm_agents: Number($("max-swarm-agents").value),
+  max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), compaction_keep_recent: Number($("compaction-keep-recent").value), max_swarm_agents: Number($("max-swarm-agents").value),
+  // Falls back to the stored value so a save raised before the handler catalog
+  // is rendered cannot overwrite the user's choice with an empty string.
+  context_handler: value("context-handler") || currentProfile?.effective?.context_handler || "",
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
   ...overrides,
 }; }
 function profilePayload(overrides={}) { return {settings: profileSettings(overrides)}; }
 function profileUrl() { const target=profileWorkspaceId||sessionId; return $("profile-scope")?.value==="global"?"/api/settings/run-profile":`/api/sessions/${encodeURIComponent(target)}/run-profile`; }
-function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||sessionId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); }
+function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; [...agentSettingsIds,...connectionDraftIds].forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||sessionId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); composerScope?.refresh(); }
 async function restoreSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiJson(profileUrl()); applyProfile(profile); }
 async function persistSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiPut(profileUrl(),profilePayload()); applyProfile(profile); }
 function bindSettingsPersistence() {
@@ -143,6 +160,7 @@ async function loadToolRegistry() {
     tools: (category.tools || []).map((tool) => [tool.id, tool.title, tool.description]),
   }));
   if (currentProfile) renderToolPermissions(currentProfile.effective?.tool_permissions || {});
+  composerScope?.refresh();
 }
 
 function renderToolPermissions(policy) {
@@ -157,25 +175,39 @@ function renderToolPermissions(policy) {
     const enabled = categories[group.id] === true;
     return `<section class="permission-card ${enabled ? "is-enabled" : "is-disabled"}"><header><span class="permission-icon">${group.icon}</span><div><h4>${group.title}</h4><p>${group.note}</p></div><label class="permission-master"><input type="checkbox" data-permission-category="${group.id}" ${enabled ? "checked" : ""}/><span>启用类别</span></label></header><div class="permission-tool-list">${group.tools.map(([id, title, note]) => `<label class="permission-tool"><span><strong>${title}</strong><small>${note}</small></span><input type="checkbox" data-permission-tool="${id}" ${tools[id] === true ? "checked" : ""} aria-label="${title}"/></label>`).join("")}</div></section>`;
   }).join("")}`;
-  target.querySelectorAll("input").forEach((input) => input.addEventListener("change", async () => {
-    const next = { categories: { ...categories }, tools: { ...tools } };
-    if (input.dataset.permissionCategory) {
-      const category = input.dataset.permissionCategory;
-      next.categories[category] = input.checked;
-      // A category checkbox is an intentional bulk choice: keep every
-      // contained tool aligned so the next rendered profile is unambiguous.
-      const group = toolRegistryGroups.find((item) => item.id === category);
-      for (const [toolId] of group?.tools || []) next.tools[toolId] = input.checked;
-    } else next.tools[input.dataset.permissionTool] = input.checked;
-    const profile = await apiPut(profileUrl(), profilePayload({ tool_permissions: next }));
-    applyProfile(profile);
+  target.querySelectorAll("input").forEach((input) => input.addEventListener("change", () => {
+    const patch = input.dataset.permissionCategory ? { category: input.dataset.permissionCategory, enabled: input.checked } : { tool: input.dataset.permissionTool, enabled: input.checked };
+    applyToolPermission(patch).catch((error) => trace("保存工具权限失败", error.message));
   }));
 }
-function setStatus(text, state="idle") { const el=$("status"); el.textContent=text; el.className=`status ${state}`; }
+
+/**
+ * Write one permission change into the session's run profile.
+ *
+ * The Agent settings grid and the composer's tool panel are two editors for one
+ * value, so both hand their change here and the applied profile re-renders
+ * whichever surface is on screen. Each call reads the stored policy rather than
+ * a render-time snapshot, so two quick toggles cannot drop one another.
+ *
+ * @param {{category?: string, tool?: string, enabled: boolean}} patch Change to
+ *   apply; a category also aligns every tool it owns, since a tool is allowed
+ *   only while its category is.
+ * @returns {Promise<void>} Resolves once the profile round-trip is applied.
+ */
+async function applyToolPermission({ category = "", tool = "", enabled = false } = {}) {
+  const stored = currentProfile?.effective?.tool_permissions || {};
+  const next = { categories: { ...(stored.categories || {}) }, tools: { ...(stored.tools || {}) } };
+  if (category) {
+    next.categories[category] = enabled;
+    for (const [toolId] of toolRegistryGroups.find((group) => group.id === category)?.tools || []) next.tools[toolId] = enabled;
+  } else if (tool) next.tools[tool] = enabled;
+  applyProfile(await apiPut(profileUrl(), profilePayload({ tool_permissions: next })));
+}
+function setStatus(text, state="idle") { const el=$("status"); el.dataset.runtimeText=String(text ?? ""); el.textContent=translateRuntime(text); el.className=`status ${state}`; }
 function providerLabel(provider) { return provider===KIMI_CODE_PROVIDER ? "Kimi Code" : provider; }
 function updateProviderHint() { const hint=$("provider-hint"); const isKimi=$("provider").value===KIMI_CODE_PROVIDER; hint.hidden=!isKimi; hint.textContent=isKimi ? "已使用 Kimi Code 的 OpenAI 兼容接口。请填写 Kimi Code Console 创建的 API Key；它不能与 Kimi 开放平台 Key 混用。该模型只接受温度 1，已自动锁定。" : ""; }
 function applyProviderPreset() { const temperature=$("temperature"), isKimi=$("provider").value===KIMI_CODE_PROVIDER; temperature.disabled=isKimi; if(!isKimi) { updateProviderHint(); return; } const apiUrl=$("api-url"), model=$("model"); if(!apiUrl.value.trim() || apiUrl.value.trim()==="https://api.openai.com/v1") apiUrl.value=KIMI_CODE_BASE_URL; if(!model.value.trim() || model.value.trim()==="gpt-4.1-mini") model.value=KIMI_CODE_DEFAULT_MODEL; temperature.value=KIMI_CODE_TEMPERATURE; updateProviderHint(); }
-function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || "模型配置"; $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; updateProviderHint(); }
+function updateModelSummary() { $("model-label").textContent=$("model").value.trim() || t("settings.modelConfig"); $("provider-label").textContent=$("provider").options[$("provider").selectedIndex]?.text || "OpenAI compatible"; updateProviderHint(); }
 /** Return explicitly selected, non-current session IDs for run-scoped memory grants. */
 function selectedMemorySessions() { return [...new Set($("session-memory-sessions").value.split(",").map(value=>value.trim()).filter(value=>value && value !== sessionId))]; }
 /** Render searchable session choices and removable selections without exposing session content. */
@@ -191,7 +223,7 @@ const imageComposer = createImageComposer({
     return payload;
   },
 });
-const chatView = createChatView({ getAgentLabel: () => selectedAgent, getSessionId: () => sessionId, onFollowChange: setScrollToBottomVisible });
+const chatView = createChatView({ getAgentLabel: () => selectedAgent, getSessionId: () => sessionId, onFollowChange: setScrollToBottomVisible, onCompactStop: (agent) => stopCompaction(agent).catch(error => trace("停止压缩失败", error.message)) });
 const traceView = createTraceView();
 /** Append a single transcript turn live (real-time path). */
 /** Normalize live tool lifecycle data while preserving structured results for chat rendering. */
@@ -233,24 +265,23 @@ function openMcpApproval(event) { $("mcp-approval-id").value=event.id; $("mcp-ap
 /** Submit a decision; elicited values travel only in this response body. */
 async function answerMcpApproval() { throw new Error("MCP approval is not available in the Session console"); }
 function updateHeaderMetrics(data) { if (!data) return; $("header-tokens").textContent=data.usage?.total ?? data.total ?? "—"; if(data.duration_ms) $("header-duration").textContent=`${(data.duration_ms/1000).toFixed(1)}s`; }
-function setRunning(running) { runActive=running; updateStopAvailability(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? "调整正在执行的 Agent…" : "给 Agent 一个任务… （/ 开头为指令，/help 查看）"; if(running){ resizeComposer(); setSteerStatus("运行中 — 指令会在安全的轮次边界生效"); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
+function setRunning(running) { runActive=running; updateStopAvailability(); slashPalette?.close(); const composer=$("composer"), input=$("message"), hint=$("steer-hint"); composer.classList.toggle("steer-mode", running); if(hint) hint.hidden=!running; input.placeholder=running ? t("runtime.adjustPlaceholder") : t("composer.placeholder"); if(running){ resizeComposer(); setSteerStatus(t("runtime.steering")); input.focus(); } const guidance=$("run-guidance"); if(running && !guidance){const panel=document.createElement("aside");panel.id="run-guidance";panel.className="run-guidance";panel.innerHTML="<strong>Agent 正在执行</strong><span>可在右侧查看工具调用与用量。</span><span>停止会在当前模型与工具步骤完成后生效。</span><span>强行停止会中断当前模型请求，并立即终止已注册的 Shell 工具进程。</span><span>切换工作空间不会中断后台任务，结果会保存在原会话。</span><span>运行中可直接在输入框发送调整指令，Agent 会在安全的轮次边界应用。</span>"; $("chat").append(panel);} if(!running) guidance?.remove(); }
 let steerStatusTimer = null;
-const steerHintText = "运行中 — 指令会在安全的轮次边界生效";
+let steerHintText = "运行中 — 指令会在安全的轮次边界生效";
+onLocaleChange(() => { steerHintText = t("runtime.steering"); if (runActive) setSteerStatus(steerHintText); });
 function setSteerStatus(text, state="") { const el=$("steer-status"); if(!el) return; const hint=el.closest(".steer-hint"); el.textContent=text; el.className=state ? `steer-status ${state}` : "steer-status"; if(hint) hint.className=`steer-hint ${state || ""}`.trim(); clearTimeout(steerStatusTimer); if(state) steerStatusTimer=setTimeout(()=>{ el.textContent=steerHintText; el.className="steer-status"; if(hint) hint.className="steer-hint"; }, 6000); }
 async function sendSteer(message) { const receipt=await apiPost(`/api/runs/${encodeURIComponent(sessionId)}/control`,{agent_id:selectedAgent,action:"steer",message,reason:"user_steer"}); const target=selectedAgent==="all"?"全部活跃 Agent":selectedAgent; setSteerStatus(`已发送给 ${target}（${(receipt.target_agents||[]).length} 个目标）`,"applied"); }
-async function apiJson(path) { const response=await fetch(path); if(!response.ok) throw new Error(`${response.status} ${response.statusText} (${path})`); return response.json(); }
-async function apiPost(path, body={}) { const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
-async function apiPut(path, body={}) { const response=await fetch(path,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const payload=await response.json().catch(()=>({})); if(!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText} (${path})`); return payload; }
 /** Load every session into the select and independently scrollable quick list. */
 function setWorkspaceIndicator(id,status) { const item=document.querySelector(`[data-workspace-id="${CSS.escape(id)}"]`); if(!item)return; item.dataset.status=status; item.title=`会话状态：${({idle:"待机",running:"运行中",error:"错误",done:"已完成"})[status]||"待机"}`; }
-async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';$("workspace-open-hint").textContent="请先创建并绑定一个项目目录。";imageComposer.setSession(sessionId);renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; imageComposer.setSession(sessionId); const opened=sessions.find(item=>item.id===sessionId); $("workspace-open-hint").textContent=opened?(opened.project_path?`当前项目：${opened.project_path}`:`当前项目：${opened.name}`):""; recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button></article>`).join(""); recent.querySelectorAll("[data-session-select]").forEach(button=>button.addEventListener("click",()=>switchSession(button.dataset.sessionSelect).catch(error=>trace("会话切换失败",error.message)))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+async function loadWorkspaces(selected=sessionId) { const {sessions}=await apiJson("/api/sessions"); availableSessions=sessions; const select=$("workspace"), recent=$("recent-sessions"); if(!sessions.length){sessionId=null;localStorage.removeItem("llmfetcherSession");select.innerHTML='<option value="">尚无会话</option>';select.disabled=true;recent.innerHTML='<p class="empty">创建一个会话以开始。</p>';imageComposer.setSession(sessionId);renderMemorySessionPicker();return;} select.disabled=false; select.innerHTML=sessions.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join(""); sessionId=sessions.some(item=>item.id===selected)?selected:sessions[0].id; if(!profileWorkspaceId)profileWorkspaceId=sessionId; select.value=sessionId; localStorage.llmfetcherSession=sessionId; imageComposer.setSession(sessionId); recent.innerHTML=sessions.map(item=>`<article class="recent-session ${item.id===sessionId?"active":""}" data-session-id="${escapeHtml(item.id)}" data-status="${escapeHtml(item.state||"idle")}"><button class="recent-session-select" type="button" data-session-select="${escapeHtml(item.id)}" title="切换到 ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span></button><div class="recent-session-actions"><button class="recent-session-action" type="button" data-session-open="${escapeHtml(item.id)}" title="打开该会话的工作目录" aria-label="打开该会话的工作目录" data-icon="external"></button><button class="recent-session-action danger" type="button" data-session-delete="${escapeHtml(item.id)}" data-session-name="${escapeHtml(item.name)}" title="删除该会话" aria-label="删除该会话" data-icon="trash"></button></div></article>`).join(""); hydrateIcons(recent); recent.querySelectorAll(".recent-session").forEach(row=>row.addEventListener("click",event=>{ if(event.target.closest(".recent-session-action")) return; switchSession(row.dataset.sessionId).catch(error=>trace("会话切换失败",error.message)); })); recent.querySelectorAll("[data-session-open]").forEach(button=>button.addEventListener("click",()=>openSessionWorkspace(button.dataset.sessionOpen).catch(error=>trace("无法打开工作目录",error.message)))); recent.querySelectorAll("[data-session-delete]").forEach(button=>button.addEventListener("click",()=>deleteSession(button.dataset.sessionDelete,button.dataset.sessionName).catch(error=>{ setStatus(`删除失败：${error.message}`,"error"); trace("删除失败",error.message); }))); recent.querySelector(".active")?.scrollIntoView({block:"nearest"}); renderMemorySessionPicker(); }
+function filterRecentSessions(query="") { const normalized=query.trim().toLowerCase(); document.querySelectorAll("#recent-sessions .recent-session").forEach((item)=>{ const text=item.textContent.toLowerCase(); item.hidden=Boolean(normalized && !text.includes(normalized)); }); }
 function applyConnector(connector) { ["provider","model","api-url"].forEach(id=>{const key=id.replaceAll("-","_"); if(connector[key] !== undefined) $(id).value=connector[key];}); applyProviderPreset(); $("api-key").value=""; $("api-key").placeholder=connector.has_api_key ? "已安全保存；留空以继续使用" : "仅保留在当前浏览器"; }
-async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
+async function loadConnectors(selected=connectorId) { const {connectors}=await apiJson("/api/connectors"); const select=$("connector"); select.innerHTML=`<option value="">未保存的临时连接</option>${connectors.map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}`; connectorId=connectors.some(item=>item.id===selected)?selected:""; select.value=connectorId; connectorChoices=connectors; composerScope?.refresh(); const connector=connectors.find(item=>item.id===connectorId); if(connector) applyConnector(connector); }
 function connectorPayload(name) { return {name, provider:value("provider"), model:value("model"), api_url:value("api-url"), api_key:$("api-key").value}; }
 /** Give connector saves a visible local result instead of relying on hidden Trace. */
 function connectorFeedback(text, state="") { const button=$("save-connector"); button.textContent=text; button.dataset.state=state; clearTimeout(connectorFeedback.timer); connectorFeedback.timer=setTimeout(()=>{button.textContent="保存";button.dataset.state="";},1800); }
 /** Persist the current fields as a new globally available connector. */
-async function createConnector(name) { const response=await fetch("/api/connectors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(connectorPayload(name))}); const connector=await response.json(); if(!response.ok) throw new Error(connector.detail||"无法保存连接"); await loadConnectors(connector.id); await persistSettings(); trace("已保存连接并绑定到当前运行档案",connector.name); connectorFeedback("已保存","success"); }
+async function createConnector(name) { const connector=await apiPost("/api/connectors",connectorPayload(name)); await loadConnectors(connector.id); await persistSettings(); trace("已保存连接并绑定到当前运行档案",connector.name); connectorFeedback("已保存","success"); }
 /** Replace the selected connector while keeping its global identity. */
 async function saveSelectedConnector() { if(!connectorId){openConnectorDialog();return;} const name=$("connector").selectedOptions[0]?.text||"当前连接"; const response=await fetch(`/api/connectors/${connectorId}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(connectorPayload(name))}); if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.detail||"无法更新连接");} trace("已更新连接",name); connectorFeedback("已保存","success"); }
 /** Open the document-native name dialog used by both new and unsaved connectors. */
@@ -271,7 +302,7 @@ function bindPluginLifecycleControls(plugin) { const button=document.querySelect
 function pluginThemeControls(plugin) { const themes=Array.isArray(plugin.themes)?plugin.themes:[]; if(plugin.kind!=="theme_pack"||!themes.length)return ""; const selected=localStorage.getItem("angelusPluginTheme")||""; return `<div class="plugin-theme-controls"><label>皮肤<select id="plugin-theme-choice">${themes.map(theme=>{const key=`plugin:${plugin.name}:${theme.id}`;return `<option value="${escapeHtml(theme.id)}" ${key===selected?"selected":""}>${escapeHtml(theme.title)} · ${escapeHtml(theme.mode)}</option>`;}).join("")}</select></label><button id="apply-plugin-theme" type="button">应用皮肤</button></div>`; }
 function renderPluginSettingsFields(schema, settings) { return schema.map(field=>{const current=settings[field.key]??field.default??"", key=escapeHtml(field.key), title=escapeHtml(field.title||field.key), desc=field.description?`<em>${escapeHtml(field.description)}</em>`:"", placeholder=field.placeholder?`placeholder="${escapeHtml(field.placeholder)}"`:""; if(field.type==="boolean")return `<label class="plugin-setting-field"><input data-plugin-setting="${key}" type="checkbox" ${current===true?"checked":""} /> ${title}${desc}</label>`; if(Array.isArray(field.enum)&&field.enum.length)return `<label class="plugin-setting-field">${title}${desc}<select data-plugin-setting="${key}">${field.enum.map(item=>`<option value="${escapeHtml(String(item))}" ${String(item)===String(current)?"selected":""}>${escapeHtml(String(item))}</option>`).join("")}</select></label>`; if(field.type==="string"&&field.format==="textarea")return `<label class="plugin-setting-field">${title}${desc}<textarea data-plugin-setting="${key}" ${placeholder}>${escapeHtml(String(current))}</textarea></label>`; const type=field.type==="string"?(field.format==="uri"?"url":"text"):"number"; return `<label class="plugin-setting-field">${title}${desc}<input data-plugin-setting="${key}" type="${type}" value="${escapeHtml(String(current))}" ${placeholder} ${field.minimum!==null&&field.minimum!==undefined?`min="${field.minimum}"`:""} ${field.maximum!==null&&field.maximum!==undefined?`max="${field.maximum}"`:""} ${field.type==="number"?"step=\"any\"":""} /></label>`; }).join(""); }
 function bindPluginTheme(plugin) { const button=$("apply-plugin-theme"), choice=$("plugin-theme-choice"); if(!button||!choice)return; button.addEventListener("click",()=>{const theme=(plugin.themes||[]).find(item=>item.id===choice.value);if(!theme)return; const linkId="angelus-plugin-theme"; document.getElementById(linkId)?.remove();const link=document.createElement("link");link.id=linkId;link.rel="stylesheet";link.href=`/plugins/${encodeURIComponent(plugin.name)}/static/${encodeURIComponent(theme.asset)}`;link.addEventListener("error",()=>{link.remove();setPluginFeedback("皮肤资源加载失败，已保留当前主题。","error");});document.head.append(link);document.documentElement.dataset.theme=theme.mode;localStorage.setItem("angelusPluginTheme",`plugin:${plugin.name}:${theme.id}`);setPluginFeedback(`${theme.title} 已应用。`,`success`);}); }
-function renderPluginDetail(plugin, payload={}) { const detail=$("plugin-settings-detail"); if(!detail)return; const registration=pluginSettingsRegistration(plugin.name); const title=registration?.title || `${plugin.display_name||plugin.name} 设置`; const description=registration?.description || "设置保存在本机插件注册表；工具插件在下次加载时读取。"; const heading=`<div class="plugin-detail-heading"><div><h4>${escapeHtml(title)}</h4><p>${escapeHtml(plugin.name||"插件")} · v${escapeHtml(plugin.version||"—")}</p></div><span class="plugin-state-badge ${escapeHtml(plugin.state||"")}">${escapeHtml(pluginStateLabel(plugin.state))}</span></div>`; const themes=pluginThemeControls(plugin), lifecycle=pluginLifecycleControls(plugin); if(!plugin.settings_available || !plugin.id) { const reason=plugin.error || (plugin.kind==="theme_pack" ? "选择皮肤后即可应用；主题包不执行 Python 代码。" : plugin.settings_available ? "插件尚未写入注册表，无法保存设置。" : "该插件没有声明可配置设置。") ; detail.innerHTML=`${heading}<p class="plugin-settings-note">${escapeHtml(reason)}</p>${themes}${lifecycle}`; bindPluginLifecycleControls(plugin);bindPluginTheme(plugin);return; } const schema=Array.isArray(payload.settings_schema)?payload.settings_schema:[]; detail.innerHTML=`${heading}<p class="plugin-settings-note">${escapeHtml(description)}</p>${themes}${lifecycle}<form id="plugin-settings-form" class="plugin-settings-editor">${renderPluginSettingsFields(schema,payload.settings||{})}<div class="plugin-settings-actions"><button type="submit">保存插件设置</button></div></form>`; $("plugin-settings-form").addEventListener("submit",event=>savePluginSettings(event,plugin,schema)); bindPluginLifecycleControls(plugin);bindPluginTheme(plugin); }
+function renderPluginDetail(plugin, payload={}) { const detail=$("plugin-settings-detail"); if(!detail)return; const registration=pluginSettingsRegistration(plugin.name); const title=registration?.title || `${plugin.display_name||plugin.name} 设置`; const description=registration?.description || "设置保存在本机插件注册表；工具插件在下次加载时读取。"; const heading=`<div class="plugin-detail-heading"><div><h4>${escapeHtml(title)}</h4><p>${escapeHtml(plugin.name||"插件")} · v${escapeHtml(plugin.version||"—")}</p></div><span class="plugin-state-badge ${escapeHtml(plugin.state||"")}">${escapeHtml(pluginStateLabel(plugin.state))}</span></div>`; const themes=pluginThemeControls(plugin), lifecycle=pluginLifecycleControls(plugin); if(!plugin.settings_available || !plugin.id) { const reason=plugin.error || (plugin.kind==="theme_pack" ? "选择皮肤后即可应用；主题包不执行 Python 代码。" : plugin.settings_available ? "插件尚未写入注册表，无法保存设置。" : "该插件没有声明可配置设置。") ; detail.innerHTML=`${heading}<p class="plugin-settings-note">${escapeHtml(reason)}</p>${themes}${lifecycle}`; bindPluginLifecycleControls(plugin);bindPluginTheme(plugin);return; } const schema=Array.isArray(payload.settings_schema)?payload.settings_schema:Object.values(payload.settings_schema||{}); detail.innerHTML=`${heading}<p class="plugin-settings-note">${escapeHtml(description)}</p>${themes}${lifecycle}<form id="plugin-settings-form" class="plugin-settings-editor">${renderPluginSettingsFields(schema,payload.settings||{})}<div class="plugin-settings-actions"><button type="submit">保存插件设置</button></div></form>`; $("plugin-settings-form").addEventListener("submit",event=>savePluginSettings(event,plugin,schema)); bindPluginLifecycleControls(plugin);bindPluginTheme(plugin); }
 async function selectPluginSettings(key) { selectedPluginKey=key; const plugin=pluginStatuses.find(item=>pluginKey(item)===key); if(!plugin)return; document.querySelectorAll(".plugin-status-card").forEach(card=>card.classList.toggle("selected",card.dataset.pluginKey===key)); if(!plugin.settings_available || !plugin.id) { renderPluginDetail(plugin,{}); return; } try { const payload=await apiJson(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`); renderPluginDetail(plugin,payload); } catch(error) { $("plugin-settings-detail").innerHTML=`<p class="empty">无法读取设置：${escapeHtml(error.message)}</p>`; } }
 async function savePluginSettings(event, plugin, schema) { event.preventDefault(); const settings={}; for(const field of schema){const input=document.querySelector(`[data-plugin-setting="${CSS.escape(field.key)}"]`);if(!input)continue;let value=field.type==="boolean"?input.checked:input.value;if(field.type==="integer")value=Number.parseInt(value,10);if(field.type==="number")value=Number(value);if((field.type==="integer"||field.type==="number")&&!Number.isFinite(value)){setPluginFeedback(`${field.title||field.key} 必须是数字。`,"error");return;}settings[field.key]=value;} const response=await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(settings)}); const payload=await response.json().catch(()=>({})); if(!response.ok) { setPluginFeedback(`无法保存：${payload.detail||response.statusText}`,"error"); return; } setPluginFeedback(`${plugin.name} 的设置已保存；下次插件加载时生效。`,"success"); }
 async function changePluginLifecycle(plugin, action) { if(!plugin)return; const registering=action==="register"; const loading=action==="load"; if(!registering && !plugin.id)return; const requested=Array.isArray(plugin.permissions_requested)?plugin.permissions_requested:[]; const grantedKeys=new Set((Array.isArray(plugin.permissions_granted)?plugin.permissions_granted:[]).map(pluginPermissionLabel)); const missing=requested.filter(item=>!grantedKeys.has(pluginPermissionLabel(item))); const message=registering ? `将“${plugin.name}”加入本机工作台注册表不会执行代码。之后仍需确认权限才能加载。\n\n继续吗？` : loading ? `加载“${plugin.name}”会执行插件代码。${missing.length?`\n\n同时授予声明权限：\n${missing.map(item=>`• ${pluginPermissionLabel(item)}`).join("\n")}`:""}\n\n继续吗？` : `卸载“${plugin.name}”会停止插件并移除前端贡献；源码和设置保留。\n\n继续吗？`; if(!window.confirm(message))return; const button=document.querySelector("[data-plugin-action]"); if(button)button.disabled=true; try { const url=registering ? `/api/plugins/discovered/${encodeURIComponent(plugin.name)}/register` : `/api/plugins/${encodeURIComponent(plugin.id)}/${loading?"load":"unload"}`; const response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true,grant_permissions:loading&&missing.length>0})}); const payload=await response.json().catch(()=>({})); if(!response.ok)throw new Error(payload.detail||response.statusText); if(registering)selectedPluginKey=payload.plugin?.id||plugin.name; if(loading)await loadPlugins(); else if(!registering)unloadPlugin(plugin.name); await loadPluginStatuses(); setPluginFeedback(registering ? `${plugin.name} 已加入工作台，可继续加载。` : loading ? `${plugin.name} 已加载。` : `${plugin.name} 已卸载；插件文件和设置已保留。`,"success"); } catch(error) { const verb=registering?"加入":loading?"加载":"卸载"; setPluginFeedback(`${verb}失败：${error.message}`,"error"); if(button)button.disabled=false; } }
@@ -734,8 +765,8 @@ function usageCells(usage={}, run=null) {
 }
 /** Render per-Agent token totals with the same reconciled state lights as other Agent surfaces. */
 async function loadUsage() { if(!hasSelectedSession()) { $("usage-total").innerHTML=`<p class="empty">请先创建或选择一个会话。</p>`; $("usage-agents").innerHTML=""; return; } const [payload,graphPayload]=await Promise.all([apiJson(sessionApi("/usage")),apiJson(graphUrl()).catch(()=>null)]); if(graphPayload?.kind==="angelus.run-graph") currentRunGraph=graphPayload; const usage=payload.usage || {}; $("usage-total").innerHTML=Number(usage.total || 0) ? usageCells(usage, payload.run).replaceAll("<span>","<div>").replaceAll("</span>","</div>") : `<p class="empty">尚无已完成的模型调用。</p>`; $("usage-agents").innerHTML=(payload.agents || []).map(agent=>{const view=agentStateView(agent.id); return `<article class="usage-agent"><header><span class="usage-agent-title"><i class="agent-state ${escapeHtml(view.ui)}" title="${escapeHtml(view.message)}"></i><strong>${escapeHtml(agent.id)}</strong></span><span>${Number(agent.usage.total || 0).toLocaleString()} tokens</span></header><div class="usage-agent-grid">${usageCells(agent.usage, agent.run)}</div></article>`;}).join(""); }
-function selectInspectorPanel(panel, refresh=true) { const target=document.getElementById(panel); if(!target) return; activeInspectorPanel=panel; localStorage.llmfetcherInspectorPanel=panel; document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.classList.toggle("active",button.dataset.inspectorPanel===panel)); document.querySelectorAll(".inspector-panel").forEach(item=>item.classList.toggle("active",item===target)); if(!refresh) return; const loaders={"inspector-plan":loadPlan,"inspector-agents":loadInspectorAgents,"inspector-trace":()=>loadTrace(true),"inspector-usage":loadUsage}; loaders[panel]?.().catch(error=>trace("检查器加载失败",error.message)); }
-function initInspectorTabs() { document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.addEventListener("click",()=>selectInspectorPanel(button.dataset.inspectorPanel))); if(!document.getElementById(activeInspectorPanel)) activeInspectorPanel="inspector-plan"; selectInspectorPanel(activeInspectorPanel,false); }
+function selectInspectorPanel(panel, refresh=true, open=true) { const target=document.getElementById(panel); if(!target) return; const activity=document.querySelector(".activity"); const isCurrent=activeInspectorPanel===panel; const isOpen=activity?.dataset.inspectorOpen === "true"; if(refresh && isCurrent && isOpen) open=false; activeInspectorPanel=panel; localStorage.llmfetcherInspectorPanel=panel; document.querySelectorAll("[data-inspector-panel]").forEach(button=>{const active=button.dataset.inspectorPanel===panel;button.classList.toggle("active",active);button.setAttribute("aria-pressed",String(active&&open));}); document.querySelectorAll(".inspector-panel").forEach(item=>item.classList.toggle("active",item===target)); if(activity){activity.dataset.inspectorOpen=String(open);document.body.classList.toggle("inspector-open",open);} if(!refresh) return; const loaders={"inspector-plan":loadPlan,"inspector-agents":loadInspectorAgents,"inspector-trace":()=>loadTrace(true),"inspector-usage":loadUsage}; loaders[panel]?.().catch(error=>trace("检查器加载失败",error.message)); }
+function initInspectorTabs() { document.querySelectorAll("[data-inspector-panel]").forEach(button=>button.addEventListener("click",()=>selectInspectorPanel(button.dataset.inspectorPanel))); if(!document.getElementById(activeInspectorPanel)) activeInspectorPanel="inspector-plan"; selectInspectorPanel(activeInspectorPanel,false,false); }
 function knownPlanAgents() { const known=new Map([["coordinator",{id:"coordinator",name:"协调者（总计划）"}]]); for(const agent of currentAgents||[]) if(agent?.id && agent.id!=="all") known.set(agent.id,agent); for(const node of currentRunGraph.nodes||[]) if(node?.id) known.set(node.id,{id:node.id,name:node.id,origin:node.origin}); return [...known.values()]; }
 function renderPlanAgentPicker() { const select=$("plan-agent"); if(!select)return; const agents=knownPlanAgents(); if(!agents.some(agent=>agent.id===selectedPlanAgent)) selectedPlanAgent="coordinator"; select.innerHTML=agents.map(agent=>`<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.id==="coordinator"?"协调者（总计划）":agent.name||agent.id)}</option>`).join(""); select.value=selectedPlanAgent; }
 async function loadPlan() { renderPlanAgentPicker(); if(!hasSelectedSession()) { $("plan-summary").textContent="请先创建或选择一个会话。"; $("task-plan").innerHTML=`<p class="empty">尚无会话。</p>`; return; } const payload=await apiJson(planUrl()); const tasks=Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload.plan) ? payload.plan : []); const agentLabel=selectedPlanAgent==="coordinator"?"协调者":selectedPlanAgent; const goal=payload.goal?` · ${payload.goal}`:""; $("plan-summary").textContent=tasks.length ? `${agentLabel} · ${tasks.length} 项根任务${goal}` : `${agentLabel} 尚未建立任务计划。`; $("task-plan").innerHTML=tasks.map(task=>renderTaskPlanItem(task)).join("") || `<p class="empty">尚未建立任务计划。</p>`; }
@@ -809,7 +840,7 @@ async function loadOlderMessages() {
 }
 /** Rebuild the selected filter from durable state, then safely reconnect its run. */
 async function rehydrateSelectedView({reloadAgents=false}={}) { if(reloadAgents) await loadAgents(); await loadHistory(); await restoreRunState(); }
-async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); profileWorkspaceId=selected; historyGeneration+=1; if((source && sourceSessionId !== selected) || (lifecycleSource && lifecycleSourceSessionId !== selected)){source?.close();source=null;sourceSessionId=""; lifecycleSource?.close();lifecycleSource=null;lifecycleSourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0;lifecycleCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
+async function switchSession(selected) { if(!availableSessions.some(item=>item.id===selected)){ await loadWorkspaces(selected); if(!availableSessions.some(item=>item.id===selected)) throw new Error("未知会话"); } clearCompactStatus(); slashPalette?.close(); profileWorkspaceId=selected; historyGeneration+=1; if((source && sourceSessionId !== selected) || (lifecycleSource && lifecycleSourceSessionId !== selected)){source?.close();source=null;sourceSessionId=""; lifecycleSource?.close();lifecycleSource=null;lifecycleSourceSessionId="";setRunning(false);setStatus("准备就绪");} selectedAgent="all"; selectedPlanAgent="coordinator"; traceBefore=null; messagesBefore=null; traceEvents=[]; durableEventCount=0; durableEventOffset=0; sseCursor=0;lifecycleCursor=0; await loadWorkspaces(selected); await loadAgents(); await loadHistory(); setStatus("准备就绪"); }
 
 async function start(message, images=[], targetSession=sessionId) {
   let runConfig;
@@ -819,8 +850,9 @@ async function start(message, images=[], targetSession=sessionId) {
   sseCursor = 0; lifecycleCursor = 0; runRetryCount = 0; setStatus("正在提交", "running");
   try {
     const targetAgent=selectedAgent === "all" ? null : selectedAgent;
-    const response=await fetch("/api/runs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"})), target_agent:targetAgent})});
-    const payload=await response.json(); if(!response.ok) throw new Error(payload.detail || "无法开始运行");
+    // apiPost turns a non-JSON failure body into its HTTP status; a bare
+    // response.json() would report a plain-text 500 as a parse error instead.
+    await apiPost("/api/runs", {session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"})), target_agent:targetAgent});
     setWorkspaceIndicator(targetSession,"running");
     if (targetSession === sessionId) {
       setRunning(true); setStatus("正在执行", "running"); chatView.append({role:"user",content:message,images});
@@ -829,14 +861,39 @@ async function start(message, images=[], targetSession=sessionId) {
     return true;
   } catch(error) { if(targetSession === sessionId){ const message=error.message==="Model is required"?"尚未配置可用模型。请打开设置 → 连接器，选择或新建连接器后再运行。":error.message; trace("请求失败", message, null); appendRunErrorBlock("发送失败，草稿已保留", message); setStatus("请求失败", "error"); setRunning(false); } return false; }
 }
-let compactStatusTimer=null;
-function showCompactStatus(text, state="running", dismissMs=0) {
-  const el=$("compact-status"); if(!el) return;
-  clearTimeout(compactStatusTimer);
-  el.textContent=text; el.className=`compact-status ${state}`; el.hidden=false;
-  if(dismissMs>0) compactStatusTimer=setTimeout(()=>{ el.hidden=true; el.className="compact-status"; }, dismissMs);
+const compactionCards = new Map();
+const compactionRenderFrames = new Map();
+function clearCompactStatus() { compactionCards.clear(); }
+function scheduleCompactionRender(key) {
+  if (compactionRenderFrames.has(key)) return;
+  compactionRenderFrames.set(key, requestAnimationFrame(() => {
+    compactionRenderFrames.delete(key);
+    const state = compactionCards.get(key);
+    if (state) chatView.upsertCompaction(state);
+  }));
 }
-function clearCompactStatus() { clearTimeout(compactStatusTimer); const el=$("compact-status"); if(el){ el.hidden=true; el.className="compact-status"; } }
+function compactCardEvent(event, manual=false) {
+  const data = event.data || event;
+  const key = String(data.compaction_id || `${event.agent || data.agent || "coordinator"}:${data.round || "manual"}`);
+  const previous = compactionCards.get(key) || {id:key, agent:event.agent || data.agent || "coordinator", manual, stages:[]};
+  const state = event.type?.endsWith("success") || data.stage === "done" ? "success" : event.type?.endsWith("failed") || data.kind === "error" ? "failed" : event.type?.endsWith("cancelled") ? "cancelled" : "running";
+  const stageLabel = event.message || data.detail || (state === "running" ? "处理中…" : "");
+  const stages = previous.stages.slice();
+  /* Streamed summary chunks carry no stage of their own; without this guard
+     every chunk would append a "处理中…" step to the card's step list. */
+  const isDelta = data.kind === "delta" || event.type === "context:compact_delta";
+  if(!isDelta && stageLabel && !stages.some(item => item.label === stageLabel)) stages.push({label:stageLabel, state});
+  const preview = `${previous.preview || ""}${data.delta || ""}`.slice(-12000);
+  const next = {...previous, state, detail:stageLabel, error:data.error || event.error || "", stages, preview, manual};
+  compactionCards.set(key, next);
+  if (event.type === "context:compact_delta") scheduleCompactionRender(key);
+  else chatView.upsertCompaction(next);
+}
+async function stopCompaction(agent="coordinator", force=false) {
+  const suffix = force ? "/force-stop" : "/stop";
+  const response = await fetch(sessionApi(`/compact${suffix}`), {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({reason:"user_requested"})});
+  if(!response.ok) throw new Error((await response.json().catch(()=>({}))).detail || "压缩尚未运行");
+}
 /** Coalesce a burst of SSE-driven refreshes into one trailing call. */
 function debounce(fn, wait=150) {
   let timer = null;
@@ -879,14 +936,12 @@ function handleEvent(event) {
   // so an open inspector can safely refresh to the exact newest request.
   if(event.event === "lifecycle" && event.type === "agent:remote_request" && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) loadContextPrompt(contextDialogAgent).catch(error=>trace("上下文请求预览刷新失败",error.message));
   if(event.event === "lifecycle" && ["agent:remote_request","agent:llm_request","agent:retry","agent:usage","agent:internal_usage","agent:round","agent:tools_requested","agent:tools_completed"].includes(event.type) && $("context-graph-dialog").open && contextDialogAgent === (event.agent || "coordinator")) refreshOpenContextCalls();
-  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
-  if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator";
-    if(event.type==="context:compact_started"){ const ratio=typeof cd.ratio==="number"?` ${cd.ratio}%`:"";
-      const csize=cd.context_size?` · ${cd.context_size} 字符`:"";
-      showCompactStatus(`正在压缩 ${cagent} 的上下文…${csize}${ratio}`,"running"); }
-    else if(event.type==="context:compact_success"){ showCompactStatus(`上下文压缩完成（${cagent}）：${cd.archived_messages??"N"} 条消息 → 1 条摘要`,"success",4000); }
-    else if(event.type==="context:compact_failed"){ showCompactStatus(`上下文压缩失败（${cagent}）：${cd.error||event.message||"未知错误"}`,"failed",6500); }
-    else if(event.type==="context:compact_skipped"){ showCompactStatus(`上下文压缩已跳过：${cd.reason||""}`,"skipped",3000); } }
+  if(event.event === "lifecycle") { if(event.type === "agent:stream_delta") { const streamAgent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === streamAgent) renderStreamDelta(streamAgent,event.data||{}); return; } if(event.type === "context:compact_delta") { compactCardEvent(event); return; } pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); renderAgentSelector(currentAgents);
+  if(event.type.startsWith("context:compact_")) { const cd=event.data||{}; const cagent=event.agent||"coordinator"; compactCardEvent(event);
+    if(event.type==="context:compact_started") setStatus(`正在压缩 ${cagent} 的上下文…`, "running");
+    else if(event.type==="context:compact_success") setStatus(`上下文压缩完成（${cagent}）`, "idle");
+    else if(event.type==="context:compact_failed") setStatus(`上下文压缩失败（${cagent}）`, "error");
+    else if(event.type==="context:compact_skipped") setStatus("上下文压缩已跳过", "idle"); }
   if(event.type === "agent:retry") { const retryAgent=event.agent||"coordinator"; runRetryCount+=1; const attempt=event.data?.attempt ?? runRetryCount; setStatus(`正在重试（${retryAgent} 第 ${attempt} 次）…`, "running"); }
   if(event.type === "agent:failed") { const agent=event.agent||"coordinator"; appendRunErrorBlock(`Agent ${agent} 运行失败`, String(event.data?.error || event.message || "未知错误")); scheduleGraphPlanReload(); }
   if(event.type === "agent:control" && event.data?.action === "steer") { const data=event.data; upsertSteering({id:data.steer_id,text:event.message||"",scope:data.agent_id||"all",recipients:data.target_agents||[],applied_agents:[],submitted_at:event.timestamp}); }
@@ -906,51 +961,61 @@ function finish() { clearCompactStatus(); source?.close(); source=null; sourceSe
 /* ---- Slash commands -------------------------------------------------- */
 function showSlashHelp() {
   chatView.removeWelcome();
-  const rows=[
-    ["/help","显示本帮助"],
-    ["/new <会话名>","创建并切换到新会话"],
-    ["/switch <会话名>","切换到已有会话"],
-    ["/clear","清空聊天区视图（会话记录仍保留）"],
-    ["/connectors","打开连接设置"],
-    ["/settings [--panel=…]","打开设置对话框"],
-    ["/plan /agents /usage /trace","切换右侧检查器面板"],
-    ["/stop /force-stop","停止 / 强行停止当前运行"],
-    ["/agent <agentId>","查看指定 Agent 会话"],
-    ["/delete <会话名>","删除会话（需确认）"],
-    ["/compact [--agent=<id>]","手动压缩上下文为摘要"],
-    ["","参数支持引号、转义与 --key=value"],
-  ];
+  // Rendered from the catalog so `/help` and the composer palette cannot drift.
+  const body=SLASH_COMMANDS.map((entry,index)=>{
+    const previous=SLASH_COMMANDS[index-1];
+    const heading=!previous || previous.group!==entry.group ? `<tr class="slash-help-group"><td colspan="2">${escapeHtml(entry.group)}</td></tr>` : "";
+    const command=`/${escapeHtml(entry.command)}${entry.args?` ${escapeHtml(entry.args)}`:""}`;
+    return `${heading}<tr><td>${command}</td><td>${escapeHtml(entry.description)}</td></tr>`;
+  }).join("");
   const el=document.createElement("article"); el.className="message assistant";
-  const body=rows.map(([cmd,desc])=>`<tr><td>${escapeHtml(cmd)}</td><td>${escapeHtml(desc)}</td></tr>`).join("");
-  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助</small></div><div class="bubble markdown"><table><thead><tr><th>指令</th><th>说明</th></tr></thead><tbody>${body}</tbody></table><p>参数支持引号分组、反斜杠转义与 <code>--key=value</code> 命名参数。</p></div>`;
+  el.innerHTML=`<div class="message-meta"><div class="role role-agent"><i></i><span>斜杠指令</span></div><small>帮助 · 输入 / 唤起面板</small></div><div class="bubble markdown"><table><thead><tr><th>指令</th><th>说明</th></tr></thead><tbody>${body}</tbody></table><p>参数支持引号分组、反斜杠转义与 <code>--key=value</code> 命名参数。</p></div>`;
   $("chat").append(el); chatView.scrollToLatestIfFollowing();
 }
 function sessionByName(name) { return availableSessions.find(item=>item.name===name || item.id===name); }
 async function switchSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } await switchSession(target.id); trace("已切换会话", target.name); }
-async function deleteSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } if(!confirm(`删除会话「${target.name}」？此操作不可撤销。`)) return; const response=await fetch(`/api/sessions/${encodeURIComponent(target.id)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:target.id})}); if(!response.ok){ const payload=await response.json().catch(()=>({})); throw new Error(payload.detail||"删除失败"); } await loadWorkspaces(); if(hasSelectedSession()) await loadHistory(); setStatus(`已删除会话「${target.name}」`); trace("已删除会话", target.name); }
+async function deleteSessionByName(name) { const target=sessionByName(name); if(!target){ setStatus(`未找到会话「${name}」`,"error"); return; } await deleteSession(target.id, target.name); }
+
+/** Open one session's workspace directory in the OS file browser. */
+async function openSessionWorkspace(targetId) { await apiPost(`/api/sessions/${encodeURIComponent(targetId)}/workspace/open`); trace("Workspace directory opened", targetId); }
+
+/**
+ * Delete one session, whichever row or command asked for it.
+ *
+ * The session may already be gone (another window, or a stale list), which is
+ * not a failure: the list is reloaded either way so the row disappears.
+ */
+async function deleteSession(targetId, name="") { if(!confirm(`删除会话「${name||targetId}」及其所有数据？此操作不可恢复。`)) return; const response=await fetch(`/api/sessions/${encodeURIComponent(targetId)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:targetId})}); const payload=await response.json().catch(()=>({})); await loadWorkspaces(); if(hasSelectedSession()) await loadHistory(); if(response.status===404){ trace("会话已不存在",`${name||targetId} 已被移除，已切换到有效会话。`); return; } if(!response.ok) throw new Error(payload.detail||"无法删除会话"); setStatus(`已删除会话「${name||targetId}」`); trace("会话已删除", name||targetId); }
 async function runStop() { const receipt=await apiPost(`/api/runs/${encodeURIComponent(sessionId)}/control`,{agent_id:selectedAgent,action:"stop",reason:"user_requested"}); $("stop").disabled=true; setStatus(selectedAgent==="all"?"等待全部 Agent 安全停止":`等待 ${selectedAgent} 安全停止`, "running"); return receipt; }
 async function runForceStop() { const label=selectedAgent==="all"?"整个运行":selectedAgent;if(!confirm(`强行停止 ${label}？`)) return; $("force-stop").disabled=true; $("stop").disabled=true; return apiPost(`/api/runs/${encodeURIComponent(sessionId)}/control`,{agent_id:selectedAgent,action:"force_stop",reason:"user_requested"}); }
 let compacting=false;
 async function runCompact(agent="coordinator") {
-  setStatus("手动压缩 API 尚未接入当前 Session 后端", "error");
-  trace("上下文压缩不可用", `Agent ${agent} 的手动压缩端点尚未挂载。`);
-  return;
   if(compacting){ setStatus("压缩已在进行中…", "running"); return; }
   if($("composer").hidden){ setStatus("运行结束后才能压缩上下文", "error"); return; }
   compacting=true; $("message").disabled=true;
   const startedSession=sessionId;
   try {
     setStatus("正在压缩上下文…", "running"); trace("上下文压缩", `开始压缩 ${agent} 的上下文…`);
-    const response=await fetch(sessionApi("/compact"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent, config: config()})});
+    const response=await fetch(sessionApi("/compact"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent})});
     if(!response.ok || !response.body){ const payload=await response.json().catch(()=>({})); const detail=payload.detail||`${response.status} ${response.statusText}`; setStatus(`压缩失败：${detail}`, "error"); trace("压缩失败", detail); return; }
     const reader=response.body.getReader(); const decoder=new TextDecoder(); let buffer="";
-    while(true){ const {done, value}=await reader.read(); if(done) break; buffer+=decoder.decode(value,{stream:true}); const lines=buffer.split("\n"); buffer=lines.pop()||""; for(const line of lines){ if(!line.trim()) continue; let record; try{ record=JSON.parse(line); }catch{ continue; } handleCompactStage(record, startedSession); } }
+    while(true){ const {done, value}=await reader.read(); if(done) break; buffer+=decoder.decode(value,{stream:true}); const lines=buffer.split("\n"); buffer=lines.pop()||""; for(const line of lines){ if(!line.trim()) continue; let record; try{ record=JSON.parse(line); }catch{ continue; } handleCompactStage(record, startedSession, agent); } }
   } catch(error){ setStatus(`压缩失败：${error.message}`,"error"); trace("压缩失败", error.message); }
   finally { compacting=false; if(sessionId===startedSession) $("message").disabled=false; }
 }
-function handleCompactStage(record, startedSession) {
+function handleCompactStage(record, startedSession, requestedAgent="coordinator") {
   if(sessionId!==startedSession) return; /* 切换会话后忽略旧压缩流 */
-  const {stage, detail, kind, error="", raw_content:rawContent=""}=record;
+  const {stage, detail, kind, error="", delta="", raw_content:rawContent=""}=record;
+  const eventAgent=record.agent||requestedAgent||"coordinator";
+  const compactionId=`manual:${startedSession}:${eventAgent}`;
+  if(kind==="delta"){
+    /* The compactor streams its summary; route chunks through the same
+       coalesced path the automatic (in-run) events already use so the card is
+       not rebuilt once per chunk. */
+    compactCardEvent({type:"context:compact_delta", agent:eventAgent, data:{stage, detail, kind, error, delta, compaction_id:compactionId}}, true);
+    return;
+  }
+  compactCardEvent({agent:eventAgent, data:{stage, detail, kind, error, compaction_id:compactionId}}, true);
   if(kind==="error"){ const diagnostic=error ? `${detail}\n原因：${error}` : detail; setStatus(detail,"error"); trace("压缩失败", diagnostic); appendRunErrorBlock("上下文压缩失败", diagnostic, rawContent); }
   else if(stage==="done"){ setStatus(detail,"idle"); trace("上下文压缩", detail); loadInspectorAgents().catch(()=>{}); }
   else setStatus(detail,"running");
@@ -980,12 +1045,33 @@ function dispatchSlashCommand(parsed) {
 }
 
 /** Resize the composer to its content, restoring the compact size when empty. */
-function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,170)}px`; }
+function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,230)}px`; }
 function applyRunGraphEvent(event) { if(event?.kind!=="angelus.run-graph-event") return; const data=event.data||{}; if(event.type==="run.state_changed" && data.to) currentRunGraph={...currentRunGraph,state:data.to,error:data.error||currentRunGraph.error,stop_reason:data.reason||currentRunGraph.stop_reason}; if(event.node_id){const nodes=[...(currentRunGraph.nodes||[])];let node=nodes.find(item=>item.id===event.node_id);if(!node){node={id:event.node_id,kind:"agent",origin:"runtime",parent_id:null,state:"pending",task_id:null,plan_task_id:null,message:"",error:null,reason:null,updated_at:null};nodes.push(node);}if(event.type==="node.state_changed"&&data.to){node.state=data.to;node.error=data.error||null;node.reason=data.reason||null;}if(data.message)node.message=data.message;node.updated_at=event.occurred_at||node.updated_at;currentRunGraph={...currentRunGraph,nodes};}renderAgentSelector(currentAgents);renderGraph(currentRunGraph); }
 function handleRunGraphEvent(event) { applyRunGraphEvent(event); scheduleGraphPlanReload(); if(event.type==="node.state_changed" && event.data?.to==="failed") appendRunErrorBlock(`Agent ${event.node_id||"未知"} 运行失败`,String(event.data?.error||event.data?.message||"未知错误")); if(event.type==="run.state_changed" && ["completed","failed","stopped","interrupted"].includes(event.data?.to)){ loadHistory().catch(error=>trace("会话历史刷新失败",error.message)); loadTrace(true).catch(error=>trace("Trace 刷新失败",error.message)); setWorkspaceIndicator(sessionId,event.data.to==="failed"?"error":"done"); finish(); } }
 function connectRunGraphEvents() { source?.close(); const eventSource=new EventSource(graphEventsUrl(sseCursor)); source=eventSource; sourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==sourceSessionId)return; const event=JSON.parse(message.data); const cursor=Number(event.sequence||message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)sseCursor=cursor; handleRunGraphEvent(event); }; eventSource.onerror=()=>{ if(source!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED){ if(!runActive) finish(); return; } if(sseStatusCheckPending)return; sseStatusCheckPending=true; apiJson(`/api/runs/${encodeURIComponent(sessionId)}/status`).then(state=>{ if(source!==eventSource)return; if(["running","stopping","force_stopping"].includes(state.state))setStatus("执行图连接中断，正在重连…","running");else finish(); }).catch(()=>{if(source===eventSource)setStatus("执行图连接中断，正在重连…","running");}).finally(()=>{sseStatusCheckPending=false;}); }; }
 function connectLifecycleEvents() { lifecycleSource?.close(); const eventSource=new EventSource(lifecycleEventsUrl(lifecycleCursor)); lifecycleSource=eventSource; lifecycleSourceSessionId=sessionId; eventSource.onmessage=(message)=>{ if(sessionId!==lifecycleSourceSessionId)return; const cursor=Number(message.lastEventId); if(Number.isSafeInteger(cursor)&&cursor>=0)lifecycleCursor=cursor; try { handleEvent(JSON.parse(message.data)); } catch(error) { trace("生命周期事件格式无效",error.message); } }; eventSource.onerror=()=>{ if(lifecycleSource!==eventSource)return; if(eventSource.readyState===EventSource.CLOSED) lifecycleSource=null; }; }
 async function restoreRunState() { if(!hasSelectedSession()) return; try { const graph=await apiJson(graphUrl()); if(graph?.kind==="angelus.run-graph") currentRunGraph=graph; if(["running","stopping","force_stopping"].includes(currentRunGraph.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunGraphEvents(); connectLifecycleEvents(); return; } if(["failed","interrupted"].includes(currentRunGraph.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",currentRunGraph.error||""); } else if(currentRunGraph.state === "completed") setStatus("已完成"); else if(currentRunGraph.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
+slashPalette = createSlashPalette({
+  input: $("message"),
+  root: $("slash-palette"),
+  describeAvailability: (entry) => slashAvailability(entry, { running: runActive, hasSession: hasSelectedSession() }),
+});
+// The composer's own connector and toolset. Both write through the session's
+// run profile - the same keys the Agent settings page edits - so this component
+// only ever reads a snapshot and reports changes.
+composerScope = createComposerScope({
+  connectorChip: $("composer-connector"),
+  connectorPanel: $("composer-connector-panel"),
+  chip: $("composer-tools"),
+  summary: $("composer-tools-summary"),
+  panel: $("composer-tool-panel"),
+  readState: () => ({ connectors: connectorChoices, connectorId, policy: currentProfile?.effective?.tool_permissions || {}, catalog: toolRegistryGroups, systemPrompt: $("system-prompt")?.value ?? "" }),
+  onConnector: (id) => { connectorId = id; const dialogSelect = $("connector"); if (dialogSelect) dialogSelect.value = id; persistSettings().catch((error) => trace("保存运行档案失败", error.message)); },
+  onPermission: (patch) => applyToolPermission(patch).catch((error) => trace("保存工具权限失败", error.message)),
+  onSystemPrompt: (text) => { const field = $("system-prompt"); if (field) field.value = text; persistSettings().catch((error) => trace("保存运行档案失败", error.message)); },
+  onOpen: () => slashPalette?.close(),
+});
+composerScope.refresh();
 $("composer").addEventListener("submit", async event=>{
   event.preventDefault();
   const snapshot=imageComposer.beginSend(); if(!snapshot)return;
@@ -998,9 +1084,12 @@ $("composer").addEventListener("submit", async event=>{
       else accepted=await start(snapshot.message,snapshot.images,snapshot.sessionId);
     }
   } catch(error){ if(snapshot.sessionId===sessionId)setSteerStatus(`发送失败：${error.message}`,"error"); }
-  finally { imageComposer.finishSend(snapshot,accepted); }
+  finally { imageComposer.finishSend(snapshot,accepted); slashPalette?.refresh(); }
 });
 $("message").addEventListener("keydown", (event)=>{
+  // The palette owns ↑↓/Tab/Esc while it is open, and consumes Enter only
+  // while it has something left to complete.
+  if(slashPalette?.handleKeydown(event)) return;
   // Plain Enter submits; Shift/Alt+Enter insert a newline in the textarea.
   if(event.key !== "Enter" || event.shiftKey || event.altKey || event.isComposing) return;
   event.preventDefault();
@@ -1013,6 +1102,7 @@ $("force-stop").addEventListener("click", ()=>runForceStop().catch(error=>trace(
 $("close-context-graph").addEventListener("click", ()=>{contextDialogAgent="";contextDialogLoaded.clear();$("context-graph-dialog").close();});
 document.querySelectorAll("[data-context-dialog-tab]").forEach(button=>button.addEventListener("click",()=>{const tab=button.dataset.contextDialogTab;selectContextDialogTab(tab);ensureContextDialogTab(tab);}));
 $("workspace").addEventListener("change", event=>{const nextWorkspaceId=event.target.value;switchSession(nextWorkspaceId).then(()=>trace("已切换会话", event.target.options[event.target.selectedIndex].text)).catch(error=>trace("会话切换失败",error.message));});
+$("session-filter")?.addEventListener("input", (event)=>filterRecentSessions(event.target.value));
 /** Ask the loopback backend to show the host operating system's folder picker. */
 async function pickWorkspaceDirectory() { const payload=await apiPost("/api/workspace-directory/pick"); return payload.cancelled ? null : String(payload.path||""); }
 async function createAndSwitchSession(name, projectPath=null) {
@@ -1057,13 +1147,12 @@ $("new-session-form").addEventListener("submit", async event=>{
   $("new-session-dialog").close();
   await createAndSwitchSession(name,projectPath);
 });
-$("delete-workspace").addEventListener("click",async()=>{const selected=$("workspace").selectedOptions[0];if(!selected)return;const targetId=selected.value;const name=selected.text;if(!confirm(`删除会话“${name}”及其所有数据？此操作不可恢复。`))return;const response=await fetch(`/api/sessions/${encodeURIComponent(targetId)}`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmation:targetId})});const payload=await response.json();if(response.status===404){await loadWorkspaces();if(hasSelectedSession())await loadHistory();trace("会话已不存在",`${name} 已被移除，已切换到有效会话。`);return;}if(!response.ok){alert(payload.detail||"无法删除会话");return;}await loadWorkspaces();if(hasSelectedSession())await loadHistory();trace("会话已删除",name);});
 $("connector").addEventListener("change", event=>{connectorId=event.target.value;loadConnectors(connectorId).then(()=>{ persistSettings(); updateModelSummary(); });});
 // Desktop sidecars can briefly serve a cached template while a fresh script
 // is loaded. Optional profile controls must not prevent every later event
 // binding in that mixed-version window.
 $("profile-scope")?.addEventListener("change",()=>restoreSettings().then(()=>loadConnectors(connectorId)).catch(error=>trace("加载运行档案失败",error.message)));
-$("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profile-scope")?.value==="global")return;try{const target=profileWorkspaceId||sessionId;const response=await fetch(`/api/sessions/${encodeURIComponent(target)}/run-profile`,{method:"DELETE"});const profile=await response.json();if(!response.ok)throw new Error(profile.detail||response.statusText);applyProfile(profile);await loadConnectors(connectorId);}catch(error){trace("恢复默认档案失败",error.message);}});
+$("restore-profile-inheritance")?.addEventListener("click",async()=>{if($("profile-scope")?.value==="global")return;try{const target=profileWorkspaceId||sessionId;const profile=await apiDelete(`/api/sessions/${encodeURIComponent(target)}/run-profile`);applyProfile(profile);await loadConnectors(connectorId);}catch(error){trace("恢复默认档案失败",error.message);}});
 $("new-connector").addEventListener("click", openConnectorDialog);
 $("open-settings").addEventListener("click", ()=>openSettings());
 $("close-settings").addEventListener("click", ()=>$("settings-dialog").close());
@@ -1103,13 +1192,21 @@ $("scroll-to-bottom")?.addEventListener("click",()=>chatView.followLatest());
 $("refresh-usage").addEventListener("click",()=>loadUsage().catch(error=>trace("用量加载失败",error.message)));
 if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher web 启动控制台，而不是直接打开 HTML 文件。");
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
+let contextHandlerSpecs = [];
+function contextHandlerLabel(spec) { const key=`settings.contextHandlers.${spec.id}`; const label=t(key); return label===key ? spec.title : label; }
+function renderContextHandlerOptions() { const select=$("context-handler"); if(!select) return; const chosen=select.value||currentProfile?.effective?.context_handler||""; select.innerHTML=contextHandlerSpecs.map(spec=>`<option value="${escapeHtml(spec.id)}">${escapeHtml(contextHandlerLabel(spec))}</option>`).join(""); select.value=contextHandlerSpecs.some(spec=>spec.id===chosen)?chosen:contextHandlerSpecs[0]?.id||""; }
+/** Load the selectable context handlers once; the labels follow the locale. */
+async function loadContextHandlers() { try { const {handlers}=await apiJson("/api/context-handlers"); contextHandlerSpecs=Array.isArray(handlers)?handlers:[]; renderContextHandlerOptions(); } catch(error) { trace("上下文管理器列表加载失败", error.message); } }
+onLocaleChange(() => renderContextHandlerOptions());
 async function initializeConsole() {
+  await initI18n();
   initInspectorTabs();
   bindSettingsPersistence();
   // The rebuilt backend currently owns only provider discovery and durable
   // session identity. Plugins, connectors, profiles, graph inspection, and
   // transcript projections are not mounted until their new services exist.
   await loadProviders();
+  await loadContextHandlers();
   await loadPlugins();
   await loadToolRegistry();
   await loadWorkspaces();

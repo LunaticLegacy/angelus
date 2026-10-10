@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from llmfetcher.context_handlers import SQLiteContextStorage
+
 from ..settings_module.json_store import read_json, write_json
 from ..session_module import validate_session_id
 
@@ -96,8 +98,7 @@ class SessionMemoryStore:
             if not path.is_file():
                 continue
             try:
-                with sqlite3.connect(path) as connection:
-                    rows = connection.execute("SELECT timeline, payload FROM messages ORDER BY timeline").fetchall()
+                rows = SQLiteContextStorage().read_rows(path)
             except (sqlite3.Error, OSError):
                 continue
             for timeline, payload in rows:

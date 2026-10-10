@@ -53,14 +53,22 @@
 | [chat-view.js](chat-view.js#L374) | `buildMessage` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: build message. |
 | [chat-view.js](chat-view.js#L416) | `buildSteer` | `message: unknown` | `unknown` | Perform the browser runtime operation: build steer. |
 | [chat-view.js](chat-view.js#L435) | `append` | `message: unknown, agentName: unknown` | `unknown` | Perform the browser runtime operation: append. |
-| [chat-view.js](chat-view.js#L442) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
-| [chat-view.js](chat-view.js#L453) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
-| [chat-view.js](chat-view.js#L465) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
-| [chat-view.js](chat-view.js#L469) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
-| [chat-view.js](chat-view.js#L476) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
-| [chat-view.js](chat-view.js#L518) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
-| [chat-view.js](chat-view.js#L531) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
-| [chat-view.js](chat-view.js#L537) | `applyScroll` | `None` | `unknown` | Perform the browser runtime operation: apply scroll. |
+| [chat-view.js](chat-view.js#L442) | `upsertCompaction` | `event: unknown` | `unknown` | Perform the browser runtime operation: upsert compaction. |
+| [chat-view.js](chat-view.js#L480) | `upsertSteer` | `steering: unknown` | `unknown` | Perform the browser runtime operation: upsert steer. |
+| [chat-view.js](chat-view.js#L491) | `beginStream` | `agentName: unknown` | `unknown` | Perform the browser runtime operation: begin stream. |
+| [chat-view.js](chat-view.js#L503) | `updateReasoningFollow` | `None` | `unknown` | Perform the browser runtime operation: update reasoning follow. |
+| [chat-view.js](chat-view.js#L507) | `afterReasoningRender` | `None` | `unknown` | Perform the browser runtime operation: after reasoning render. |
+| [chat-view.js](chat-view.js#L514) | `updateTool` | `tool: unknown` | `unknown` | Perform the browser runtime operation: update tool. |
+| [chat-view.js](chat-view.js#L556) | `appendError` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append error. |
+| [chat-view.js](chat-view.js#L569) | `render` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render. |
+| [chat-view.js](chat-view.js#L575) | `applyScroll` | `None` | `unknown` | Perform the browser runtime operation: apply scroll. |
+| [composer-scope.js](composer-scope.js#L20) | `summarize` | `state: unknown` | `unknown` | Perform the browser runtime operation: summarize. |
+| [composer-scope.js](composer-scope.js#L32) | `connectorMarkup` | `state: unknown` | `unknown` | Perform the browser runtime operation: connector markup. |
+| [composer-scope.js](composer-scope.js#L46) | `promptMarkup` | `None` | `unknown` | Perform the browser runtime operation: prompt markup. |
+| [composer-scope.js](composer-scope.js#L56) | `cardMarkup` | `state: unknown` | `unknown` | Perform the browser runtime operation: card markup. |
+| [composer-scope.js](composer-scope.js#L101) | `createComposerScope` | `options: object` | `unknown` | Perform the browser runtime operation: create composer scope. |
+| [composer-scope.js](composer-scope.js#L116) | `setOpen` | `target: unknown` | `unknown` | Perform the browser runtime operation: set open. |
+| [composer-scope.js](composer-scope.js#L131) | `refresh` | `None` | `unknown` | Perform the browser runtime operation: refresh. |
 | [dom.js](dom.js#L2) | `$` | `id: unknown` | `unknown` | Perform the browser runtime operation: $. |
 | [dom.js](dom.js#L7) | `escapeHtml` | `text: unknown` | `unknown` | Perform the browser runtime operation: escape html. |
 | [external-agent-hub-view.js](external-agent-hub-view.js#L13) | `createExternalAgentHubView` | `dialog: unknown, root: unknown` | `unknown` | Perform the browser runtime operation: create external agent hub view. |
@@ -103,6 +111,16 @@
 | [markdown-renderer.js](markdown-renderer.js#L61) | `renderMarkdownInto` | `target: unknown, source: unknown` | `unknown` | Perform the browser runtime operation: render markdown into. |
 | [markdown-renderer.js](markdown-renderer.js#L83) | `createMarkdownStream` | `target: unknown, afterRender: unknown` | `unknown` | Perform the browser runtime operation: create markdown stream. |
 | [markdown-renderer.js](markdown-renderer.js#L87) | `flush` | `None` | `unknown` | Perform the browser runtime operation: flush. |
+| [slash-palette.js](slash-palette.js#L10) | `label` | `state: unknown, match: unknown` | `unknown` | Perform the browser runtime operation: label. |
+| [slash-palette.js](slash-palette.js#L16) | `signature` | `state: unknown, matches: unknown` | `unknown` | Perform the browser runtime operation: signature. |
+| [slash-palette.js](slash-palette.js#L33) | `createSlashPalette` | `options: object` | `unknown` | Perform the browser runtime operation: create slash palette. |
+| [slash-palette.js](slash-palette.js#L38) | `close` | `None` | `unknown` | Perform the browser runtime operation: close. |
+| [slash-palette.js](slash-palette.js#L48) | `highlight` | `None` | `unknown` | Perform the browser runtime operation: highlight. |
+| [slash-palette.js](slash-palette.js#L57) | `render` | `None` | `unknown` | Perform the browser runtime operation: render. |
+| [slash-palette.js](slash-palette.js#L87) | `accept` | `index: unknown` | `unknown` | Perform the browser runtime operation: accept. |
+| [slash-palette.js](slash-palette.js#L106) | `refresh` | `None` | `unknown` | Perform the browser runtime operation: refresh. |
+| [slash-palette.js](slash-palette.js#L122) | `enterCompletes` | `None` | `unknown` | Perform the browser runtime operation: enter completes. |
+| [slash-palette.js](slash-palette.js#L135) | `handleKeydown` | `event: unknown` | `unknown` | Perform the browser runtime operation: handle keydown. |
 | [task-plan-view.js](task-plan-view.js#L14) | `renderTaskPlanItem` | `task: unknown, depth: unknown` | `unknown` | Perform the browser runtime operation: render task plan item. |
 | [trace-view.js](trace-view.js#L9) | `createTraceView` | `None` | `unknown` | Perform the browser runtime operation: create trace view. |
 | [trace-view.js](trace-view.js#L10) | `kindFor` | `event: unknown` | `unknown` | Perform the browser runtime operation: kind for. |

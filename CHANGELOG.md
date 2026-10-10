@@ -3,6 +3,12 @@
 本文件记录 Angelus 的面向用户发行说明，采用
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构。
 
+## [0.6.0] - 2026-10-10
+
+### Changed
+
+- “跨对话记忆”工具组获得面向用户的名称与说明：`search_session_memory`（搜索记忆）、`read_session_memory`（读取记忆）、`search_session_artifacts`（搜索附件）、`open_session_artifact`（取用附件）、`create_session_handoff`（创建交接）、`read_session_handoff`（读取交接）现在各自带有独立的标题与用途说明，取代此前共用的通用描述。
+
 ## [0.5.0-rc.1] - 2026-09-02
 
 ### Fixed

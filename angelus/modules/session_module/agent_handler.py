@@ -9,8 +9,11 @@ from typing import Optional, List, Callable, Any
 from pathlib import Path
 
 from llmfetcher import Agent, LLMBackendConfig, LLMFetcher, Tool
-from llmfetcher.graph_memory import GraphContextHandler
-from llmfetcher.context_handlers import ContextHandler
+from llmfetcher.context_handlers import (
+    DEFAULT_CONTEXT_HANDLER,
+    ContextHandler,
+    create_context_handler,
+)
 
 def create_agent(
     configs: List[LLMBackendConfig],
@@ -20,7 +23,9 @@ def create_agent(
     max_concurrency: int = 3,
     max_context_threshold: int = 262144,
     compaction_output_max_tokens: int = 8192,
+    keep_recent: int = 0,
     context_path: Optional[str | Path] = "",
+    context_handler_name: str = DEFAULT_CONTEXT_HANDLER,
     context_handler: Optional[ContextHandler] = None,
     default_max_rounds: int = 30,
     default_max_tokens: int = 32768,
@@ -41,9 +46,16 @@ def create_agent(
         max_context_threshold: Context size at which compaction starts.
         compaction_output_max_tokens: Maximum generated tokens for one
             compactor summary request.
+        keep_recent: Number of newest active entries compaction keeps verbatim
+            instead of summarising. ``0`` summarises the whole active
+            transcript.
         context_path: Optional persisted context file path.
+        context_handler_name: Registered handler id to build when
+            ``context_handler`` is omitted. The selectable ids come from
+            :func:`llmfetcher.context_handlers.available_context_handlers`.
         context_handler: Optional custom context implementation, such as
-            ``RetrievedContextHandler``.
+            ``RetrievedContextHandler``. Takes precedence over
+            ``context_handler_name``.
         default_max_rounds: Default maximum model-and-tool steps for a
             ``run`` call that omits ``max_rounds``. ``0`` means unlimited.
         default_max_tokens: Default maximum generated tokens per model
@@ -62,7 +74,8 @@ def create_agent(
 
     Raises:
         ValueError: If either default execution budget is negative or the
-            token budget is not positive.
+            token budget is not positive, or if ``context_handler_name`` is
+            not a registered context handler.
 
     Side Effects:
         Creates the parent directory of ``context_path`` when persistence is
@@ -71,13 +84,15 @@ def create_agent(
     """
     fetcher = LLMFetcher(configs)
     fetcher.image_resolver = image_resolver
-    # GraphContextHandler is the standard persistent context implementation.
-    # Passing an explicit handler remains supported for specialised hosts.
+    # The llmfetcher registry owns both the selectable list and the default;
+    # an explicitly injected handler still wins for specialised hosts.
     if context_handler is None:
-        context_handler = GraphContextHandler(
-            compacting_fetcher=fetcher,
+        context_handler = create_context_handler(
+            context_handler_name,
+            fetcher=fetcher,
             max_context_threshold=max_context_threshold,
             compaction_output_max_tokens=compaction_output_max_tokens,
+            keep_recent=keep_recent,
         )
     if context_path:
         Path(context_path).parent.mkdir(parents=True, exist_ok=True)

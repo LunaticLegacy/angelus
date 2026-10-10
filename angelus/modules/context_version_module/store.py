@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -122,20 +121,11 @@ class ContextVersionStore:
         pointer = self._pointer(); database_name = pointer.get("database")
         if not isinstance(database_name, str): raise ContextVersionError("unsupported context checkpoint")
         database = self.path.parent / database_name
-        with sqlite3.connect(database) as connection:
-            archive_max = connection.execute("SELECT COALESCE(MAX(timeline), 0) FROM archive").fetchone()[0]
-            message_max = connection.execute("SELECT COALESCE(MAX(timeline), 0) FROM messages").fetchone()[0]
-            start = max(int(archive_max), int(message_max), int(getattr(linear, "_round", 0))) + 1
-            normalized = []
-            for offset, item in enumerate(messages):
-                value = dict(item); value["timeline"] = start + offset; normalized.append(value)
-            connection.execute("DELETE FROM messages")
-            connection.executemany("INSERT INTO messages(timeline, payload) VALUES (?, ?)", [(x["timeline"], json.dumps(x, ensure_ascii=False)) for x in normalized])
-            connection.commit()
-        linear.messages = [linear._context_from_dict(item) for item in normalized]
-        linear._round = normalized[-1]["timeline"] if normalized else start
-        linear._storage_message_high_water = linear._round
-        linear.context_editing = {"revision_id": revision_id, "graph_stale": True}
+        linear.replace_active_context(
+            messages,
+            database=database,
+            context_editing={"revision_id": revision_id, "graph_stale": True},
+        )
         reset = getattr(self.agent.context_handler, "_init_session_state", None)
         if callable(reset): reset()
         if not linear.save(self.path): raise ContextVersionError("edited context could not be activated")

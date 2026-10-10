@@ -7,7 +7,7 @@
 
 - **F1** `angelus/history.py::_agent_context_stats()` — 读持久化 `contexts/<agent>.json` 的字符统计（messages/characters/abstract_characters/compacted/threshold/round/ratio）。
 - **F2** `angelus/history.py::_agent_context_preview()` 内 `RemoteRequestStats` — 对事件日志中最近一次远程请求快照的字符统计（messages/characters/tool_schemas/tool_schema_characters/estimated_tokens）。
-- **F3** `llmfetcher/context_handlers/linear.py::_estimate_context_size()` — 运行时估算实际发送请求体字符长度，驱动压缩（不改）。
+- **F3** `llmfetcher/context_handlers/linear/handler.py::_estimate_context_size()` — 运行时估算实际发送请求体字符长度，驱动压缩（不改）。
 - **F4** `angelus/history.py::_session_usage_summary()` + `llmfetcher/usage_ledger.py` — 真实 token 用量账本（不改）。
 
 ## 统一口径决策

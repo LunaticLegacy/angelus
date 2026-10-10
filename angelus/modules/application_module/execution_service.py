@@ -137,6 +137,19 @@ class ExecutionService:
             data = event.data if isinstance(event.data, dict) else {"event_data": event.data}
             data = {**data, "agent": event.agent_name, "message": event.message}
             usage = data.get("usage") or data.get("round_usage") or {}
+            if event.event_type in {"agent:stream_delta", "context:compact_delta"}:
+                # Token/tool deltas and streamed compaction summaries are
+                # transport-only.  They remain available to currently attached
+                # SSE clients, but must not inflate the durable replay journal
+                # or be sent again after reconnect.
+                attempt.publish_ephemeral(
+                    event.event_type,
+                    data,
+                    agent=event.agent_name,
+                    message=event.message,
+                    usage=usage if isinstance(usage, dict) else {},
+                )
+                return
             attempt.journal.append(
                 event.event_type or "swarm_event", data, agent=event.agent_name,
                 message=event.message, usage=usage if isinstance(usage, dict) else {},

@@ -76,6 +76,10 @@ class Session:
         # deliberately never persisted: only durable Agent context survives a
         # process restart, not an in-flight provider request.
         self.run_control: SessionRunControl | None = None
+        # Explicit context compaction is a session-owned operation so the UI
+        # can cancel the same in-flight provider request safely.
+        self.compaction_control: Any | None = None
+        self.compaction_lock = threading.RLock()
         # Durable console-only state (plans and safe graph blueprints).  It is
         # attached when the session receives its durable state root.
         self.console: ConsoleState | None = None
@@ -107,7 +111,9 @@ class Session:
         self.execution = SessionExecutor(session_id, root)
         self.console = ConsoleState(root)
         self.artifacts = SessionArtifactStore(session_id, root, self.execution)
-        self.attachments = ImageAttachmentStore(root)
+        # Keep user-facing Session state grouped by concern. Image blobs are
+        # content-addressed, but they belong under the explicit images area.
+        self.attachments = ImageAttachmentStore(root / "images")
 
     def set_coordinator(self, agent: Agent, fingerprint: tuple[object, ...]) -> None:
         """Install the required coordinator and retain it as ``agents[0]``.

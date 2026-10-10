@@ -57,13 +57,17 @@ replaced solely by `settings.py`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [__init__.py](__init__.py#L34) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
+| [__init__.py](__init__.py#L36) | `include_api_routes` | `app: FastAPI, core: AngelusCore` | `None` | Install API routes and the local workbench assets on one host. |
 | [attachments.py](attachments.py#L13) | `_store` | `request: Request, session_id: str` | `Any` | Implement `_store`. |
 | [attachments.py](attachments.py#L21) | `upload_image` | `session_id: str, request: Request, filename: str` | `dict` | Accept bounded raw image bytes without requiring a multipart parser. |
 | [attachments.py](attachments.py#L37) | `download_image` | `session_id: str, attachment_id: str, request: Request` | `FileResponse` | Serve an existing validated image only within its owning Session. |
-| [compact.py](compact.py#L29) | `_stage` | `stage: str, detail: str, kind: str, error: str \| None, raw_content: str \| None` | `str` | Serialize one compaction progress record as an NDJSON line. |
-| [compact.py](compact.py#L63) | `_build_compactor_fetcher` | `config: Any` | `LLMFetcher` | Create a throwaway LLM fetcher for the manual compaction call. |
-| [compact.py](compact.py#L84) | `compact_session` | `session_id: str, request: CompactRequest` | `StreamingResponse` | Compress one Agent's linear context into a single summary abstract. |
+| [compact.py](compact.py#L27) | `_core` | `request: Request` | `AngelusCore` | Implement `_core`. |
+| [compact.py](compact.py#L34) | `_stage` | `stage: str, detail: str, kind: str, **extra: Any` | `str` | Implement `_stage`. |
+| [compact.py](compact.py#L40) | `compact_session` | `session_id: str, payload: CompactRequest, request: Request` | `StreamingResponse` | Run explicit compaction through the session's existing Agent handler. |
+| [compact.py](compact.py#L104) | `stop_compaction` | `session_id: str, payload: CompactStopRequest, request: Request` | `dict[str, Any]` | Implement `stop_compaction`. |
+| [compact.py](compact.py#L112) | `force_stop_compaction` | `session_id: str, payload: CompactStopRequest, request: Request` | `dict[str, Any]` | Implement `force_stop_compaction`. |
+| [error_reporting.py](error_reporting.py#L20) | `write_failure` | `state_root: Path, request: Request, exc: Exception` | `Path` | Append one failure and its traceback to the state-root log. |
+| [error_reporting.py](error_reporting.py#L44) | `install_error_reporting` | `app: FastAPI, state_root: Path` | `None` | Answer unhandled exceptions with JSON detail and log their traceback. |
 | [external_agent_hub.py](external_agent_hub.py#L41) | `_core` | `request: Request` | `AngelusCore` | Resolve the application composition root from FastAPI state. |
 | [external_agent_hub.py](external_agent_hub.py#L60) | `list_external_agents` | `request: Request` | `dict[str, object]` | List all durable external Agent definitions. |
 | [external_agent_hub.py](external_agent_hub.py#L73) | `discover_external_agent_processes` | `request: Request` | `dict[str, object]` | Read local known Agent processes without attaching or persisting one. |
@@ -162,39 +166,43 @@ replaced solely by `settings.py`.
 | [session_console.py](session_console.py#L216) | `plan` | `session_id: str, request: Request, agent: str \| None` | `Any` | Implement `plan`. |
 | [session_console.py](session_console.py#L218) | `events` | `session_id: str, request: Request, cursor: int, limit: int` | `Any` | Implement `events`. |
 | [session_console.py](session_console.py#L222) | `events_stream` | `session_id: str, request: Request, cursor: int, last_event_id: str \| None` | `StreamingResponse` | Follow durable lifecycle facts so the browser renders live deltas. |
-| [session_console.py](session_console.py#L252) | `usage` | `session_id: str, request: Request` | `Any` | Implement `usage`. |
-| [session_console.py](session_console.py#L254) | `context` | `session_id: str, agent: str, request: Request, before: int \| None, limit: int` | `Any` | Return the newest context page or one older cursor page. |
-| [session_console.py](session_console.py#L271) | `export_context` | `session_id: str, agent: str, request: Request, before: int \| None, limit: int` | `dict[str, object]` | Export one bounded durable context page without reading all history. |
-| [session_console.py](session_console.py#L304) | `import_context` | `session_id: str, agent: str, request: Request, payload: object` | `Any` | Append a selected portable package to one idle Session Agent. |
-| [session_console.py](session_console.py#L331) | `context_graph` | `session_id: str, agent: str, request: Request` | `Any` | Implement `context_graph`. |
-| [session_console.py](session_console.py#L333) | `request_preview` | `session_id: str, agent: str, body: RequestPreviewInput, request: Request` | `Any` | Compose the next dispatch-ready model request without sending it. |
-| [session_console.py](session_console.py#L347) | `compaction_input` | `session_id: str, agent: str, request: Request` | `Any` | Implement `compaction_input`. |
-| [session_console.py](session_console.py#L350) | `agent_calls` | `session_id: str, agent: str, request: Request, limit: int` | `Any` | Return the journal-derived LLM call ledger for one Agent. |
-| [session_console.py](session_console.py#L367) | `_core_context_exchange` | `request: Request` | `Any` | Resolve the application-owned portable context exchange service. |
-| [session_console.py](session_console.py#L385) | `_package` | `value: ContextPackage` | `dict[str, object]` | Serialize one portable package without exposing executable tool data. |
-| [sessions.py](sessions.py#L33) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without manufacturing application state. |
-| [sessions.py](sessions.py#L42) | `list_sessions` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List durable workspace identities, not process-local execution state. |
-| [sessions.py](sessions.py#L59) | `create_session` | `payload: CreateSessionRequest, request: Request` | `dict[str, Any]` | Create an empty session; Agent and graph configuration come afterwards. |
-| [sessions.py](sessions.py#L78) | `delete_session` | `session_id: str, payload: DeleteSessionRequest, request: Request` | `dict[str, str]` | Delete one confirmed Session after its active execution has stopped. |
-| [sessions.py](sessions.py#L92) | `get_session_messages` | `session_id: str, request: Request, before: int \| None, limit: int, agent: str \| None` | `dict[str, Any]` | Return one Agent's durable context as a chronological chat page. |
-| [settings.py](settings.py#L48) | `_core` | `request: Request` | `AngelusCore` | Resolve host-owned core without creating a second settings store. |
-| [settings.py](settings.py#L61) | `tool_registry` | `request: Request` | `ToolCatalog` | Return categories and tools actually registered by backend providers. |
-| [settings.py](settings.py#L74) | `version` | `None` | `RuntimeVersions` | Return independent Angelus and llmfetcher runtime versions. |
-| [settings.py](settings.py#L84) | `list_connectors` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List global connectors without serializing credentials in HTTP output. |
-| [settings.py](settings.py#L90) | `create_connector` | `payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Create one globally reusable connector and return its public projection. |
-| [settings.py](settings.py#L99) | `replace_connector` | `connector_id: str, payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Replace metadata, retaining a secret when the supplied API key is blank. |
-| [settings.py](settings.py#L110) | `delete_connector` | `connector_id: str, request: Request` | `None` | Delete connector only when no effective run profile references it. |
-| [settings.py](settings.py#L127) | `get_global_profile` | `request: Request` | `dict[str, Any]` | Return global defaults for future Session attempts, not a live config. |
-| [settings.py](settings.py#L133) | `put_global_profile` | `payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace global defaults for later attempts. |
-| [settings.py](settings.py#L142) | `get_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Return one Session's effective future-attempt profile and inheritance. |
-| [settings.py](settings.py#L151) | `put_session_profile` | `session_id: str, payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace one Session's future-run override. |
-| [settings.py](settings.py#L162) | `delete_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Discard a Session override and return its now-inherited effective profile. |
+| [session_console.py](session_console.py#L275) | `usage` | `session_id: str, request: Request` | `Any` | Implement `usage`. |
+| [session_console.py](session_console.py#L277) | `context` | `session_id: str, agent: str, request: Request, before: int \| None, limit: int` | `Any` | Return the newest context page or one older cursor page. |
+| [session_console.py](session_console.py#L294) | `export_context` | `session_id: str, agent: str, request: Request, before: int \| None, limit: int` | `dict[str, object]` | Export one bounded durable context page without reading all history. |
+| [session_console.py](session_console.py#L327) | `import_context` | `session_id: str, agent: str, request: Request, payload: object` | `Any` | Append a selected portable package to one idle Session Agent. |
+| [session_console.py](session_console.py#L354) | `context_graph` | `session_id: str, agent: str, request: Request` | `Any` | Implement `context_graph`. |
+| [session_console.py](session_console.py#L356) | `request_preview` | `session_id: str, agent: str, body: RequestPreviewInput, request: Request` | `Any` | Compose the next dispatch-ready model request without sending it. |
+| [session_console.py](session_console.py#L370) | `compaction_input` | `session_id: str, agent: str, request: Request` | `Any` | Implement `compaction_input`. |
+| [session_console.py](session_console.py#L373) | `agent_calls` | `session_id: str, agent: str, request: Request, limit: int` | `Any` | Return the journal-derived LLM call ledger for one Agent. |
+| [session_console.py](session_console.py#L390) | `_core_context_exchange` | `request: Request` | `Any` | Resolve the application-owned portable context exchange service. |
+| [session_console.py](session_console.py#L408) | `_package` | `value: ContextPackage` | `dict[str, object]` | Serialize one portable package without exposing executable tool data. |
+| [sessions.py](sessions.py#L35) | `_core` | `request: Request` | `AngelusCore` | Resolve the app-owned core without manufacturing application state. |
+| [sessions.py](sessions.py#L44) | `list_sessions` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List durable workspace identities, not process-local execution state. |
+| [sessions.py](sessions.py#L61) | `create_session` | `payload: CreateSessionRequest, request: Request` | `dict[str, Any]` | Create an empty session; Agent and graph configuration come afterwards. |
+| [sessions.py](sessions.py#L80) | `delete_session` | `session_id: str, payload: DeleteSessionRequest, request: Request` | `dict[str, str]` | Delete one confirmed Session after its active execution has stopped. |
+| [sessions.py](sessions.py#L94) | `open_workspace_directory` | `session_id: str, request: Request` | `dict[str, str]` | Open the selected project directory in the host file manager. |
+| [sessions.py](sessions.py#L110) | `get_session_messages` | `session_id: str, request: Request, before: int \| None, limit: int, agent: str \| None` | `dict[str, Any]` | Return one Agent's durable context as a chronological chat page. |
+| [settings.py](settings.py#L50) | `_core` | `request: Request` | `AngelusCore` | Resolve host-owned core without creating a second settings store. |
+| [settings.py](settings.py#L63) | `tool_registry` | `request: Request` | `ToolCatalog` | Return categories and tools actually registered by backend providers. |
+| [settings.py](settings.py#L76) | `version` | `None` | `RuntimeVersions` | Return independent Angelus and llmfetcher runtime versions. |
+| [settings.py](settings.py#L86) | `list_connectors` | `request: Request` | `dict[str, list[dict[str, Any]]]` | List global connectors without serializing credentials in HTTP output. |
+| [settings.py](settings.py#L92) | `create_connector` | `payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Create one globally reusable connector and return its public projection. |
+| [settings.py](settings.py#L101) | `replace_connector` | `connector_id: str, payload: ConnectorPayload, request: Request` | `dict[str, Any]` | Replace metadata, retaining a secret when the supplied API key is blank. |
+| [settings.py](settings.py#L112) | `delete_connector` | `connector_id: str, request: Request` | `None` | Delete connector only when no effective run profile references it. |
+| [settings.py](settings.py#L129) | `get_global_profile` | `request: Request` | `dict[str, Any]` | Return global defaults for future Session attempts, not a live config. |
+| [settings.py](settings.py#L135) | `put_global_profile` | `payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace global defaults for later attempts. |
+| [settings.py](settings.py#L144) | `get_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Return one Session's effective future-attempt profile and inheritance. |
+| [settings.py](settings.py#L153) | `put_session_profile` | `session_id: str, payload: ProfilePayload, request: Request` | `dict[str, Any]` | Validate then atomically replace one Session's future-run override. |
+| [settings.py](settings.py#L164) | `delete_session_profile` | `session_id: str, request: Request` | `dict[str, Any]` | Discard a Session override and return its now-inherited effective profile. |
+| [settings.py](settings.py#L173) | `list_context_handlers` | `None` | `dict[str, Any]` | Return the selectable context handlers for the run-profile form. |
 | [workspace_directory.py](workspace_directory.py#L19) | `pick_workspace_directory` | `None` | `dict[str, bool \| str \| None]` | Ask the system resource manager to select one absolute directory. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
+| [compact.py](compact.py#L19) | `CompactRequest` | `agent: str` | `BaseModel` | Provide `CompactRequest` behavior. |
+| [compact.py](compact.py#L23) | `CompactStopRequest` | `reason: str` | `BaseModel` | Provide `CompactStopRequest` behavior. |
 | [external_agent_hub.py](external_agent_hub.py#L19) | `ExternalAgentInput` | `id: str, title: str, adapter_kind: str, endpoint: str, connector_id: str, enabled: bool, description: str` | `object` | Validated HTTP body fields for a complete external Agent definition. |
 | [plugins.py](plugins.py#L18) | `PluginConfirmation` | `confirm: bool, grant_permissions: bool` | `BaseModel` | Explicit browser confirmation required for executable plugin actions. |
 | [runs.py](runs.py#L19) | `RunImageReference` | `attachment_id: str, media_type: Literal['image/png', 'image/jpeg', 'image/webp', 'image/gif'], detail: Literal['auto', 'low', 'high']` | `BaseModel` | An existing Session image, never arbitrary paths or remote URLs. |
@@ -207,9 +215,9 @@ replaced solely by `settings.py`.
 | [session_console.py](session_console.py#L51) | `RouterEdit` | `agent: str, targets: list[str]` | `object` | Typed input for a declarative dynamic router. |
 | [session_console.py](session_console.py#L63) | `RequestPreviewInput` | `message: str` | `object` | Typed input for one no-send next-request composition. |
 | [session_console.py](session_console.py#L75) | `RecoveryRequest` | `execution_id: str \| None` | `object` | Optional source execution selected for safe guided recovery. |
-| [sessions.py](sessions.py#L19) | `CreateSessionRequest` | `session_id: str \| None, name: str, project_path: str \| None` | `BaseModel` | HTTP input for an empty logical Session and its workspace. |
-| [sessions.py](sessions.py#L27) | `DeleteSessionRequest` | `confirmation: str` | `BaseModel` | Explicit confirmation for an irreversible session-data deletion. |
-| [settings.py](settings.py#L19) | `ConnectorPayload` | `name: str, provider: str, model: str, api_url: str, api_key: str` | `BaseModel` | Public connector metadata plus an optional write-only API key. |
-| [settings.py](settings.py#L37) | `ProfilePayload` | `settings: dict[str, Any]` | `BaseModel` | A complete profile document for global defaults or one Session override. |
+| [sessions.py](sessions.py#L21) | `CreateSessionRequest` | `session_id: str \| None, name: str, project_path: str \| None` | `BaseModel` | HTTP input for an empty logical Session and its workspace. |
+| [sessions.py](sessions.py#L29) | `DeleteSessionRequest` | `confirmation: str` | `BaseModel` | Explicit confirmation for an irreversible session-data deletion. |
+| [settings.py](settings.py#L21) | `ConnectorPayload` | `name: str, provider: str, model: str, api_url: str, api_key: str` | `BaseModel` | Public connector metadata plus an optional write-only API key. |
+| [settings.py](settings.py#L39) | `ProfilePayload` | `settings: dict[str, Any]` | `BaseModel` | A complete profile document for global defaults or one Session override. |
 
 <!-- END GENERATED SYMBOL MAP -->

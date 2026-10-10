@@ -9,6 +9,7 @@
 | `semantic-map.md` | 架构、模块 API、类层级与函数职责的代码语义参考。 |
 | `current-code-architecture-mermaid.md` | 基于当前工作树的 Mermaid 架构、依赖、类/方法/字段、函数和全局变量语义图；明确现行与未挂载路径。 |
 | `session-console-backend-design.md` | 右侧任务控制台的后端优先设计、Session 所有权边界与 API 契约。 |
+| `post-persistence-render-gaps.md` | 持久化结束后「新增信息渲染」的分层定位说明（durable offset 未落盘、前端结束路径不一致、`_pending_resume` 被 load 清掉）；仅定位，未改码。 |
 | `context-stats-unification-spec.md` | 上下文长度统计统一口径、字段契约与迁移验收规格。 |
 | `context-stats-change-notes.md` | 上下文统计统一工作的实现变更与验证记录。 |
 | `graph_context_design.md` | 线性上下文、压缩归档、图检索与持久化设计。 |
@@ -29,6 +30,7 @@
 - **代码架构与职责** → `semantic-map.md`
 - **当前可运行控制面架构（Mermaid）** → `current-code-architecture-mermaid.md`
 - **任务控制台后端迁移** → `session-console-backend-design.md`
+- **持久化后渲染 / 事件流对账** → `post-persistence-render-gaps.md`
 - **图记忆与归档上下文** → `graph_context_design.md`
 - **设计取舍** → `decisions.md`
 - **安全边界** → `security.md`

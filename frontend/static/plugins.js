@@ -30,6 +30,7 @@
  */
 
 import { apiJson, apiPost } from "./api.js";
+import { hydrateIcons } from "./ui/icons.js?v=icon-3";
 
 /* ================================================================
  * Constants
@@ -191,7 +192,16 @@ function _renderPanel(registration) {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.inspectorPanel = panelId;
-    button.textContent = registration.title;
+    // The rail paints its glyph from `data-icon` and hides any text the button
+    // carries, so a plugin tab without one renders as a blank slot. Keep the
+    // title in a span: that is what the rail's tooltip reveals on hover.
+    button.dataset.icon = "plugin";
+    button.setAttribute("title", registration.title);
+    button.setAttribute("aria-label", registration.title);
+    const label = document.createElement("span");
+    label.textContent = registration.title;
+    button.append(label);
+    hydrateIcons(button);
     tabs.appendChild(button);
 
     const section = document.createElement("section");

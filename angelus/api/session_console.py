@@ -220,7 +220,12 @@ def events(session_id: str, request: Request, cursor: int = 0, limit: int = 200)
 
 @router.get("/events/stream")
 def events_stream(session_id: str, request: Request, cursor: int = 0, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
-    """Follow durable lifecycle facts so the browser renders live deltas."""
+    """Follow durable lifecycle facts so the browser renders live deltas.
+
+    Each poll iteration emits the live-only (ephemeral) backlog *before* the
+    durable journal page, so in-round frames precede the durable record that
+    closes their round.  Do not reverse that order: see the loop comment.
+    """
     def stream() -> Iterator[str]:
         try:
             resumed_cursor = int(last_event_id) if last_event_id is not None else 0
@@ -228,7 +233,25 @@ def events_stream(session_id: str, request: Request, cursor: int = 0, last_event
             resumed_cursor = 0
         next_cursor = max(0, cursor, resumed_cursor)
         try:
+            ephemeral_cursor = _service(request).ephemeral_cursor(session_id)
+        except (KeyError, LookupError):
+            ephemeral_cursor = 0
+        try:
             while True:
+                # Live-only frames go out before the durable page of the same
+                # iteration.  A round's deltas buffer ephemerally while the
+                # fact that the round ended (`agent:round`) is committed
+                # durably, so flushing the durable page first delivered
+                # `agent:round` before its own trailing `agent:stream_delta`
+                # frames; the browser then re-created a streaming card for an
+                # already-finished round (streamingMessages had been discarded)
+                # and nothing ever removed it.
+                live = _service(request).ephemeral_events(session_id, ephemeral_cursor)
+                for event in live["events"]:
+                    ephemeral_cursor = int(event["ephemeral_sequence"])
+                    # No SSE id: ephemeral frames must never advance the
+                    # durable Last-Event-ID/cursor used for reconnect replay.
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 page = _service(request).events(session_id, next_cursor, 500)
                 records = page["events"]
                 for event in records:

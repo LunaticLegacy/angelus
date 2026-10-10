@@ -71,6 +71,25 @@ class SystemResourceManager:
             )
         return path.resolve()
 
+    def open_directory(self, path: str | Path) -> Path:
+        """Open an existing directory in the host file manager."""
+        target = Path(path).expanduser().resolve()
+        if not target.is_dir():
+            raise SystemResourceManagerError("workspace directory does not exist")
+        if self._system_name == "Windows":
+            command = [self._first_available("explorer.exe", "explorer"), str(target)]
+        elif self._system_name == "Darwin":
+            command = [self._first_available("open"), str(target)]
+        elif self._system_name == "Linux":
+            command = [self._first_available("xdg-open"), str(target)]
+        else:
+            raise SystemResourceManagerUnavailable(f"unsupported operating system: {self._system_name or 'unknown'}")
+        try:
+            self._runner(command, check=False)
+        except OSError as exc:
+            raise SystemResourceManagerUnavailable("unable to open the workspace directory") from exc
+        return target
+
     def _picker_command(self, title: str) -> list[str]:
         """Build the command for the current host without invoking it."""
         if self._system_name == "Windows":

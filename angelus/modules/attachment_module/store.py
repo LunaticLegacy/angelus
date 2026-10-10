@@ -56,9 +56,17 @@ class ImageAttachmentStore:
             raise ValueError("Invalid image attachment ID")
         target = self.root / attachment_id
         self._reject_symlinks(target)
-        if not target.is_dir():
-            raise KeyError(attachment_id)
-        return target
+        if target.is_dir():
+            return target
+        # Backward compatibility for stores created before the explicit
+        # ``images`` directory was introduced. New writes never use this path.
+        legacy_root = self.root.parent if self.root.name == "images" else None
+        legacy = legacy_root / attachment_id if legacy_root is not None else None
+        if legacy is not None:
+            self._reject_symlinks(legacy)
+            if legacy.is_dir():
+                return legacy
+        raise KeyError(attachment_id)
 
     @staticmethod
     def _read(path: Path, limit: int) -> bytes:

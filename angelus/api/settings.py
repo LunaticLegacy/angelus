@@ -7,6 +7,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from llmfetcher.context_handlers import context_handler_specs
+
 from ..core import AngelusCore
 from ..modules.application_module import UnknownSession
 from ..modules.tool_module import ToolCatalog
@@ -165,6 +167,22 @@ def delete_session_profile(session_id: str, request: Request) -> dict[str, Any]:
         return _core(request).settings_service.clear_session_profile(session_id)
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
+
+
+@router.get("/api/context-handlers")
+def list_context_handlers() -> dict[str, Any]:
+    """Return the selectable context handlers for the run-profile form.
+
+    Returns:
+        Catalog entries carrying the stable id, a library-neutral title and a
+        one-line description. The console maps ids to its own localized labels.
+    """
+    return {
+        "handlers": [
+            {"id": spec.id, "title": spec.title, "description": spec.description}
+            for spec in context_handler_specs()
+        ]
+    }
 
 
 __all__ = ["router"]

@@ -3,16 +3,66 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
-from angelus.modules.plugin_module import PluginManager, PluginUiActionResult
-from angelus.modules.tool_module import ToolRegistry
+from angelus.core import AngelusCore, _bundled_plugin_root, _development_plugin_root
+from angelus.modules.plugin_module import PluginManager, PluginRecord, PluginUiActionResult
+from angelus.modules.tool_module import ToolPolicy, ToolRegistry
 
 
 class PluginManagerTests(unittest.TestCase):
     """Assert discovery never executes code and loaded packages stay bounded."""
+
+    def test_compiled_sidecar_plugin_root_override_is_used(self) -> None:
+        """Packaged sidecars discover plugins from their extracted data root."""
+        with TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"ANGELUS_BUNDLED_PLUGIN_ROOT": directory}):
+                self.assertEqual(Path(directory).resolve(), _bundled_plugin_root())
+                core = AngelusCore(state_root=Path(directory) / "state")
+                self.assertIn(Path(directory).resolve(), core.plugin_manager._discovery_roots)
+
+    def test_release_sidecar_does_not_scan_repository_plugins(self) -> None:
+        with patch.dict(os.environ, {"ANGELUS_DISABLE_DEVELOPMENT_PLUGINS": "1"}):
+            self.assertFalse(_development_plugin_root().exists())
+
+    def test_stale_onefile_path_is_rebound_to_current_bundle(self) -> None:
+        """A registry from an earlier onefile extraction remains loadable."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            bundled = root / "starter-plugins"
+            package = bundled / "theme-pack"
+            package.mkdir(parents=True)
+            _json(package / "manifest.json", {
+                "name": "theme-pack", "version": "1.0.0", "api_version": "1", "kind": "theme_pack",
+                "frontend": {"assets": ["theme.css"], "settings": False, "themes": [
+                    {"id": "default", "title": "Default", "asset": "theme.css", "mode": "dark"},
+                ]},
+            })
+            (package / "theme.css").write_text(":root {}", encoding="utf-8")
+            manager = PluginManager(state, ToolRegistry(), bundled)
+            manager.store.put(PluginRecord("theme-pack", "theme-pack", str(root / "old-onefile" / "theme-pack")))
+
+            active = manager.load("theme-pack", grant_permissions=False)
+
+            self.assertEqual("active", active["state"])
+            self.assertEqual(str(package.resolve()), manager.store.get("theme-pack").package_path)
+
+    def test_portable_managed_root_contains_all_plugin_state(self) -> None:
+        """Portable packages, registry, and runtime data share one state tree."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            managed = root / ".angelus-state" / "plugins"
+            manager = PluginManager(root / ".angelus-state" / "workspace", ToolRegistry(), managed_root=managed)
+
+            self.assertEqual(managed.resolve(), manager.store.package_root)
+            self.assertEqual((managed / "registry.json").resolve(), manager.store._path)
+            self.assertEqual((managed / "data").resolve(), manager.store.data_root)
 
     def test_theme_pack_registers_settings_and_serves_only_whitelisted_css(self) -> None:
         """A theme pack exposes multiple skins without executable entry code.
@@ -22,7 +72,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "packages" / "aurora-pack"
+            package = root / "plugins" / "aurora-pack"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "aurora-pack", "display_name": "Aurora", "version": "1.0.0", "api_version": "1", "kind": "theme_pack",
@@ -60,7 +110,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "packages" / "echo-tools"
+            package = root / "plugins" / "echo-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "echo-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -86,6 +136,48 @@ class PluginManagerTests(unittest.TestCase):
             manager.unload("echo-tools")
             self.assertEqual((), registry.definitions())
 
+    def test_plugin_tools_obey_the_session_policy(self) -> None:
+        """Revoking a plugin category must remove its Tools from the Agent.
+
+        Returns:
+            ``None`` after asserting the host filters a plugin's Tools by the
+            session grants instead of trusting the plugin to do it.
+        """
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "plugins" / "echo-tools"
+            package.mkdir(parents=True)
+            _json(package / "manifest.json", {
+                "name": "echo-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
+                "frontend": {"assets": [], "settings": False},
+            })
+            (package / "main.py").write_text(
+                "from llmfetcher import Tool, ToolSchema\n"
+                "from angelus.modules.plugin_module import PluginToolCategory, PluginToolContribution, PluginToolDefinition\n"
+                "class Provider:\n"
+                "    def materialize(self, session_id, policy, role):\n"
+                "        return [Tool('plugin.echo-tools.echo', 'Echo', ToolSchema(), lambda **_: 'ok')]\n"
+                "class Plugin:\n"
+                "    def setup(self, runtime):\n"
+                "        runtime.register_tool_provider(PluginToolContribution(Provider(), (PluginToolCategory('utility', 'Echo', 'Echo helpers'),), (PluginToolDefinition('echo', 'utility', 'Echo', 'Echo safely', frozenset({'coordinator'})),)))\n"
+                "    def teardown(self): pass\n"
+                "angelus_plugin = Plugin()\n",
+                encoding="utf-8",
+            )
+            registry = ToolRegistry()
+            manager = PluginManager(root, registry)
+            manager.register("echo-tools")
+            manager.load("echo-tools", grant_permissions=False)
+            session = SimpleNamespace(execution=None)
+            granted = ToolPolicy(frozenset({"plugin.echo-tools.utility"}), frozenset({"plugin.echo-tools.echo"}))
+            revoked = ToolPolicy(frozenset(), frozenset())
+
+            granted_names = [tool.name for tool in registry.materialize(session, granted, "coordinator")]
+            revoked_names = [tool.name for tool in registry.materialize(session, revoked, "coordinator")]
+
+            self.assertEqual(["plugin.echo-tools.echo"], granted_names)
+            self.assertEqual([], revoked_names)
+
     def test_settings_schema_exposes_user_parameters_to_runtime(self) -> None:
         """Persist declared user parameters and expose them through runtime access.
 
@@ -95,7 +187,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "packages" / "parameter-tools"
+            package = root / "plugins" / "parameter-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "parameter-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -129,7 +221,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "packages" / "panel-tools"
+            package = root / "plugins" / "panel-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "panel-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -165,7 +257,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "packages" / "login-tools"
+            package = root / "plugins" / "login-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "login-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -204,6 +296,9 @@ class PluginManagerTests(unittest.TestCase):
             self.assertTrue(password["sensitive"])
             self.assertEqual("password", password["format"])
             definitions = [item.id for item in manager._tool_registry.definitions() if item.id.startswith("plugin.gzctf.")]
+            # This repository's bundled gzctf publishes 11 tools. The same test
+            # in angelus-pofp-ctf asserts 14 because that plugin gained three
+            # team-instance lifecycle tools separately from this runtime port.
             self.assertEqual(11, len(definitions))
 
     def test_development_packages_are_discovered_and_can_be_loaded(self) -> None:

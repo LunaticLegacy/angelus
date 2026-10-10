@@ -20,6 +20,7 @@ mimetypes.add_type("image/svg+xml", ".svg")
 
 from ..core import AngelusCore
 from .runs import router as runs_router
+from .error_reporting import install_error_reporting
 from .sessions import router as sessions_router
 from .providers import router as providers_router
 from .workspace_directory import router as workspace_directory_router
@@ -29,11 +30,15 @@ from .plugins import router as plugins_router
 from .external_agent_hub import router as external_agent_hub_router
 from .mcp import router as mcp_router
 from .attachments import router as attachments_router
+from .compact import router as compact_router
 
 
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     """Install API routes and the local workbench assets on one host."""
     app.state.angelus_core = core
+    # Registered before any route so an unhandled failure reaches the console
+    # as JSON detail with a traceback in the state root, not as plain text.
+    install_error_reporting(app, core.state_root)
     frontend_root = Path(__file__).resolve().parents[2] / "frontend"
 
     @app.get("/", include_in_schema=False)
@@ -77,6 +82,7 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     app.include_router(external_agent_hub_router)
     app.include_router(mcp_router)
     app.include_router(attachments_router)
+    app.include_router(compact_router)
     app.mount("/static", StaticFiles(directory=frontend_root / "static"), name="static")
 
 

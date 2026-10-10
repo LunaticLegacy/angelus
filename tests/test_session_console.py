@@ -25,6 +25,8 @@ from angelus.modules.tool_module import ToolPolicy
 from angelus.modules.execution_module.journal import ExecutionJournal
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
 from llmfetcher.llm_types import LLMOutput, LLMToolCall, TokenUsage
+from angelus.modules.application_module.agent_control import SessionRunControl
+from llmfetcher.execution import ExecutionController
 
 
 class _Journal:
@@ -1202,16 +1204,254 @@ class FrontendContextLoadTests(unittest.TestCase):
 
     def test_chat_view_cache_buster_is_bumped(self) -> None:
         app = self._read("frontend/static/app.js")
-        self.assertIn("chat-view.js?v=native-vision-5", app)
+        self.assertIn("chat-view.js?v=native-vision-6", app)
+        self.assertNotIn("chat-view.js?v=native-vision-5", app)
         self.assertNotIn("chat-view.js?v=native-vision-4", app)
-        self.assertNotIn("chat-view.js?v=native-vision-3", app)
+
+    def test_the_session_row_lays_its_children_out_in_a_line(self) -> None:
+        """A row that aligns its children must also be a flex container.
+
+        The row carried ``align-items``/``gap`` and flex children long before it
+        carried ``display:flex``; while the status and the dots were absolutely
+        positioned that cost nothing, and the moment the status became a normal
+        item every row stacked name, dot, status and actions onto four lines.
+        """
+        css = self._read("frontend/static/app.css")
+        rows = [line for line in css.splitlines() if line.startswith(".recent-session {") and "align-items" in line]
+        self.assertTrue(rows, "expected a flex row rule for the session list")
+        for line in rows:
+            self.assertIn("display:flex", line)
 
     def test_static_cache_buster_is_bumped(self) -> None:
+        """Guard that the shell assets carry the tokens the template ships.
+
+        The script token tracks the shell bundle (``desktop-boundary-2`` ->
+        ``i18n-1`` -> ... -> ``i18n-17``); the stylesheet token tracks the layout
+        (``desktop-agent-1`` -> ... -> ``desktop-agent-19``). Expectations follow
+        ``index.html`` rather than one particular change.
+        """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=external-hub-9", html)
-        self.assertNotIn("/static/app.js?v=external-hub-8", html)
-        self.assertIn("/static/app.css?v=workbench-86", html)
-        self.assertNotIn("/static/app.css?v=workbench-85", html)
+        self.assertIn("/static/app.js?v=i18n-17", html)
+        self.assertNotIn("/static/app.js?v=i18n-16", html)
+        self.assertIn("/static/app.css?v=desktop-agent-19", html)
+        self.assertNotIn("/static/app.css?v=desktop-agent-18", html)
+
+    def test_the_composer_offers_the_session_connector_and_toolset(self) -> None:
+        """Both controls edit run-profile keys the Agent page also edits.
+
+        They are shortcuts rather than a second store: every change travels the
+        shared ``applyToolPermission`` / ``persistSettings`` path, so the two
+        editors cannot disagree about a value.
+        """
+        html = self._read("frontend/templates/index.html")
+        for control in ('id="composer-connector"', 'id="composer-connector-panel"', 'id="composer-tools"', 'id="composer-tool-panel"'):
+            self.assertIn(control, html)
+
+        css = self._read("frontend/static/app.css")
+        self.assertIn("min-height:58px", css)
+        self.assertIn("max-height:220px", css)
+
+        app = self._read("frontend/static/app.js")
+        self.assertIn("./components/composer-scope.js?v=composer-scope-3", app)
+        self.assertIn("async function applyToolPermission", app)
+        # One writer, two callers: the settings grid and the composer panel.
+        self.assertGreaterEqual(app.count("applyToolPermission("), 3)
+
+        # The panel is a card grid with a category switch per card, and it edits
+        # the system prompt beside it.
+        scope = self._read("frontend/static/components/composer-scope.js")
+        self.assertIn("tool-cards", scope)
+        self.assertIn("composer-system-prompt", scope)
+        self.assertIn("onSystemPrompt", scope)
+
+        # The hints are addressed by id: a positional lookup put one hint in the
+        # connector chip's span and printed the other twice.
+        for hint in ('id="composer-hint-enter"', 'id="composer-hint-newline"'):
+            self.assertIn(hint, html)
+        self.assertNotIn('querySelectorAll(".composer-meta span")', self._read("frontend/static/i18n.js"))
+
+    def test_the_session_row_is_one_click_target(self) -> None:
+        """The visible row and the clickable row must be the same box.
+
+        Only the name inside the row used to switch sessions, so most of the
+        bordered surface did nothing when clicked. The state dot is now the
+        only status cue: the row stopped printing its label.
+        """
+        app = self._read("frontend/static/app.js")
+        self.assertIn('recent.querySelectorAll(".recent-session")', app)
+        self.assertIn('closest(".recent-session-action")', app)
+        css = self._read("frontend/static/app.css")
+        row = next(line for line in css.splitlines() if line.startswith(".recent-session {") and "display:flex" in line)
+        self.assertIn("cursor:pointer", row)
+        self.assertNotIn("attr(data-status)", css)
+        # The card that used to frame the (screen-reader-only) session select.
+        self.assertNotIn('class="workspace-card"', self._read("frontend/templates/index.html"))
+
+    def test_the_theme_toggle_swaps_its_icon_instead_of_writing_text(self) -> None:
+        """Writing a glyph into the button leaves it carrying two.
+
+        ``applyTheme`` runs before ``hydrateIcons`` at load, so a text glyph it
+        wrote survived and the hydrated svg landed beside it: the toggle showed
+        a moon inside its box and another one under it, and toggling wiped the
+        svg instead.
+        """
+        app = self._read("frontend/static/app.js")
+        self.assertIn('setIcon(btn, theme === "light" ? "sun" : "moon")', app)
+        self.assertNotIn("btn.textContent", app)
+        self.assertIn("export function setIcon(", self._read("frontend/static/ui/icons.js"))
+
+    def test_the_sidebar_never_hides_its_content_on_hover(self) -> None:
+        """Only the collapse button may hide the sidebar's contents.
+
+        The 901px band used to hide them until the pointer entered the column,
+        so the filter, the workspace heading and the session list appeared and
+        vanished with the mouse.
+        """
+        css = self._read("frontend/static/app.css")
+        hiders = [line for line in css.splitlines() if ".side-block > *" in line and "visibility:hidden" in line]
+        self.assertTrue(hiders, "the explicit collapse rule must remain")
+        for line in hiders:
+            self.assertIn("sidebar-collapsed", line, line.strip()[:90])
+        html = self._read("frontend/templates/index.html")
+        self.assertIn('class="brand"', html)
+        # The card duplicated the session selector above the list; the sidebar
+        # now ends at the list itself.
+        self.assertNotIn('class="workspace-current"', html)
+
+    def test_each_session_row_carries_its_own_actions(self) -> None:
+        """The list's rows must offer open-workspace and delete themselves.
+
+        The stylesheet has described ``.recent-session-actions`` for
+        generations, but the row template never emitted them, so the affordance
+        only existed on paper.
+        """
+        app = self._read("frontend/static/app.js")
+        row = app[app.index('class="recent-session-actions"') - 400 :]
+        self.assertIn('data-session-open="', row[:800])
+        self.assertIn('data-session-delete="', row[:800])
+        # Dynamically built rows need hydrating, or the buttons render empty.
+        self.assertIn("hydrateIcons(recent)", app)
+        self.assertIn("openSessionWorkspace(", app)
+        self.assertIn("deleteSession(", app)
+        html = self._read("frontend/templates/index.html")
+        self.assertNotIn('id="delete-workspace"', html)
+        self.assertNotIn('id="open-workspace-directory"', html)
+
+    def test_the_type_scale_has_one_owner(self) -> None:
+        """Every size in the sheet must come off the ladder it declares.
+
+        The workbench carried 266 absolute px sizes clustered at 8-11px, so the
+        smallest tier read as cramped and nothing could be rescaled at once.
+        The ladder lives in ``--fs-*``; this keeps a stray size from drifting
+        back in, and pins that the declarations actually resolve through it.
+        """
+        css = self._read("frontend/static/app.css")
+        for token in ("micro", "small", "body", "lede", "heading", "title", "large", "display"):
+            self.assertIn(f"--fs-{token}:", css)
+        self.assertGreaterEqual(css.count("font-size:var(--fs-"), 200)
+        ladder = {"11px", "12px", "13px", "15px", "17px", "19px", "22px", "26px"}
+        literal = set(re.findall(r"font-size:\s*([0-9.]+px)", css))
+        self.assertEqual(set(), literal - ladder, f"font-size off the ladder: {sorted(literal - ladder)}")
+        shorthand = set(re.findall(r"font:[^;{}]*?([0-9.]+px)", css))
+        self.assertEqual(set(), shorthand - ladder, f"font shorthand off the ladder: {sorted(shorthand - ladder)}")
+
+    def test_the_inspector_reserve_matches_its_columns(self) -> None:
+        """The body reserves business+rail; a leftover gap made the grid wider.
+
+        A ``column-gap`` the reserve does not pay for silently steals width from
+        the panel column and leaves a dead channel beside the rail.
+        """
+        css = self._read("frontend/static/app.css")
+        self.assertIn(
+            "calc(var(--inspector-business-width) + var(--inspector-rail-width))", css
+        )
+        for line in css.splitlines():
+            if ".activity" in line and "column-gap" in line:
+                self.assertIn("column-gap:0", line, line.strip()[:90])
+
+    def test_no_dead_activity_heading_rules_survive(self) -> None:
+        """The heading wrapper left the DOM; its rules must not linger."""
+        self.assertNotIn("activity-heading", self._read("frontend/static/app.css"))
+        self.assertNotIn("activity-heading", self._read("frontend/templates/index.html"))
+
+    def test_a_plugin_tab_cannot_ship_as_a_blank_slot(self) -> None:
+        """The rail paints ``data-icon`` and hides button text, so tabs need one."""
+        plugins = self._read("frontend/static/plugins.js")
+        self.assertIn('button.dataset.icon = "plugin"', plugins)
+        self.assertIn("hydrateIcons(button)", plugins)
+        # A cached copy of the module would hide the new tab from a browser that
+        # had already loaded the shell.
+        self.assertIn("./plugins.js?v=plugin-tab-2", self._read("frontend/static/app.js"))
+
+    def test_every_requested_icon_exists(self) -> None:
+        """A ``data-icon`` name with no entry in the set renders as nothing.
+
+        The template asks the icon module by name, so the two vocabularies have
+        to agree; a typo would otherwise show up only as an empty control.
+        """
+        icons = self._read("frontend/static/ui/icons.js")
+        start = icons.index("const ICONS = {")
+        known = set(re.findall(r"^\s*(\w+):", icons[start : icons.index("\n};", start)], re.M))
+        self.assertGreaterEqual(len(known), 15)
+
+        used = set(re.findall(r'data-icon="([^"]+)"', self._read("frontend/templates/index.html")))
+        self.assertGreaterEqual(len(used), 12)
+        self.assertEqual(set(), used - known, f"unknown icons in the template: {sorted(used - known)}")
+        for name in ("plugin", "collapse"):
+            self.assertIn(name, known, name)
+
+        # The module is new, so every importer carries a token: a cached copy
+        # would leave the whole shell without icons.
+        self.assertIn("./ui/icons.js?v=icon-3", self._read("frontend/static/app.js"))
+        self.assertIn("./icons.js?v=icon-3", self._read("frontend/static/ui/shell.js"))
+        self.assertIn("./ui/icons.js?v=icon-3", self._read("frontend/static/plugins.js"))
+
+    def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
+        """`/help` and the palette render the catalog; dispatch uses the map.
+
+        Neither list may name a command the other cannot answer. The two had
+        already drifted apart while `/help` still advertised combined rows, so
+        this pins the invariant in both directions.
+        """
+        source = self._read("frontend/static/slash.js")
+        start = source.index("const SLASH_COMMANDS = [")
+        catalog = re.findall(r'command: "([^"]+)"', source[start:source.index("\n];", start)])
+        self.assertTrue(catalog, "the catalog must not be empty")
+
+        app = self._read("frontend/static/app.js")
+        handlers = app[app.index("const slashHandlers = {"):]
+        dispatched = re.findall(r'^\s*"?([A-Za-z][\w-]*)"?\s*:', handlers[:handlers.index("\n};")], re.M)
+
+        self.assertEqual(sorted(catalog), sorted(dispatched))
+
+    def test_the_slash_palette_is_wired_to_the_composer(self) -> None:
+        """The palette must own the composer keys and be closed by the shell."""
+        app = self._read("frontend/static/app.js")
+        self.assertIn("./components/slash-palette.js?v=slash-palette-1", app)
+        self.assertIn("slashPalette?.handleKeydown(event)", app)
+        self.assertIn("slashPalette?.close()", app)
+        self.assertIn('let slashPalette = null', app)
+
+        html = self._read("frontend/templates/index.html")
+        self.assertIn('id="slash-palette"', html)
+        # The parser module ships no token until now, so a cached copy could
+        # hide a catalog change from every browser that had already loaded it.
+        self.assertIn("/static/slash.js?v=slash-1", html)
+
+    def test_the_compaction_card_streams_and_de_duplicates(self) -> None:
+        """Pin the seams the manual-compaction card depends on.
+
+        The route relays chunks as ``delta`` frames, so the shell must route
+        them through the coalesced ``context:compact_delta`` path instead of
+        appending a step per chunk, and the card must not print the terminal
+        stage's text next to the identical title.
+        """
+        app = self._read("frontend/static/app.js")
+        self.assertIn('kind==="delta"', app)
+        self.assertIn('type:"context:compact_delta"', app)
+        self.assertIn('data.kind === "delta"', app)
+        chat_view = self._read("frontend/static/components/chat-view.js")
+        self.assertIn("detail !== title", chat_view)
 
     def test_plan_mutations_trigger_a_plan_reload(self) -> None:
         """``plan:*`` lifecycle facts must schedule the debounced plan reload.
@@ -1268,6 +1508,92 @@ class FrontendContextLoadTests(unittest.TestCase):
         self.assertIn('calls:{title:"调用"', app)
         self.assertIn("refreshOpenContextCalls", app)
         self.assertIn('$("context-panel-calls").hidden=chrome.selected!=="calls"', app)
+
+
+
+class _ControlSwarm:
+    "Minimal TaskBus fake recording dynamic Agent registration."
+    def __init__(self) -> None: self.dispatched: list[str] = []
+    def dynamic_add_agent(self, name: str, worker: object) -> str:
+        return "Connected: " + name
+    def dispatch_task(self, **kwargs: object) -> SimpleNamespace:
+        name = str(kwargs.get("agent_name"))
+        self.dispatched.append(name)
+        return SimpleNamespace(id="task-" + name, recipient=name)
+    def redispatch_task(self, **kwargs: object) -> SimpleNamespace:
+        name = str(kwargs.get("agent_name"))
+        return SimpleNamespace(id="task-" + name, recipient=name)
+
+
+class _ControlWorker:
+    "Worker fake accepting the report Tool added before dispatch."
+    def add_tools(self, tools: list[object]) -> None:
+        self.tools = list(tools)
+
+
+class _ControlConsole:
+    "Console fake modelling worker registration and bindability."
+    def __init__(self) -> None: self.workers: list[str] = []
+    def add_worker(self, name: str, system_prompt: str = "") -> None:
+        self.workers.append(name)
+    def remove_worker(self, name: str) -> None:
+        if name in self.workers:
+            self.workers.remove(name)
+    def is_bindable_leaf(self, plan_task_id: str) -> bool:
+        return True
+    def bind_execution(self, task_id: str, assignment_id: str) -> None:
+        return None
+
+
+class _ControlExecution:
+    "Execution boundary exposing the session identity only."
+    def __init__(self) -> None:
+        self.session_id = "session-1"
+        self.attempt = None
+
+
+class _ControlSession:
+    "Session aggregate containing only the fields console tools touch."
+    def __init__(self, run_control: SessionRunControl | None) -> None:
+        self.console = _ControlConsole()
+        self.swarm = _ControlSwarm()
+        self.agents: list[object] = []
+        self.execution = _ControlExecution()
+        self.run_control = run_control
+
+
+class DynamicAgentControlRegistrationTests(unittest.TestCase):
+    "Prove dynamically created console agents register with live run control."
+
+    def _tools(self, run_control: SessionRunControl | None) -> tuple[SessionConsoleTools, _ControlSession]:
+        session = _ControlSession(run_control)
+
+        def factory(_session_id: str, _name: str, _prompt: str) -> _ControlWorker:
+            return _ControlWorker()
+
+        permissions = ToolPermissionPolicy(
+            frozenset({"swarm"}), frozenset({"swarm_add_worker", "dispatch_subagent", "revive_agent"}),
+        )
+        tools = SessionConsoleTools(session, permissions, worker_factory=factory)
+        return tools, session
+
+    def test_dynamic_tools_register_agents_for_targeted_control(self) -> None:
+        control = SessionRunControl(ExecutionController())
+        tools, session = self._tools(control)
+        tools.swarm_add_worker("worker-a", "inspect")
+        tools.dispatch_subagent("worker-b", "inspect", "objective-b")
+        tools.revive_agent("worker-a", "objective-c")
+        self.assertIs(session.run_control, control)
+        for name in ("worker-a", "worker-b"):
+            self.assertEqual(control.steer(name, "focus").target_agents, (name,))
+            self.assertEqual(control.stop(name, False, "done"), (name,))
+
+    def test_dynamic_tools_noop_without_run_control(self) -> None:
+        tools, session = self._tools(None)
+        tools.swarm_add_worker("worker-a", "inspect")
+        tools.dispatch_subagent("worker-b", "inspect", "objective-b")
+        tools.revive_agent("worker-a", "objective-c")
+        self.assertEqual(session.console.workers, ["worker-a", "worker-b"])
 
 
 if __name__ == "__main__":

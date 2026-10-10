@@ -327,7 +327,14 @@ class ConsoleProjectionService:
         """
         session = self._session(session_id)
         live = session.swarm.view_snapshot()
-        nodes = live["nodes"] or self.workflow(session_id)["nodes"]
+        # Runtime snapshots can be partial after a restart or before all
+        # Workers are materialized. Keep the persisted workflow identities in
+        # the operator-facing list and let runtime data override them.
+        persisted_nodes = self.workflow(session_id)["nodes"]
+        runtime_nodes = live.get("nodes", []) if isinstance(live, dict) else []
+        by_id = {str(node.get("id")): node for node in persisted_nodes if isinstance(node, dict)}
+        by_id.update({str(node.get("id")): node for node in runtime_nodes if isinstance(node, dict)})
+        nodes = list(by_id.values())
         agents = []
         for node in nodes:
             if node["kind"] != "agent":
@@ -359,14 +366,92 @@ class ConsoleProjectionService:
             Input, output, total, cached, and reasoning token totals.
         """
         swarm = self._session(session_id).swarm
-        per_agent = swarm.agent_usage()
+        persisted = self._persisted_usage(session_id)
+        if persisted is None:
+            total = swarm.total_usage()
+            per_agent = swarm.agent_usage()
+        else:
+            total, per_agent = persisted
         return {
-            "usage": swarm.total_usage(),
+            "usage": total,
             "agents": [
                 {"id": agent_id, "usage": usage}
                 for agent_id, usage in sorted(per_agent.items())
             ],
         }
+
+    @staticmethod
+    def _usage_values(value: object) -> dict[str, int] | None:
+        """Normalize one persisted usage mapping without trusting its types."""
+        if not isinstance(value, dict):
+            return None
+        result: dict[str, int] = {}
+        for key in ("input", "output", "total", "cached", "reasoning"):
+            try:
+                result[key] = max(0, int(value.get(key, 0)))
+            except (TypeError, ValueError):
+                result[key] = 0
+        return result
+
+    @classmethod
+    def _add_usage(cls, target: dict[str, int], value: object) -> bool:
+        usage = cls._usage_values(value)
+        if usage is None:
+            return False
+        for key, amount in usage.items():
+            target[key] += amount
+        return any(usage.values())
+
+    def _persisted_usage(self, session_id: str) -> tuple[dict[str, int], dict[str, dict[str, int]]] | None:
+        """Rebuild usage from durable execution journals after restart."""
+        root = self._core.workspaces.get(session_id).state_path
+        total = {key: 0 for key in ("input", "output", "total", "cached", "reasoning")}
+        agents: dict[str, dict[str, int]] = {}
+        found = False
+        for journal_path in (root / "executions").glob("*/execution.events.ndjson"):
+            try:
+                lines = journal_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(event, dict) or event.get("type") not in {"agent:usage", "agent:internal_usage"}:
+                    continue
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                value = data.get("usage") if isinstance(data, dict) else None
+                value = value if value is not None else event.get("usage")
+                agent = str(event.get("agent") or "unknown")
+                bucket = agents.setdefault(agent, {key: 0 for key in total})
+                if self._add_usage(total, value):
+                    self._add_usage(bucket, value)
+                    found = True
+        if found:
+            return total, agents
+
+        # Compatibility fallback for old checkpoints without usage journal
+        # facts; archived context rows may contain the original usage fields.
+        for context_path in (root / "agents").glob("*/context.json"):
+            before: int | None = None
+            while True:
+                try:
+                    page, next_before, _ = read_persisted_context_page(
+                        context_path, before_timeline=before, limit=200, include_archive=True
+                    )
+                except (OSError, ValueError, TypeError):
+                    break
+                bucket = agents.setdefault(context_path.parent.name, {key: 0 for key in total})
+                for item in page:
+                    value = getattr(item, "usage", None)
+                    if self._add_usage(total, value):
+                        self._add_usage(bucket, value)
+                        found = True
+                if next_before is None:
+                    break
+                before = next_before
+        return (total, agents) if found else None
 
     # Index-only keys permitted in an ``agent:remote_request`` projection.  A
     # legacy journal recorded the full ``{model,messages,...,tools}`` request
@@ -480,6 +565,22 @@ class ConsoleProjectionService:
             page.append({**item, "data": data, "event": "lifecycle", "source": self._event_source(etype), "agent": item.get("agent") or data.get("agent", ""), "message": item.get("message") or data.get("message", ""), "usage": item.get("usage") or data.get("usage", {})})
         next_cursor=start+len(page)
         return {"events": page, "next_cursor": next_cursor if has_more else None, "has_more": has_more, "durable_offset": page[-1].get("offset", 0) if page else 0}
+
+    def ephemeral_cursor(self, session_id: str) -> int:
+        """Return the current live-only cursor for a new SSE subscriber."""
+        session = self._session(session_id)
+        attempt = session.execution.attempt if session.execution else None
+        return attempt.ephemeral_cursor() if attempt is not None else 0
+
+    def ephemeral_events(self, session_id: str, cursor: int = 0) -> dict[str, object]:
+        """Return token-level events that exist only for attached clients."""
+        session = self._session(session_id)
+        attempt = session.execution.attempt if session.execution else None
+        if attempt is None:
+            return {"events": [], "next_cursor": cursor}
+        events = attempt.ephemeral_events(cursor)
+        next_cursor = max([cursor, *(int(item.get("ephemeral_sequence", cursor)) for item in events)])
+        return {"events": events, "next_cursor": next_cursor}
 
     def _rebuild_after_edit(self, session_id: str) -> dict[str, object]:
         """Rebuild the concrete swarm after a persisted static graph change.
@@ -611,7 +712,7 @@ class ConsoleProjectionService:
         self._agent(session_id, name)
         path = self._context_path(session_id, name)
         if not path.is_file():
-            return {"agent": name, "metadata": [], "request": None, "stats": {"messages": 0, "characters": 0, "tool_schemas": 0, "tool_schema_characters": 0}, "next_before": None, "has_more": False}
+            return {"agent": name, "metadata": [], "request": None, "stats": {"messages": 0, "characters": 0, "tool_schemas": 0, "tool_schema_characters": 0, "estimated_tokens": 0}, "next_before": None, "has_more": False}
         try:
             messages, next_before, total = read_persisted_context_page(
                 path, before_timeline=before, limit=limit, include_archive=True,
@@ -619,7 +720,8 @@ class ConsoleProjectionService:
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         metadata = [{"index": item.timeline, "source": "context", "type": item.role, "length": len(item.content) + len(item.content_reasoning), "timeline": item.timeline} for item in messages]
-        return {"agent": name, "metadata": metadata, "request": None, "stats": {"messages": total, "characters": sum(entry["length"] for entry in metadata), "tool_schemas": 0, "tool_schema_characters": 0}, "next_before": next_before, "has_more": next_before is not None}
+        characters = sum(entry["length"] for entry in metadata)
+        return {"agent": name, "metadata": metadata, "request": None, "stats": {"messages": total, "characters": characters, "tool_schemas": 0, "tool_schema_characters": 0, "estimated_tokens": characters // 4}, "next_before": next_before, "has_more": next_before is not None}
 
     def messages(self, session_id: str, name: str | None, before: int | None, limit: int) -> dict[str, object]:
         """Project one Agent's durable context page into chat-message cards.
@@ -1309,7 +1411,27 @@ class ConsoleProjectionService:
         Returns:
             Persisted entity/relation graph, or an honest empty projection.
         """
-        agent=self._agent(session_id,name); handler=getattr(agent,"context_handler",None); store=getattr(handler,"store",None)
+        agent=self._agent(session_id,name)
+        if agent is None:
+            context_path = self._context_path(session_id, name)
+            graph_path = Path(f"{context_path}.graph.json")
+            try:
+                pointer = json.loads(context_path.read_text(encoding="utf-8")) if context_path.is_file() else {}
+                graph_name = pointer.get("graph_checkpoint") if isinstance(pointer, dict) else None
+                if isinstance(graph_name, str) and graph_name:
+                    graph_path = context_path.with_name(graph_name)
+                raw = json.loads(graph_path.read_text(encoding="utf-8")) if graph_path.is_file() else {}
+            except (OSError, ValueError):
+                raw = {}
+            summary = self.context(session_id, name)
+            stats = summary.get("stats") if isinstance(summary, dict) else {}
+            stats = stats if isinstance(stats, dict) else {}
+            raw_nodes = raw.get("nodes", {}) if isinstance(raw, dict) else {}
+            nodes = list(raw_nodes.values()) if isinstance(raw_nodes, dict) else list(raw_nodes) if isinstance(raw_nodes, list) else []
+            edges = raw.get("edges", []) if isinstance(raw, dict) and isinstance(raw.get("edges", []), list) else []
+            communities = raw.get("communities", {}) if isinstance(raw, dict) else {}
+            return {"agent": name, "context": {"messages": int(stats.get("messages", 0) or 0), "characters": int(stats.get("characters", 0) or 0), "abstract_characters": 0, "threshold": 0, "estimated_tokens": int(stats.get("estimated_tokens", 0) or 0)}, "graph": {"available": bool(nodes), "nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges), "community_count": len(communities) if isinstance(communities, (dict, list)) else 0, "stale": False}}
+        handler=getattr(agent,"context_handler",None); store=getattr(handler,"store",None)
         raw = store.to_dict() if store is not None and hasattr(store, "to_dict") else {}
         raw_nodes=raw.get("nodes",{}) if isinstance(raw,dict) else {}
         nodes=list(raw_nodes.values()) if isinstance(raw_nodes,dict) else list(raw_nodes)

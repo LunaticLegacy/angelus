@@ -37,20 +37,20 @@ Session-owned store and owns no storage itself.
 | [store.py](store.py#L38) | `ImageAttachmentStore._ensure_root` | `None` | `None` | Create the storage root only when this Session first stores an image. |
 | [store.py](store.py#L50) | `ImageAttachmentStore._reject_symlinks` | `path: Path` | `None` | Implement `ImageAttachmentStore._reject_symlinks`. |
 | [store.py](store.py#L54) | `ImageAttachmentStore._directory` | `attachment_id: str` | `Path` | Implement `ImageAttachmentStore._directory`. |
-| [store.py](store.py#L64) | `ImageAttachmentStore._read` | `path: Path, limit: int` | `bytes` | Implement `ImageAttachmentStore._read`. |
-| [store.py](store.py#L76) | `ImageAttachmentStore.put` | `data: bytes, filename: str` | `dict` | Validate actual decoded format and publish an immutable attachment. |
-| [store.py](store.py#L124) | `ImageAttachmentStore.get` | `attachment_id: str` | `dict` | Read durable metadata, failing if this Session does not own the ID. |
-| [store.py](store.py#L132) | `ImageAttachmentStore.path` | `attachment_id: str` | `Path` | Return a checked local path for the HTTP image response. |
-| [store.py](store.py#L140) | `ImageAttachmentStore.resolve` | `reference: dict` | `dict` | Resolve a durable reference only when preparing a provider request. |
-| [store.py](store.py#L151) | `ImageAttachmentStore.import_file` | `path: str \| Path, project_root: str \| Path` | `dict` | Import a regular image file confined to the granted project root. |
-| [tool_provider.py](tool_provider.py#L24) | `ImageToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `ImageToolProvider.materialize`. |
-| [tool_provider.py](tool_provider.py#L61) | `image_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Implement `image_tool_registration`. |
+| [store.py](store.py#L72) | `ImageAttachmentStore._read` | `path: Path, limit: int` | `bytes` | Implement `ImageAttachmentStore._read`. |
+| [store.py](store.py#L84) | `ImageAttachmentStore.put` | `data: bytes, filename: str` | `dict` | Validate actual decoded format and publish an immutable attachment. |
+| [store.py](store.py#L132) | `ImageAttachmentStore.get` | `attachment_id: str` | `dict` | Read durable metadata, failing if this Session does not own the ID. |
+| [store.py](store.py#L140) | `ImageAttachmentStore.path` | `attachment_id: str` | `Path` | Return a checked local path for the HTTP image response. |
+| [store.py](store.py#L148) | `ImageAttachmentStore.resolve` | `reference: dict` | `dict` | Resolve a durable reference only when preparing a provider request. |
+| [store.py](store.py#L159) | `ImageAttachmentStore.import_file` | `path: str \| Path, project_root: str \| Path` | `dict` | Import a regular image file confined to the granted project root. |
+| [tool_provider.py](tool_provider.py#L26) | `ImageToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `ImageToolProvider.materialize`. |
+| [tool_provider.py](tool_provider.py#L68) | `image_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Implement `image_tool_registration`. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
 | [store.py](store.py#L20) | `ImageAttachmentStore` | `root: str \| Path` | `object` | Own one Session's validated, immutable image files. |
-| [tool_provider.py](tool_provider.py#L18) | `ImageToolProvider` | `core: 'AngelusCore'` | `object` | Expose native image results without filesystem or provider leakage. |
+| [tool_provider.py](tool_provider.py#L19) | `ImageToolProvider` | `core: 'AngelusCore'` | `object` | Expose native image results without filesystem or provider leakage. |
 
 <!-- END GENERATED SYMBOL MAP -->

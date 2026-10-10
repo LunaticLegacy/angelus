@@ -11,9 +11,11 @@ from pydantic import BaseModel, Field
 
 from ..core import AngelusCore
 from ..modules.console_module import ConsoleDomainError
+from ..modules.platform_module import SystemResourceManager, SystemResourceManagerError, SystemResourceManagerUnavailable
 
 
 router = APIRouter()
+_resource_manager = SystemResourceManager()
 
 
 class CreateSessionRequest(BaseModel):
@@ -86,6 +88,22 @@ def delete_session(session_id: str, payload: DeleteSessionRequest, request: Requ
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "deleted", "session_id": session_id}
+
+
+@router.post("/api/sessions/{session_id}/workspace/open")
+def open_workspace_directory(session_id: str, request: Request) -> dict[str, str]:
+    """Open the selected project directory in the host file manager."""
+    core = _core(request)
+    try:
+        workspace = core.workspaces.get(session_id)
+        opened = _resource_manager.open_directory(workspace.project_path or workspace.state_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
+    except SystemResourceManagerUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except SystemResourceManagerError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"session_id": session_id, "path": str(opened)}
 
 
 @router.get("/api/sessions/{session_id}/messages")

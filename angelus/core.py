@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 import threading
@@ -24,6 +25,30 @@ from .modules.attachment_module.tool_provider import image_tool_registration
 from .modules.plugin_module import PluginManager
 from .modules.external_agent_hub_module import CodexAppServerAdapter, ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore, SessionContextExchangeService
 from .modules.external_agent_hub_module.adapters import ClaudeSdkAdapter, CozeExternalAgentAdapter, OpenCodeExternalAgentAdapter, UnavailableExternalAgentFacade, WorkBuddyExternalAgentAdapter
+
+
+def _bundled_plugin_root() -> Path:
+    """Resolve the read-only plugin root shipped inside a desktop sidecar."""
+    override = os.environ.get("ANGELUS_BUNDLED_PLUGIN_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return (Path(__file__).resolve().parent.parent / "plugins").resolve()
+
+
+def _managed_plugin_root(state_root: Path) -> Path | None:
+    """Resolve an explicit portable plugin directory when the host supplies it."""
+    override = os.environ.get("ANGELUS_PLUGIN_DIR", "").strip()
+    return Path(override).expanduser().resolve() if override else None
+
+
+def _development_plugin_root() -> Path:
+    """Resolve the repository plugin source, or an inert root in releases."""
+    if os.environ.get("ANGELUS_DISABLE_DEVELOPMENT_PLUGINS") == "1":
+        return Path.cwd() / ".angelus-no-development-plugins"
+    bundled = os.environ.get("ANGELUS_BUNDLED_PLUGIN_ROOT", "").strip()
+    if bundled:
+        return Path(bundled).expanduser().resolve()
+    return Path.cwd() / "plugins"
 
 
 class AngelusCore:
@@ -87,8 +112,12 @@ class AngelusCore:
         self.tool_registry.register(session_memory_tool_registration(self))
         self.tool_registry.register(image_tool_registration(self))
         # Plugins can only extend the application through this same ToolRegistry.
-        bundled_plugins = Path(__file__).resolve().parent.parent / "plugins"
-        self.plugin_manager = PluginManager(self.state_root, self.tool_registry, bundled_plugins)
+        self.plugin_manager = PluginManager(
+            self.state_root,
+            self.tool_registry,
+            _development_plugin_root(),
+            _managed_plugin_root(self.state_root),
+        )
         self.plugin_manager.restore_enabled()
         # External Agent definitions are global durable metadata. Phase-two
         # adapters permit only health/capability/session inspection; their
