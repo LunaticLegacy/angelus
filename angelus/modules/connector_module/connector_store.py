@@ -15,8 +15,10 @@ class ConnectorStore:
 
     Public records are safe to return to a workbench.  A key is write-only:
     the store can report whether one exists but never reads it into a public
-    projection.  Execution-time secret resolution is deliberately not added
-    until Agent construction consumes an immutable run snapshot.
+    projection.  Execution time reads a saved connector through exactly two
+    internal methods: :meth:`api_key` for the secret and
+    :meth:`connection_config` for the provider wiring, so a run cannot
+    disagree with the connector its Session selected.
     """
 
     def __init__(self, state_root: Path) -> None:
@@ -114,6 +116,27 @@ class ConnectorStore:
             if not isinstance(api_key, str) or not api_key:
                 raise KeyError(connector_id)
             return api_key
+
+    def connection_config(self, connector_id: str) -> dict[str, str]:
+        """Return one connector's non-secret provider wiring for Agent construction.
+
+        This is the metadata half of execution-time resolution; :meth:`api_key`
+        is the secret half.  Both read the same saved record, so a run cannot
+        send one connector's key to another connector's endpoint.
+
+        Raises:
+            KeyError: If the connector has no durable metadata record.
+        """
+        self._validate_id(connector_id)
+        with self._lock:
+            record = self._records().get(connector_id)
+            if record is None:
+                raise KeyError(connector_id)
+            return {
+                "provider": str(record.get("provider", "")),
+                "model": str(record.get("model", "")),
+                "api_url": str(record.get("api_url", "")),
+            }
 
     def _records(self) -> dict[str, dict[str, Any]]:
         """Decode the metadata envelope into an ID-indexed copy."""

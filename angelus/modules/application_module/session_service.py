@@ -94,11 +94,12 @@ class SessionService:
             raise RuntimeError("Session coordinator requires a saved connector")
         try:
             api_key = self._core.connectors.api_key(connector_id)
+            connection = self._core.connectors.connection_config(connector_id)
         except KeyError as exc:
             raise RuntimeError("Session coordinator connector has no saved API key") from exc
         fingerprint = (
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
-            profile["provider"], profile["model"], profile["api_url"],
+            connection["provider"], connection["model"], connection["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
             profile["max_retries"], profile["request_timeout_seconds"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
             self._core.mcp_service.fingerprint(session_id, "coordinator"),
@@ -115,10 +116,10 @@ class SessionService:
         coordinator = create_agent(
             [LLMBackendConfig(
                 name=session.coordinator_name,
-                provider=profile["provider"],
-                model=profile["model"],
+                provider=connection["provider"],
+                model=connection["model"],
                 api_key=api_key,
-                api_url=profile["api_url"] or None,
+                api_url=connection["api_url"] or None,
                 timeout=profile["request_timeout_seconds"],
                 max_retries=profile["max_retries"],
             )],
@@ -277,14 +278,15 @@ class SessionService:
         if not isinstance(connector_id, str) or not connector_id:
             raise RuntimeError("Session worker requires a saved connector")
         api_key = self._core.connectors.api_key(connector_id)
+        connection = self._core.connectors.connection_config(connector_id)
         permissions = ToolPolicy.from_profile(profile.get("tool_permissions"))
         workspace = self._core.workspaces.get(session_id)
         if session.artifacts is None:
             raise RuntimeError("Session artifact storage is not configured")
         return create_agent(
             [LLMBackendConfig(
-                name=name, provider=profile["provider"], model=profile["model"], api_key=api_key,
-                api_url=profile["api_url"] or None, timeout=profile["request_timeout_seconds"], max_retries=profile["max_retries"],
+                name=name, provider=connection["provider"], model=connection["model"], api_key=api_key,
+                api_url=connection["api_url"] or None, timeout=profile["request_timeout_seconds"], max_retries=profile["max_retries"],
             )],
             self._core.tool_registry.materialize(session, permissions, "worker", name),
             system_prompt=system_prompt or profile["system_prompt"],
@@ -327,6 +329,7 @@ class SessionService:
             raise RuntimeError("Session preview requires a saved connector")
         try:
             api_key = self._core.connectors.api_key(connector_id)
+            connection = self._core.connectors.connection_config(connector_id)
         except KeyError as exc:
             raise RuntimeError("Session preview connector has no saved API key") from exc
         workspace = self._core.workspaces.get(session_id)
@@ -338,10 +341,10 @@ class SessionService:
         return create_agent(
             [LLMBackendConfig(
                 name=name,
-                provider=profile["provider"],
-                model=profile["model"],
+                provider=connection["provider"],
+                model=connection["model"],
                 api_key=api_key,
-                api_url=profile["api_url"] or None,
+                api_url=connection["api_url"] or None,
                 timeout=profile["request_timeout_seconds"],
                 max_retries=profile["max_retries"],
             )],

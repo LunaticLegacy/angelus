@@ -75,197 +75,199 @@ not introduce a second transcript renderer.
 | [app.js](app.js#L31) | `initTheme` | `None` | `unknown` | Perform the browser runtime operation: init theme. |
 | [app.js](app.js#L104) | `value` | `id: unknown` | `unknown` | Perform the browser runtime operation: value. |
 | [app.js](app.js#L106) | `config` | `None` | `unknown` | Perform the browser runtime operation: config. |
-| [app.js](app.js#L120) | `persistedFields` | `ids: unknown` | `unknown` | Perform the browser runtime operation: persisted fields. |
-| [app.js](app.js#L121) | `profileSettings` | `overrides: unknown` | `unknown` | Perform the browser runtime operation: profile settings. |
-| [app.js](app.js#L136) | `profilePayload` | `overrides: unknown` | `unknown` | Perform the browser runtime operation: profile payload. |
-| [app.js](app.js#L137) | `profileUrl` | `None` | `unknown` | Perform the browser runtime operation: profile url. |
-| [app.js](app.js#L138) | `applyProfile` | `profile: unknown` | `unknown` | Perform the browser runtime operation: apply profile. |
-| [app.js](app.js#L139) | `restoreSettings` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore settings. |
-| [app.js](app.js#L140) | `persistSettings` | `None` | `Promise<unknown>` | Perform the browser runtime operation: persist settings. |
-| [app.js](app.js#L141) | `bindSettingsPersistence` | `None` | `unknown` | Perform the browser runtime operation: bind settings persistence. |
-| [app.js](app.js#L153) | `loadToolRegistry` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load tool registry. |
-| [app.js](app.js#L165) | `renderToolPermissions` | `policy: unknown` | `unknown` | Perform the browser runtime operation: render tool permissions. |
-| [app.js](app.js#L197) | `applyToolPermission` | `options: object` | `Promise<unknown>` | Perform the browser runtime operation: apply tool permission. |
-| [app.js](app.js#L206) | `setStatus` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set status. |
-| [app.js](app.js#L207) | `providerLabel` | `provider: unknown` | `unknown` | Perform the browser runtime operation: provider label. |
-| [app.js](app.js#L208) | `updateProviderHint` | `None` | `unknown` | Perform the browser runtime operation: update provider hint. |
-| [app.js](app.js#L209) | `applyProviderPreset` | `None` | `unknown` | Perform the browser runtime operation: apply provider preset. |
-| [app.js](app.js#L210) | `updateModelSummary` | `None` | `unknown` | Perform the browser runtime operation: update model summary. |
-| [app.js](app.js#L212) | `selectedMemorySessions` | `None` | `unknown` | Perform the browser runtime operation: selected memory sessions. |
-| [app.js](app.js#L214) | `renderMemorySessionPicker` | `None` | `unknown` | Perform the browser runtime operation: render memory session picker. |
-| [app.js](app.js#L230) | `liveTools` | `data: unknown` | `unknown` | Perform the browser runtime operation: live tools. |
-| [app.js](app.js#L232) | `appendMessage` | `role: unknown, content: unknown, reasoning: unknown, tools: unknown, agentName: unknown, usage: unknown, modelDurationMs: unknown, roundDurationMs: unknown, timestamp: unknown` | `unknown` | Perform the browser runtime operation: append message. |
-| [app.js](app.js#L233) | `streamKey` | `agent: unknown, round: unknown` | `unknown` | Perform the browser runtime operation: stream key. |
-| [app.js](app.js#L234) | `renderStreamDelta` | `agent: unknown, data: unknown` | `unknown` | Perform the browser runtime operation: render stream delta. |
-| [app.js](app.js#L235) | `renderStreamTool` | `agent: unknown, data: unknown, status: unknown` | `unknown` | Perform the browser runtime operation: render stream tool. |
-| [app.js](app.js#L236) | `discardStream` | `agent: unknown, round: unknown` | `unknown` | Perform the browser runtime operation: discard stream. |
-| [app.js](app.js#L237) | `discardAgentStreams` | `agent: unknown` | `unknown` | Perform the browser runtime operation: discard agent streams. |
-| [app.js](app.js#L239) | `appendRunErrorBlock` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append run error block. |
-| [app.js](app.js#L241) | `upsertSteering` | `record: unknown` | `unknown` | Perform the browser runtime operation: upsert steering. |
-| [app.js](app.js#L244) | `messageForChat` | `message: unknown` | `unknown` | Perform the browser runtime operation: message for chat. |
-| [app.js](app.js#L254) | `renderMessagesInto` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render messages into. |
-| [app.js](app.js#L256) | `ensureLoadMoreMessagesButton` | `None` | `unknown` | Perform the browser runtime operation: ensure load more messages button. |
-| [app.js](app.js#L258) | `setScrollToBottomVisible` | `following: unknown` | `unknown` | Perform the browser runtime operation: set scroll to bottom visible. |
-| [app.js](app.js#L259) | `setMessageHistoryButton` | `hasMore: unknown, text: unknown` | `unknown` | Perform the browser runtime operation: set message history button. |
-| [app.js](app.js#L260) | `loadAllAgentBehavior` | `snapshot: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load all agent behavior. |
-| [app.js](app.js#L261) | `trace` | `title: unknown, message: unknown, data: unknown, kind: unknown` | `unknown` | Perform the browser runtime operation: trace. |
-| [app.js](app.js#L262) | `tracePayload` | `event: unknown, position: unknown` | `unknown` | Perform the browser runtime operation: trace payload. |
-| [app.js](app.js#L264) | `openMcpApproval` | `event: unknown` | `unknown` | Perform the browser runtime operation: open mcp approval. |
-| [app.js](app.js#L266) | `answerMcpApproval` | `None` | `Promise<unknown>` | Perform the browser runtime operation: answer mcp approval. |
-| [app.js](app.js#L267) | `updateHeaderMetrics` | `data: unknown` | `unknown` | Perform the browser runtime operation: update header metrics. |
-| [app.js](app.js#L268) | `setRunning` | `running: unknown` | `unknown` | Perform the browser runtime operation: set running. |
-| [app.js](app.js#L272) | `setSteerStatus` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set steer status. |
-| [app.js](app.js#L273) | `sendSteer` | `message: unknown` | `Promise<unknown>` | Perform the browser runtime operation: send steer. |
-| [app.js](app.js#L275) | `setWorkspaceIndicator` | `id: unknown, status: unknown` | `unknown` | Perform the browser runtime operation: set workspace indicator. |
-| [app.js](app.js#L276) | `loadWorkspaces` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load workspaces. |
-| [app.js](app.js#L277) | `filterRecentSessions` | `query: unknown` | `unknown` | Perform the browser runtime operation: filter recent sessions. |
-| [app.js](app.js#L278) | `applyConnector` | `connector: unknown` | `unknown` | Perform the browser runtime operation: apply connector. |
-| [app.js](app.js#L279) | `loadConnectors` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load connectors. |
-| [app.js](app.js#L280) | `connectorPayload` | `name: unknown` | `unknown` | Perform the browser runtime operation: connector payload. |
-| [app.js](app.js#L282) | `connectorFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: connector feedback. |
-| [app.js](app.js#L284) | `createConnector` | `name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: create connector. |
-| [app.js](app.js#L286) | `saveSelectedConnector` | `None` | `Promise<unknown>` | Perform the browser runtime operation: save selected connector. |
-| [app.js](app.js#L288) | `openConnectorDialog` | `None` | `unknown` | Perform the browser runtime operation: open connector dialog. |
-| [app.js](app.js#L289) | `openSettings` | `section: unknown` | `unknown` | Perform the browser runtime operation: open settings. |
-| [app.js](app.js#L290) | `openAgentProfile` | `targetSessionId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: open agent profile. |
-| [app.js](app.js#L291) | `showSettingsSection` | `section: unknown` | `unknown` | Perform the browser runtime operation: show settings section. |
-| [app.js](app.js#L292) | `setPluginFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set plugin feedback. |
-| [app.js](app.js#L293) | `pluginStateLabel` | `state: unknown` | `unknown` | Perform the browser runtime operation: plugin state label. |
-| [app.js](app.js#L294) | `pluginSettingsRegistration` | `name: unknown` | `unknown` | Perform the browser runtime operation: plugin settings registration. |
-| [app.js](app.js#L295) | `pluginKey` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin key. |
-| [app.js](app.js#L296) | `renderPluginStatusList` | `None` | `unknown` | Perform the browser runtime operation: render plugin status list. |
-| [app.js](app.js#L297) | `loadPluginStatuses` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load plugin statuses. |
-| [app.js](app.js#L298) | `pluginPermissionLabel` | `permission: unknown` | `unknown` | Perform the browser runtime operation: plugin permission label. |
-| [app.js](app.js#L299) | `pluginPermissionsNote` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin permissions note. |
-| [app.js](app.js#L300) | `pluginLifecycleControls` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin lifecycle controls. |
-| [app.js](app.js#L301) | `bindPluginLifecycleControls` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: bind plugin lifecycle controls. |
-| [app.js](app.js#L302) | `pluginThemeControls` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin theme controls. |
-| [app.js](app.js#L303) | `renderPluginSettingsFields` | `schema: unknown, settings: unknown` | `unknown` | Perform the browser runtime operation: render plugin settings fields. |
-| [app.js](app.js#L304) | `bindPluginTheme` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: bind plugin theme. |
-| [app.js](app.js#L305) | `renderPluginDetail` | `plugin: unknown, payload: unknown` | `unknown` | Perform the browser runtime operation: render plugin detail. |
-| [app.js](app.js#L306) | `selectPluginSettings` | `key: unknown` | `Promise<unknown>` | Perform the browser runtime operation: select plugin settings. |
-| [app.js](app.js#L307) | `savePluginSettings` | `event: unknown, plugin: unknown, schema: unknown` | `Promise<unknown>` | Perform the browser runtime operation: save plugin settings. |
-| [app.js](app.js#L308) | `changePluginLifecycle` | `plugin: unknown, action: unknown` | `Promise<unknown>` | Perform the browser runtime operation: change plugin lifecycle. |
-| [app.js](app.js#L310) | `setMcpFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set mcp feedback. |
-| [app.js](app.js#L312) | `mcpKeyValues` | `id: unknown` | `unknown` | Perform the browser runtime operation: mcp key values. |
-| [app.js](app.js#L314) | `updateMcpTransportFields` | `None` | `unknown` | Perform the browser runtime operation: update mcp transport fields. |
-| [app.js](app.js#L316) | `resetMcpForm` | `None` | `unknown` | Perform the browser runtime operation: reset mcp form. |
-| [app.js](app.js#L318) | `selectMcpServer` | `serverId: unknown` | `unknown` | Perform the browser runtime operation: select mcp server. |
-| [app.js](app.js#L320) | `loadMcpConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load mcp console. |
-| [app.js](app.js#L322) | `saveMcpBinding` | `serverId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: save mcp binding. |
-| [app.js](app.js#L324) | `saveMcpServer` | `event: unknown` | `Promise<unknown>` | Perform the browser runtime operation: save mcp server. |
-| [app.js](app.js#L325) | `sessionApi` | `path: unknown, selectedSession: unknown` | `unknown` | Perform the browser runtime operation: session api. |
-| [app.js](app.js#L326) | `planUrl` | `None` | `unknown` | Perform the browser runtime operation: plan url. |
-| [app.js](app.js#L327) | `messagesUrl` | `before: unknown, selectedSession: unknown, agent: unknown, limit: unknown` | `unknown` | Perform the browser runtime operation: messages url. |
-| [app.js](app.js#L328) | `graphUrl` | `None` | `unknown` | Perform the browser runtime operation: graph url. |
-| [app.js](app.js#L329) | `graphEventsUrl` | `cursor: unknown` | `unknown` | Perform the browser runtime operation: graph events url. |
-| [app.js](app.js#L330) | `lifecycleEventsUrl` | `cursor: unknown` | `unknown` | Perform the browser runtime operation: lifecycle events url. |
-| [app.js](app.js#L331) | `workflowUrl` | `None` | `unknown` | Perform the browser runtime operation: workflow url. |
-| [app.js](app.js#L332) | `runNode` | `agentId: unknown` | `unknown` | Perform the browser runtime operation: run node. |
-| [app.js](app.js#L333) | `agentIcon` | `agent: unknown` | `unknown` | Perform the browser runtime operation: agent icon. |
-| [app.js](app.js#L334) | `acknowledgementKey` | `None` | `unknown` | Perform the browser runtime operation: acknowledgement key. |
-| [app.js](app.js#L335) | `acknowledgedAgents` | `None` | `unknown` | Perform the browser runtime operation: acknowledged agents. |
-| [app.js](app.js#L337) | `agentStateView` | `agentId: unknown, agents: unknown` | `unknown` | Perform the browser runtime operation: agent state view. |
-| [app.js](app.js#L362) | `stateLabel` | `state: unknown` | `unknown` | Perform the browser runtime operation: state label. |
-| [app.js](app.js#L364) | `stateView` | `canonical: unknown, message: unknown, agentId: unknown` | `unknown` | Perform the browser runtime operation: state view. |
-| [app.js](app.js#L365) | `agentRunState` | `agentId: unknown, agents: unknown` | `unknown` | Perform the browser runtime operation: agent run state. |
-| [app.js](app.js#L367) | `updateStopAvailability` | `None` | `unknown` | Perform the browser runtime operation: update stop availability. |
-| [app.js](app.js#L368) | `acknowledgeAgent` | `agentId: unknown` | `unknown` | Perform the browser runtime operation: acknowledge agent. |
-| [app.js](app.js#L370) | `agentCard` | `agent: unknown, selected: unknown, tone: unknown, icon: unknown, subtitle: unknown, view: unknown, title: unknown` | `unknown` | Perform the browser runtime operation: agent card. |
-| [app.js](app.js#L374) | `renderAgentSelector` | `agents: unknown` | `unknown` | Perform the browser runtime operation: render agent selector. |
-| [app.js](app.js#L377) | `contextNodeTone` | `type: unknown` | `unknown` | Perform the browser runtime operation: context node tone. |
-| [app.js](app.js#L379) | `renderContextGraphDetail` | `graph: unknown, nodeId: unknown` | `unknown` | Perform the browser runtime operation: render context graph detail. |
-| [app.js](app.js#L390) | `renderContextGraph` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render context graph. |
-| [app.js](app.js#L422) | `contextDialogChrome` | `tab: unknown` | `unknown` | Perform the browser runtime operation: context dialog chrome. |
-| [app.js](app.js#L441) | `selectContextDialogTab` | `tab: unknown` | `unknown` | Perform the browser runtime operation: select context dialog tab. |
-| [app.js](app.js#L461) | `decodePromptText` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode prompt text. |
-| [app.js](app.js#L463) | `readablePromptValue` | `value: unknown, indent: unknown` | `unknown` | Perform the browser runtime operation: readable prompt value. |
-| [app.js](app.js#L465) | `renderContextPrompt` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render context prompt. |
-| [app.js](app.js#L475) | `loadContextPrompt` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load context prompt. |
-| [app.js](app.js#L477) | `renderCompactionInput` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render compaction input. |
-| [app.js](app.js#L486) | `loadCompactionInput` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load compaction input. |
-| [app.js](app.js#L489) | `callDurationText` | `roundValue: unknown, modelValue: unknown` | `unknown` | Perform the browser runtime operation: call duration text. |
-| [app.js](app.js#L491) | `callUsageText` | `usage: unknown` | `unknown` | Perform the browser runtime operation: call usage text. |
-| [app.js](app.js#L493) | `callTimestampText` | `value: unknown` | `unknown` | Perform the browser runtime operation: call timestamp text. |
-| [app.js](app.js#L502) | `toolNameChips` | `names: unknown` | `unknown` | Perform the browser runtime operation: tool name chips. |
-| [app.js](app.js#L508) | `callContentBlock` | `label: unknown, preview: unknown` | `unknown` | Perform the browser runtime operation: call content block. |
-| [app.js](app.js#L519) | `readableRequestMessages` | `model: unknown, messages: unknown, omitted: unknown` | `unknown` | Perform the browser runtime operation: readable request messages. |
-| [app.js](app.js#L533) | `callRoundContent` | `record: unknown` | `unknown` | Perform the browser runtime operation: call round content. |
-| [app.js](app.js#L544) | `renderCallRequestConfig` | `config: unknown` | `unknown` | Perform the browser runtime operation: render call request config. |
-| [app.js](app.js#L553) | `renderCalls` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render calls. |
-| [app.js](app.js#L586) | `loadCalls` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load calls. |
-| [app.js](app.js#L588) | `refreshOpenContextCalls` | `None` | `unknown` | Perform the browser runtime operation: refresh open context calls. |
-| [app.js](app.js#L602) | `ensureContextDialogTab` | `tab: unknown` | `unknown` | Perform the browser runtime operation: ensure context dialog tab. |
-| [app.js](app.js#L611) | `openAgentContextInspector` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: open agent context inspector. |
-| [app.js](app.js#L622) | `hasSelectedSession` | `None` | `unknown` | Perform the browser runtime operation: has selected session. |
-| [app.js](app.js#L623) | `renderInspectorEmpty` | `message: unknown` | `unknown` | Perform the browser runtime operation: render inspector empty. |
-| [app.js](app.js#L624) | `loadAgents` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load agents. |
-| [app.js](app.js#L625) | `selectAgent` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: select agent. |
-| [app.js](app.js#L626) | `renderGraph` | `graph: unknown` | `unknown` | Perform the browser runtime operation: render graph. |
-| [app.js](app.js#L628) | `loadGraph` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load graph. |
-| [app.js](app.js#L630) | `traceUrl` | `cursor: unknown` | `unknown` | Perform the browser runtime operation: trace url. |
-| [app.js](app.js#L632) | `isTraceVisible` | `event: unknown` | `unknown` | Perform the browser runtime operation: is trace visible. |
-| [app.js](app.js#L638) | `loadTrace` | `reset: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load trace. |
-| [app.js](app.js#L639) | `agentContextStats` | `agent: unknown` | `unknown` | Perform the browser runtime operation: agent context stats. |
-| [app.js](app.js#L662) | `renderAgentTopology` | `agents: unknown, graph: unknown` | `unknown` | Perform the browser runtime operation: render agent topology. |
-| [app.js](app.js#L677) | `loadInspectorAgents` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load inspector agents. |
-| [app.js](app.js#L678) | `graphEditUrl` | `None` | `unknown` | Perform the browser runtime operation: graph edit url. |
-| [app.js](app.js#L680) | `graphEditFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: graph edit feedback. |
-| [app.js](app.js#L682) | `loadGraphEditInfo` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load graph edit info. |
-| [app.js](app.js#L685) | `setDisabled` | `list: unknown, disabled: unknown` | `unknown` | Perform the browser runtime operation: set disabled. |
-| [app.js](app.js#L699) | `graphAddAgent` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph add agent. |
-| [app.js](app.js#L708) | `graphConnect` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph connect. |
-| [app.js](app.js#L717) | `graphRemoveAgent` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph remove agent. |
-| [app.js](app.js#L729) | `graphDisconnect` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph disconnect. |
-| [app.js](app.js#L740) | `graphSetMapper` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph set mapper. |
-| [app.js](app.js#L748) | `graphSetRouter` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph set router. |
-| [app.js](app.js#L757) | `usageCells` | `usage: unknown, run: unknown` | `unknown` | Perform the browser runtime operation: usage cells. |
-| [app.js](app.js#L758) | `value` | `key: unknown` | `unknown` | Perform the browser runtime operation: value. |
-| [app.js](app.js#L767) | `loadUsage` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load usage. |
-| [app.js](app.js#L768) | `selectInspectorPanel` | `panel: unknown, refresh: unknown, open: unknown` | `unknown` | Perform the browser runtime operation: select inspector panel. |
-| [app.js](app.js#L769) | `initInspectorTabs` | `None` | `unknown` | Perform the browser runtime operation: init inspector tabs. |
-| [app.js](app.js#L770) | `knownPlanAgents` | `None` | `unknown` | Perform the browser runtime operation: known plan agents. |
-| [app.js](app.js#L771) | `renderPlanAgentPicker` | `None` | `unknown` | Perform the browser runtime operation: render plan agent picker. |
-| [app.js](app.js#L772) | `loadPlan` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load plan. |
-| [app.js](app.js#L774) | `loadHistory` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load history. |
-| [app.js](app.js#L808) | `loadOlderMessages` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load older messages. |
-| [app.js](app.js#L842) | `rehydrateSelectedView` | `options: object` | `Promise<unknown>` | Perform the browser runtime operation: rehydrate selected view. |
-| [app.js](app.js#L843) | `switchSession` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: switch session. |
-| [app.js](app.js#L844) | `start` | `message: unknown, images: unknown, targetSession: unknown` | `Promise<unknown>` | Perform the browser runtime operation: start. |
-| [app.js](app.js#L866) | `clearCompactStatus` | `None` | `unknown` | Perform the browser runtime operation: clear compact status. |
-| [app.js](app.js#L867) | `scheduleCompactionRender` | `key: unknown` | `unknown` | Perform the browser runtime operation: schedule compaction render. |
-| [app.js](app.js#L875) | `compactCardEvent` | `event: unknown, manual: unknown` | `unknown` | Perform the browser runtime operation: compact card event. |
-| [app.js](app.js#L892) | `stopCompaction` | `agent: unknown, force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: stop compaction. |
-| [app.js](app.js#L898) | `debounce` | `fn: unknown, wait: unknown` | `unknown` | Perform the browser runtime operation: debounce. |
-| [app.js](app.js#L909) | `pushTraceEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: push trace event. |
-| [app.js](app.js#L914) | `indexTraceEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: index trace event. |
-| [app.js](app.js#L920) | `rebuildTraceEventIndex` | `None` | `unknown` | Perform the browser runtime operation: rebuild trace event index. |
-| [app.js](app.js#L931) | `handleEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: handle event. |
-| [app.js](app.js#L960) | `finish` | `None` | `unknown` | Perform the browser runtime operation: finish. |
-| [app.js](app.js#L962) | `showSlashHelp` | `None` | `unknown` | Perform the browser runtime operation: show slash help. |
-| [app.js](app.js#L975) | `sessionByName` | `name: unknown` | `unknown` | Perform the browser runtime operation: session by name. |
-| [app.js](app.js#L976) | `switchSessionByName` | `name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: switch session by name. |
-| [app.js](app.js#L977) | `deleteSessionByName` | `name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: delete session by name. |
-| [app.js](app.js#L980) | `openSessionWorkspace` | `targetId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: open session workspace. |
-| [app.js](app.js#L988) | `deleteSession` | `targetId: unknown, name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: delete session. |
-| [app.js](app.js#L989) | `runStop` | `None` | `Promise<unknown>` | Perform the browser runtime operation: run stop. |
-| [app.js](app.js#L990) | `runForceStop` | `None` | `Promise<unknown>` | Perform the browser runtime operation: run force stop. |
-| [app.js](app.js#L992) | `runCompact` | `agent: unknown` | `Promise<unknown>` | Perform the browser runtime operation: run compact. |
-| [app.js](app.js#L1006) | `handleCompactStage` | `record: unknown, startedSession: unknown, requestedAgent: unknown` | `unknown` | Perform the browser runtime operation: handle compact stage. |
-| [app.js](app.js#L1040) | `dispatchSlashCommand` | `parsed: unknown` | `unknown` | Perform the browser runtime operation: dispatch slash command. |
-| [app.js](app.js#L1048) | `resizeComposer` | `None` | `unknown` | Perform the browser runtime operation: resize composer. |
-| [app.js](app.js#L1049) | `applyRunGraphEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: apply run graph event. |
-| [app.js](app.js#L1050) | `handleRunGraphEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: handle run graph event. |
-| [app.js](app.js#L1051) | `connectRunGraphEvents` | `None` | `unknown` | Perform the browser runtime operation: connect run graph events. |
-| [app.js](app.js#L1052) | `connectLifecycleEvents` | `None` | `unknown` | Perform the browser runtime operation: connect lifecycle events. |
-| [app.js](app.js#L1053) | `restoreRunState` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore run state. |
-| [app.js](app.js#L1107) | `pickWorkspaceDirectory` | `None` | `Promise<unknown>` | Perform the browser runtime operation: pick workspace directory. |
-| [app.js](app.js#L1108) | `createAndSwitchSession` | `name: unknown, projectPath: unknown` | `Promise<unknown>` | Perform the browser runtime operation: create and switch session. |
-| [app.js](app.js#L1194) | `loadProviders` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load providers. |
-| [app.js](app.js#L1196) | `contextHandlerLabel` | `spec: unknown` | `unknown` | Perform the browser runtime operation: context handler label. |
-| [app.js](app.js#L1197) | `renderContextHandlerOptions` | `None` | `unknown` | Perform the browser runtime operation: render context handler options. |
-| [app.js](app.js#L1199) | `loadContextHandlers` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load context handlers. |
-| [app.js](app.js#L1201) | `initializeConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: initialize console. |
+| [app.js](app.js#L121) | `persistedFields` | `ids: unknown` | `unknown` | Perform the browser runtime operation: persisted fields. |
+| [app.js](app.js#L125) | `profileSettings` | `overrides: unknown` | `unknown` | Perform the browser runtime operation: profile settings. |
+| [app.js](app.js#L139) | `profilePayload` | `overrides: unknown` | `unknown` | Perform the browser runtime operation: profile payload. |
+| [app.js](app.js#L140) | `profileUrl` | `None` | `unknown` | Perform the browser runtime operation: profile url. |
+| [app.js](app.js#L141) | `applyProfile` | `profile: unknown` | `unknown` | Perform the browser runtime operation: apply profile. |
+| [app.js](app.js#L142) | `restoreSettings` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore settings. |
+| [app.js](app.js#L143) | `persistSettings` | `None` | `Promise<unknown>` | Perform the browser runtime operation: persist settings. |
+| [app.js](app.js#L144) | `bindSettingsPersistence` | `None` | `unknown` | Perform the browser runtime operation: bind settings persistence. |
+| [app.js](app.js#L157) | `loadToolRegistry` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load tool registry. |
+| [app.js](app.js#L169) | `renderToolPermissions` | `policy: unknown` | `unknown` | Perform the browser runtime operation: render tool permissions. |
+| [app.js](app.js#L201) | `applyToolPermission` | `options: object` | `Promise<unknown>` | Perform the browser runtime operation: apply tool permission. |
+| [app.js](app.js#L210) | `setStatus` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set status. |
+| [app.js](app.js#L211) | `providerLabel` | `provider: unknown` | `unknown` | Perform the browser runtime operation: provider label. |
+| [app.js](app.js#L212) | `updateProviderHint` | `None` | `unknown` | Perform the browser runtime operation: update provider hint. |
+| [app.js](app.js#L213) | `applyProviderPreset` | `None` | `unknown` | Perform the browser runtime operation: apply provider preset. |
+| [app.js](app.js#L214) | `updateModelSummary` | `None` | `unknown` | Perform the browser runtime operation: update model summary. |
+| [app.js](app.js#L216) | `selectedMemorySessions` | `None` | `unknown` | Perform the browser runtime operation: selected memory sessions. |
+| [app.js](app.js#L218) | `renderMemorySessionPicker` | `None` | `unknown` | Perform the browser runtime operation: render memory session picker. |
+| [app.js](app.js#L234) | `liveTools` | `data: unknown` | `unknown` | Perform the browser runtime operation: live tools. |
+| [app.js](app.js#L236) | `appendMessage` | `role: unknown, content: unknown, reasoning: unknown, tools: unknown, agentName: unknown, usage: unknown, modelDurationMs: unknown, roundDurationMs: unknown, timestamp: unknown` | `unknown` | Perform the browser runtime operation: append message. |
+| [app.js](app.js#L237) | `streamKey` | `agent: unknown, round: unknown` | `unknown` | Perform the browser runtime operation: stream key. |
+| [app.js](app.js#L238) | `renderStreamDelta` | `agent: unknown, data: unknown` | `unknown` | Perform the browser runtime operation: render stream delta. |
+| [app.js](app.js#L239) | `renderStreamTool` | `agent: unknown, data: unknown, status: unknown` | `unknown` | Perform the browser runtime operation: render stream tool. |
+| [app.js](app.js#L240) | `discardStream` | `agent: unknown, round: unknown` | `unknown` | Perform the browser runtime operation: discard stream. |
+| [app.js](app.js#L241) | `discardAgentStreams` | `agent: unknown` | `unknown` | Perform the browser runtime operation: discard agent streams. |
+| [app.js](app.js#L243) | `appendRunErrorBlock` | `title: unknown, message: unknown, rawContent: unknown` | `unknown` | Perform the browser runtime operation: append run error block. |
+| [app.js](app.js#L245) | `upsertSteering` | `record: unknown` | `unknown` | Perform the browser runtime operation: upsert steering. |
+| [app.js](app.js#L248) | `messageForChat` | `message: unknown` | `unknown` | Perform the browser runtime operation: message for chat. |
+| [app.js](app.js#L258) | `renderMessagesInto` | `messages: unknown, assistantLabel: unknown` | `unknown` | Perform the browser runtime operation: render messages into. |
+| [app.js](app.js#L260) | `ensureLoadMoreMessagesButton` | `None` | `unknown` | Perform the browser runtime operation: ensure load more messages button. |
+| [app.js](app.js#L262) | `setScrollToBottomVisible` | `following: unknown` | `unknown` | Perform the browser runtime operation: set scroll to bottom visible. |
+| [app.js](app.js#L263) | `setMessageHistoryButton` | `hasMore: unknown, text: unknown` | `unknown` | Perform the browser runtime operation: set message history button. |
+| [app.js](app.js#L264) | `loadAllAgentBehavior` | `snapshot: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load all agent behavior. |
+| [app.js](app.js#L265) | `trace` | `title: unknown, message: unknown, data: unknown, kind: unknown` | `unknown` | Perform the browser runtime operation: trace. |
+| [app.js](app.js#L266) | `tracePayload` | `event: unknown, position: unknown` | `unknown` | Perform the browser runtime operation: trace payload. |
+| [app.js](app.js#L268) | `openMcpApproval` | `event: unknown` | `unknown` | Perform the browser runtime operation: open mcp approval. |
+| [app.js](app.js#L270) | `answerMcpApproval` | `None` | `Promise<unknown>` | Perform the browser runtime operation: answer mcp approval. |
+| [app.js](app.js#L271) | `updateHeaderMetrics` | `data: unknown` | `unknown` | Perform the browser runtime operation: update header metrics. |
+| [app.js](app.js#L272) | `setRunning` | `running: unknown` | `unknown` | Perform the browser runtime operation: set running. |
+| [app.js](app.js#L276) | `setSteerStatus` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set steer status. |
+| [app.js](app.js#L277) | `sendSteer` | `message: unknown` | `Promise<unknown>` | Perform the browser runtime operation: send steer. |
+| [app.js](app.js#L279) | `setWorkspaceIndicator` | `id: unknown, status: unknown` | `unknown` | Perform the browser runtime operation: set workspace indicator. |
+| [app.js](app.js#L280) | `loadWorkspaces` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load workspaces. |
+| [app.js](app.js#L281) | `filterRecentSessions` | `query: unknown` | `unknown` | Perform the browser runtime operation: filter recent sessions. |
+| [app.js](app.js#L283) | `markConnectorDirty` | `None` | `unknown` | Perform the browser runtime operation: mark connector dirty. |
+| [app.js](app.js#L285) | `clearConnectorFields` | `None` | `unknown` | Perform the browser runtime operation: clear connector fields. |
+| [app.js](app.js#L286) | `applyConnector` | `connector: unknown` | `unknown` | Perform the browser runtime operation: apply connector. |
+| [app.js](app.js#L287) | `loadConnectors` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load connectors. |
+| [app.js](app.js#L288) | `connectorPayload` | `name: unknown` | `unknown` | Perform the browser runtime operation: connector payload. |
+| [app.js](app.js#L290) | `connectorFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: connector feedback. |
+| [app.js](app.js#L292) | `createConnector` | `name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: create connector. |
+| [app.js](app.js#L294) | `saveSelectedConnector` | `None` | `Promise<unknown>` | Perform the browser runtime operation: save selected connector. |
+| [app.js](app.js#L296) | `openConnectorDialog` | `None` | `unknown` | Perform the browser runtime operation: open connector dialog. |
+| [app.js](app.js#L297) | `openSettings` | `section: unknown` | `unknown` | Perform the browser runtime operation: open settings. |
+| [app.js](app.js#L298) | `openAgentProfile` | `targetSessionId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: open agent profile. |
+| [app.js](app.js#L299) | `showSettingsSection` | `section: unknown` | `unknown` | Perform the browser runtime operation: show settings section. |
+| [app.js](app.js#L300) | `setPluginFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set plugin feedback. |
+| [app.js](app.js#L301) | `pluginStateLabel` | `state: unknown` | `unknown` | Perform the browser runtime operation: plugin state label. |
+| [app.js](app.js#L302) | `pluginSettingsRegistration` | `name: unknown` | `unknown` | Perform the browser runtime operation: plugin settings registration. |
+| [app.js](app.js#L303) | `pluginKey` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin key. |
+| [app.js](app.js#L304) | `renderPluginStatusList` | `None` | `unknown` | Perform the browser runtime operation: render plugin status list. |
+| [app.js](app.js#L305) | `loadPluginStatuses` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load plugin statuses. |
+| [app.js](app.js#L306) | `pluginPermissionLabel` | `permission: unknown` | `unknown` | Perform the browser runtime operation: plugin permission label. |
+| [app.js](app.js#L307) | `pluginPermissionsNote` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin permissions note. |
+| [app.js](app.js#L308) | `pluginLifecycleControls` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin lifecycle controls. |
+| [app.js](app.js#L309) | `bindPluginLifecycleControls` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: bind plugin lifecycle controls. |
+| [app.js](app.js#L310) | `pluginThemeControls` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: plugin theme controls. |
+| [app.js](app.js#L311) | `renderPluginSettingsFields` | `schema: unknown, settings: unknown` | `unknown` | Perform the browser runtime operation: render plugin settings fields. |
+| [app.js](app.js#L312) | `bindPluginTheme` | `plugin: unknown` | `unknown` | Perform the browser runtime operation: bind plugin theme. |
+| [app.js](app.js#L313) | `renderPluginDetail` | `plugin: unknown, payload: unknown` | `unknown` | Perform the browser runtime operation: render plugin detail. |
+| [app.js](app.js#L314) | `selectPluginSettings` | `key: unknown` | `Promise<unknown>` | Perform the browser runtime operation: select plugin settings. |
+| [app.js](app.js#L315) | `savePluginSettings` | `event: unknown, plugin: unknown, schema: unknown` | `Promise<unknown>` | Perform the browser runtime operation: save plugin settings. |
+| [app.js](app.js#L316) | `changePluginLifecycle` | `plugin: unknown, action: unknown` | `Promise<unknown>` | Perform the browser runtime operation: change plugin lifecycle. |
+| [app.js](app.js#L318) | `setMcpFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: set mcp feedback. |
+| [app.js](app.js#L320) | `mcpKeyValues` | `id: unknown` | `unknown` | Perform the browser runtime operation: mcp key values. |
+| [app.js](app.js#L322) | `updateMcpTransportFields` | `None` | `unknown` | Perform the browser runtime operation: update mcp transport fields. |
+| [app.js](app.js#L324) | `resetMcpForm` | `None` | `unknown` | Perform the browser runtime operation: reset mcp form. |
+| [app.js](app.js#L326) | `selectMcpServer` | `serverId: unknown` | `unknown` | Perform the browser runtime operation: select mcp server. |
+| [app.js](app.js#L328) | `loadMcpConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load mcp console. |
+| [app.js](app.js#L330) | `saveMcpBinding` | `serverId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: save mcp binding. |
+| [app.js](app.js#L332) | `saveMcpServer` | `event: unknown` | `Promise<unknown>` | Perform the browser runtime operation: save mcp server. |
+| [app.js](app.js#L333) | `sessionApi` | `path: unknown, selectedSession: unknown` | `unknown` | Perform the browser runtime operation: session api. |
+| [app.js](app.js#L334) | `planUrl` | `None` | `unknown` | Perform the browser runtime operation: plan url. |
+| [app.js](app.js#L335) | `messagesUrl` | `before: unknown, selectedSession: unknown, agent: unknown, limit: unknown` | `unknown` | Perform the browser runtime operation: messages url. |
+| [app.js](app.js#L336) | `graphUrl` | `None` | `unknown` | Perform the browser runtime operation: graph url. |
+| [app.js](app.js#L337) | `graphEventsUrl` | `cursor: unknown` | `unknown` | Perform the browser runtime operation: graph events url. |
+| [app.js](app.js#L338) | `lifecycleEventsUrl` | `cursor: unknown` | `unknown` | Perform the browser runtime operation: lifecycle events url. |
+| [app.js](app.js#L339) | `workflowUrl` | `None` | `unknown` | Perform the browser runtime operation: workflow url. |
+| [app.js](app.js#L340) | `runNode` | `agentId: unknown` | `unknown` | Perform the browser runtime operation: run node. |
+| [app.js](app.js#L341) | `agentIcon` | `agent: unknown` | `unknown` | Perform the browser runtime operation: agent icon. |
+| [app.js](app.js#L342) | `acknowledgementKey` | `None` | `unknown` | Perform the browser runtime operation: acknowledgement key. |
+| [app.js](app.js#L343) | `acknowledgedAgents` | `None` | `unknown` | Perform the browser runtime operation: acknowledged agents. |
+| [app.js](app.js#L345) | `agentStateView` | `agentId: unknown, agents: unknown` | `unknown` | Perform the browser runtime operation: agent state view. |
+| [app.js](app.js#L370) | `stateLabel` | `state: unknown` | `unknown` | Perform the browser runtime operation: state label. |
+| [app.js](app.js#L372) | `stateView` | `canonical: unknown, message: unknown, agentId: unknown` | `unknown` | Perform the browser runtime operation: state view. |
+| [app.js](app.js#L373) | `agentRunState` | `agentId: unknown, agents: unknown` | `unknown` | Perform the browser runtime operation: agent run state. |
+| [app.js](app.js#L375) | `updateStopAvailability` | `None` | `unknown` | Perform the browser runtime operation: update stop availability. |
+| [app.js](app.js#L376) | `acknowledgeAgent` | `agentId: unknown` | `unknown` | Perform the browser runtime operation: acknowledge agent. |
+| [app.js](app.js#L378) | `agentCard` | `agent: unknown, selected: unknown, tone: unknown, icon: unknown, subtitle: unknown, view: unknown, title: unknown` | `unknown` | Perform the browser runtime operation: agent card. |
+| [app.js](app.js#L382) | `renderAgentSelector` | `agents: unknown` | `unknown` | Perform the browser runtime operation: render agent selector. |
+| [app.js](app.js#L385) | `contextNodeTone` | `type: unknown` | `unknown` | Perform the browser runtime operation: context node tone. |
+| [app.js](app.js#L387) | `renderContextGraphDetail` | `graph: unknown, nodeId: unknown` | `unknown` | Perform the browser runtime operation: render context graph detail. |
+| [app.js](app.js#L398) | `renderContextGraph` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render context graph. |
+| [app.js](app.js#L430) | `contextDialogChrome` | `tab: unknown` | `unknown` | Perform the browser runtime operation: context dialog chrome. |
+| [app.js](app.js#L449) | `selectContextDialogTab` | `tab: unknown` | `unknown` | Perform the browser runtime operation: select context dialog tab. |
+| [app.js](app.js#L469) | `decodePromptText` | `value: unknown` | `unknown` | Perform the browser runtime operation: decode prompt text. |
+| [app.js](app.js#L471) | `readablePromptValue` | `value: unknown, indent: unknown` | `unknown` | Perform the browser runtime operation: readable prompt value. |
+| [app.js](app.js#L473) | `renderContextPrompt` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render context prompt. |
+| [app.js](app.js#L483) | `loadContextPrompt` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load context prompt. |
+| [app.js](app.js#L485) | `renderCompactionInput` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render compaction input. |
+| [app.js](app.js#L494) | `loadCompactionInput` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load compaction input. |
+| [app.js](app.js#L497) | `callDurationText` | `roundValue: unknown, modelValue: unknown` | `unknown` | Perform the browser runtime operation: call duration text. |
+| [app.js](app.js#L499) | `callUsageText` | `usage: unknown` | `unknown` | Perform the browser runtime operation: call usage text. |
+| [app.js](app.js#L501) | `callTimestampText` | `value: unknown` | `unknown` | Perform the browser runtime operation: call timestamp text. |
+| [app.js](app.js#L510) | `toolNameChips` | `names: unknown` | `unknown` | Perform the browser runtime operation: tool name chips. |
+| [app.js](app.js#L516) | `callContentBlock` | `label: unknown, preview: unknown` | `unknown` | Perform the browser runtime operation: call content block. |
+| [app.js](app.js#L527) | `readableRequestMessages` | `model: unknown, messages: unknown, omitted: unknown` | `unknown` | Perform the browser runtime operation: readable request messages. |
+| [app.js](app.js#L541) | `callRoundContent` | `record: unknown` | `unknown` | Perform the browser runtime operation: call round content. |
+| [app.js](app.js#L552) | `renderCallRequestConfig` | `config: unknown` | `unknown` | Perform the browser runtime operation: render call request config. |
+| [app.js](app.js#L561) | `renderCalls` | `payload: unknown` | `unknown` | Perform the browser runtime operation: render calls. |
+| [app.js](app.js#L594) | `loadCalls` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load calls. |
+| [app.js](app.js#L596) | `refreshOpenContextCalls` | `None` | `unknown` | Perform the browser runtime operation: refresh open context calls. |
+| [app.js](app.js#L610) | `ensureContextDialogTab` | `tab: unknown` | `unknown` | Perform the browser runtime operation: ensure context dialog tab. |
+| [app.js](app.js#L619) | `openAgentContextInspector` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: open agent context inspector. |
+| [app.js](app.js#L630) | `hasSelectedSession` | `None` | `unknown` | Perform the browser runtime operation: has selected session. |
+| [app.js](app.js#L631) | `renderInspectorEmpty` | `message: unknown` | `unknown` | Perform the browser runtime operation: render inspector empty. |
+| [app.js](app.js#L632) | `loadAgents` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load agents. |
+| [app.js](app.js#L633) | `selectAgent` | `agentId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: select agent. |
+| [app.js](app.js#L634) | `renderGraph` | `graph: unknown` | `unknown` | Perform the browser runtime operation: render graph. |
+| [app.js](app.js#L636) | `loadGraph` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load graph. |
+| [app.js](app.js#L638) | `traceUrl` | `cursor: unknown` | `unknown` | Perform the browser runtime operation: trace url. |
+| [app.js](app.js#L640) | `isTraceVisible` | `event: unknown` | `unknown` | Perform the browser runtime operation: is trace visible. |
+| [app.js](app.js#L646) | `loadTrace` | `reset: unknown` | `Promise<unknown>` | Perform the browser runtime operation: load trace. |
+| [app.js](app.js#L647) | `agentContextStats` | `agent: unknown` | `unknown` | Perform the browser runtime operation: agent context stats. |
+| [app.js](app.js#L670) | `renderAgentTopology` | `agents: unknown, graph: unknown` | `unknown` | Perform the browser runtime operation: render agent topology. |
+| [app.js](app.js#L685) | `loadInspectorAgents` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load inspector agents. |
+| [app.js](app.js#L686) | `graphEditUrl` | `None` | `unknown` | Perform the browser runtime operation: graph edit url. |
+| [app.js](app.js#L688) | `graphEditFeedback` | `text: unknown, state: unknown` | `unknown` | Perform the browser runtime operation: graph edit feedback. |
+| [app.js](app.js#L690) | `loadGraphEditInfo` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load graph edit info. |
+| [app.js](app.js#L693) | `setDisabled` | `list: unknown, disabled: unknown` | `unknown` | Perform the browser runtime operation: set disabled. |
+| [app.js](app.js#L707) | `graphAddAgent` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph add agent. |
+| [app.js](app.js#L716) | `graphConnect` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph connect. |
+| [app.js](app.js#L725) | `graphRemoveAgent` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph remove agent. |
+| [app.js](app.js#L737) | `graphDisconnect` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph disconnect. |
+| [app.js](app.js#L748) | `graphSetMapper` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph set mapper. |
+| [app.js](app.js#L756) | `graphSetRouter` | `None` | `Promise<unknown>` | Perform the browser runtime operation: graph set router. |
+| [app.js](app.js#L765) | `usageCells` | `usage: unknown, run: unknown` | `unknown` | Perform the browser runtime operation: usage cells. |
+| [app.js](app.js#L766) | `value` | `key: unknown` | `unknown` | Perform the browser runtime operation: value. |
+| [app.js](app.js#L775) | `loadUsage` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load usage. |
+| [app.js](app.js#L776) | `selectInspectorPanel` | `panel: unknown, refresh: unknown, open: unknown` | `unknown` | Perform the browser runtime operation: select inspector panel. |
+| [app.js](app.js#L777) | `initInspectorTabs` | `None` | `unknown` | Perform the browser runtime operation: init inspector tabs. |
+| [app.js](app.js#L778) | `knownPlanAgents` | `None` | `unknown` | Perform the browser runtime operation: known plan agents. |
+| [app.js](app.js#L779) | `renderPlanAgentPicker` | `None` | `unknown` | Perform the browser runtime operation: render plan agent picker. |
+| [app.js](app.js#L780) | `loadPlan` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load plan. |
+| [app.js](app.js#L782) | `loadHistory` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load history. |
+| [app.js](app.js#L816) | `loadOlderMessages` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load older messages. |
+| [app.js](app.js#L850) | `rehydrateSelectedView` | `options: object` | `Promise<unknown>` | Perform the browser runtime operation: rehydrate selected view. |
+| [app.js](app.js#L851) | `switchSession` | `selected: unknown` | `Promise<unknown>` | Perform the browser runtime operation: switch session. |
+| [app.js](app.js#L852) | `start` | `message: unknown, images: unknown, targetSession: unknown` | `Promise<unknown>` | Perform the browser runtime operation: start. |
+| [app.js](app.js#L874) | `clearCompactStatus` | `None` | `unknown` | Perform the browser runtime operation: clear compact status. |
+| [app.js](app.js#L875) | `scheduleCompactionRender` | `key: unknown` | `unknown` | Perform the browser runtime operation: schedule compaction render. |
+| [app.js](app.js#L883) | `compactCardEvent` | `event: unknown, manual: unknown` | `unknown` | Perform the browser runtime operation: compact card event. |
+| [app.js](app.js#L900) | `stopCompaction` | `agent: unknown, force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: stop compaction. |
+| [app.js](app.js#L906) | `debounce` | `fn: unknown, wait: unknown` | `unknown` | Perform the browser runtime operation: debounce. |
+| [app.js](app.js#L917) | `pushTraceEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: push trace event. |
+| [app.js](app.js#L922) | `indexTraceEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: index trace event. |
+| [app.js](app.js#L928) | `rebuildTraceEventIndex` | `None` | `unknown` | Perform the browser runtime operation: rebuild trace event index. |
+| [app.js](app.js#L939) | `handleEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: handle event. |
+| [app.js](app.js#L968) | `finish` | `None` | `unknown` | Perform the browser runtime operation: finish. |
+| [app.js](app.js#L970) | `showSlashHelp` | `None` | `unknown` | Perform the browser runtime operation: show slash help. |
+| [app.js](app.js#L983) | `sessionByName` | `name: unknown` | `unknown` | Perform the browser runtime operation: session by name. |
+| [app.js](app.js#L984) | `switchSessionByName` | `name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: switch session by name. |
+| [app.js](app.js#L985) | `deleteSessionByName` | `name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: delete session by name. |
+| [app.js](app.js#L988) | `openSessionWorkspace` | `targetId: unknown` | `Promise<unknown>` | Perform the browser runtime operation: open session workspace. |
+| [app.js](app.js#L996) | `deleteSession` | `targetId: unknown, name: unknown` | `Promise<unknown>` | Perform the browser runtime operation: delete session. |
+| [app.js](app.js#L997) | `runStop` | `None` | `Promise<unknown>` | Perform the browser runtime operation: run stop. |
+| [app.js](app.js#L998) | `runForceStop` | `None` | `Promise<unknown>` | Perform the browser runtime operation: run force stop. |
+| [app.js](app.js#L1000) | `runCompact` | `agent: unknown` | `Promise<unknown>` | Perform the browser runtime operation: run compact. |
+| [app.js](app.js#L1014) | `handleCompactStage` | `record: unknown, startedSession: unknown, requestedAgent: unknown` | `unknown` | Perform the browser runtime operation: handle compact stage. |
+| [app.js](app.js#L1048) | `dispatchSlashCommand` | `parsed: unknown` | `unknown` | Perform the browser runtime operation: dispatch slash command. |
+| [app.js](app.js#L1056) | `resizeComposer` | `None` | `unknown` | Perform the browser runtime operation: resize composer. |
+| [app.js](app.js#L1057) | `applyRunGraphEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: apply run graph event. |
+| [app.js](app.js#L1058) | `handleRunGraphEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: handle run graph event. |
+| [app.js](app.js#L1059) | `connectRunGraphEvents` | `None` | `unknown` | Perform the browser runtime operation: connect run graph events. |
+| [app.js](app.js#L1060) | `connectLifecycleEvents` | `None` | `unknown` | Perform the browser runtime operation: connect lifecycle events. |
+| [app.js](app.js#L1061) | `restoreRunState` | `None` | `Promise<unknown>` | Perform the browser runtime operation: restore run state. |
+| [app.js](app.js#L1115) | `pickWorkspaceDirectory` | `None` | `Promise<unknown>` | Perform the browser runtime operation: pick workspace directory. |
+| [app.js](app.js#L1116) | `createAndSwitchSession` | `name: unknown, projectPath: unknown` | `Promise<unknown>` | Perform the browser runtime operation: create and switch session. |
+| [app.js](app.js#L1202) | `loadProviders` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load providers. |
+| [app.js](app.js#L1204) | `contextHandlerLabel` | `spec: unknown` | `unknown` | Perform the browser runtime operation: context handler label. |
+| [app.js](app.js#L1205) | `renderContextHandlerOptions` | `None` | `unknown` | Perform the browser runtime operation: render context handler options. |
+| [app.js](app.js#L1207) | `loadContextHandlers` | `None` | `Promise<unknown>` | Perform the browser runtime operation: load context handlers. |
+| [app.js](app.js#L1209) | `initializeConsole` | `None` | `Promise<unknown>` | Perform the browser runtime operation: initialize console. |
 | [chat.js](chat.js#L12) | `removeWelcome` | `None` | `unknown` | Perform the browser runtime operation: remove welcome. |
 | [chat.js](chat.js#L16) | `appendMessage` | `role: unknown, content: unknown, reasoning: unknown, contentHtml: unknown, reasoningHtml: unknown, tools: unknown` | `unknown` | Perform the browser runtime operation: append message. |
 | [chat.js](chat.js#L57) | `renderTools` | `tools: unknown` | `unknown` | Perform the browser runtime operation: render tools. |

@@ -69,12 +69,12 @@ changes coordinator identity and therefore applies on the next materialization.
 | [session_service.py](session_service.py#L35) | `SessionService.create` | `session_id: str, name: str, project_path: Path \| None` | `Workspace` | Register an empty Session and its durable workspace metadata. |
 | [session_service.py](session_service.py#L67) | `SessionService.list` | `None` | `tuple[Workspace, ...]` | List durable workspace records, including sessions configured later. |
 | [session_service.py](session_service.py#L75) | `SessionService.ensure_coordinator` | `session_id: str` | `None` | Build or retain the Session's required coordinator from saved profile. |
-| [session_service.py](session_service.py#L146) | `SessionService.compact` | `session_id: str, agent_name: str, observer: Callable[[str, str, dict], None] \| None` | `tuple[ExecutionController, Agent]` | Start one explicit compaction using the session's live Agent. |
-| [session_service.py](session_service.py#L217) | `SessionService.stop_compaction` | `session_id: str, force: bool, reason: str` | `bool` | Implement `SessionService.stop_compaction`. |
-| [session_service.py](session_service.py#L226) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
-| [session_service.py](session_service.py#L254) | `SessionService.create_runtime_worker` | `session_id: str, name: str, system_prompt: str` | `Agent` | Build one worker using the effective Session profile and ToolRegistry. |
-| [session_service.py](session_service.py#L304) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
-| [session_service.py](session_service.py#L363) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
+| [session_service.py](session_service.py#L147) | `SessionService.compact` | `session_id: str, agent_name: str, observer: Callable[[str, str, dict], None] \| None` | `tuple[ExecutionController, Agent]` | Start one explicit compaction using the session's live Agent. |
+| [session_service.py](session_service.py#L218) | `SessionService.stop_compaction` | `session_id: str, force: bool, reason: str` | `bool` | Implement `SessionService.stop_compaction`. |
+| [session_service.py](session_service.py#L227) | `SessionService.rebuild_swarm` | `session_id: str` | `None` | Materialize the safe console blueprint into the Session's one swarm. |
+| [session_service.py](session_service.py#L255) | `SessionService.create_runtime_worker` | `session_id: str, name: str, system_prompt: str` | `Agent` | Build one worker using the effective Session profile and ToolRegistry. |
+| [session_service.py](session_service.py#L306) | `SessionService.preview_agent` | `session_id: str, name: str` | `Agent` | Build one detached Agent for a no-I/O request preview. |
+| [session_service.py](session_service.py#L366) | `SessionService.delete` | `session_id: str, confirmation: str, wait_timeout: float` | `Workspace` | Force-stop, durably remove, and unregister one confirmed Session. |
 | [settings_service.py](settings_service.py#L32) | `SettingsService.global_profile` | `None` | `dict[str, Any]` | Read future-attempt defaults shared by all Sessions. |
 | [settings_service.py](settings_service.py#L40) | `SettingsService.replace_global_profile` | `values: Mapping[str, Any]` | `dict[str, Any]` | Validate connector ownership then atomically replace global defaults. |
 | [settings_service.py](settings_service.py#L49) | `SettingsService.session_profile` | `session_id: str` | `dict[str, Any]` | Read effective future-attempt settings for an existing Session. |

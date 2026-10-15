@@ -14,11 +14,10 @@ from .json_store import read_json, write_json
 
 
 DEFAULT_RUN_PROFILE: dict[str, Any] = {
-    # Empty means a future Agent may use directly-entered transient credentials.
+    # Which saved connector a future attempt runs on. Empty means none is
+    # selected, and no run can be built without one; provider, model and
+    # endpoint are read from that connector's own record, never from here.
     "connector_id": "",
-    "provider": "openai",
-    "model": "",
-    "api_url": "",
     "system_prompt": "You are a helpful, precise assistant.",
     "temperature": 0.4,
     "max_tokens": 16384,
@@ -53,6 +52,14 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
         },
     },
 }
+
+# Fields an older profile document still carries. They named the run's own
+# provider, model and endpoint before the selected connector record became
+# their single owner. Such a document must stay readable — a rejected read
+# would also block the settings UI that could rewrite it — so these keys are
+# accepted and dropped rather than rejected or merged. Every save therefore
+# migrates the document it rewrites.
+_LEGACY_FIELDS = frozenset({"provider", "model", "api_url"})
 
 
 class RunProfileStore:
@@ -184,12 +191,16 @@ class RunProfileStore:
         """
         if not isinstance(values, Mapping):
             raise ValueError("run profile must be an object")
-        unknown = set(values) - set(DEFAULT_RUN_PROFILE)
+        unknown = set(values) - set(DEFAULT_RUN_PROFILE) - _LEGACY_FIELDS
         if unknown:
             raise ValueError(f"unknown run-profile fields: {', '.join(sorted(unknown))}")
         result: dict[str, Any] = {} if partial else dict(DEFAULT_RUN_PROFILE)
         for key, value in values.items():
-            if key in {"connector_id", "provider", "model", "api_url", "system_prompt"}:
+            if key in _LEGACY_FIELDS:
+                # Dropped, not validated: the value is already unused, so a
+                # stale document must not be able to fail its own read.
+                continue
+            if key in {"connector_id", "system_prompt"}:
                 if not isinstance(value, str):
                     raise ValueError(f"{key} must be a string")
                 result[key] = value

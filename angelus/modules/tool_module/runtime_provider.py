@@ -57,12 +57,13 @@ class RuntimeToolProvider:
             profile = self._core.run_profiles.effective(session.execution.session_id)
             connector_id = profile.get("connector_id")
             if isinstance(connector_id, str) and connector_id:
+                connection = self._core.connectors.connection_config(connector_id)
                 tools.append(create_tlb_rag_tool(
                     project_path,
                     LLMFetcher([LLMBackendConfig(
-                        name="tlb_rag", provider=profile["provider"], model=profile["model"],
+                        name="tlb_rag", provider=connection["provider"], model=connection["model"],
                         api_key=self._core.connectors.api_key(connector_id),
-                        api_url=profile["api_url"] or None, timeout=profile["request_timeout_seconds"],
+                        api_url=connection["api_url"] or None, timeout=profile["request_timeout_seconds"],
                         max_retries=profile["max_retries"],
                     )]),
                 ))
