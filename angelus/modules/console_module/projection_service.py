@@ -1552,9 +1552,13 @@ class ConsoleProjectionService:
             request = snapshot.to_dict()
             messages = request["messages"]
             characters = len(json.dumps(messages, ensure_ascii=False))
+            request_metadata = agent.context_handler.describe_request_messages(
+                agent.context_handler.build_messages(system_prompt=agent.system_prompt)
+            )
             return {
                 "agent": name,
                 "request": request,
+                "message_metadata": request_metadata,
                 "stats": {
                     "messages": len(messages),
                     "characters": characters,
