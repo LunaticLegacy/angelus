@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from llmfetcher.context_handlers.linear import read_persisted_context_page
+from llmfetcher.context_handlers.linear.codec import context_from_dict
+from llmfetcher.context_handlers.storage import SQLiteContextStorage
 
 from .console_state import ConsoleDomainError
 from ..execution_module import ExecutionState
@@ -731,11 +733,35 @@ class ConsoleProjectionService:
             messages, next_before, total = read_persisted_context_page(
                 path, before_timeline=before, limit=limit, include_archive=True,
             )
+            if total == 0:
+                legacy_sage_page = self._read_legacy_sage_page(
+                    path, before_timeline=before, limit=limit,
+                )
+                if legacy_sage_page is not None:
+                    messages, next_before, total = legacy_sage_page
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         metadata = [{"index": item.timeline, "source": "context", "type": item.role, "length": len(item.content) + len(item.content_reasoning), "timeline": item.timeline} for item in messages]
         characters = sum(entry["length"] for entry in metadata)
         return {"agent": name, "metadata": metadata, "request": None, "stats": {"messages": total, "characters": characters, "tool_schemas": 0, "tool_schema_characters": 0, "estimated_tokens": characters // 4}, "next_before": next_before, "has_more": next_before is not None}
+
+    @staticmethod
+    def _read_legacy_sage_page(path: Path, *, before_timeline: int | None, limit: int):
+        """Read rows from Sage schema-1 checkpoints written before schema 3."""
+        pointer = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(pointer, dict) or not pointer.get("sage_state_checkpoint"):
+            return None
+        database_name = pointer.get("database")
+        if not isinstance(database_name, str) or Path(database_name).name != database_name:
+            return None
+        database = path.with_name(database_name)
+        rows = SQLiteContextStorage().read_rows(database, include_archive=True)
+        filtered = [(timeline, payload) for timeline, payload in rows
+                    if before_timeline is None or timeline < before_timeline]
+        bounded = max(1, min(int(limit), 200))
+        selected = filtered[-bounded:]
+        next_before = selected[0][0] if len(filtered) > len(selected) and selected else None
+        return [context_from_dict(json.loads(payload)) for _, payload in selected], next_before, len(rows)
 
     def messages(self, session_id: str, name: str | None, before: int | None, limit: int) -> dict[str, object]:
         """Project one Agent's durable context page into chat-message cards.
