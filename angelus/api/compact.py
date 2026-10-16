@@ -87,14 +87,24 @@ def compact_session(session_id: str, payload: CompactRequest, request: Request) 
             yield _stage("error", "上下文压缩未完成，原上下文保持不变", "error", error=str(error))
             return
         _control, agent = outcome["value"]
-        linear = getattr(agent.context_handler, "linear", agent.context_handler)
+        handler = agent.context_handler
+        linear = getattr(handler, "linear", None)
+        active_ids = getattr(handler, "activate_context_id_list", [])
+        raw_contexts = getattr(handler, "raw_contexts_info", [])
+        summaries = getattr(handler, "summaries", {})
         abstract = getattr(linear, "abstract", None)
+        if linear is None:
+            abstract_characters = sum(len(str(value)) for value in summaries.values())
+            archived_messages = max(0, len(raw_contexts) - len(active_ids))
+        else:
+            abstract_characters = len(getattr(abstract, "abstract_msg", "") or "")
+            archived_messages = len(getattr(linear, "archive", []))
         yield _stage(
             "done",
             "上下文压缩完成",
             "done",
-            archived_messages=len(getattr(linear, "archive", [])),
-            abstract_characters=len(getattr(abstract, "abstract_msg", "") or ""),
+            archived_messages=archived_messages,
+            abstract_characters=abstract_characters,
         )
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

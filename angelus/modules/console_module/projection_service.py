@@ -353,6 +353,20 @@ class ConsoleProjectionService:
         linear = getattr(handler, "linear", handler)
         messages = getattr(linear, "messages", []) if linear else []
         abstract = getattr(linear, "abstract", None) if linear else None
+        if hasattr(handler, "raw_contexts_info"):
+            messages = getattr(handler, "raw_contexts_info", [])
+            active_ids = getattr(handler, "activate_context_id_list", [])
+            summaries = getattr(handler, "summaries", {})
+            text = "".join(str(item) for item in messages)
+            return {
+                "messages": len(messages),
+                "active_messages": len(active_ids),
+                "characters": len(text),
+                "abstract_characters": sum(len(str(value)) for value in summaries.values()),
+                "threshold": getattr(handler, "max_context_threshold", 0),
+                "estimated_tokens": len(text) // 4,
+                "branches": len(getattr(handler, "worktree_dict", {})),
+            }
         text = "".join(str(item) for item in messages)
         return {"messages": len(messages), "characters": len(text), "abstract_characters": len(str(abstract or "")), "threshold": getattr(linear, "compress_threshold", 0), "estimated_tokens": len(text) // 4}
 
@@ -1453,8 +1467,9 @@ class ConsoleProjectionService:
         agent = self._detached_preview_agent(session_id, name)
         try:
             handler = agent.context_handler
-            linear = getattr(handler, "linear", handler)
-            build_preview = getattr(linear, "compaction_request_preview", None)
+            linear = getattr(handler, "linear", None)
+            compaction_owner = linear or handler
+            build_preview = getattr(compaction_owner, "compaction_request_preview", None)
             if not callable(build_preview):
                 raise ConsoleDomainError("agent context does not support compaction previews")
             plan = build_preview()
@@ -1465,7 +1480,7 @@ class ConsoleProjectionService:
                 max_tokens=plan.max_tokens,
                 tools=[],
             )
-            context_size = linear._estimate_context_size()
+            context_size = compaction_owner._estimate_context_size()
             return {
                 "agent": name,
                 "text": plan.text,

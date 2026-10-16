@@ -1202,10 +1202,11 @@ if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
 let contextHandlerSpecs = [];
 function contextHandlerLabel(spec) { const key=`settings.contextHandlers.${spec.id}`; const label=t(key); return label===key ? spec.title : label; }
-function renderContextHandlerOptions() { const select=$("context-handler"); if(!select) return; const chosen=select.value||currentProfile?.effective?.context_handler||""; select.innerHTML=contextHandlerSpecs.map(spec=>`<option value="${escapeHtml(spec.id)}">${escapeHtml(contextHandlerLabel(spec))}</option>`).join(""); select.value=contextHandlerSpecs.some(spec=>spec.id===chosen)?chosen:contextHandlerSpecs[0]?.id||""; }
+function renderContextHandlerOptions() { const select=$("context-handler"); if(!select) return; const chosen=select.value||currentProfile?.effective?.context_handler||""; select.innerHTML=contextHandlerSpecs.map(spec=>`<option value="${escapeHtml(spec.id)}">${escapeHtml(contextHandlerLabel(spec))}</option>`).join(""); select.value=contextHandlerSpecs.some(spec=>spec.id===chosen)?chosen:contextHandlerSpecs[0]?.id||""; const spec=contextHandlerSpecs.find(item=>item.id===select.value); const tools=$("context-handler-tools"); if(tools) tools.textContent=spec?.exposed_tools?.length?`Tools: ${spec.exposed_tools.join(", ")}`:"No context-specific tools"; }
 /** Load the selectable context handlers once; the labels follow the locale. */
 async function loadContextHandlers() { try { const {handlers}=await apiJson("/api/context-handlers"); contextHandlerSpecs=Array.isArray(handlers)?handlers:[]; renderContextHandlerOptions(); } catch(error) { trace("上下文管理器列表加载失败", error.message); } }
 onLocaleChange(() => renderContextHandlerOptions());
+$("context-handler")?.addEventListener("change", () => renderContextHandlerOptions());
 async function initializeConsole() {
   await initI18n();
   initInspectorTabs();

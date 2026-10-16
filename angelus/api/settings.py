@@ -179,7 +179,8 @@ def list_context_handlers() -> dict[str, Any]:
     """
     return {
         "handlers": [
-            {"id": spec.id, "title": spec.title, "description": spec.description}
+            {"id": spec.id, "title": spec.title, "description": spec.description,
+             "exposed_tools": list(spec.exposed_tools)}
             for spec in context_handler_specs()
         ]
     }

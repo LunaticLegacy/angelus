@@ -190,11 +190,15 @@ class SessionService:
                 if not agent.context_handler.load(context_path):
                     raise RuntimeError("Could not load context checkpoint")
             profile = self._core.run_profiles.effective(session_id)
-            linear = getattr(agent.context_handler, "linear", agent.context_handler)
-            if hasattr(linear, "compress_threshold"):
+            handler = agent.context_handler
+            if hasattr(handler, "max_context_threshold"):
+                handler.max_context_threshold = profile["max_context_threshold"]
+            linear = getattr(handler, "linear", None)
+            if linear is not None and hasattr(linear, "compress_threshold"):
                 linear.compress_threshold = profile["max_context_threshold"]
-            install = getattr(linear, "set_compaction_event_hook", None)
-            previous_hook = getattr(linear, "event_hook", None)
+            event_owner = linear or handler
+            install = getattr(event_owner, "set_compaction_event_hook", None)
+            previous_hook = getattr(event_owner, "event_hook", None)
             borrowing = observer is not None and callable(install)
             if borrowing:
                 def relay(event_type: str, message: str, data: dict) -> None:

@@ -14,6 +14,7 @@ from llmfetcher.context_handlers import (
     ContextHandler,
     create_context_handler,
 )
+from llmfetcher.context_handlers.sage import SageContext, create_sage_tools
 
 def create_agent(
     configs: List[LLMBackendConfig],
@@ -113,4 +114,9 @@ def create_agent(
     # Tool ownership belongs to the Agent factory. Session ownership is
     # established later by SessionHandler.
     agent.add_tools(tools=tools)
+    # Sage coordination tools are bound to this Agent's handler instance.
+    # They enqueue branch mutations and are applied by Agent at the round
+    # boundary, so separate Sage Agents never share worktree state.
+    if isinstance(context_handler, SageContext):
+        agent.add_tools(tools=create_sage_tools(context_handler))
     return agent
