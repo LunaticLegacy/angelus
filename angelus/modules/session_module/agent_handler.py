@@ -15,6 +15,7 @@ from llmfetcher.context_handlers import (
     create_context_handler,
 )
 from llmfetcher.context_handlers.sage import SageContext, create_sage_tools
+from llmfetcher.graph_memory import GraphContextHandler, create_graph_tools
 
 def create_agent(
     configs: List[LLMBackendConfig],
@@ -119,4 +120,6 @@ def create_agent(
     # boundary, so separate Sage Agents never share worktree state.
     if isinstance(context_handler, SageContext):
         agent.add_tools(tools=create_sage_tools(context_handler))
+    if isinstance(context_handler, GraphContextHandler):
+        agent.add_tools(tools=create_graph_tools(context_handler))
     return agent
