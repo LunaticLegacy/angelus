@@ -1204,9 +1204,9 @@ class FrontendContextLoadTests(unittest.TestCase):
 
     def test_chat_view_cache_buster_is_bumped(self) -> None:
         app = self._read("frontend/static/app.js")
-        self.assertIn("chat-view.js?v=native-vision-6", app)
+        self.assertIn("chat-view.js?v=native-vision-7", app)
+        self.assertNotIn("chat-view.js?v=native-vision-6", app)
         self.assertNotIn("chat-view.js?v=native-vision-5", app)
-        self.assertNotIn("chat-view.js?v=native-vision-4", app)
 
     def test_the_session_row_lays_its_children_out_in_a_line(self) -> None:
         """A row that aligns its children must also be a flex container.

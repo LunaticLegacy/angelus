@@ -180,7 +180,14 @@ def list_context_handlers() -> dict[str, Any]:
     return {
         "handlers": [
             {"id": spec.id, "title": spec.title, "description": spec.description,
-             "exposed_tools": list(spec.exposed_tools)}
+             "exposed_tools": list(spec.exposed_tools),
+             "settings": [
+                 {"key": item.key, "title": item.title,
+                  "description": item.description, "type": item.type,
+                  "default": item.default, "enum": list(item.enum),
+                  "minimum": item.minimum, "maximum": item.maximum}
+                 for item in spec.settings
+             ]}
             for spec in context_handler_specs()
         ]
     }

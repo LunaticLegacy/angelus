@@ -1,6 +1,6 @@
 /** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js";
-import { createChatView } from "./components/chat-view.js?v=native-vision-6";
+import { createChatView } from "./components/chat-view.js?v=native-vision-7";
 import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
 import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-3";
 import { createImageComposer } from "./components/image-composer.js";
@@ -102,11 +102,12 @@ const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
 const KIMI_CODE_DEFAULT_MODEL = "kimi-for-coding";
 const KIMI_CODE_TEMPERATURE = 1;
 
-const value = (id) => $(id).value.trim();
+const value = (id) => $(id)?.value?.trim() ?? "";
 const config = () => ({
   provider: value("provider"), model: value("model"), api_key: $("api-key").value, connector_id: connectorId,
   api_url: value("api-url"), system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
+  thinking_mode: value("thinking-mode") || "auto", reasoning_effort: value("reasoning-effort") || "auto",
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value), max_context_threshold: Number($("max-context-threshold").value),
   compaction_output_max_tokens: Number($("compaction-output-max-tokens").value),
   // Shell and Swarm are enabled exclusively by their permission categories.
@@ -115,7 +116,7 @@ const config = () => ({
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
 });
-const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "compaction-keep-recent", "context-handler", "max-swarm-agents", "session-memory-sessions"];
+const agentSettingsIds = ["system-prompt", "temperature", "max-tokens", "thinking-mode", "reasoning-effort", "max-rounds", "max-retries", "request-timeout-seconds", "max-context-threshold", "compaction-output-max-tokens", "compaction-keep-recent", "context-handler", "max-swarm-agents", "session-memory-sessions"];
 /** Fields that describe the selected connector, not the run profile. */
 const connectorFieldIds = ["provider", "model", "api-url"];
 function persistedFields(ids) { return Object.fromEntries(ids.map(id=>[id.replaceAll("-","_"), $(id).value])); }
@@ -127,24 +128,26 @@ function profileSettings(overrides={}) { return {
   connector_id: connectorId,
   system_prompt: $("system-prompt").value,
   temperature: Number($("temperature").value), max_tokens: Number($("max-tokens").value),
+  thinking_mode: value("thinking-mode") || "auto", reasoning_effort: value("reasoning-effort") || "auto",
   max_rounds: Number($("max-rounds").value), max_retries: Number($("max-retries").value), request_timeout_seconds: Number($("request-timeout-seconds").value),
   max_context_threshold: Number($("max-context-threshold").value), compaction_output_max_tokens: Number($("compaction-output-max-tokens").value), compaction_keep_recent: Number($("compaction-keep-recent").value), max_swarm_agents: Number($("max-swarm-agents").value),
   // Falls back to the stored value so a save raised before the handler catalog
   // is rendered cannot overwrite the user's choice with an empty string.
   context_handler: value("context-handler") || currentProfile?.effective?.context_handler || "",
+  context_settings: collectContextSettings(),
   session_memory_search_sessions: selectedMemorySessions(), session_memory_read_sessions: selectedMemorySessions(),
   session_artifact_search_sessions: selectedMemorySessions(), session_artifact_open_sessions: selectedMemorySessions(),
   ...overrides,
 }; }
 function profilePayload(overrides={}) { return {settings: profileSettings(overrides)}; }
 function profileUrl() { const target=profileWorkspaceId||sessionId; return $("profile-scope")?.value==="global"?"/api/settings/run-profile":`/api/sessions/${encodeURIComponent(target)}/run-profile`; }
-function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_");if(settings[key]!==undefined)$(id).value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||sessionId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); composerScope?.refresh(); }
-async function restoreSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiJson(profileUrl()); applyProfile(profile); }
+function applyProfile(profile) { const settings=profile.effective||{}; currentProfile=profile; connectorId=settings.connector_id||""; agentSettingsIds.forEach(id=>{const key=id.replaceAll("-","_");const element=$(id);if(element&&settings[key]!==undefined)element.value=settings[key];}); const status=$("profile-status"),scope=$("profile-scope"),target=profileWorkspaceId||sessionId,targetName=availableSessions.find(item=>item.id===target)?.name||target; if(status)status.innerHTML=scope?.value==="global"?"<b>全局默认</b> · 新 Agent 会继承这些值。":profile.inherits_default?`<b>${escapeHtml(targetName)} · 继承全局默认</b> · 有效值由默认档案提供。`:`<b>${escapeHtml(targetName)} · Coordinator 覆盖</b> · 正在编辑该会话的完整 Agent 档案。`; renderToolPermissions(settings.tool_permissions||{}); renderMemorySessionPicker(); composerScope?.refresh(); }
+async function restoreSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiJson(profileUrl()); applyProfile(profile); renderContextHandlerOptions(); }
 async function persistSettings() { if(!$("profile-scope"))return; if($("profile-scope").value!=="global" && !(profileWorkspaceId||sessionId))return; const profile=await apiPut(profileUrl(),profilePayload()); applyProfile(profile); }
 function bindSettingsPersistence() {
   /** Persist only completed field changes, leaving live typing responsive. */
   agentSettingsIds.forEach((id) => {
-    $(id).addEventListener("change", () => {
+    $(id)?.addEventListener("change", () => {
       persistSettings().catch((error) => trace("保存运行档案失败", error.message));
     });
   });
@@ -394,6 +397,31 @@ function renderContextGraphDetail(graph, nodeId) {
   const rows=relations.length ? relations.map(edge=>{const other=edge.source_id===nodeId?edge.target_id:edge.source_id;return `<li>${escapeHtml(edge.relation)} <span>· ${escapeHtml(names[other]||other)} · 时间线 ${edge.last_seen}</span></li>`;}).join("") : '<li class="muted">尚无可展示的内部关系。</li>';
   target.innerHTML=`<header><span class="context-entity-dot ${contextNodeTone(node.entity_type)}"></span><div><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.entity_type)} · 出现 ${Number(node.freq||0)} 次</small></div></header>${summary}${aliases}<p><b>时间线</b>${Number(node.first_seen||0)} — ${Number(node.last_seen||0)}</p><h4>关联</h4><ul>${rows}</ul>`;
 }
+/** Compute a deterministic, bounded force layout for the entity canvas. */
+function contextGraphForceLayout(nodes, edges, width, height) {
+  const margin=48, count=nodes.length;
+  const positions=Object.fromEntries(nodes.map((node,index)=>{
+    // A grid seed prevents disconnected nodes from collapsing into one orbit.
+    const columns=Math.max(1,Math.ceil(Math.sqrt(count*width/height)));
+    const rows=Math.max(1,Math.ceil(count/columns));
+    const col=index%columns, row=Math.floor(index/columns);
+    return [node.id,{x:margin+(col+.5)*(width-2*margin)/columns,y:margin+(row+.5)*(height-2*margin)/rows,vx:0,vy:0}];
+  }));
+  const degree=Object.fromEntries(nodes.map(node=>[node.id,0]));
+  const links=[];
+  for(const edge of edges){const a=positions[edge.source_id],b=positions[edge.target_id];if(!a||!b)continue;links.push([a,b]);degree[edge.source_id]=(degree[edge.source_id]||0)+1;degree[edge.target_id]=(degree[edge.target_id]||0)+1;}
+  const minDistance=count>36?38:46;
+  for(let iteration=0;iteration<100;iteration++){
+    for(const node of nodes){const p=positions[node.id];p.vx*=.72;p.vy*=.72;}
+    for(let i=0;i<nodes.length;i++) for(let j=i+1;j<nodes.length;j++){
+      const a=positions[nodes[i].id],b=positions[nodes[j].id];let dx=a.x-b.x,dy=a.y-b.y;const d=Math.max(1,Math.hypot(dx,dy));
+      const force=(minDistance*minDistance)/(d*d)*1.8;dx/=d;dy/=d;a.vx+=dx*force;a.vy+=dy*force;b.vx-=dx*force;b.vy-=dy*force;
+    }
+    for(const [a,b] of links){let dx=b.x-a.x,dy=b.y-a.y;const d=Math.max(1,Math.hypot(dx,dy));const force=(d-105)*.012;dx/=d;dy/=d;a.vx+=dx*force;a.vy+=dy*force;b.vx-=dx*force;b.vy-=dy*force;}
+    for(const node of nodes){const p=positions[node.id];const centerPull=(degree[node.id]?0.002:0.009);p.vx+=(width/2-p.x)*centerPull;p.vy+=(height/2-p.y)*centerPull;p.x=Math.max(margin,Math.min(width-margin,p.x+p.vx));p.y=Math.max(margin,Math.min(height-margin,p.y+p.vy));}
+  }
+  return positions;
+}
 /** Build the bounded relationship view, then bind entity selections for the current graph. */
 function renderContextGraph(payload) {
   const graph=payload.graph||{}; const nodes=graph.nodes||[]; const edges=graph.edges||[];
@@ -401,12 +429,11 @@ function renderContextGraph(payload) {
   $("context-graph-summary").innerHTML=`<span>实体 <b>${Number(graph.node_count||0)}</b></span><span>关系 <b>${Number(graph.edge_count||0)}</b></span><span>社区 <b>${Number(graph.community_count||0)}</b></span><span>上下文 <b>${Number(ctx.messages||0)}</b> 条</span>${graph.stale?'<small>图等待重建</small>':graph.truncated?'<small>仅显示最近的 60 个实体</small>':""}`;
   const canvas=$("context-graph-canvas"), list=$("context-graph-nodes");
   if(!graph.available || !nodes.length){canvas.innerHTML='<p class="empty">尚无实体。图会在 Agent 处理消息并完成 checkpoint 后出现。</p>';list.innerHTML="";$("context-graph-detail").innerHTML='<p class="empty">没有可检查的实体。</p>';return;}
-  // Spread dense graphs across the full landscape canvas while leaving space
-  // above and below every label instead of shrinking them into the center.
-  const width=640,height=270,centerX=width/2,centerY=height/2;
-  const radiusX=Math.min(245,Math.max(140,nodes.length*14));
-  const radiusY=Math.min(95,Math.max(68,nodes.length*5));
-  const positions=Object.fromEntries(nodes.map((node,index)=>{const angle=(Math.PI*2*index/nodes.length)-Math.PI/2;return [node.id,{x:centerX+Math.cos(angle)*radiusX,y:centerY+Math.sin(angle)*radiusY}];}));
+  // A force layout keeps related entities near each other and distributes
+  // isolated entities across the canvas. The old single-ring layout caused
+  // labels and edges to overlap as soon as the graph grew.
+  const width=900,height=320;
+  const positions=contextGraphForceLayout(nodes,edges,width,height);
   // Each point is the visual center of its absolutely positioned entity
   // button, so a relation starts and ends at the center of its two entities.
   const lines=edges.map(edge=>{const source=positions[edge.source_id],target=positions[edge.target_id];if(!source||!target)return "";return `<line x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" class="${edge.valid===false?"invalid":""}"><title>${escapeHtml(edge.relation)}</title></line>`;}).join("");
@@ -556,7 +583,7 @@ function renderCallRequestConfig(config) {
   if(!config||typeof config!=="object"){ target.innerHTML=""; target.hidden=true; return; }
   const backend=config.backend&&typeof config.backend==="object"?config.backend:{};
   const tools=Array.isArray(config.tools)?config.tools:[];
-  const fields=[["后端",Object.entries(backend).map(([key,value])=>`${key}=${value}`).join(" · ")||"—"],["temperature",config.temperature??"—"],["max_tokens",config.max_tokens??"—"]];
+  const fields=[["后端",Object.entries(backend).map(([key,value])=>`${key}=${value}`).join(" · ")||"—"],["temperature",config.temperature??"—"],["max_tokens",config.max_tokens??"—"],["thinking_mode",config.thinking_mode??"auto"],["reasoning_effort",config.reasoning_effort??"auto"]];
   target.hidden=false;
   target.innerHTML=`<details class="call-request-config"><summary>运行请求配置（每轮不变 · 仅存一次）</summary><dl class="call-request-fields">${fields.map(([label,value])=>`<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd>`).join("")}</dl>${callContentBlock("system prompt",config.system_prompt)}${callContentBlock("首条消息",config.message)}<details class="call-content"><summary>工具 schema · ${tools.length}</summary><ul class="call-tool-schemas">${tools.map(tool=>`<li><strong>${escapeHtml(String(tool?.name||""))}</strong>${tool?.description?`<span>${escapeHtml(String(tool.description.text||""))}</span>`:""}</li>`).join("")}</ul></details></details>`;
 }
@@ -596,6 +623,19 @@ function renderCalls(payload) {
 async function loadCalls(agentId) { if(contextCallsLoading)return; contextCallsLoading=true; try { const payload=await apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/calls`)); if(contextDialogAgent===agentId)renderCalls(payload); } finally { contextCallsLoading=false; } }
 /** Refresh the open dialog's ledger after a committed lifecycle event, only if already loaded. */
 function refreshOpenContextCalls() { const dialog=$("context-graph-dialog"); if(!dialog||!dialog.open||!contextDialogAgent||!contextDialogLoaded.has("calls"))return; loadCalls(contextDialogAgent).catch(error=>trace("调用账本刷新失败",error.message)); }
+/** Reload the graph tab from the live handler/checkpoint, bypassing browser cache. */
+function loadContextGraph(agentId=contextDialogAgent) {
+  if(!agentId) return Promise.resolve();
+  const url=`${sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)}?refresh=${Date.now()}`;
+  return apiJson(url).then(payload=>{
+    if(contextDialogAgent===agentId) renderContextGraph(payload);
+  });
+}
+function refreshOpenContextGraph() {
+  const dialog=$("context-graph-dialog");
+  if(!dialog||!dialog.open||!contextDialogAgent||!contextDialogLoaded.has("graph")) return;
+  loadContextGraph().catch(error=>trace("实体图刷新失败",error.message));
+}
 /**
  * Hydrate one context-dialog tab on demand, once per dialog opening.
  *
@@ -613,7 +653,7 @@ function ensureContextDialogTab(tab) {
   const agentId=contextDialogAgent;
   if(!agentId||contextDialogLoaded.has(tab))return;
   contextDialogLoaded.add(tab);
-  if(tab==="graph") apiJson(sessionApi(`/agents/${encodeURIComponent(agentId)}/context-graph`)).then(renderContextGraph).catch(error=>{ if(contextDialogAgent===agentId) $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; });
+  if(tab==="graph") loadContextGraph(agentId).catch(error=>{ if(contextDialogAgent===agentId) $("context-graph-canvas").innerHTML=`<p class="empty">${escapeHtml(error.message)}</p>`; });
   else if(tab==="prompt") loadContextPrompt(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-prompt-preview").textContent=error.message; $("context-prompt-status").textContent="读取失败"; } });
   else if(tab==="compaction") loadCompactionInput(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-compaction-preview").textContent=error.message; $("context-compaction-status").textContent="读取失败"; } });
   else if(tab==="calls") loadCalls(agentId).catch(error=>{ if(contextDialogAgent===agentId){ $("context-calls-status").textContent="读取失败"; $("context-calls-primary").innerHTML=`<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`; $("context-calls-internal").innerHTML='<tr><td colspan="5">—</td></tr>'; } });
@@ -960,12 +1000,12 @@ function handleEvent(event) {
   if(event.type === "agent:tool_call_ready") { const agent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,event.data||{},"准备执行"); }
   if(event.type === "agent:tool_started") { const agent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,event.data||{},"执行中"); }
   if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); }
-  if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); const agent=event.agent||"coordinator"; for(const tool of (event.data?.tool_calls||[])){ if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,{...tool,arguments:tool.args,status:tool.ok===false?"失败":"已完成"},tool.ok===false?"失败":"已完成"); } }
+  if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); const agent=event.agent||"coordinator"; for(const tool of (event.data?.tool_calls||[])){ if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,{...tool,arguments:tool.args,status:tool.ok===false?"失败":"已完成"},tool.ok===false?"失败":"已完成"); } if((event.data?.tool_calls||[]).some(tool=>String(tool?.name||"").startsWith("graph_")) && contextDialogAgent===agent) refreshOpenContextGraph(); }
   if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") { discardAgentStreams(event.agent || "coordinator"); updateHeaderMetrics(event.data); } if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:") || event.type.startsWith("plan:")){ scheduleGraphPlanReload(); } return; }
-  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; discardAgentStreams(resultAgent); if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
+  if(event.event === "result") { const resultAgent=event.agent || "coordinator"; discardAgentStreams(resultAgent); if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); refreshOpenContextGraph(); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); finish(); return; }
   if(event.event === "stopped") { setWorkspaceIndicator(sessionId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }
-  if(event.event === "done") { setWorkspaceIndicator(sessionId,"done"); finish(); scheduleGraphPlanReload(); }
+  if(event.event === "done") { setWorkspaceIndicator(sessionId,"done"); finish(); refreshOpenContextGraph(); scheduleGraphPlanReload(); }
 }
 function finish() { clearCompactStatus(); source?.close(); source=null; sourceSessionId=""; /* lifecycle SSE drains committed tail and closes itself */ setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
 /* ---- Slash commands -------------------------------------------------- */
@@ -1204,11 +1244,33 @@ if(location.protocol === "file:") trace("服务未启动", "请通过 llmfetcher
 async function loadProviders() { try { const {providers}=await apiJson("/api/providers"); const select=$("provider"), chosen=select.value; select.innerHTML=providers.map(x=>`<option value="${escapeHtml(x)}">${escapeHtml(providerLabel(x))}</option>`).join(""); select.value=providers.includes(chosen)?chosen:providers[0]; } catch {} }
 let contextHandlerSpecs = [];
 function contextHandlerLabel(spec) { const key=`settings.contextHandlers.${spec.id}`; const label=t(key); return label===key ? spec.title : label; }
-function renderContextHandlerOptions() { const select=$("context-handler"); if(!select) return; const chosen=select.value||currentProfile?.effective?.context_handler||""; select.innerHTML=contextHandlerSpecs.map(spec=>`<option value="${escapeHtml(spec.id)}">${escapeHtml(contextHandlerLabel(spec))}</option>`).join(""); select.value=contextHandlerSpecs.some(spec=>spec.id===chosen)?chosen:contextHandlerSpecs[0]?.id||""; const spec=contextHandlerSpecs.find(item=>item.id===select.value); const tools=$("context-handler-tools"); if(tools) tools.textContent=spec?.exposed_tools?.length?`Tools: ${spec.exposed_tools.join(", ")}`:"No context-specific tools"; }
+function contextSettingValue(handlerId, key, fallback) { return currentProfile?.effective?.context_settings?.[handlerId]?.[key] ?? fallback; }
+function renderContextHandlerSettings(spec) {
+  const root=$("context-handler-settings"); if(!root) return;
+  const fields=Array.isArray(spec?.settings)?spec.settings:[];
+  root.innerHTML=fields.map(field=>{
+    const value=contextSettingValue(spec.id, field.key, field.default);
+    const title=escapeHtml(field.title||field.key), desc=field.description?`<em>${escapeHtml(field.description)}</em>`:"";
+    if(field.type==="boolean") return `<label>${title} ${desc}<input data-context-setting="${escapeHtml(field.key)}" type="checkbox" ${value===true?"checked":""}></label>`;
+    if(field.type==="enum") return `<label>${title} ${desc}<select data-context-setting="${escapeHtml(field.key)}">${(field.enum||[]).map(item=>`<option value="${escapeHtml(String(item))}" ${String(item)===String(value)?"selected":""}>${escapeHtml(String(item))}</option>`).join("")}</select></label>`;
+    return `<label>${title} ${desc}<input data-context-setting="${escapeHtml(field.key)}" type="${field.type==="number"||field.type==="integer"?"number":"text"}" value="${escapeHtml(String(value??""))}" ${field.minimum!=null?`min="${field.minimum}"`:""} ${field.maximum!=null?`max="${field.maximum}"`:""}></label>`;
+  }).join("");
+}
+function collectContextSettings() {
+  const handler=value("context-handler")||currentProfile?.effective?.context_handler||"";
+  const existing=JSON.parse(JSON.stringify(currentProfile?.effective?.context_settings||{}));
+  const spec=contextHandlerSpecs.find(item=>item.id===handler);
+  if(!spec?.settings?.length) return existing;
+  const values={...(existing[handler]||{})};
+  spec.settings.forEach(field=>{const input=document.querySelector(`[data-context-setting="${CSS.escape(field.key)}"]`); if(!input)return; let value=field.type==="boolean"?input.checked:input.value; if(field.type==="integer")value=Number.parseInt(value,10); if(field.type==="number")value=Number(value); values[field.key]=value;});
+  existing[handler]=values; return existing;
+}
+function renderContextHandlerOptions() { const select=$("context-handler"); if(!select) return; const chosen=select.value||currentProfile?.effective?.context_handler||""; select.innerHTML=contextHandlerSpecs.map(spec=>`<option value="${escapeHtml(spec.id)}">${escapeHtml(contextHandlerLabel(spec))}</option>`).join(""); select.value=contextHandlerSpecs.some(spec=>spec.id===chosen)?chosen:contextHandlerSpecs[0]?.id||""; const spec=contextHandlerSpecs.find(item=>item.id===select.value); const tools=$("context-handler-tools"); if(tools) tools.textContent=spec?.exposed_tools?.length?`Tools: ${spec.exposed_tools.join(", ")}`:"No context-specific tools"; renderContextHandlerSettings(spec); }
 /** Load the selectable context handlers once; the labels follow the locale. */
 async function loadContextHandlers() { try { const {handlers}=await apiJson("/api/context-handlers"); contextHandlerSpecs=Array.isArray(handlers)?handlers:[]; renderContextHandlerOptions(); } catch(error) { trace("上下文管理器列表加载失败", error.message); } }
 onLocaleChange(() => renderContextHandlerOptions());
 $("context-handler")?.addEventListener("change", () => renderContextHandlerOptions());
+$("context-handler-settings")?.addEventListener("change", () => persistSettings().catch(error => trace("上下文设置保存失败", error.message)));
 async function initializeConsole() {
   await initI18n();
   initInspectorTabs();
@@ -1218,9 +1280,11 @@ async function initializeConsole() {
   // transcript projections are not mounted until their new services exist.
   await loadProviders();
   await loadContextHandlers();
-  await loadPlugins();
-  await loadToolRegistry();
   await loadWorkspaces();
+  // Load durable sessions before optional plugin assets. A broken or slow
+  // plugin must not leave the workspace sidebar empty.
+  await loadPlugins().catch(error => trace("插件加载失败，已继续加载工作区", error.message));
+  await loadToolRegistry().catch(error => trace("工具目录加载失败，已继续加载工作区", error.message));
   // 启动时先恢复运行档案与连接列表，保证 composer 芯片在直接刷新后也有值。
   await restoreSettings().catch((error) => trace("加载运行档案失败", error.message));
   await loadConnectors(connectorId).catch((error) => trace("加载连接列表失败", error.message));

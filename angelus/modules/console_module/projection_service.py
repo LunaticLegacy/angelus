@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from llmfetcher.context_handlers.linear import read_persisted_context_page
 from llmfetcher.context_handlers.linear.codec import context_from_dict
 from llmfetcher.context_handlers.storage import SQLiteContextStorage
+from llmfetcher.context_handlers import ContextSnapshot
 
 from .console_state import ConsoleDomainError
 from ..execution_module import ExecutionState
@@ -106,6 +107,8 @@ class RequestConfig:
     backend: BackendInfo
     temperature: JsonValue
     max_tokens: JsonValue
+    thinking_mode: JsonValue
+    reasoning_effort: JsonValue
 
 
 @dataclass
@@ -128,6 +131,8 @@ class PrimaryCall:
     tool_names: list[str]
     temperature: JsonValue
     max_tokens: JsonValue
+    thinking_mode: JsonValue
+    reasoning_effort: JsonValue
     usage: CallUsage | None
     model_duration_ms: float | None
     round_duration_ms: float | None
@@ -476,7 +481,7 @@ class ConsoleProjectionService:
         "request_id", "round", "model", "stream", "message_count",
         "message_roles", "source_ids", "input_characters",
         "estimated_input_tokens", "input_sha256", "tool_count",
-        "tool_schema_hashes", "temperature", "max_tokens",
+        "tool_schema_hashes", "temperature", "max_tokens", "thinking_mode", "reasoning_effort",
     )
 
     @classmethod
@@ -500,7 +505,7 @@ class ConsoleProjectionService:
     # fact carries the run-invariant system prompt, the first user message and
     # every tool description; the ledger reads those from the journal directly,
     # so the trace endpoint must reduce that payload to content-free fields.
-    _LLM_REQUEST_INDEX_KEYS = ("round", "temperature", "max_tokens")
+    _LLM_REQUEST_INDEX_KEYS = ("round", "temperature", "max_tokens", "thinking_mode", "reasoning_effort")
 
     @classmethod
     def _llm_request_index(cls, data: dict[str, object]) -> dict[str, object]:
@@ -1093,7 +1098,7 @@ class ConsoleProjectionService:
             model="", stream=False, message_count=0, message_roles={},
             source_ids=[], input_characters=0, estimated_input_tokens=0,
             input_sha256="", tool_count=0, tool_schema_hashes=[], tool_names=[],
-            temperature=None, max_tokens=None, usage=None, model_duration_ms=None,
+            temperature=None, max_tokens=None, thinking_mode="auto", reasoning_effort="auto", usage=None, model_duration_ms=None,
             round_duration_ms=None, tool_call_count=None, input_message=None,
             request_messages=[], request_omitted_messages=0, assistant_content=None,
             reasoning_content=None, tool_calls=[], tool_results=[], retries=0,
@@ -1171,6 +1176,8 @@ class ConsoleProjectionService:
             record.tool_schema_hashes = [str(item) for item in hashes] if isinstance(hashes, list) else []
             record.temperature = request.get("temperature")
             record.max_tokens = request.get("max_tokens")
+            record.thinking_mode = request.get("thinking_mode", "auto")
+            record.reasoning_effort = request.get("reasoning_effort", "auto")
             record.request_messages, record.request_omitted_messages = (
                 cls._request_messages(data.get("request_content")))
             # Every provider attempt emits remote_request; the first defines
@@ -1281,7 +1288,9 @@ class ConsoleProjectionService:
             tools=config_tools,
             backend=cls._backend_info(data.get("backend")),
             temperature=data.get("temperature"),
-            max_tokens=data.get("max_tokens"))
+            max_tokens=data.get("max_tokens"),
+            thinking_mode=data.get("thinking_mode", "auto"),
+            reasoning_effort=data.get("reasoning_effort", "auto"))
 
     @staticmethod
     def _backend_info(backend: object) -> BackendInfo:
@@ -1504,6 +1513,9 @@ class ConsoleProjectionService:
                 system_prompt=plan.system_prompt,
                 temperature=plan.temperature,
                 max_tokens=plan.max_tokens,
+                thinking_mode=getattr(agent, "thinking_mode", "auto"),
+                reasoning_effort=getattr(agent, "reasoning_effort", "auto"),
+                context_composer=getattr(agent, "context_composer", None),
                 tools=[],
             )
             context_size = compaction_owner._estimate_context_size()
@@ -1545,16 +1557,30 @@ class ConsoleProjectionService:
                 system_prompt=agent.system_prompt,
                 temperature=0.4,
                 max_tokens=agent.default_max_tokens,
+                thinking_mode=agent.thinking_mode,
+                reasoning_effort=agent.reasoning_effort,
                 context_handler=agent.context_handler,
+                context_composer=getattr(agent, "context_composer", None),
                 tools=agent.tool_handler.get_all_tools(),
                 stream=agent.default_stream,
             )
             request = snapshot.to_dict()
             messages = request["messages"]
             characters = len(json.dumps(messages, ensure_ascii=False))
-            request_metadata = agent.context_handler.describe_request_messages(
-                agent.context_handler.build_messages(system_prompt=agent.system_prompt)
-            )
+            composer = getattr(agent, "context_composer", None)
+            if composer is not None:
+                request_metadata = composer.describe(
+                    snapshot=ContextSnapshot(
+                        handler=agent.context_handler,
+                        system_prompt=agent.system_prompt,
+                        current_message="",
+                    ),
+                    system_prompt=agent.system_prompt,
+                )
+            else:
+                request_metadata = agent.context_handler.describe_request_messages(
+                    agent.context_handler.build_messages(system_prompt=agent.system_prompt)
+                )
             return {
                 "agent": name,
                 "request": request,

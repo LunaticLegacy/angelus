@@ -300,17 +300,40 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)}s`;
   }
 
+  /** Return a short, useful description for the visible tool event row. */
+  function toolPreview(tool = {}) {
+    const value = tool.arguments ?? tool.args;
+    if (value === undefined || value === null || value === "") return "";
+    let parsed = value;
+    if (typeof value === "string") {
+      try { parsed = JSON.parse(value); } catch { parsed = value; }
+    }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const preferred = ["command", "cmd", "path", "file", "query", "name"];
+      const entry = preferred.map(key => [key, parsed[key]]).find(([, item]) => item !== undefined && item !== null && item !== "");
+      if (entry) return String(entry[1]);
+      const first = Object.values(parsed).find(item => typeof item === "string" && item.trim());
+      if (first) return String(first);
+    }
+    return String(parsed);
+  }
+
   function renderTools(tools = []) {
     if (!tools.length) return "";
     const calls = tools.map((tool) => {
       const duration = formatDuration(tool.duration_ms);
       const badge = duration ? `<span class="tool-duration">${escapeHtml(duration)}</span>` : "";
+      const preview = toolPreview(tool);
+      const previewMarkup = preview ? `<span class="tool-call-preview">${escapeHtml(preview)}</span>` : "";
       return `
-      <article class="tool-call"><strong>${escapeHtml(tool.name)}</strong>${badge}<p>参数</p>
-      ${renderToolPayload(tool.arguments, "无参数")}<p>结果</p>
-      ${renderToolPayload(tool.result, "无返回内容")}</article>`;
+      <article class="tool-call">
+        <div class="tool-call-summary"><span class="tool-call-icon" aria-hidden="true">↳</span><strong>${escapeHtml(tool.name)}</strong><span class="tool-call-status">已完成</span>${badge}${previewMarkup}</div>
+        <details class="tool-call-details"><summary>查看参数与结果</summary><p>参数</p>
+        ${renderToolPayload(tool.arguments, "无参数")}<p>结果</p>
+        ${renderToolPayload(tool.result, "无返回内容")}</details>
+      </article>`;
     }).join("");
-    return `<details class="tool-calls"><summary>工具调用 · ${tools.length}</summary>${calls}</details>`;
+    return `<section class="tool-calls" aria-label="工具调用"><div class="tool-calls-heading"><span>工具调用</span><b>${tools.length}</b></div><div class="tool-call-list">${calls}</div></section>`;
   }
 
   /** Format an epoch timestamp (seconds or milliseconds) as local HH:MM:SS. */
@@ -495,7 +518,7 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     const element = document.createElement("article");
     const speaker = agentName || getAgentLabel() || "Coordinator";
     element.className = "message assistant streaming";
-    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><details class="reasoning" aria-label="思考过程" hidden open><summary>思考过程</summary><div class="markdown"></div></details><div class="bubble markdown"></div><details class="tool-calls streaming-tool-calls" hidden><summary>工具调用 · <span data-stream-tool-count>0</span></summary><div data-stream-tool-list></div></details>`;
+    element.innerHTML = `<div class="message-meta"><div class="role role-agent"><i></i><span>${escapeHtml(speaker)}</span></div><small>正在生成</small></div><details class="reasoning" aria-label="思考过程" hidden open><summary>思考过程</summary><div class="markdown"></div></details><div class="bubble markdown"></div><section class="tool-calls streaming-tool-calls" hidden aria-label="工具调用"><div class="tool-calls-heading"><span>工具调用</span><b data-stream-tool-count>0</b></div><div class="tool-call-list" data-stream-tool-list></div></section>`;
     $("chat").append(element);
     scrollToLatestIfFollowing();
     const reasoningTarget = element.querySelector(".reasoning .markdown");
@@ -530,7 +553,9 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
       const duration = tool.duration_ms ?? elapsed;
       const args = tool.arguments ?? tool.raw_arguments ?? "";
       const result = tool.result;
-      card.innerHTML = `<header><strong>${escapeHtml(tool.name || "工具调用")}</strong><span class="tool-live-status">${escapeHtml(status)}</span>${duration != null ? `<span class="tool-duration">${escapeHtml(formatDuration(duration))}</span>` : ""}</header><p>参数</p>${renderToolPayload(args, "正在接收参数…")}${result !== undefined ? `<p>结果</p>${renderToolPayload(result, "无返回内容")}` : ""}`;
+      const preview = toolPreview({...tool, arguments: args});
+      const previewMarkup = preview ? `<span class="tool-call-preview">${escapeHtml(preview)}</span>` : "";
+      card.innerHTML = `<div class="tool-call-summary"><span class="tool-call-icon" aria-hidden="true">↳</span><strong>${escapeHtml(tool.name || "工具调用")}</strong><span class="tool-live-status">${escapeHtml(status)}</span>${duration != null ? `<span class="tool-duration">${escapeHtml(formatDuration(duration))}</span>` : ""}${previewMarkup}</div><details class="tool-call-details"><summary>查看参数与结果</summary><p>参数</p>${renderToolPayload(args, "正在接收参数…")}${result !== undefined ? `<p>结果</p>${renderToolPayload(result, "无返回内容")}` : ""}</details>`;
       if (started > 0 && ["running", "执行中"].includes(status) && !toolTimers.has(id)) {
         const timer = setInterval(() => updateTool({...tool, duration_ms: (Date.now() / 1000 - started) * 1000}), 250);
         toolTimers.set(id, timer);

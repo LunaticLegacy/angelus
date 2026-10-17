@@ -36,9 +36,9 @@ class ToolResultPromptBudgetTests(unittest.TestCase):
             )],
         ))
 
-        first_messages = handler.build_messages()
+        first_messages = [message.to_dict() for message in handler.build_messages()]
         first_tools = [message for message in first_messages if message["role"] == "tool"]
-        second_messages = handler.build_messages()
+        second_messages = [message.to_dict() for message in handler.build_messages()]
         tool_messages = [message for message in second_messages if message["role"] == "tool"]
 
         self.assertEqual(

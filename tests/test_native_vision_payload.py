@@ -77,12 +77,12 @@ class NativeVisionPayloadTests(unittest.TestCase):
             text: Accompanying user text for the turn.
 
         Returns:
-            Provider-neutral messages and the reference they were built from.
+            Provider-neutral wire messages and the reference they were built from.
         """
         ref = {"attachment_id": metadata["attachment_id"], "media_type": "image/png", "detail": "high"}
         context = ContextHandlerLinear(MagicMock())
         context.add_user_message(UserMessage(text, [ref]))
-        return context.build_messages(), ref
+        return [message.to_dict() for message in context.build_messages()], ref
 
     def test_openai_wire_carries_durable_bytes(self) -> None:
         """OpenAI receives a base64 data URL built from the stored bytes."""

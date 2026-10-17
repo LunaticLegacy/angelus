@@ -5,13 +5,14 @@ Abstract:
     There should be a factory for the Agent.
 
 """
-from typing import Optional, List, Callable, Any
+from typing import Optional, List, Callable, Any, Mapping, Sequence
 from pathlib import Path
 
 from llmfetcher import Agent, LLMBackendConfig, LLMFetcher, Tool
 from llmfetcher.context_handlers import (
     DEFAULT_CONTEXT_HANDLER,
     ContextHandler,
+    ContextProvider,
     create_context_handler,
 )
 from llmfetcher.context_handlers.sage import SageContext, create_sage_tools
@@ -29,11 +30,15 @@ def create_agent(
     context_path: Optional[str | Path] = "",
     context_handler_name: str = DEFAULT_CONTEXT_HANDLER,
     context_handler: Optional[ContextHandler] = None,
+    context_settings: Mapping[str, Any] | None = None,
+    context_providers: Sequence[ContextProvider] = (),
     default_max_rounds: int = 30,
     default_max_tokens: int = 32768,
     enable_stop_turn: bool = False,
     default_stream: bool = True,
     output_reasoning: bool = True,
+    thinking_mode: str = "auto",
+    reasoning_effort: str = "auto",
     tool_result_transformer: Callable[[str, str, str], str] | None = None,
     image_resolver: Callable[[dict[str, Any]], dict[str, str]] | None = None,
 ) -> Agent:
@@ -58,6 +63,8 @@ def create_agent(
         context_handler: Optional custom context implementation, such as
             ``RetrievedContextHandler``. Takes precedence over
             ``context_handler_name``.
+        context_providers: Optional plugin providers registered on the
+            Agent's ``ContextComposer`` before the first request.
         default_max_rounds: Default maximum model-and-tool steps for a
             ``run`` call that omits ``max_rounds``. ``0`` means unlimited.
         default_max_tokens: Default maximum generated tokens per model
@@ -95,6 +102,7 @@ def create_agent(
             max_context_threshold=max_context_threshold,
             compaction_output_max_tokens=compaction_output_max_tokens,
             keep_recent=keep_recent,
+            settings=(context_settings or {}).get(context_handler_name, {}),
         )
     if context_path:
         Path(context_path).parent.mkdir(parents=True, exist_ok=True)
@@ -108,9 +116,12 @@ def create_agent(
         enable_stop_turn=enable_stop_turn,
         default_stream=default_stream,
         output_reasoning=output_reasoning,
+        thinking_mode=thinking_mode,
+        reasoning_effort=reasoning_effort,
         context_path=context_path,
         context_handler=context_handler,
         tool_result_transformer=tool_result_transformer,
+        context_providers=tuple(context_providers),
     )
     # Tool ownership belongs to the Agent factory. Session ownership is
     # established later by SessionHandler.

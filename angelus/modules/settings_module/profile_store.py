@@ -8,7 +8,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from llmfetcher.context_handlers import DEFAULT_CONTEXT_HANDLER
+from llmfetcher.context_handlers import DEFAULT_CONTEXT_HANDLER, CONTEXT_HANDLERS, normalize_context_settings
 
 from .json_store import read_json, write_json
 
@@ -20,6 +20,8 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "connector_id": "",
     "system_prompt": "You are a helpful, precise assistant.",
     "temperature": 0.4,
+    "thinking_mode": "auto",
+    "reasoning_effort": "auto",
     "max_tokens": 16384,
     "max_rounds": 0,
     "max_retries": 3,
@@ -30,6 +32,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     # Which context handler a future attempt builds for its Agents. The library
     # registry owns the default and the selectable list.
     "context_handler": DEFAULT_CONTEXT_HANDLER,
+    "context_settings": {},
     "max_swarm_agents": 4,
     "session_memory_search_sessions": [],
     "session_memory_read_sessions": [],
@@ -38,7 +41,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "tool_permissions": {
         "categories": {
             "context_version": True, "session_memory": True, "vision": True,
-            "shell": True, "planning": True,
+            "shell": True, "planning": True, "swarm": True,
         },
         "tools": {
             "inspect_agent_context": True, "edit_agent_context": True, "restore_agent_context": True,
@@ -49,6 +52,12 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
             "computer": False,
             "shell": True,
             "set_task_plan": True, "update_task_status": True, "read_task_plan": True,
+            "swarm_connect": True, "swarm_disconnect": True,
+            "swarm_set_mapper": True, "swarm_set_router": True,
+            "swarm_add_worker": True, "swarm_remove_worker": True,
+            "swarm_info": True, "dispatch_subagent": True,
+            "dispatch_subagents": True, "revive_agent": True,
+            "wait_for_reports": True,
         },
     },
 }
@@ -208,6 +217,14 @@ class RunProfileStore:
                 if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
                     raise ValueError("temperature must be between 0 and 2")
                 result[key] = float(value)
+            elif key == "thinking_mode":
+                if value not in {"auto", "on", "off"}:
+                    raise ValueError("thinking_mode must be auto, on, or off")
+                result[key] = value
+            elif key == "reasoning_effort":
+                if value not in {"auto", "low", "medium", "high"}:
+                    raise ValueError("reasoning_effort must be auto, low, medium, or high")
+                result[key] = value
             elif key == "request_timeout_seconds":
                 if (
                     not isinstance(value, (int, float))
@@ -232,6 +249,20 @@ class RunProfileStore:
                 if not isinstance(value, str) or not value:
                     raise ValueError("context_handler must be a non-empty string")
                 result[key] = value
+            elif key == "context_settings":
+                if not isinstance(value, Mapping):
+                    raise ValueError("context_settings must be an object")
+                normalized: dict[str, dict[str, Any]] = {}
+                for handler_id, raw_settings in value.items():
+                    if not isinstance(handler_id, str) or not isinstance(raw_settings, Mapping):
+                        raise ValueError("context_settings must map handler ids to objects")
+                    spec = CONTEXT_HANDLERS.get(handler_id)
+                    if spec is None:
+                        raise ValueError(f"unknown context handler: {handler_id}")
+                    # The registry owns the canonical validation. Importing
+                    # lazily avoids duplicating handler-specific rules here.
+                    normalized[handler_id] = normalize_context_settings(spec, raw_settings)
+                result[key] = normalized
             elif key.endswith("_sessions"):
                 if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
                     raise ValueError(f"{key} must be a list of session IDs")

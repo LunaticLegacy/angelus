@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import hashlib
+import json
 from typing import TYPE_CHECKING, Callable
 
 from ..workspace_module import Workspace
 from ..execution_module import ExecutionState
 from ..session_module import create_agent, validate_session_id
 from ..tool_module import ToolPolicy
+from .context_provider import WorkspaceContextProvider
 from llmfetcher import Agent, LLMBackendConfig
 from llmfetcher.execution import ExecutionController, StopMode
 
@@ -97,11 +99,16 @@ class SessionService:
             connection = self._core.connectors.connection_config(connector_id)
         except KeyError as exc:
             raise RuntimeError("Session coordinator connector has no saved API key") from exc
+        workspace = self._core.workspaces.get(session_id)
         fingerprint = (
             connector_id, hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
             connection["provider"], connection["model"], connection["api_url"],
             profile["system_prompt"], profile["max_tokens"], profile["max_rounds"],
+            profile["thinking_mode"], profile["reasoning_effort"],
             profile["max_retries"], profile["request_timeout_seconds"], profile["max_context_threshold"], profile["compaction_output_max_tokens"], profile["max_swarm_agents"], permissions.fingerprint(), self._core.tool_registry.revision,
+            json.dumps(profile.get("context_settings", {}), sort_keys=True),
+            str(workspace.project_path) if workspace.project_path is not None else "",
+            str(workspace.state_path),
             self._core.mcp_service.fingerprint(session_id, "coordinator"),
         )
         # A forced stop closes the cached coordinator's clients, so rebuild
@@ -110,7 +117,6 @@ class SessionService:
         # conversation continuity across the rebuild.
         if session.coordinator_matches(fingerprint) and not session.runtime_agents_dirty:
             return
-        workspace = self._core.workspaces.get(session_id)
         if session.artifacts is None:
             raise RuntimeError("Session artifact storage is not configured")
         coordinator = create_agent(
@@ -130,9 +136,17 @@ class SessionService:
             compaction_output_max_tokens=profile["compaction_output_max_tokens"],
             keep_recent=profile["compaction_keep_recent"],
             context_handler_name=profile["context_handler"],
+            context_settings=profile.get("context_settings", {}),
             context_path=workspace.state_path / "agents" / session.coordinator_name / "context.json",
+            context_providers=(WorkspaceContextProvider(
+                workspace.project_path,
+                workspace.state_path,
+                session.coordinator_name,
+            ),),
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
+            thinking_mode=profile["thinking_mode"],
+            reasoning_effort=profile["reasoning_effort"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
             image_resolver=session.attachments.resolve if session.attachments else None,
@@ -299,9 +313,17 @@ class SessionService:
             compaction_output_max_tokens=profile["compaction_output_max_tokens"],
             keep_recent=profile["compaction_keep_recent"],
             context_handler_name=profile["context_handler"],
+            context_settings=profile.get("context_settings", {}),
             context_path=workspace.state_path / "agents" / name / "context.json",
+            context_providers=(WorkspaceContextProvider(
+                workspace.project_path,
+                workspace.state_path,
+                name,
+            ),),
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
+            thinking_mode=profile["thinking_mode"],
+            reasoning_effort=profile["reasoning_effort"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
             image_resolver=session.attachments.resolve if session.attachments else None,
@@ -359,9 +381,17 @@ class SessionService:
             compaction_output_max_tokens=profile["compaction_output_max_tokens"],
             keep_recent=profile["compaction_keep_recent"],
             context_handler_name=profile["context_handler"],
+            context_settings=profile.get("context_settings", {}),
             context_path=workspace.state_path / "agents" / name / "context.json",
+            context_providers=(WorkspaceContextProvider(
+                workspace.project_path,
+                workspace.state_path,
+                name,
+            ),),
             default_max_rounds=profile["max_rounds"],
             default_max_tokens=profile["max_tokens"],
+            thinking_mode=profile["thinking_mode"],
+            reasoning_effort=profile["reasoning_effort"],
             enable_stop_turn=permissions.allows("turn_control", "stop_turn"),
             tool_result_transformer=session.artifacts.transform_tool_result,
             image_resolver=session.attachments.resolve if session.attachments else None,
