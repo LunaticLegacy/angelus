@@ -16,6 +16,9 @@ import warnings
 
 from PIL import Image, UnidentifiedImageError
 
+MAX_IMAGES_PER_RUN = 8
+MAX_IMAGES_TOTAL_BYTES = 15 * 1024 * 1024
+
 
 class ImageAttachmentStore:
     """Own one Session's validated, immutable image files.
@@ -56,17 +59,9 @@ class ImageAttachmentStore:
             raise ValueError("Invalid image attachment ID")
         target = self.root / attachment_id
         self._reject_symlinks(target)
-        if target.is_dir():
-            return target
-        # Backward compatibility for stores created before the explicit
-        # ``images`` directory was introduced. New writes never use this path.
-        legacy_root = self.root.parent if self.root.name == "images" else None
-        legacy = legacy_root / attachment_id if legacy_root is not None else None
-        if legacy is not None:
-            self._reject_symlinks(legacy)
-            if legacy.is_dir():
-                return legacy
-        raise KeyError(attachment_id)
+        if not target.is_dir():
+            raise KeyError(attachment_id)
+        return target
 
     @staticmethod
     def _read(path: Path, limit: int) -> bytes:

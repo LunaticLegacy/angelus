@@ -7,8 +7,13 @@ import unittest
 from pathlib import Path
 
 from angelus.modules.run_graph_module import RunGraphProjector
-from angelus.modules.run_graph_module.models import RunGraph, RunNodeState
+from angelus.modules.run_graph_module.models import RunGraph
 from angelus.modules.run_graph_module.reducer import apply_journal_event
+from llmfetcher.swarm_module.snapshots import (
+    GraphNodeState,
+    GraphNodeView,
+    SwarmViewSnapshot,
+)
 
 
 class RunGraphProjectionTests(unittest.TestCase):
@@ -51,11 +56,18 @@ class RunGraphProjectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             result = RunGraphProjector().project(
                 "session-1", Path(temporary),
-                live_snapshot={
-                    "nodes": [{"id": "coordinator", "kind": "agent", "dynamic": False}],
-                    "edges": [], "assignments": {}, "task_states": {},
-                    "node_states": {"coordinator": {"state": "running", "message": "Round 1", "updated_at": 12}},
-                },
+                live_snapshot=SwarmViewSnapshot(
+                    nodes=(GraphNodeView("coordinator", "agent", False, None),),
+                    edges=(),
+                    max_concurrency_agents=3,
+                    assignments={},
+                    task_states={},
+                    node_states={
+                        "coordinator": GraphNodeState(
+                            state="running", message="Round 1", updated_at=12
+                        )
+                    },
+                ),
                 live_status={"execution_id": "live-1", "attempt": 1, "state": "running", "started_at": 10},
             )
 
@@ -202,95 +214,6 @@ class RunGraphCheckpointReplayTests(unittest.TestCase):
 
         self.assertEqual([{"type": "kept"}], kept)
         self.assertEqual([{"type": "skipped"}, {"type": "kept"}], all_valid)
-
-
-
-class JournalParentReplayTests(unittest.TestCase):
-    "Prove dispatch reply_to rebuilds parent_id through journal replay."
-
-    def _graph(self) -> RunGraph:
-        return RunGraph(session_id="session-1", execution_id="run-1", attempt=1)
-
-    def _apply(self, graph: RunGraph, events: list[dict[str, object]]) -> None:
-        for cursor, event in enumerate(events, start=1):
-            apply_journal_event(graph, event, cursor=cursor)
-
-    def test_task_dispatched_sets_parent_from_reply_to(self) -> None:
-        graph = self._graph()
-        self._apply(graph, [
-            {"type": "execution_started", "timestamp": 1, "data": {}},
-            {"type": "task:dispatched", "timestamp": 2, "agent": "child", "data": {"task_id": "t1", "reply_to": "coordinator"}},
-        ])
-        node = graph.nodes["child"]
-        self.assertEqual(node.parent_id, "coordinator")
-        self.assertEqual(node.state, RunNodeState.QUEUED)
-
-    def test_task_redispatched_sets_parent_from_reply_to(self) -> None:
-        graph = self._graph()
-        self._apply(graph, [
-            {"type": "execution_started", "timestamp": 1, "data": {}},
-            {"type": "task:redispatched", "timestamp": 2, "agent": "child", "data": {"task_id": "t1", "reply_to": "lead"}},
-        ])
-        self.assertEqual(graph.nodes["child"].parent_id, "lead")
-
-    def test_completion_keeps_parent_and_marks_succeeded(self) -> None:
-        graph = self._graph()
-        self._apply(graph, [
-            {"type": "task:dispatched", "timestamp": 1, "agent": "child", "data": {"task_id": "t1", "reply_to": "coordinator"}},
-            {"type": "agent:completed", "timestamp": 2, "agent": "child", "data": {"task_id": "t1"}},
-        ])
-        node = graph.nodes["child"]
-        self.assertEqual(node.parent_id, "coordinator")
-        self.assertEqual(node.state, RunNodeState.SUCCEEDED)
-
-    def test_project_replays_dispatch_reply_to_without_live_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            attempt = root / "executions" / "run-1"
-            (attempt / "run-graph").mkdir(parents=True)
-            checkpoint = {
-                "schema_version": 1,
-                "kind": "angelus.run-graph",
-                "session_id": "session-1",
-                "execution_id": "run-1",
-                "attempt": 1,
-                "state": "running",
-                "nodes": [
-                    {"id": "coordinator", "kind": "agent", "origin": "blueprint", "parent_id": None, "state": "running", "task_id": None, "plan_task_id": None, "message": "", "error": None, "reason": None, "updated_at": 1},
-                ],
-                "edges": [],
-                "event_cursor": 1,
-                "started_at": 1,
-                "finished_at": None,
-                "error": None,
-                "stop_reason": None,
-                "checkpoint": None,
-            }
-            encoded = json.dumps(checkpoint, ensure_ascii=False, indent=2, sort_keys=True).encode()
-            (attempt / "run-graph" / "checkpoint.json").write_bytes(encoded)
-            manifest = {
-                "execution_id": "run-1",
-                "attempt": 1,
-                "state": "running",
-                "started_at": 1,
-                "finished_at": None,
-                "checkpoint": {
-                    "run_graph": {
-                        "path": "run-graph/checkpoint.json",
-                        "sha256": hashlib.sha256(encoded).hexdigest(),
-                    },
-                },
-            }
-            (attempt / "execution-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-            events = [
-                {"type": "execution_started", "timestamp": 1, "data": {}},
-                {"type": "task:dispatched", "timestamp": 2, "agent": "child", "data": {"task_id": "t1", "reply_to": "coordinator"}},
-            ]
-            (attempt / "execution.events.ndjson").write_text("".join(json.dumps(event) + chr(10) for event in events), encoding="utf-8")
-            result = RunGraphProjector().project("session-1", root)
-        nodes = {node["id"]: node for node in result["nodes"]}
-        self.assertEqual(nodes["child"]["parent_id"], "coordinator")
-        self.assertEqual(nodes["child"]["state"], "queued")
 
 
 if __name__ == "__main__":

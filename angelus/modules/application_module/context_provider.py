@@ -8,8 +8,11 @@ from typing import Any, Sequence
 from llmfetcher.context_handlers import (
     ContextBlock,
     ContextPosition,
+    ContextProvider,
     ContextSnapshot,
 )
+
+from ..context_module import ContextProviderRegistration, ContextProviderRequest
 
 
 class WorkspaceContextProvider:
@@ -56,4 +59,35 @@ class WorkspaceContextProvider:
         )]
 
 
-__all__ = ["WorkspaceContextProvider"]
+class WorkspaceContextFactory:
+    """Materialize the workspace source for one Agent."""
+
+    def build(self, request: ContextProviderRequest) -> Sequence[ContextProvider]:
+        """Return the workspace description bound to this Agent.
+
+        Args:
+            request: Session whose workspace paths are projected.
+
+        Returns:
+            One always-on workspace source.
+        """
+        return (WorkspaceContextProvider(
+            request.workspace.project_path,
+            request.workspace.state_path,
+            request.agent_name,
+        ),)
+
+
+def workspace_context_registration() -> ContextProviderRegistration:
+    """Return the workspace source registration for the process registry."""
+    return ContextProviderRegistration(
+        id=WorkspaceContextProvider.provider_id,
+        factory=WorkspaceContextFactory(),
+    )
+
+
+__all__ = [
+    "WorkspaceContextFactory",
+    "WorkspaceContextProvider",
+    "workspace_context_registration",
+]

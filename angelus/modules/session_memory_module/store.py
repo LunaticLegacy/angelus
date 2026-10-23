@@ -5,12 +5,13 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import threading
 import time
+from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-
-from llmfetcher.context_handlers import SQLiteContextStorage
 
 from ..settings_module.json_store import read_json, write_json
 from ..session_module import validate_session_id
@@ -20,62 +21,85 @@ class SessionMemoryError(ValueError):
     """Safe rejection of an invalid or unauthorized memory operation."""
 
 
+_SESSION_LOCKS: dict[Path, threading.RLock] = {}
+_SESSION_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for_path(path: Path) -> threading.RLock:
+    """Return the process-local lock shared by every store for one session path."""
+    key = path.resolve()
+    with _SESSION_LOCKS_GUARD:
+        return _SESSION_LOCKS.setdefault(key, threading.RLock())
+
+
 class SessionMemoryStore:
     """Build immutable evidence manifests from current Angelus state."""
 
-    def __init__(self, state_root: Path) -> None:
+    def __init__(self, state_root: Path, project_root: Callable[[str], Path | None]) -> None:
         self._root = state_root / "sessions"
+        self._project_root = project_root
+
+    def _lock_for(self, session_id: str) -> threading.RLock:
+        """Return the process-wide lock for one Session's memory files."""
+        return _lock_for_path(self._session_root(session_id))
 
     def snapshot(self, session_id: str) -> dict[str, Any]:
-        root = self._session_root(session_id)
-        latest = read_json(root / "memory-manifest.json", {})
-        generation = int(latest.get("generation", 0)) + 1 if isinstance(latest, dict) else 1
-        evidence = self._context_evidence(root)
-        artifacts = self._artifacts(root, session_id)
-        manifest = {"schema_version": 1, "session_id": session_id, "generation": generation,
-                    "created_at": time.time(), "evidence": evidence, "artifacts": artifacts}
-        write_json(root / f"memory-manifest.{generation}.json", manifest)
-        write_json(root / "memory-manifest.json", manifest)
-        return manifest
+        with self._lock_for(session_id):
+            root = self._session_root(session_id)
+            latest = read_json(root / "memory-manifest.json", {})
+            generation = int(latest.get("generation", 0)) + 1 if isinstance(latest, dict) else 1
+            evidence = self._context_evidence(root)
+            artifacts = self._artifacts(root, session_id)
+            manifest = {"schema_version": 1, "session_id": session_id, "generation": generation,
+                        "created_at": time.time(), "evidence": evidence, "artifacts": artifacts}
+            write_json(root / f"memory-manifest.{generation}.json", manifest)
+            write_json(root / "memory-manifest.json", manifest)
+            return manifest
 
     def manifest(self, session_id: str, generation: int | None = None) -> dict[str, Any]:
-        root = self._session_root(session_id)
-        path = root / (f"memory-manifest.{generation}.json" if generation else "memory-manifest.json")
-        value = read_json(path, None)
-        if not isinstance(value, dict):
-            return self.snapshot(session_id) if generation is None else self._missing()
-        return value
+        with self._lock_for(session_id):
+            root = self._session_root(session_id)
+            path = root / (f"memory-manifest.{generation}.json" if generation else "memory-manifest.json")
+            value = read_json(path, None)
+            if not isinstance(value, dict):
+                return self.snapshot(session_id) if generation is None else self._missing()
+            return value
 
     def create_handoff(self, session_id: str, handoff: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(handoff, dict):
-            raise SessionMemoryError("handoff must be an object")
-        manifest = self.snapshot(session_id)
-        handoff_id = str(handoff.get("handoff_id") or uuid4().hex)
-        if not handoff_id.replace("-", "").replace("_", "").isalnum():
-            raise SessionMemoryError("invalid handoff id")
-        value = {**handoff, "schema_version": 1, "handoff_id": handoff_id,
-                 "source": {"session_id": session_id, "generation": manifest["generation"]},
-                 "created_at": time.time()}
-        path = self._session_root(session_id) / "handoffs" / f"{handoff_id}.json"
-        if path.exists():
-            raise SessionMemoryError("handoff is immutable and already exists")
-        write_json(path, value)
-        return value
+        with self._lock_for(session_id):
+            if not isinstance(handoff, dict):
+                raise SessionMemoryError("handoff must be an object")
+            manifest = self.snapshot(session_id)
+            handoff_id = str(handoff.get("handoff_id") or uuid4().hex)
+            if not handoff_id.replace("-", "").replace("_", "").isalnum():
+                raise SessionMemoryError("invalid handoff id")
+            value = {**handoff, "schema_version": 1, "handoff_id": handoff_id,
+                     "source": {"session_id": session_id, "generation": manifest["generation"]},
+                     "created_at": time.time()}
+            path = self._session_root(session_id) / "handoffs" / f"{handoff_id}.json"
+            if path.exists():
+                raise SessionMemoryError("handoff is immutable and already exists")
+            write_json(path, value)
+            return value
 
     def read_handoff(self, session_id: str, handoff_id: str) -> dict[str, Any]:
-        if not handoff_id.replace("-", "").replace("_", "").isalnum():
-            raise SessionMemoryError("invalid handoff id")
-        value = read_json(self._session_root(session_id) / "handoffs" / f"{handoff_id}.json", None)
-        if not isinstance(value, dict):
-            raise SessionMemoryError("handoff not found")
-        return value
+        with self._lock_for(session_id):
+            if not handoff_id.replace("-", "").replace("_", "").isalnum():
+                raise SessionMemoryError("invalid handoff id")
+            value = read_json(self._session_root(session_id) / "handoffs" / f"{handoff_id}.json", None)
+            if not isinstance(value, dict):
+                raise SessionMemoryError("handoff not found")
+            return value
 
     def copy_artifact(self, source_session: str, artifact_id: str, target_session: str) -> dict[str, Any]:
         manifest = self.manifest(source_session)
         artifact = next((item for item in manifest["artifacts"] if item["artifact_id"] == artifact_id), None)
         if artifact is None:
             raise SessionMemoryError("artifact not found")
-        source = self._session_root(source_session) / artifact["relative_path"]
+        project = self._project_root(source_session)
+        if project is None:
+            raise SessionMemoryError("Session has no project directory")
+        source = project / artifact["relative_path"]
         if not source.is_file():
             raise SessionMemoryError("artifact bytes unavailable")
         target = self._session_root(target_session) / "imported-artifacts" / artifact["sha256"]
@@ -98,7 +122,9 @@ class SessionMemoryStore:
             if not path.is_file():
                 continue
             try:
-                rows = SQLiteContextStorage().read_rows(path)
+                with closing(sqlite3.connect(path, timeout=30)) as connection:
+                    connection.execute("PRAGMA busy_timeout = 30000")
+                    rows = connection.execute("SELECT timeline, payload FROM messages ORDER BY timeline").fetchall()
             except (sqlite3.Error, OSError):
                 continue
             for timeline, payload in rows:
@@ -118,6 +144,13 @@ class SessionMemoryStore:
 
     def _artifacts(self, root: Path, session_id: str) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
+        project = self._project_root(session_id)
+        if project is not None:
+            user_manifest = read_json(project / "attachments" / "manifest.json", {})
+            if isinstance(user_manifest, dict):
+                for item in user_manifest.values():
+                    if isinstance(item, dict) and isinstance(item.get("artifact_id"), str):
+                        result.append(dict(item))
         for path in sorted((root / "executions").glob("*/tool-results/*")) if (root / "executions").is_dir() else ():
             if not path.is_file(): continue
             relative = path.relative_to(root).as_posix()

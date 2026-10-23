@@ -47,21 +47,23 @@ Host deadline expiry writes `INTERRUPTED`; a late worker must not overwrite it.
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [checkpoint_store.py](checkpoint_store.py#L16) | `_write_json_atomically` | `path: Path, payload: dict[str, Any]` | `str` | Durably replace one JSON document and return its SHA-256 digest. |
-| [checkpoint_store.py](checkpoint_store.py#L71) | `CheckpointStore.commit` | `generation: str, graph: dict[str, Any] \| None, contexts: dict[str, dict[str, Any]], reason: str, run_graph: dict[str, Any] \| None, recovery: dict[str, Any] \| None` | `dict[str, Any]` | Write a complete generation and make it recoverable exactly once. |
-| [execution_attempt.py](execution_attempt.py#L106) | `ExecutionAttempt.publish_ephemeral` | `event_type: str, data: dict[str, Any], agent: str, message: str, usage: dict[str, Any] \| None` | `None` | Publish one live-only event without appending it to the journal. |
-| [execution_attempt.py](execution_attempt.py#L132) | `ExecutionAttempt.ephemeral_cursor` | `None` | `int` | Return the current live-only sequence for a new SSE subscriber. |
-| [execution_attempt.py](execution_attempt.py#L137) | `ExecutionAttempt.ephemeral_events` | `after: int` | `list[dict[str, Any]]` | Return live-only events after an in-process subscriber cursor. |
-| [execution_attempt.py](execution_attempt.py#L145) | `ExecutionAttempt.start` | `operation: Callable[[ExecutionController], ResultT], start_data: dict[str, object] \| None` | `None` | Schedule exactly one operation under this attempt's controller. |
-| [execution_attempt.py](execution_attempt.py#L162) | `ExecutionAttempt.request_stop` | `force: bool, reason: str` | `ExecutionSnapshot` | Record one stop request and propagate it to every resource owner. |
-| [execution_attempt.py](execution_attempt.py#L182) | `ExecutionAttempt.wait` | `timeout: float \| None` | `bool` | Wait for worker terminal cleanup without attempting to join it. |
-| [execution_attempt.py](execution_attempt.py#L186) | `ExecutionAttempt.snapshot` | `None` | `ExecutionSnapshot` | Return a consistent process-local state projection. |
-| [execution_attempt.py](execution_attempt.py#L192) | `ExecutionAttempt.result` | `None` | `ResultT \| None` | Return a successful result only after the worker has supplied one. |
-| [execution_attempt.py](execution_attempt.py#L197) | `ExecutionAttempt.commit_checkpoint` | `generation: str, graph: dict[str, object] \| None, contexts: dict[str, dict[str, object]], reason: str, run_graph: dict[str, object] \| None, recovery: dict[str, object] \| None` | `dict[str, object]` | Commit one complete graph/context generation through this attempt. |
-| [execution_attempt.py](execution_attempt.py#L215) | `ExecutionAttempt.mark_interrupted` | `reason: str` | `None` | Persist an unconfirmed terminal when host shutdown exceeds deadline. |
-| [execution_attempt.py](execution_attempt.py#L230) | `ExecutionAttempt._run` | `operation: Callable[[ExecutionController], ResultT]` | `None` | Run operation and publish one mutually exclusive terminal outcome. |
-| [execution_attempt.py](execution_attempt.py#L257) | `ExecutionAttempt._write_manifest` | `None` | `None` | Atomically project current lifecycle and latest checkpoint to manifest. |
+| [checkpoint_store.py](checkpoint_store.py#L69) | `CheckpointStore.commit` | `generation: str, graph: dict[str, Any] \| None, contexts: dict[str, dict[str, Any]], reason: str, run_graph: dict[str, Any] \| None, recovery: dict[str, Any] \| None` | `dict[str, Any]` | Write a complete generation and make it recoverable exactly once. |
+| [execution_attempt.py](execution_attempt.py#L108) | `ExecutionAttempt.publish_ephemeral` | `event_type: str, data: dict[str, Any], agent: str, message: str, usage: dict[str, Any] \| None` | `None` | Publish one live transport event and its durable write-behind copy. |
+| [execution_attempt.py](execution_attempt.py#L123) | `ExecutionAttempt.ephemeral_cursor` | `None` | `int` | Implement `ExecutionAttempt.ephemeral_cursor`. |
+| [execution_attempt.py](execution_attempt.py#L127) | `ExecutionAttempt.ephemeral_events` | `after: int` | `list[dict[str, Any]]` | Implement `ExecutionAttempt.ephemeral_events`. |
+| [execution_attempt.py](execution_attempt.py#L131) | `ExecutionAttempt.start` | `operation: Callable[[ExecutionController], ResultT], start_data: dict[str, object] \| None` | `None` | Schedule exactly one operation under this attempt's controller. |
+| [execution_attempt.py](execution_attempt.py#L148) | `ExecutionAttempt.request_stop` | `force: bool, reason: str` | `ExecutionSnapshot` | Record one stop request and propagate it to every resource owner. |
+| [execution_attempt.py](execution_attempt.py#L168) | `ExecutionAttempt.wait` | `timeout: float \| None` | `bool` | Wait for worker terminal cleanup without attempting to join it. |
+| [execution_attempt.py](execution_attempt.py#L172) | `ExecutionAttempt.snapshot` | `None` | `ExecutionSnapshot` | Return a consistent process-local state projection. |
+| [execution_attempt.py](execution_attempt.py#L178) | `ExecutionAttempt.result` | `None` | `ResultT \| None` | Return a successful result only after the worker has supplied one. |
+| [execution_attempt.py](execution_attempt.py#L183) | `ExecutionAttempt.commit_checkpoint` | `generation: str, graph: dict[str, object] \| None, contexts: dict[str, dict[str, object]], reason: str, run_graph: dict[str, object] \| None, recovery: dict[str, object] \| None` | `dict[str, object]` | Commit one complete graph/context generation through this attempt. |
+| [execution_attempt.py](execution_attempt.py#L201) | `ExecutionAttempt.mark_interrupted` | `reason: str` | `None` | Persist an unconfirmed terminal when host shutdown exceeds deadline. |
+| [execution_attempt.py](execution_attempt.py#L221) | `ExecutionAttempt._run` | `operation: Callable[[ExecutionController], ResultT]` | `None` | Run operation and publish one mutually exclusive terminal outcome. |
+| [execution_attempt.py](execution_attempt.py#L253) | `ExecutionAttempt._write_manifest` | `None` | `None` | Atomically project current lifecycle and latest checkpoint to manifest. |
 | [journal.py](journal.py#L35) | `ExecutionJournal.append` | `event_type: str, data: dict[str, Any] \| None, agent: str, message: str, usage: dict[str, int] \| None, duration_ms: float \| None` | `dict[str, Any]` | Commit one event before any caller publishes it to observers. |
 | [journal.py](journal.py#L72) | `ExecutionJournal.events` | `None` | `Iterator[dict[str, Any]]` | Yield complete valid JSON lines in commit order. |
+| [journal_tail.py](journal_tail.py#L34) | `read_journal_before` | `path: Path, before: int \| None, limit: int` | `JournalPage` | Read at most ``limit`` complete records starting before ``before``. |
+| [reconcile.py](reconcile.py#L15) | `reconcile_interrupted_attempts` | `state_root: Path` | `tuple[str, ...]` | Mark every attempt the previous host left non-terminal as interrupted. |
 | [sigint_supervisor.py](sigint_supervisor.py#L38) | `SigintSupervisor.install` | `None` | `None` | Install minimal receipt handler from host main thread. |
 | [sigint_supervisor.py](sigint_supervisor.py#L47) | `SigintSupervisor.restore` | `None` | `None` | Restore prior host handler once, leaving no Angelus signal residue. |
 | [sigint_supervisor.py](sigint_supervisor.py#L53) | `SigintSupervisor.drain` | `None` | `bool` | Consume one pending SIGINT and perform its durable shutdown work. |
@@ -69,16 +71,25 @@ Host deadline expiry writes `INTERRUPTED`; a late worker must not overwrite it.
 | [sigint_supervisor.py](sigint_supervisor.py#L78) | `SigintSupervisor.wait_for_stop_all` | `attempts: Iterable[ExecutionAttempt[object]], reason: str` | `None` | Wait boundedly and persist interruption for each unfinished worker. |
 | [sigint_supervisor.py](sigint_supervisor.py#L89) | `SigintSupervisor.force_stop_all` | `reason: str` | `None` | Request and then boundedly await every live attempt before exit. |
 | [sigint_supervisor.py](sigint_supervisor.py#L99) | `SigintSupervisor._receive` | `_signum: int, _frame: object` | `None` | Mark SIGINT pending without performing locks, joins, or disk I/O. |
+| [trace_buffer.py](trace_buffer.py#L48) | `TraceBuffer.last_committed_sequence` | `None` | `int` | Return the highest sequence already fsynced. |
+| [trace_buffer.py](trace_buffer.py#L54) | `TraceBuffer.error` | `None` | `BaseException \| None` | Return the first background flush failure instead of hiding it. |
+| [trace_buffer.py](trace_buffer.py#L59) | `TraceBuffer.append` | `record: dict[str, object]` | `None` | Buffer one record, flushing synchronously once the batch is full. |
+| [trace_buffer.py](trace_buffer.py#L83) | `TraceBuffer.flush` | `None` | `None` | Write and fsync every buffered record, raising on failure. |
+| [trace_buffer.py](trace_buffer.py#L88) | `TraceBuffer.close` | `None` | `None` | Flush the tail, stop the flusher, and surface any write failure. |
+| [trace_buffer.py](trace_buffer.py#L102) | `TraceBuffer._run` | `None` | `None` | Flush on a fixed interval until closed. |
+| [trace_buffer.py](trace_buffer.py#L111) | `TraceBuffer._flush_locked` | `None` | `None` | Write the pending batch as one NDJSON append and fsync it. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [checkpoint_store.py](checkpoint_store.py#L49) | `CheckpointStore` | `attempt_root: Path, journal: ExecutionJournal` | `object` | Commit graph/context generations through one journal event. |
-| [execution_attempt.py](execution_attempt.py#L23) | `ExecutionAttempt` | `session_id: str, attempt: int, root: Path` | `Generic[ResultT]` | Own the complete lifecycle of one concrete execution attempt. |
+| [checkpoint_store.py](checkpoint_store.py#L47) | `CheckpointStore` | `attempt_root: Path, journal: ExecutionJournal` | `object` | Commit graph/context generations through one journal event. |
+| [execution_attempt.py](execution_attempt.py#L24) | `ExecutionAttempt` | `session_id: str, attempt: int, root: Path` | `Generic[ResultT]` | Own the complete lifecycle of one concrete execution attempt. |
 | [journal.py](journal.py#L14) | `ExecutionJournal` | `path: Path, execution_id: str` | `object` | The sole append-only durable fact log for one execution attempt. |
+| [journal_tail.py](journal_tail.py#L19) | `JournalPage` | `events: tuple[dict[str, object], ...], next_before: int \| None, has_more: bool` | `object` | One bounded page of journal records, newest first. |
 | [sigint_supervisor.py](sigint_supervisor.py#L12) | `SigintSupervisor` | `live_attempts: Callable[[], Iterable[ExecutionAttempt[object]]], deadline_seconds: float` | `object` | Translate Ctrl+C into a bounded forced shutdown of Session attempts. |
 | [state.py](state.py#L9) | `ExecutionState` | `None` | `StrEnum` | Canonical lifecycle states written by an execution attempt. |
 | [state.py](state.py#L28) | `ExecutionSnapshot` | `session_id: str, execution_id: str \| None, attempt: int, state: ExecutionState, started_at: float \| None, finished_at: float \| None, error: str \| None` | `object` | Immutable process-local projection of one attempt lifecycle. |
+| [trace_buffer.py](trace_buffer.py#L19) | `TraceBuffer` | `path: Path, flush_interval: float, flush_at: int` | `object` | Append transport deltas to one NDJSON file with bounded coalescing. |
 
 <!-- END GENERATED SYMBOL MAP -->

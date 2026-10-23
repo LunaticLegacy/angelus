@@ -4,7 +4,12 @@ from __future__ import annotations
 import unittest
 
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
-from llmfetcher.llm_types import LLMContext, LLMToolCall, ToolInfo
+from llmfetcher.llm_types import (
+    AssistantTurnInput,
+    TokenUsage,
+    ToolCallInput,
+    ToolResultInput,
+)
 
 
 class ToolResultPromptBudgetTests(unittest.TestCase):
@@ -14,27 +19,37 @@ class ToolResultPromptBudgetTests(unittest.TestCase):
         """Context reconstruction preserves a host-supplied result verbatim."""
         handler = ContextHandlerLinear(object(), max_context_threshold=10_000_000)
         historical = "h" * 50_000
-        handler.messages = [
-            LLMContext(
-                role="assistant",
-                timeline=index,
-                content="",
-                tool_calls=[ToolInfo(
-                    call=LLMToolCall(name="shell", call_id=f"old-{index}"),
-                    result=historical,
-                )],
+
+        def add(call_id: str, tool_name: str, output: str) -> None:
+            """Append one v2 assistant turn with its stored tool result."""
+            handler.add_assistant_message(
+                AssistantTurnInput(
+                    content="",
+                    reasoning="",
+                    tool_calls=(
+                        ToolCallInput(call_id=call_id, name=tool_name, arguments={}),
+                    ),
+                    usage=TokenUsage(),
+                    model_duration_ms=None,
+                    round_duration_ms=None,
+                    created_at=None,
+                ),
+                [
+                    ToolResultInput(
+                        call_id=call_id,
+                        tool_name=tool_name,
+                        output=output,
+                        images=(),
+                        ok=True,
+                        duration_ms=1,
+                        created_at=None,
+                    )
+                ],
             )
-            for index in range(1, 6)
-        ]
-        handler.messages.append(LLMContext(
-            role="assistant",
-            timeline=6,
-            content="",
-            tool_calls=[ToolInfo(
-                call=LLMToolCall(name="plan_read", call_id="latest"),
-                result="Plan item frontend-agent-render saved as in_progress.",
-            )],
-        ))
+
+        for index in range(1, 6):
+            add(f"old-{index}", "shell", historical)
+        add("latest", "plan_read", "Plan item frontend-agent-render saved as in_progress.")
 
         first_messages = [message.to_dict() for message in handler.build_messages()]
         first_tools = [message for message in first_messages if message["role"] == "tool"]
@@ -55,3 +70,6 @@ class ToolResultPromptBudgetTests(unittest.TestCase):
             for item in tool_messages[:-1]
         ))
         self.assertEqual(historical, tool_messages[0]["content"])
+
+
+if __name__ == "__main__": unittest.main()

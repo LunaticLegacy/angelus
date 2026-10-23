@@ -1,17 +1,20 @@
-"""Unified automatic/manual context compaction endpoints."""
+"""Session-owned context compaction endpoint."""
 
 from __future__ import annotations
 
 import json
 import queue
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core import AngelusCore
+from .dependencies import get_core
+
+if TYPE_CHECKING:
+    from ..core import AngelusCore
 
 router = APIRouter()
 
@@ -20,110 +23,50 @@ class CompactRequest(BaseModel):
     agent: str = Field(default="coordinator", min_length=1, max_length=80)
 
 
-class CompactStopRequest(BaseModel):
-    reason: str = Field(default="user_requested", min_length=1, max_length=512)
-
-
 def _core(request: Request) -> AngelusCore:
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
 
 
-def _stage(stage: str, detail: str, kind: str = "progress", **extra: Any) -> str:
-    payload = {"stage": stage, "detail": detail, "kind": kind, **extra}
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+def _frame(stage: str, detail: str, kind: str = "progress", **extra: Any) -> str:
+    return json.dumps({"stage": stage, "detail": detail, "kind": kind, **extra}, ensure_ascii=False) + "\n"
 
 
 @router.post("/api/sessions/{session_id}/compact")
 def compact_session(session_id: str, payload: CompactRequest, request: Request) -> StreamingResponse:
-    """Run explicit compaction through the session's existing Agent handler.
-
-    The compactor generates its summary with a streaming request, but those
-    chunks reach the world through the handler's compaction observer, which the
-    run path only installs while an execution attempt exists. An explicit
-    compaction runs with no attempt, so this route hands the service its own
-    observer and relays every chunk as a ``delta`` frame. The response then
-    reports real progress instead of blocking silently between ``compacting``
-    and ``done``.
-    """
+    """Run compaction through the live Session Agent and stream lifecycle frames."""
     core = _core(request)
 
     def generate():
-        yield _stage("loading", "正在载入当前 session 上下文…")
-        yield _stage("compacting", "正在生成摘要…")
-        # The service compacts on this generator's behalf, so chunks cross a
-        # queue: a generator cannot yield from an observer callback.
-        records: "queue.Queue[tuple[str, Any]]" = queue.Queue()
-        outcome: dict[str, Any] = {}
+        yield _frame("loading", "正在载入当前会话上下文…")
+        yield _frame("compacting", "正在流式生成摘要…")
+        frames: queue.Queue[dict[str, Any]] = queue.Queue()
 
-        def observe(_event_type: str, _message: str, data: dict) -> None:
-            delta = str((data or {}).get("delta") or "")
-            if delta:
-                records.put(("delta", delta))
+        def on_event(event_type: str, _message: str, data: dict) -> None:
+            if event_type == "context:compact_delta":
+                delta = str(data.get("delta", ""))
+                frames.put({"stage": "output", "kind": "delta", "delta": delta, "detail": delta})
 
-        def compact() -> None:
+        def run() -> None:
             try:
-                outcome["value"] = core.session_service.compact(
-                    session_id, payload.agent, observer=observe
-                )
+                agent = core.session_service.compact(session_id, payload.agent, on_event=on_event)
+                linear = agent.context_handler.linear
+                abstract = linear.abstract
+                frames.put({"stage": "done", "detail": "上下文压缩完成", "kind": "done",
+                            "archived_messages": len(linear.archive),
+                            "abstract_characters": len(abstract.abstract_msg or "") if abstract is not None else 0})
             except Exception as exc:
-                outcome["error"] = exc
+                frames.put({"stage": "error", "detail": "上下文压缩失败，原上下文保持不变", "kind": "error", "error": str(exc)})
             finally:
-                records.put(("end", None))
+                frames.put({"stage": "__end__"})
 
-        worker = threading.Thread(target=compact, name=f"compact-{session_id}", daemon=True)
-        worker.start()
+        threading.Thread(target=run, name="angelus-compaction", daemon=True).start()
         while True:
-            kind, value = records.get()
-            if kind == "end":
+            frame = frames.get()
+            if frame.get("stage") == "__end__":
                 break
-            yield _stage("delta", "", "delta", delta=value)
-        worker.join()
-
-        error = outcome.get("error")
-        if error is not None:
-            yield _stage("error", "上下文压缩未完成，原上下文保持不变", "error", error=str(error))
-            return
-        _control, agent = outcome["value"]
-        handler = agent.context_handler
-        linear = getattr(handler, "linear", None)
-        active_ids = getattr(handler, "activate_context_id_list", [])
-        raw_contexts = getattr(handler, "raw_contexts_info", [])
-        summaries = getattr(handler, "summaries", {})
-        abstract = getattr(linear, "abstract", None)
-        if linear is None:
-            abstract_characters = sum(len(str(value)) for value in summaries.values())
-            archived_messages = max(0, len(raw_contexts) - len(active_ids))
-        else:
-            abstract_characters = len(getattr(abstract, "abstract_msg", "") or "")
-            archived_messages = len(getattr(linear, "archive", []))
-        yield _stage(
-            "done",
-            "上下文压缩完成",
-            "done",
-            archived_messages=archived_messages,
-            abstract_characters=abstract_characters,
-        )
+            yield json.dumps(frame, ensure_ascii=False) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
-
-
-@router.post("/api/sessions/{session_id}/compact/stop")
-def stop_compaction(session_id: str, payload: CompactStopRequest, request: Request) -> dict[str, Any]:
-    stopped = _core(request).session_service.stop_compaction(session_id, reason=payload.reason)
-    if not stopped:
-        raise HTTPException(status_code=409, detail="No compaction is running")
-    return {"accepted": True, "session_id": session_id}
-
-
-@router.post("/api/sessions/{session_id}/compact/force-stop")
-def force_stop_compaction(session_id: str, payload: CompactStopRequest, request: Request) -> dict[str, Any]:
-    stopped = _core(request).session_service.stop_compaction(session_id, force=True, reason=payload.reason)
-    if not stopped:
-        raise HTTPException(status_code=409, detail="No compaction is running")
-    return {"accepted": True, "session_id": session_id}
 
 
 __all__ = ["router", "compact_session"]

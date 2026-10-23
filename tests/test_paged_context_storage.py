@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from llmfetcher.context_handlers import is_sqlite_context_pointer
 from llmfetcher.context_handlers.linear import ContextHandlerLinear, read_persisted_context_page
 
 
@@ -29,7 +30,7 @@ class PagedContextStorageTests(unittest.TestCase):
                 writer.add_user_message(f"message-{number}")
             self.assertTrue(writer.save(path))
             pointer = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(3, pointer["schema_version"])
+            self.assertTrue(is_sqlite_context_pointer(pointer))
             reader = ContextHandlerLinear(_NoopCompactor())
             self.assertTrue(reader.load(path))
             self.assertEqual(200, len(reader.messages))

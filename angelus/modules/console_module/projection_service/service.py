@@ -4,220 +4,54 @@ from __future__ import annotations
 import json
 import threading
 from collections import OrderedDict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence, cast
 
-from llmfetcher.context_handlers.linear import read_persisted_context_page
-from llmfetcher.context_handlers.linear.codec import context_from_dict
-from llmfetcher.context_handlers.storage import SQLiteContextStorage
 from llmfetcher.context_handlers import ContextSnapshot
+from llmfetcher.context_handlers.linear import read_persisted_archive_page, read_persisted_context_page
+from llmfetcher.context_handlers.linear.codec import tool_result_from_dict
+from llmfetcher.context_handlers.storage import SQLiteContextStorage
+from llmfetcher.graph_memory.models import GraphMemoryState
+from llmfetcher.graph_memory.projection import ContextGraphProjection
+from llmfetcher.llm_types import (
+    AssistantContextItem,
+    ContextItem,
+    ContextSummaryItem,
+    JsonObject,
+    ToolResultRecord,
+    UserContextItem,
+)
 
-from .console_state import ConsoleDomainError
-from ..execution_module import ExecutionState
-from ..run_graph_module import RunGraphProjector
+from ..console_state import ConsoleDomainError
+from ...execution_module import ExecutionState
+from ...execution_module.journal_tail import read_journal_before
+from ...run_graph_module import RunGraphProjector
+from .types import (
+    CONTEXT_BLOCK_LABELS,
+    AgentBucket,
+    BackendInfo,
+    CallRecord,
+    CallUsage,
+    CallsPayload,
+    CallsState,
+    CallsStats,
+    ContentPreview,
+    InternalCall,
+    JsonValue,
+    PrimaryCall,
+    RequestConfig,
+    RequestMessage,
+    RequestTool,
+    SessionUsageLedger,
+    ToolCallContent,
+    ToolResult,
+    ToolResultPreview,
+    UsageScope,
+)
 
 if TYPE_CHECKING:
-    from ...core import AngelusCore
-
-
-
-# -- Call-ledger value types -------------------------------------------
-#
-# The console call ledger projects durable journal facts into typed records
-# instead of ad-hoc ``dict[str, Any]`` rows.  ``CallsPayload.as_wire``
-# serializes a payload back to the exact JSON contract the frontend consumes,
-# so the dataclasses are the only in-process representation of a call.
-
-JsonScalar = str | int | float | bool | None
-JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-
-
-@dataclass
-class ContentPreview:
-    """One capped content value that still reports its true character count."""
-    text: str
-    characters: int
-    truncated: bool
-
-
-@dataclass
-class ToolResultPreview(ContentPreview):
-    """A tool-result preview that keeps an image count, never image bytes."""
-    image_count: int = 0
-
-
-@dataclass
-class RequestMessage:
-    """One capped planned request message rendered in the ledger."""
-    role: str
-    text: str
-    characters: int
-    truncated: bool
-
-
-@dataclass
-class ToolCallContent:
-    """One tool call's name plus its capped argument preview."""
-    name: str
-    args: ContentPreview | None
-
-
-@dataclass
-class ToolResult:
-    """One completed tool result keyed by the originating call id."""
-    call_id: str
-    name: str
-    ok: JsonValue
-    duration_ms: JsonValue
-    result: ContentPreview | ToolResultPreview | None
-
-
-@dataclass
-class CallUsage:
-    """Token accounting for one call; every key is always emitted."""
-    input: int = 0
-    output: int = 0
-    total: int = 0
-    cached: int = 0
-    reasoning: int = 0
-
-
-@dataclass
-class RequestTool:
-    """One tool schema offered to the model, with a capped description."""
-    name: str
-    description: ContentPreview | None
-
-
-@dataclass
-class BackendInfo:
-    """The provider identity one request was dispatched to."""
-    name: str | None = None
-    provider: str | None = None
-    model: str | None = None
-
-
-@dataclass
-class RequestConfig:
-    """Run-invariant request material stored once per Agent."""
-    system_prompt: ContentPreview | None
-    message: ContentPreview | None
-    tools: list[RequestTool]
-    backend: BackendInfo
-    temperature: JsonValue
-    max_tokens: JsonValue
-    thinking_mode: JsonValue
-    reasoning_effort: JsonValue
-
-
-@dataclass
-class PrimaryCall:
-    """One real, round-based primary LLM call."""
-    kind: str
-    agent: str
-    round: int
-    request_id: str | None
-    model: str
-    stream: bool
-    message_count: int
-    message_roles: dict[str, int]
-    source_ids: list[str]
-    input_characters: int
-    estimated_input_tokens: int
-    input_sha256: str
-    tool_count: int
-    tool_schema_hashes: list[str]
-    tool_names: list[str]
-    temperature: JsonValue
-    max_tokens: JsonValue
-    thinking_mode: JsonValue
-    reasoning_effort: JsonValue
-    usage: CallUsage | None
-    model_duration_ms: float | None
-    round_duration_ms: float | None
-    tool_call_count: int | None
-    input_message: ContentPreview | None
-    request_messages: list[RequestMessage]
-    request_omitted_messages: int
-    assistant_content: ContentPreview | None
-    reasoning_content: ContentPreview | None
-    tool_calls: list[ToolCallContent]
-    tool_results: list[ToolResult]
-    retries: int
-    attempts: int
-    timestamp: JsonValue
-    id: str
-    sequence: int
-
-
-@dataclass
-class InternalCall:
-    """One hidden internal LLM call (for example context compaction)."""
-    kind: str
-    agent: str
-    internal_kind: str
-    message: str
-    usage: CallUsage | None
-    timestamp: JsonValue
-    id: str
-    sequence: int
-
-
-CallRecord = PrimaryCall | InternalCall
-
-
-@dataclass
-class AgentBucket:
-    """Per-Agent accumulator used while folding the durable journal."""
-    primary: dict[int, PrimaryCall] = field(default_factory=dict)
-    internal: list[InternalCall] = field(default_factory=list)
-    request: RequestConfig | None = None
-
-
-@dataclass
-class CallsState:
-    """Incremental fold state keyed by journal byte cursor."""
-    agents: dict[str, AgentBucket] = field(default_factory=dict)
-    sequence: int = 0
-    cursor: int = 0
-
-
-@dataclass
-class CallsStats:
-    """Aggregate counters across one Agent's ledger window."""
-    total: int = 0
-    primary: int = 0
-    internal: int = 0
-    retries: int = 0
-    input_tokens: int = 0
-    usage: CallUsage = field(default_factory=CallUsage)
-
-
-@dataclass
-class CallsPayload:
-    """Typed ``/calls`` projection; ``as_wire`` restores the JSON contract."""
-    agent: str
-    calls: list[CallRecord]
-    available_tools: list[str]
-    request_config: RequestConfig | None
-    stats: CallsStats
-    has_more: bool
-
-    def as_wire(self) -> dict[str, JsonValue]:
-        """Serialize to the frontend wire shape with identical keys and order.
-
-        Returns:
-            The payload as JSON-ready mappings, with the internal ``sequence``
-            ordering helper removed from every call row.
-        """
-        wire = asdict(self)
-        calls = wire.get("calls")
-        if isinstance(calls, list):
-            for record in calls:
-                if isinstance(record, dict):
-                    record.pop("sequence", None)
-        return wire
+    from ....core import AngelusCore
 
 
 
@@ -264,42 +98,20 @@ class ConsoleProjectionService:
         Returns:
             JSON-safe static topology. Runtime state never appears here.
         """
-        blueprint = self._state(session_id).blueprint()
-        return {
-            "schema_version": 1,
-            "kind": "angelus.workflow",
-            "nodes": [
-                {"id": "coordinator", "kind": "agent", "role": "coordinator"},
-                *[
-                    {"id": worker.name, "kind": "agent", "role": worker.role}
-                    for _, worker in sorted(blueprint.workers.items())
-                ],
-            ],
-            "edges": [
-                {"source": edge.source, "target": edge.target, "kind": "dependency"}
-                for edge in blueprint.connections
-            ],
-            "mappers": dict(blueprint.mappers),
-            "routers": {name: list(targets) for name, targets in blueprint.routers.items()},
-            "revision": blueprint.schema_version,
-        }
+        return self._core.swarm_graph.topology(session_id)
 
     def graph(self, session_id: str, execution_id: str | None = None) -> dict[str, object]:
-        """Project one selected/latest execution as the Session execution graph."""
-        session = self._session(session_id)
-        executor = session.execution
-        if executor is None:
-            return RunGraphProjector().project(session_id, self._core.state_root / "sessions" / session_id)
-        status = executor.snapshot()
-        requested_is_live = execution_id is None or execution_id == status.execution_id
-        live = session.swarm.view_snapshot() if requested_is_live and session.swarm is not None else None
-        return RunGraphProjector().project(
-            session_id,
-            executor.root,
-            execution_id=execution_id,
-            live_snapshot=live,
-            live_status=asdict(status) if requested_is_live else None,
-        )
+        """Project one selected/latest execution as the Session execution graph.
+
+        Args:
+            session_id: Stable identity of the Session to inspect.
+            execution_id: Optional attempt identity; ``None`` selects the
+                latest or live attempt.
+
+        Returns:
+            The canonical graph snapshot from the topology gateway.
+        """
+        return self._core.swarm_graph.snapshot(session_id, execution_id)
 
     def graph_events(self, session_id: str, cursor: int = 0, execution_id: str | None = None) -> dict[str, object]:
         """Return only normalized RunGraph events for one attempt."""
@@ -333,49 +145,32 @@ class ConsoleProjectionService:
             Agent-role list without prompts, tools, or credentials.
         """
         session = self._session(session_id)
-        live = session.swarm.view_snapshot()
-        # Runtime snapshots can be partial after a restart or before all
-        # Workers are materialized. Keep the persisted workflow identities in
-        # the operator-facing list and let runtime data override them.
-        persisted_nodes = self.workflow(session_id)["nodes"]
-        runtime_nodes = live.get("nodes", []) if isinstance(live, dict) else []
-        by_id = {str(node.get("id")): node for node in persisted_nodes if isinstance(node, dict)}
-        by_id.update({str(node.get("id")): node for node in runtime_nodes if isinstance(node, dict)})
-        nodes = list(by_id.values())
+        graph = self._core.swarm_graph.snapshot(session_id)
+        nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
         agents = []
         for node in nodes:
-            if node["kind"] != "agent":
+            if not isinstance(node, dict) or node.get("kind") != "agent":
+                continue
+            agent_id = str(node.get("id") or "")
+            if not agent_id:
                 continue
             try:
-                context = self._context_stats(session.swarm.get_agent(node["id"]))
+                agent = session.swarm.get_agent(agent_id) if session.swarm is not None else None
             except KeyError:
-                context = {}
-            agents.append({"id": node["id"], "name": node["id"], "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": context})
+                agent = None
+            context = self._context_stats(agent) if agent is not None else {}
+            agents.append({"id": agent_id, "name": agent_id, "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": context})
         return {"agents": agents}
 
     @staticmethod
     def _context_stats(agent: object) -> dict[str, object]:
         """Summarize a concrete Agent context without exposing messages."""
-        handler = getattr(agent, "context_handler", None)
-        linear = getattr(handler, "linear", handler)
-        messages = getattr(linear, "messages", []) if linear else []
-        abstract = getattr(linear, "abstract", None) if linear else None
-        if hasattr(handler, "raw_contexts_info"):
-            messages = getattr(handler, "raw_contexts_info", [])
-            active_ids = getattr(handler, "activate_context_id_list", [])
-            summaries = getattr(handler, "summaries", {})
-            text = "".join(str(item) for item in messages)
-            return {
-                "messages": len(messages),
-                "active_messages": len(active_ids),
-                "characters": len(text),
-                "abstract_characters": sum(len(str(value)) for value in summaries.values()),
-                "threshold": getattr(handler, "max_context_threshold", 0),
-                "estimated_tokens": len(text) // 4,
-                "branches": len(getattr(handler, "worktree_dict", {})),
-            }
+        handler = agent.context_handler
+        linear = handler.linear
+        messages = linear.messages
+        abstract = linear.abstract
         text = "".join(str(item) for item in messages)
-        return {"messages": len(messages), "characters": len(text), "abstract_characters": len(str(abstract or "")), "threshold": getattr(linear, "compress_threshold", 0), "estimated_tokens": len(text) // 4}
+        return {"messages": len(messages), "characters": len(text), "abstract_characters": len(str(abstract or "")), "threshold": linear.compress_threshold, "estimated_tokens": len(text) // 4}
 
     def usage(self, session_id: str) -> dict[str, object]:
         """Aggregate five-dimensional token usage across the Session swarm.
@@ -384,22 +179,34 @@ class ConsoleProjectionService:
             session_id: Stable identity of the Session to inspect.
 
         Returns:
-            Input, output, total, cached, and reasoning token totals.
+            ``usage`` (lifetime, every call), ``primary`` (lifetime request
+            loop), ``run`` and ``run_primary`` for the newest execution, and
+            the per-agent lifetime ledger.  A cache-hit rate divides one of
+            the ``primary`` maps: internal calls send unrelated prompts, so
+            folding them in makes a healthy prefix read as a partial miss.
         """
-        swarm = self._session(session_id).swarm
-        persisted = self._persisted_usage(session_id)
-        if persisted is None:
-            total = swarm.total_usage()
-            per_agent = swarm.agent_usage()
-        else:
-            total, per_agent = persisted
-        return {
-            "usage": total,
+        ledger = self._usage_ledger(session_id)
+        if ledger is None:
+            swarm = self._session(session_id).swarm
+            return {
+                "usage": swarm.total_usage(),
+                "agents": [
+                    {"id": agent_id, "usage": usage}
+                    for agent_id, usage in sorted(swarm.agent_usage().items())
+                ],
+            }
+        payload: dict[str, object] = {
+            "usage": asdict(ledger.lifetime.all),
+            "primary": asdict(ledger.lifetime.primary),
             "agents": [
-                {"id": agent_id, "usage": usage}
-                for agent_id, usage in sorted(per_agent.items())
+                {"id": agent_id, "usage": asdict(usage)}
+                for agent_id, usage in sorted(ledger.agents.items())
             ],
         }
+        if ledger.run is not None:
+            payload["run"] = asdict(ledger.run.all)
+            payload["run_primary"] = asdict(ledger.run.primary)
+        return payload
 
     @staticmethod
     def _usage_values(value: object) -> dict[str, int] | None:
@@ -408,32 +215,58 @@ class ConsoleProjectionService:
             return None
         result: dict[str, int] = {}
         for key in ("input", "output", "total", "cached", "reasoning"):
+            raw = value.get(key, 0)
             try:
-                result[key] = max(0, int(value.get(key, 0)))
+                result[key] = max(0, int(raw))
             except (TypeError, ValueError):
                 result[key] = 0
         return result
 
     @classmethod
-    def _add_usage(cls, target: dict[str, int], value: object) -> bool:
+    def _add_call_usage(cls, target: CallUsage, value: object) -> bool:
+        """Add one normalized usage mapping into a typed accumulator."""
         usage = cls._usage_values(value)
         if usage is None:
             return False
-        for key, amount in usage.items():
-            target[key] += amount
+        target.input += usage["input"]
+        target.output += usage["output"]
+        target.total += usage["total"]
+        target.cached += usage["cached"]
+        target.reasoning += usage["reasoning"]
         return any(usage.values())
 
-    def _persisted_usage(self, session_id: str) -> tuple[dict[str, int], dict[str, dict[str, int]]] | None:
-        """Rebuild usage from durable execution journals after restart."""
+    def _usage_ledger(self, session_id: str) -> SessionUsageLedger | None:
+        """Rebuild Session usage from durable execution/context state.
+
+        Runtime ``Agent.lifetime_usage`` is intentionally process-local, while
+        the metrics page must survive a backend restart.  Normal executions
+        have canonical ``agent:usage`` and ``agent:internal_usage`` journal
+        facts; older checkpoints may only contain per-assistant usage in their
+        persisted context database, which is used as a compatibility path.
+
+        Every call lands in ``all``; only a ``primary`` call also lands in
+        ``primary``.  ``run`` is the execution whose journal was written last,
+        so a cache-hit rate can be read for the run currently being inspected
+        instead of an average over the Session's whole history.
+        """
         root = self._core.workspaces.get(session_id).state_path
-        total = {key: 0 for key in ("input", "output", "total", "cached", "reasoning")}
-        agents: dict[str, dict[str, int]] = {}
+        lifetime = UsageScope(all=CallUsage(), primary=CallUsage())
+        agents: dict[str, CallUsage] = {}
+        scopes: dict[str, UsageScope] = {}
+        journal_mtimes: dict[str, float] = {}
         found = False
-        for journal_path in (root / "executions").glob("*/execution.events.ndjson"):
+        executions = root / "executions"
+        for journal_path in executions.glob("*/execution.events.ndjson"):
             try:
                 lines = journal_path.read_text(encoding="utf-8").splitlines()
+                modified = journal_path.stat().st_mtime
             except OSError:
                 continue
+            execution = journal_path.parent.name
+            scope = scopes.setdefault(
+                execution, UsageScope(all=CallUsage(), primary=CallUsage())
+            )
+            journal_mtimes[execution] = modified
             for line in lines:
                 try:
                     event = json.loads(line)
@@ -444,16 +277,23 @@ class ConsoleProjectionService:
                 data = event.get("data") if isinstance(event.get("data"), dict) else {}
                 value = data.get("usage") if isinstance(data, dict) else None
                 value = value if value is not None else event.get("usage")
+                if not self._add_call_usage(lifetime.all, value):
+                    continue
+                found = True
                 agent = str(event.get("agent") or "unknown")
-                bucket = agents.setdefault(agent, {key: 0 for key in total})
-                if self._add_usage(total, value):
-                    self._add_usage(bucket, value)
-                    found = True
+                self._add_call_usage(agents.setdefault(agent, CallUsage()), value)
+                self._add_call_usage(scope.all, value)
+                kind = "internal" if event.get("type") == "agent:internal_usage" else str(data.get("kind") or "primary")
+                if kind == "primary":
+                    self._add_call_usage(lifetime.primary, value)
+                    self._add_call_usage(scope.primary, value)
         if found:
-            return total, agents
+            newest = max(journal_mtimes, key=lambda name: journal_mtimes[name])
+            return SessionUsageLedger(lifetime=lifetime, run=scopes[newest], agents=agents)
 
-        # Compatibility fallback for old checkpoints without usage journal
-        # facts; archived context rows may contain the original usage fields.
+        # Compatibility path for checkpoints created before durable usage
+        # journal facts were emitted.  Archived rows are included because
+        # compaction moves completed assistant turns there.
         for context_path in (root / "agents").glob("*/context.json"):
             before: int | None = None
             while True:
@@ -463,16 +303,173 @@ class ConsoleProjectionService:
                     )
                 except (OSError, ValueError, TypeError):
                     break
-                bucket = agents.setdefault(context_path.parent.name, {key: 0 for key in total})
+                agent = context_path.parent.name
+                bucket = agents.setdefault(agent, CallUsage())
                 for item in page:
                     value = getattr(item, "usage", None)
-                    if self._add_usage(total, value):
-                        self._add_usage(bucket, value)
+                    if self._add_call_usage(lifetime.all, value):
+                        self._add_call_usage(lifetime.primary, value)
+                        self._add_call_usage(bucket, value)
                         found = True
                 if next_before is None:
                     break
                 before = next_before
-        return (total, agents) if found else None
+        return SessionUsageLedger(lifetime=lifetime, run=None, agents=agents) if found else None
+
+    def usage_series(self, session_id: str) -> dict[str, object]:
+        """Project per-round usage points, attempts, and compaction markers.
+
+        The series is rebuilt from durable execution journals, never from
+        process-local Agent counters.  A session whose checkpoints predate
+        ``agent:usage`` returns an empty point list instead of a synthetic
+        timeline; the aggregate ``usage`` projection keeps its own fallback.
+        """
+        root = self._core.workspaces.get(session_id).state_path
+        points: dict[tuple[str, str, int, str], dict[str, object]] = {}
+        attempts: list[dict[str, object]] = []
+        compactions: dict[tuple[str, int], dict[str, object]] = {}
+
+        for execution_dir in sorted((root / "executions").glob("*")):
+            journal_path = execution_dir / "execution.events.ndjson"
+            if not journal_path.is_file():
+                continue
+            manifest = self._execution_manifest(execution_dir / "execution-manifest.json")
+            execution_id = str(manifest.get("execution_id") or execution_dir.name)
+            attempt = manifest.get("attempt")
+            attempts.append({
+                "execution": execution_id,
+                "attempt": attempt if isinstance(attempt, int) else None,
+                "started_at": manifest.get("started_at"),
+                "finished_at": manifest.get("finished_at"),
+                "state": manifest.get("state"),
+            })
+            try:
+                lines = journal_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                etype = event.get("type")
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                if etype in {"agent:usage", "agent:internal_usage"}:
+                    usage = self._usage_values(data.get("usage") if isinstance(data.get("usage"), dict) else event.get("usage"))
+                    if usage is None or not any(usage.values()):
+                        continue
+                    round_idx = data.get("round")
+                    if not isinstance(round_idx, int):
+                        continue
+                    agent = str(event.get("agent") or data.get("agent") or "unknown")
+                    kind = "internal" if etype == "agent:internal_usage" else str(data.get("kind") or "primary")
+                    key = (execution_id, agent, round_idx, kind)
+                    point = points.get(key)
+                    if point is None:
+                        point = self._series_point(execution_id, attempt, round_idx, agent, kind,
+                                                   self._event_timestamp(event))
+                        points[key] = point
+                    for field, amount in usage.items():
+                        point[field] = int(point[field]) + amount
+                    timestamp = self._event_timestamp(event)
+                    if timestamp is not None and (point["timestamp"] is None or timestamp < point["timestamp"]):
+                        point["timestamp"] = timestamp
+                    duration = data.get("duration_ms") if data.get("duration_ms") is not None else event.get("duration_ms")
+                    if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+                        point["duration_ms"] = float(duration)
+                        if point["model_duration_ms"] is None:
+                            point["model_duration_ms"] = float(duration)
+                elif etype == "agent:round":
+                    round_idx = data.get("round")
+                    if not isinstance(round_idx, int):
+                        continue
+                    agent = str(event.get("agent") or "unknown")
+                    key = (execution_id, agent, round_idx, "primary")
+                    point = points.get(key)
+                    if point is None:
+                        point = self._series_point(execution_id, attempt, round_idx, agent, "primary",
+                                                   self._event_timestamp(event))
+                        points[key] = point
+                    duration = data.get("duration_ms")
+                    if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+                        point["duration_ms"] = float(duration)
+                    model_duration = data.get("model_duration_ms")
+                    if isinstance(model_duration, (int, float)) and not isinstance(model_duration, bool):
+                        point["model_duration_ms"] = float(model_duration)
+                    tool_count = data.get("tool_call_count")
+                    if isinstance(tool_count, int) and not isinstance(tool_count, bool):
+                        point["tool_call_count"] = tool_count
+                elif etype == "context:compact_success":
+                    round_idx = data.get("round")
+                    if not isinstance(round_idx, int):
+                        continue
+                    archived = data.get("archived_messages")
+                    compactions[(execution_id, round_idx)] = {
+                        "execution": execution_id,
+                        "round": round_idx,
+                        "timestamp": self._event_timestamp(event),
+                        "archived_messages": archived if isinstance(archived, int) else 0,
+                    }
+
+        ordered = sorted(
+            points.values(),
+            key=lambda item: (
+                item["attempt"] if isinstance(item["attempt"], int) else 0,
+                item["timestamp"] if isinstance(item["timestamp"], (int, float)) else 0.0,
+                int(item["round"]),
+                str(item["agent"]),
+                str(item["kind"]),
+            ),
+        )
+        attempts.sort(key=lambda item: (
+            item["attempt"] if isinstance(item["attempt"], int) else 0,
+            item["started_at"] if isinstance(item["started_at"], (int, float)) else 0.0,
+        ))
+        markers = sorted(compactions.values(), key=lambda item: (
+            item["timestamp"] if isinstance(item["timestamp"], (int, float)) else 0.0,
+            int(item["round"]),
+        ))
+        return {"points": ordered, "attempts": attempts, "compactions": markers}
+
+    @staticmethod
+    def _series_point(execution: str, attempt: object, round_idx: int, agent: str,
+                      kind: str, timestamp: float | None) -> dict[str, object]:
+        """Create one empty series point before its journal facts are merged."""
+        return {
+            "execution": execution,
+            "attempt": attempt if isinstance(attempt, int) else None,
+            "round": round_idx,
+            "timestamp": timestamp,
+            "agent": agent,
+            "kind": kind,
+            "input": 0,
+            "output": 0,
+            "cached": 0,
+            "reasoning": 0,
+            "total": 0,
+            "duration_ms": None,
+            "model_duration_ms": None,
+            "tool_call_count": None,
+        }
+
+    @staticmethod
+    def _execution_manifest(path: Path) -> dict[str, object]:
+        """Read one optional execution manifest without trusting its contents."""
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _event_timestamp(event: dict[str, object]) -> float | None:
+        """Return one journal event timestamp, rejecting booleans and strings."""
+        value = event.get("timestamp")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return None
 
     # Index-only keys permitted in an ``agent:remote_request`` projection.  A
     # legacy journal recorded the full ``{model,messages,...,tools}`` request
@@ -481,7 +478,7 @@ class ConsoleProjectionService:
         "request_id", "round", "model", "stream", "message_count",
         "message_roles", "source_ids", "input_characters",
         "estimated_input_tokens", "input_sha256", "tool_count",
-        "tool_schema_hashes", "temperature", "max_tokens", "thinking_mode", "reasoning_effort",
+        "tool_schema_hashes", "temperature", "max_tokens",
     )
 
     @classmethod
@@ -505,7 +502,7 @@ class ConsoleProjectionService:
     # fact carries the run-invariant system prompt, the first user message and
     # every tool description; the ledger reads those from the journal directly,
     # so the trace endpoint must reduce that payload to content-free fields.
-    _LLM_REQUEST_INDEX_KEYS = ("round", "temperature", "max_tokens", "thinking_mode", "reasoning_effort")
+    _LLM_REQUEST_INDEX_KEYS = ("round", "temperature", "max_tokens")
 
     @classmethod
     def _llm_request_index(cls, data: dict[str, object]) -> dict[str, object]:
@@ -554,7 +551,7 @@ class ConsoleProjectionService:
         return ""
 
     def events(self, session_id: str, cursor: int = 0, limit: int = 200) -> dict[str, object]:
-        """Page the current attempt's durable journal in commit order.
+        """Page the live attempt's journal in commit order for the SSE stream.
 
         Args:
             session_id: Stable identity of the Session to inspect.
@@ -577,43 +574,179 @@ class ConsoleProjectionService:
             if len(page) >= maximum:
                 has_more=True
                 break
-            data=item.get("data") or {}
-            etype=item.get("type")
-            if etype == "agent:remote_request":
-                data=self._remote_request_index(data)
-            elif etype == "agent:llm_request":
-                data=self._llm_request_index(data)
-            page.append({**item, "data": data, "event": "lifecycle", "source": self._event_source(etype), "agent": item.get("agent") or data.get("agent", ""), "message": item.get("message") or data.get("message", ""), "usage": item.get("usage") or data.get("usage", {})})
+            page.append(self._event_payload(item))
         next_cursor=start+len(page)
         return {"events": page, "next_cursor": next_cursor if has_more else None, "has_more": has_more, "durable_offset": page[-1].get("offset", 0) if page else 0}
 
+    def event_page(self, session_id: str, execution_id: str | None = None,
+                   before: int | None = None, limit: int = 200) -> dict[str, object]:
+        """Page one durable attempt's journal newest-first, straight from disk.
+
+        The live attempt object disappears on restart while every
+        ``executions/<id>`` keeps its NDJSON ledger, so the Trace view must read
+        the file rather than the process-local attempt. Reading backwards also
+        keeps one page's cost independent of the journal size.
+
+        Args:
+            session_id: Stable Session identity to inspect.
+            execution_id: Attempt to read; ``None`` selects the newest one.
+            before: Byte offset returned as ``next_before`` by a prior page.
+            limit: Maximum events, bounded to 1-500.
+
+        Returns:
+            Events newest-first plus the offset that continues the page.
+        """
+        self._session(session_id)
+        attempt_root = self._attempt_root(self._execution_root(session_id), execution_id)
+        if attempt_root is None:
+            return {"events": [], "next_before": None, "has_more": False, "execution_id": None}
+        page = read_journal_before(attempt_root / "execution.events.ndjson", before, limit)
+        return {
+            "events": [self._event_payload(item) for item in page.events],
+            "next_before": page.next_before,
+            "has_more": page.has_more,
+            "execution_id": attempt_root.name,
+        }
+
+    def event_attempts(self, session_id: str) -> list[dict[str, object]]:
+        """List durable attempts for the Trace selector, newest first."""
+        self._session(session_id)
+        executions = self._execution_root(session_id) / "executions"
+        if not executions.is_dir():
+            return []
+        entries: list[dict[str, object]] = []
+        for directory in executions.iterdir():
+            if not directory.is_dir():
+                continue
+            manifest = self._execution_manifest(directory / "execution-manifest.json")
+            entries.append({
+                "execution_id": directory.name,
+                "attempt": manifest.get("attempt"),
+                "state": manifest.get("state", "unknown"),
+                "started_at": self._number(manifest.get("started_at")),
+                "finished_at": self._number(manifest.get("finished_at")),
+            })
+        entries.sort(
+            key=lambda item: (item["started_at"] or 0, str(item["execution_id"])),
+            reverse=True,
+        )
+        return entries
+
+    def _event_payload(self, item: dict[str, object]) -> dict[str, object]:
+        """Project one journal record onto the browser event contract."""
+        raw_data = item.get("data")
+        data = dict(raw_data) if isinstance(raw_data, dict) else {}
+        etype = item.get("type")
+        if etype == "agent:remote_request":
+            data = self._remote_request_index(data)
+        elif etype == "agent:llm_request":
+            data = self._llm_request_index(data)
+        # The durable journal uses execution_* facts while the browser contract
+        # uses terminal transport events; translate only the terminal ones.
+        terminal_event = {
+            "execution_completed": "done",
+            "execution_stopped": "stopped",
+            "execution_failed": "error",
+        }.get(etype)
+        return {
+            **item,
+            "data": data,
+            "event": terminal_event or "lifecycle",
+            "source": self._event_source(etype),
+            "agent": item.get("agent") or data.get("agent", ""),
+            "message": item.get("message") or data.get("message", "") or (
+                data.get("error", "") if terminal_event == "error" else ""
+            ) or (
+                "运行已停止。" if terminal_event == "stopped" else
+                "运行失败。" if terminal_event == "error" else ""
+            ),
+            "usage": item.get("usage") or data.get("usage", {}),
+        }
+
+    def _execution_root(self, session_id: str) -> Path:
+        """Return the Session's durable execution parent directory."""
+        return self._core.workspaces.get(session_id).state_path
+
+    def _attempt_root(self, root: Path, execution_id: str | None) -> Path | None:
+        """Resolve one attempt directory, or the newest one when unspecified."""
+        executions = root / "executions"
+        if execution_id:
+            candidate = executions / execution_id
+            return candidate if candidate.is_dir() else None
+        if not executions.is_dir():
+            return None
+        candidates = [path for path in executions.iterdir() if path.is_dir()]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda path: (
+                self._number(
+                    self._execution_manifest(path / "execution-manifest.json").get("started_at")
+                ) or 0,
+                path.name,
+            ),
+        )
+
+    @staticmethod
+    def _number(value: object) -> float | None:
+        """Return a float for a JSON number, rejecting booleans and strings."""
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
     def ephemeral_cursor(self, session_id: str) -> int:
-        """Return the current live-only cursor for a new SSE subscriber."""
         session = self._session(session_id)
         attempt = session.execution.attempt if session.execution else None
         return attempt.ephemeral_cursor() if attempt is not None else 0
 
     def ephemeral_events(self, session_id: str, cursor: int = 0) -> dict[str, object]:
-        """Return token-level events that exist only for attached clients."""
+        """Page live deltas, falling back to the write-behind file after restart.
+
+        The in-memory attempt disappears with its process, but the buffer
+        fsynced the last window to ``execution.stream.ndjson``; the fallback
+        keeps those deltas readable instead of reporting an empty stream.
+        """
         session = self._session(session_id)
         attempt = session.execution.attempt if session.execution else None
-        if attempt is None:
-            return {"events": [], "next_cursor": cursor}
-        events = attempt.ephemeral_events(cursor)
+        events = (
+            attempt.ephemeral_events(cursor)
+            if attempt is not None
+            else self._persisted_stream_events(session_id, cursor)
+        )
         next_cursor = max([cursor, *(int(item.get("ephemeral_sequence", cursor)) for item in events)])
         return {"events": events, "next_cursor": next_cursor}
 
-    def _rebuild_after_edit(self, session_id: str) -> dict[str, object]:
-        """Rebuild the concrete swarm after a persisted static graph change.
-
-        Args:
-            session_id: Stable identity of the Session whose swarm is rebuilt.
-
-        Returns:
-            Updated safe graph projection.
-        """
-        self._core.session_service.rebuild_swarm(session_id)
-        return self.workflow(session_id)
+    def _persisted_stream_events(self, session_id: str, cursor: int) -> list[dict[str, object]]:
+        """Read the newest attempt's write-behind stream without a live attempt."""
+        attempt_root = self._attempt_root(self._execution_root(session_id), None)
+        if attempt_root is None:
+            return []
+        path = attempt_root / "execution.stream.ndjson"
+        if not path.is_file():
+            return []
+        events: list[dict[str, object]] = []
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(value, dict):
+                continue
+            sequence = value.get("stream_sequence")
+            if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence <= cursor:
+                continue
+            events.append({
+                "event": "lifecycle",
+                "type": value.get("type", "agent:stream_delta"),
+                "agent": value.get("agent", ""),
+                "message": value.get("message", ""),
+                "usage": value.get("usage", {}),
+                "data": value.get("data", {}),
+                "ephemeral": True,
+                "ephemeral_sequence": sequence,
+            })
+            if len(events) >= 500:
+                break
+        return events
 
     def add_worker(self, session_id: str, name: str, system_prompt: str) -> dict[str, object]:
         """Add one worker to an idle Session graph.
@@ -627,8 +760,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._idle(session_id)
-        self._state(session_id).add_worker(name, system_prompt)
-        return self._rebuild_after_edit(session_id)
+        return self._core.swarm_graph.add_agent(session_id, name, system_prompt).snapshot
 
     def remove_worker(self, session_id: str, name: str) -> dict[str, object]:
         """Remove one worker from an idle Session graph.
@@ -641,8 +773,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._idle(session_id)
-        self._state(session_id).remove_worker(name)
-        return self._rebuild_after_edit(session_id)
+        return self._core.swarm_graph.remove_agent(session_id, name).snapshot
 
     def add_connection(self, session_id: str, source: str, target: str) -> dict[str, object]:
         """Add one acyclic dependency edge to an idle Session graph.
@@ -656,8 +787,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._idle(session_id)
-        self._state(session_id).add_connection(source, target)
-        return self._rebuild_after_edit(session_id)
+        return self._core.swarm_graph.add_connection(session_id, source, target).snapshot
 
     def remove_connection(self, session_id: str, source: str, target: str) -> dict[str, object]:
         """Remove one dependency edge from an idle Session graph.
@@ -671,8 +801,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._idle(session_id)
-        self._state(session_id).remove_connection(source, target)
-        return self._rebuild_after_edit(session_id)
+        return self._core.swarm_graph.remove_connection(session_id, source, target).snapshot
 
     def set_mapper(self, session_id: str, agent: str, mode: str) -> dict[str, object]:
         """Set a declarative mapper on an idle Session graph.
@@ -686,8 +815,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._idle(session_id)
-        self._state(session_id).mapper(agent, mode)
-        return self._rebuild_after_edit(session_id)
+        return self._core.swarm_graph.set_mapper(session_id, agent, mode).snapshot
 
     def set_router(self, session_id: str, agent: str, targets: list[str]) -> dict[str, object]:
         """Set fixed router targets on an idle Session graph.
@@ -701,8 +829,7 @@ class ConsoleProjectionService:
             Updated safe graph projection.
         """
         self._idle(session_id)
-        self._state(session_id).router(agent, targets)
-        return self._rebuild_after_edit(session_id)
+        return self._core.swarm_graph.set_router(session_id, agent, targets).snapshot
 
     def plan(self, session_id: str, agent: str | None) -> dict[str, object]:
         """Project durable plan items into JSON-safe API data.
@@ -717,6 +844,18 @@ class ConsoleProjectionService:
         owner = agent or "coordinator"
         value = asdict(self._state(session_id).plan(owner))
         return {"agent": owner, **value, "plan": value["tasks"]}
+
+    def replace_plan(self, session_id: str, agent: str, goal: str, summary: str, tasks: list[dict[str, object]]) -> dict[str, object]:
+        """Replace one idle Session Agent's complete task plan."""
+        self._idle(session_id)
+        value = asdict(self._state(session_id).set_plan(agent, goal, summary, tasks))
+        return {"agent": agent, **value, "plan": value["tasks"]}
+
+    def update_task_status(self, session_id: str, agent: str, task_id: str, status: str) -> dict[str, object]:
+        """Update one leaf task and return the derived plan snapshot."""
+        self._idle(session_id)
+        value = asdict(self._state(session_id).update_task_status(agent, task_id, status))
+        return {"agent": agent, **value, "plan": value["tasks"]}
 
     def context(self, session_id: str, name: str, before: int | None = None, limit: int = 200) -> dict[str, object]:
         """Return persisted linear-context metadata for one valid Agent role.
@@ -736,37 +875,175 @@ class ConsoleProjectionService:
             return {"agent": name, "metadata": [], "request": None, "stats": {"messages": 0, "characters": 0, "tool_schemas": 0, "tool_schema_characters": 0, "estimated_tokens": 0}, "next_before": None, "has_more": False}
         try:
             messages, next_before, total = read_persisted_context_page(
-                path, before_timeline=before, limit=limit, include_archive=True,
+                path, before_timeline=before, limit=limit, include_archive=False,
             )
-            if total == 0:
-                legacy_sage_page = self._read_legacy_sage_page(
-                    path, before_timeline=before, limit=limit,
-                )
-                if legacy_sage_page is not None:
-                    messages, next_before, total = legacy_sage_page
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
-        metadata = [{"index": item.timeline, "source": "context", "type": item.role, "length": len(item.content) + len(item.content_reasoning), "timeline": item.timeline} for item in messages]
+        metadata = []
+        for item in messages:
+            if item.kind == "assistant":
+                item_type = "assistant"
+                length = len(item.content) + len(item.reasoning)
+            elif item.kind == "user":
+                item_type = "user"
+                length = len(item.content)
+            else:
+                item_type = "system"
+                length = len(item.abstract)
+            metadata.append({
+                "index": item.timeline,
+                "source": "context",
+                "type": item_type,
+                "length": length,
+                "timeline": item.timeline,
+            })
         characters = sum(entry["length"] for entry in metadata)
         return {"agent": name, "metadata": metadata, "request": None, "stats": {"messages": total, "characters": characters, "tool_schemas": 0, "tool_schema_characters": 0, "estimated_tokens": characters // 4}, "next_before": next_before, "has_more": next_before is not None}
 
-    @staticmethod
-    def _read_legacy_sage_page(path: Path, *, before_timeline: int | None, limit: int):
-        """Read rows from Sage schema-1 checkpoints written before schema 3."""
+    def archive(self, session_id: str, name: str, before: int | None = None, limit: int = 50) -> dict[str, object]:
+        """Return one archive-only page of one Agent's compacted-out context.
+
+        The archive browser deliberately uses a different reader from
+        :meth:`context`: archived rows are not part of the active transcript,
+        and paging must stay inside SQLite instead of loading the archive into
+        Python and slicing it.
+
+        Args:
+            session_id: Stable identity of the owning Session.
+            name: Agent role identity whose archive is requested.
+            before: Exclusive older-than timeline cursor from a prior page.
+            limit: Maximum entries to return, bounded by the durable reader.
+
+        Returns:
+            Chronological archived entries, the next older cursor, and whether
+            another older page exists.
+        """
+        self._agent(session_id, name)
+        path = self._context_path(session_id, name)
+        if not path.is_file():
+            return {"agent": name, "entries": [], "next_before": None, "has_more": False}
+        try:
+            entries, next_before, has_more = read_persisted_archive_page(
+                path, before_timeline=before, limit=limit,
+            )
+        except (OSError, ValueError) as exc:
+            raise ConsoleDomainError(f"cannot read persisted archive: {exc}") from exc
+        results = self._page_tool_results(path, entries)
+        return {
+            "agent": name,
+            "entries": [
+                self._entry_card(session_id, entry, results)
+                for entry in entries
+            ],
+            "next_before": next_before,
+            "has_more": has_more,
+        }
+
+    def _page_tool_results(
+        self,
+        path: Path,
+        entries: Sequence[ContextItem],
+    ) -> dict[str, ToolResultRecord]:
+        """Resolve every tool result one context page references."""
         pointer = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(pointer, dict) or not pointer.get("sage_state_checkpoint"):
-            return None
+        if not isinstance(pointer, dict):
+            raise ConsoleDomainError("context pointer must be an object")
         database_name = pointer.get("database")
-        if not isinstance(database_name, str) or Path(database_name).name != database_name:
-            return None
-        database = path.with_name(database_name)
-        rows = SQLiteContextStorage().read_rows(database, include_archive=True)
-        filtered = [(timeline, payload) for timeline, payload in rows
-                    if before_timeline is None or timeline < before_timeline]
-        bounded = max(1, min(int(limit), 200))
-        selected = filtered[-bounded:]
-        next_before = selected[0][0] if len(filtered) > len(selected) and selected else None
-        return [context_from_dict(json.loads(payload)) for _, payload in selected], next_before, len(rows)
+        if not isinstance(database_name, str):
+            raise ConsoleDomainError("context pointer names no database")
+        result_ids = [
+            call.result_id.value
+            for entry in entries
+            if entry.kind == "assistant"
+            for call in cast(AssistantContextItem, entry).tool_calls
+            if call.result_id is not None
+        ]
+        rows = SQLiteContextStorage().read_tool_results(
+            path.with_name(database_name), result_ids,
+        )
+        results: dict[str, ToolResultRecord] = {}
+        for result_id, payload in rows:
+            decoded = json.loads(payload)
+            if not isinstance(decoded, dict):
+                raise ConsoleDomainError("tool result payload must be an object")
+            results[result_id] = tool_result_from_dict(cast(JsonObject, decoded))
+        if set(result_ids) != set(results):
+            raise ConsoleDomainError("context references a missing tool result")
+        return results
+
+    def _entry_card(
+        self,
+        session_id: str,
+        entry: ContextItem,
+        results: dict[str, ToolResultRecord],
+    ) -> dict[str, object]:
+        """Project one typed context item into a chat message card."""
+        match entry.kind:
+            case "summary":
+                summary = cast(ContextSummaryItem, entry)
+                return {
+                    "role": "system",
+                    "content": summary.abstract,
+                    "images": [],
+                    "reasoning": "",
+                    "tools": [],
+                    "timeline": summary.timeline,
+                    "usage": {},
+                    "model_duration_ms": None,
+                    "round_duration_ms": None,
+                    "created_at": None,
+                }
+            case "user":
+                user = cast(UserContextItem, entry)
+                return {
+                    "role": "user",
+                    "content": user.content,
+                    "images": self._image_previews(session_id, list(user.images)),
+                    "reasoning": "",
+                    "tools": [],
+                    "timeline": user.timeline,
+                    "usage": {},
+                    "model_duration_ms": None,
+                    "round_duration_ms": None,
+                    "created_at": None,
+                }
+            case "assistant":
+                assistant = cast(AssistantContextItem, entry)
+                tools = []
+                for call in assistant.tool_calls:
+                    record = (
+                        results[call.result_id.value]
+                        if call.result_id is not None
+                        else None
+                    )
+                    tools.append({
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "result": record.output if record is not None else None,
+                        "images": self._image_previews(
+                            session_id,
+                            list(record.images) if record is not None else [],
+                        ),
+                    })
+                return {
+                    "role": "assistant",
+                    "content": assistant.content,
+                    "images": [],
+                    "reasoning": assistant.reasoning,
+                    "tools": tools,
+                    "timeline": assistant.timeline,
+                    "usage": {
+                        "input": assistant.usage.input_tokens,
+                        "cached": assistant.usage.cached_tokens,
+                        "output": assistant.usage.output_tokens,
+                        "reasoning": assistant.usage.reasoning_tokens,
+                        "total": assistant.usage.total_tokens,
+                    },
+                    "model_duration_ms": assistant.model_duration_ms,
+                    "round_duration_ms": assistant.round_duration_ms,
+                    "created_at": assistant.created_at,
+                }
+        raise ConsoleDomainError(f"unsupported context item kind: {entry.kind!r}")
 
     def messages(self, session_id: str, name: str | None, before: int | None, limit: int) -> dict[str, object]:
         """Project one Agent's durable context page into chat-message cards.
@@ -804,27 +1081,13 @@ class ConsoleProjectionService:
         except (OSError, ValueError) as exc:
             raise ConsoleDomainError(f"cannot read persisted context: {exc}") from exc
         messages = []
+        results = self._page_tool_results(path, entries)
         for entry in entries:
             # Full chat projection: the transcript is the operator's own view of
             # what the Agent sent and got back, so arguments/results/images are
             # restored here.  The privacy scoping (index-only) applies to the
             # raw journal ``events()`` and the calls ledger, not to this view.
-            tools = [{"name": tool.call.name, "arguments": tool.call.arguments,
-                      "result": tool.result,
-                      "images": self._image_previews(session_id, getattr(tool, "images", []))}
-                     for tool in entry.tool_calls]
-            messages.append({
-                "role": entry.role,
-                "content": entry.content,
-                "images": self._image_previews(session_id, getattr(entry, "images", [])),
-                "reasoning": entry.content_reasoning,
-                "tools": tools,
-                "timeline": entry.timeline,
-                "usage": entry.usage,
-                "model_duration_ms": entry.model_duration_ms,
-                "round_duration_ms": entry.round_duration_ms,
-                "created_at": entry.created_at,
-            })
+            messages.append(self._entry_card(session_id, entry, results))
         return {"agent": resolved_name, "messages": messages, "steering": steering,
                 "available_tools": available_tools,
                 "next_cursor": next_cursor, "has_more": next_cursor is not None}
@@ -1098,7 +1361,7 @@ class ConsoleProjectionService:
             model="", stream=False, message_count=0, message_roles={},
             source_ids=[], input_characters=0, estimated_input_tokens=0,
             input_sha256="", tool_count=0, tool_schema_hashes=[], tool_names=[],
-            temperature=None, max_tokens=None, thinking_mode="auto", reasoning_effort="auto", usage=None, model_duration_ms=None,
+            temperature=None, max_tokens=None, usage=None, model_duration_ms=None,
             round_duration_ms=None, tool_call_count=None, input_message=None,
             request_messages=[], request_omitted_messages=0, assistant_content=None,
             reasoning_content=None, tool_calls=[], tool_results=[], retries=0,
@@ -1176,8 +1439,6 @@ class ConsoleProjectionService:
             record.tool_schema_hashes = [str(item) for item in hashes] if isinstance(hashes, list) else []
             record.temperature = request.get("temperature")
             record.max_tokens = request.get("max_tokens")
-            record.thinking_mode = request.get("thinking_mode", "auto")
-            record.reasoning_effort = request.get("reasoning_effort", "auto")
             record.request_messages, record.request_omitted_messages = (
                 cls._request_messages(data.get("request_content")))
             # Every provider attempt emits remote_request; the first defines
@@ -1288,9 +1549,7 @@ class ConsoleProjectionService:
             tools=config_tools,
             backend=cls._backend_info(data.get("backend")),
             temperature=data.get("temperature"),
-            max_tokens=data.get("max_tokens"),
-            thinking_mode=data.get("thinking_mode", "auto"),
-            reasoning_effort=data.get("reasoning_effort", "auto"))
+            max_tokens=data.get("max_tokens"))
 
     @staticmethod
     def _backend_info(backend: object) -> BackendInfo:
@@ -1460,34 +1719,66 @@ class ConsoleProjectionService:
         Returns:
             Persisted entity/relation graph, or an honest empty projection.
         """
-        agent=self._agent(session_id,name)
-        if agent is None:
-            context_path = self._context_path(session_id, name)
-            graph_path = Path(f"{context_path}.graph.json")
-            try:
-                pointer = json.loads(context_path.read_text(encoding="utf-8")) if context_path.is_file() else {}
-                graph_name = pointer.get("graph_checkpoint") if isinstance(pointer, dict) else None
-                if isinstance(graph_name, str) and graph_name:
-                    graph_path = context_path.with_name(graph_name)
-                raw = json.loads(graph_path.read_text(encoding="utf-8")) if graph_path.is_file() else {}
-            except (OSError, ValueError):
-                raw = {}
-            summary = self.context(session_id, name)
-            stats = summary.get("stats") if isinstance(summary, dict) else {}
-            stats = stats if isinstance(stats, dict) else {}
-            raw_nodes = raw.get("nodes", {}) if isinstance(raw, dict) else {}
-            nodes = list(raw_nodes.values()) if isinstance(raw_nodes, dict) else list(raw_nodes) if isinstance(raw_nodes, list) else []
-            edges = raw.get("edges", []) if isinstance(raw, dict) and isinstance(raw.get("edges", []), list) else []
-            communities = raw.get("communities", {}) if isinstance(raw, dict) else {}
-            return {"agent": name, "context": {"messages": int(stats.get("messages", 0) or 0), "characters": int(stats.get("characters", 0) or 0), "abstract_characters": 0, "threshold": 0, "estimated_tokens": int(stats.get("estimated_tokens", 0) or 0)}, "graph": {"available": bool(nodes), "nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges), "community_count": len(communities) if isinstance(communities, (dict, list)) else 0, "stale": False}}
-        handler=getattr(agent,"context_handler",None); store=getattr(handler,"store",None)
-        raw = store.to_dict() if store is not None and hasattr(store, "to_dict") else {}
-        raw_nodes=raw.get("nodes",{}) if isinstance(raw,dict) else {}
-        nodes=list(raw_nodes.values()) if isinstance(raw_nodes,dict) else list(raw_nodes)
-        edges=raw.get("edges",[]) if isinstance(raw,dict) else []
-        communities=raw.get("communities",{}) if isinstance(raw,dict) else {}
-        community_count=len(communities) if isinstance(communities,(dict,list)) else 0
-        return {"agent":name,"context":self._context_stats(agent),"graph":{"available":bool(nodes),"nodes":nodes,"edges":edges,"node_count":len(nodes),"edge_count":len(edges),"community_count":community_count,"stale":False}}
+        agent = self._agent(session_id, name)
+        if agent is not None:
+            return {
+                "agent": name,
+                "context": self._context_stats(agent),
+                "graph": agent.context_handler.graph_projection().to_json(),
+            }
+        # After a backend restart the persisted role may not have been
+        # materialized yet (credentials are intentionally lazy). Decode the
+        # committed companion generation so the context tab remains a durable
+        # read-only view instead of reporting an empty graph.
+        summary = self.context(session_id, name)
+        stats = summary.get("stats") if isinstance(summary, dict) else {}
+        stats = stats if isinstance(stats, dict) else {}
+        return {
+            "agent": name,
+            "context": {
+                "messages": int(stats.get("messages", 0) or 0),
+                "characters": int(stats.get("characters", 0) or 0),
+                "abstract_characters": 0,
+                "threshold": 0,
+                "estimated_tokens": int(stats.get("estimated_tokens", 0) or 0),
+            },
+            "graph": self._persisted_graph_projection(session_id, name).to_json(),
+        }
+
+    def _persisted_graph_projection(self, session_id: str, name: str) -> ContextGraphProjection:
+        """Decode the committed entity graph for a non-materialised role.
+
+        Args:
+            session_id: Stable identity of the owning Session.
+            name: Agent role identity whose graph is requested.
+
+        Returns:
+            The projected committed graph, or an empty projection when no
+            generation was ever committed.
+
+        Raises:
+            ConsoleDomainError: If the pointer or companion file is unreadable
+                or malformed.
+        """
+        context_path = self._context_path(session_id, name)
+        graph_path = Path(f"{context_path}.graph.json")
+        stale = False
+        try:
+            if context_path.is_file():
+                pointer = json.loads(context_path.read_text(encoding="utf-8"))
+                if isinstance(pointer, dict):
+                    graph_name = pointer.get("graph_checkpoint")
+                    if isinstance(graph_name, str) and graph_name:
+                        graph_path = context_path.with_name(graph_name)
+                    editing = pointer.get("context_editing")
+                    stale = bool(editing.get("graph_stale")) if isinstance(editing, dict) else False
+            if not graph_path.is_file():
+                return ContextGraphProjection.empty()
+            state = GraphMemoryState.from_dict(json.loads(graph_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ConsoleDomainError(f"cannot read persisted entity graph: {exc}") from exc
+        return ContextGraphProjection.from_state(state, stale=stale)
+
     def compaction_input(self, session_id: str, name: str) -> dict[str, object]:
         """Reconstruct the next compaction request without provider I/O.
 
@@ -1502,23 +1793,16 @@ class ConsoleProjectionService:
         agent = self._detached_preview_agent(session_id, name)
         try:
             handler = agent.context_handler
-            linear = getattr(handler, "linear", None)
-            compaction_owner = linear or handler
-            build_preview = getattr(compaction_owner, "compaction_request_preview", None)
-            if not callable(build_preview):
-                raise ConsoleDomainError("agent context does not support compaction previews")
-            plan = build_preview()
+            linear = handler.linear
+            plan = linear.compaction_request_preview()
             snapshot = agent.llm_fetcher.prepare_request(
                 plan.text,
                 system_prompt=plan.system_prompt,
                 temperature=plan.temperature,
                 max_tokens=plan.max_tokens,
-                thinking_mode=getattr(agent, "thinking_mode", "auto"),
-                reasoning_effort=getattr(agent, "reasoning_effort", "auto"),
-                context_composer=getattr(agent, "context_composer", None),
                 tools=[],
             )
-            context_size = compaction_owner._estimate_context_size()
+            context_size = linear._estimate_context_size()
             return {
                 "agent": name,
                 "text": plan.text,
@@ -1551,40 +1835,103 @@ class ConsoleProjectionService:
         """
         agent = self._detached_preview_agent(session_id, name)
         try:
-            agent.context_handler.add_user_message(message)
+            # During the first model round the live Agent has already accepted
+            # the user turn in memory, while its context checkpoint is written
+            # only after the response completes.  Recover that pending input
+            # from the attempt journal so the inspector does not show an empty
+            # coordinator request during an active graph execution.
+            if not message.strip():
+                pending = self._latest_agent_input(session_id, name)
+                linear = agent.context_handler.linear
+                existing = linear.messages
+                if pending and not any(
+                    item.kind == "user"
+                    and str(item.content or "") == pending
+                    for item in existing
+                ):
+                    agent.context_handler.add_user_message(pending)
+            if message.strip():
+                agent.context_handler.add_user_message(message)
             snapshot = agent.llm_fetcher.prepare_request(
                 "",
                 system_prompt=agent.system_prompt,
-                temperature=0.4,
+                temperature=agent.default_temperature,
                 max_tokens=agent.default_max_tokens,
-                thinking_mode=agent.thinking_mode,
-                reasoning_effort=agent.reasoning_effort,
                 context_handler=agent.context_handler,
-                context_composer=getattr(agent, "context_composer", None),
+                context_composer=agent.context_composer,
                 tools=agent.tool_handler.get_all_tools(),
                 stream=agent.default_stream,
             )
             request = snapshot.to_dict()
             messages = request["messages"]
             characters = len(json.dumps(messages, ensure_ascii=False))
-            composer = getattr(agent, "context_composer", None)
-            if composer is not None:
-                request_metadata = composer.describe(
-                    snapshot=ContextSnapshot(
-                        handler=agent.context_handler,
-                        system_prompt=agent.system_prompt,
-                        current_message="",
-                    ),
+            block_rows = agent.context_composer.describe(
+                snapshot=ContextSnapshot(
+                    handler=agent.context_handler,
                     system_prompt=agent.system_prompt,
-                )
-            else:
-                request_metadata = agent.context_handler.describe_request_messages(
-                    agent.context_handler.build_messages(system_prompt=agent.system_prompt)
-                )
+                    current_message="",
+                ),
+                system_prompt=agent.system_prompt,
+            )
+            blocks: list[dict[str, Any]] = []
+            block_indexes: dict[str, int] = {}
+            for row in block_rows:
+                source = str(row.get("source") or "")
+                if not source or source == "system_prompt":
+                    continue
+                if source in block_indexes:
+                    existing = blocks[block_indexes[source]]
+                    existing["messages"] = int(existing["messages"]) + 1
+                    existing["characters"] = int(existing["characters"]) + int(row.get("length") or 0)
+                    continue
+                block_indexes[source] = len(blocks)
+                blocks.append({
+                    "source": source,
+                    "label": CONTEXT_BLOCK_LABELS.get(source, source),
+                    "type": row.get("type"),
+                    "position": row.get("position"),
+                    "position_value": row.get("position_value"),
+                    "priority": row.get("priority"),
+                    "default_priority": row.get("default_priority"),
+                    "unlisted": bool(row.get("unlisted")),
+                    "messages": 1,
+                    "characters": int(row.get("length") or 0),
+                    "persisted": bool(row.get("persisted")),
+                    "present": True,
+                })
+            # A handler slot can be empty for this request — compaction
+            # archives the newest user turn, so linear.current_input emits no
+            # block until the next message. Listing only rendered blocks would
+            # drop that source from the order editor and leave the saved table
+            # unable to place it when it comes back.
+            catalog_snapshot = ContextSnapshot(
+                handler=agent.context_handler,
+                system_prompt=agent.system_prompt,
+                current_message="",
+            )
+            for spec in agent.context_composer.catalog(catalog_snapshot):
+                if spec.source in block_indexes:
+                    continue
+                block_indexes[spec.source] = len(blocks)
+                blocks.append({
+                    "source": spec.source,
+                    "label": CONTEXT_BLOCK_LABELS.get(spec.source, spec.source),
+                    "type": None,
+                    "position": spec.position.name.lower(),
+                    "position_value": int(spec.position),
+                    "priority": agent.context_composer.effective_priority(spec.source),
+                    "default_priority": 0,
+                    "unlisted": not agent.context_composer.is_ordered(spec.source),
+                    "messages": 0,
+                    "characters": 0,
+                    "persisted": False,
+                    "present": False,
+                })
+            blocks.sort(key=lambda item: (int(item["priority"]), int(item["position_value"])))
             return {
                 "agent": name,
                 "request": request,
-                "message_metadata": request_metadata,
+                "blocks": blocks,
                 "stats": {
                     "messages": len(messages),
                     "characters": characters,
@@ -1594,6 +1941,27 @@ class ConsoleProjectionService:
             }
         finally:
             agent.close()
+
+    def _latest_agent_input(self, session_id: str, name: str) -> str:
+        """Read the newest live user input for one Agent from its journal."""
+        session = self._session(session_id)
+        executor = session.execution
+        attempt = executor.attempt if executor is not None else None
+        journal = getattr(attempt, "journal", None)
+        events = journal.events() if journal is not None else ()
+        for event in reversed(list(events)):
+            if event.get("type") != "agent:llm_request":
+                continue
+            data = event.get("data")
+            if not isinstance(data, dict):
+                continue
+            agent = str(event.get("agent") or data.get("agent", ""))
+            if agent != name:
+                continue
+            value = data.get("user_message") or data.get("msg")
+            if isinstance(value, str) and value.strip():
+                return value
+        return ""
 
     def _detached_preview_agent(self, session_id: str, name: str):
         """Create and hydrate an Agent copy that cannot mutate Session state.

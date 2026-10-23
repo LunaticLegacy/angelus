@@ -33,10 +33,10 @@ providers; legacy three-argument callers remain supported.
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
 | [runtime_provider.py](runtime_provider.py#L30) | `RuntimeToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Build only explicitly authorized project-scoped runtime tools. |
-| [runtime_provider.py](runtime_provider.py#L73) | `runtime_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Return built-in runtime registration for the application's registry. |
+| [runtime_provider.py](runtime_provider.py#L78) | `runtime_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Return built-in runtime registration for the application's registry. |
 | [tool_policy.py](tool_policy.py#L30) | `ToolPolicy.from_profile` | `value: object` | `'ToolPolicy'` | Decode profile grants and migrate recognized historic Tool names. |
-| [tool_policy.py](tool_policy.py#L59) | `ToolPolicy.allows` | `category_id: str, tool_id: str` | `bool` | Return whether both grants needed to expose a Tool are present. |
-| [tool_policy.py](tool_policy.py#L71) | `ToolPolicy.fingerprint` | `None` | `tuple[tuple[str, ...], tuple[str, ...]]` | Return a deterministic configuration identity for Agent rebuilding. |
+| [tool_policy.py](tool_policy.py#L62) | `ToolPolicy.allows` | `category_id: str, tool_id: str` | `bool` | Return whether both grants needed to expose a Tool are present. |
+| [tool_policy.py](tool_policy.py#L85) | `ToolPolicy.fingerprint` | `None` | `tuple[tuple[str, ...], tuple[str, ...]]` | Return a deterministic configuration identity for Agent rebuilding. |
 | [tool_registry.py](tool_registry.py#L21) | `ToolProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Build only Tools this provider can safely expose. |
 | [tool_registry.py](tool_registry.py#L61) | `ToolRegistry.register` | `registration: ToolProviderRegistration` | `None` | Register one complete provider atomically after uniqueness checks. |
 | [tool_registry.py](tool_registry.py#L93) | `ToolRegistry.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Build all authorized concrete Tools for one Agent role. |

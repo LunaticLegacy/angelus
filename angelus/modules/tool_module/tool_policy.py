@@ -41,6 +41,9 @@ class ToolPolicy:
         raw_categories = value.get("categories")
         raw_tools = value.get("tools")
         categories = frozenset(
+            # ``context`` was the pre-registry frontend label.  Keep existing
+            # profiles working after the canonical category became
+            # ``context_version``.
             "context_version" if name == "context" else name
             for name, enabled in raw_categories.items()
             if isinstance(name, str) and enabled is True
@@ -66,7 +69,18 @@ class ToolPolicy:
         Returns:
             ``True`` when the Agent may receive the Tool.
         """
-        return category_id in self.categories and tool_id in self.tools
+        category_granted = category_id in self.categories
+        # ``tlb_rag`` used to share the file-discovery category. Keep old
+        # persisted profiles functional after the dedicated runtime category
+        # was introduced to avoid a registry collision with file tools.
+        if category_id == "project_retrieval" and "file_discovery" in self.categories:
+            category_granted = True
+        # ``plugin`` was the pre-registry UI category. Keep old session
+        # profiles working while plugin categories are now namespaced as
+        # ``plugin.<name>.<category>`` by the registry.
+        if not category_granted and category_id.startswith("plugin.") and "plugin" in self.categories:
+            category_granted = True
+        return category_granted and tool_id in self.tools
 
     def fingerprint(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Return a deterministic configuration identity for Agent rebuilding.
