@@ -12,6 +12,7 @@ from .models import (
     PluginToolCategory,
     PluginToolContribution,
     PluginToolDefinition,
+    PluginContextContribution,
     PluginPanel,
     PluginPanelField,
     PluginUiActionRequest,
@@ -21,6 +22,6 @@ from .models import (
 __all__ = [
     "PluginManager", "PluginManifest", "PluginPermission", "PluginRecord",
     "PluginRuntime", "PluginSettingField", "PluginSettingValue", "PluginTheme",
-    "PluginToolCategory", "PluginToolContribution", "PluginToolDefinition",
+    "PluginToolCategory", "PluginToolContribution", "PluginToolDefinition", "PluginContextContribution",
     "PluginPanel", "PluginPanelField", "PluginUiActionRequest", "PluginUiActionResult",
 ]

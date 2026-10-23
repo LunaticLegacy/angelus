@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..execution_module import ExecutionAttempt, ExecutionSnapshot, ExecutionState
+from ..attachment_module.store import MAX_IMAGES_PER_RUN, MAX_IMAGES_TOTAL_BYTES
 from ..run_graph_module import RunGraphProjector
 from llmfetcher.swarm_module import AgentFailure
 from llmfetcher.multimodal import UserMessage
@@ -83,7 +84,8 @@ class ExecutionService:
         self._core = core
 
     def start(self, session_id: str, message: str, *, recovery: dict[str, object] | None = None,
-              images: list[dict[str, Any]] | None = None, target_agent: str | None = None) -> ExecutionSnapshot:
+              images: list[dict[str, Any]] | None = None, target_agent: str | None = None,
+              connector_id: str | None = None) -> ExecutionSnapshot:
         """Start the configured Session AgentSwarm under a fresh attempt.
 
         Args:
@@ -105,7 +107,10 @@ class ExecutionService:
         image_refs = self._validate_images(session, images or [])
         if not message.strip() and not image_refs:
             raise ValueError("A message or image is required")
-        self._core.session_service.ensure_coordinator(session_id)
+        if connector_id:
+            self._core.session_service.ensure_coordinator(session_id, connector_id=connector_id)
+        else:
+            self._core.session_service.ensure_coordinator(session_id)
         # ``ensure_coordinator`` installs the required role at index zero.
         # Keep this defensive guard so a malformed custom Session cannot run.
         if not session.agents:
@@ -137,15 +142,9 @@ class ExecutionService:
             data = event.data if isinstance(event.data, dict) else {"event_data": event.data}
             data = {**data, "agent": event.agent_name, "message": event.message}
             usage = data.get("usage") or data.get("round_usage") or {}
-            if event.event_type in {"agent:stream_delta", "context:compact_delta"}:
-                # Token/tool deltas and streamed compaction summaries are
-                # transport-only.  They remain available to currently attached
-                # SSE clients, but must not inflate the durable replay journal
-                # or be sent again after reconnect.
+            if event.event_type == "agent:stream_delta":
                 attempt.publish_ephemeral(
-                    event.event_type,
-                    data,
-                    agent=event.agent_name,
+                    event.event_type, data, agent=event.agent_name,
                     message=event.message,
                     usage=usage if isinstance(usage, dict) else {},
                 )
@@ -169,20 +168,14 @@ class ExecutionService:
                     plan_status = "completed" if event.event_type == "task:reported" and report_status == "completed" else "blocked"
                     session.console.update_assignment_status(assignment_id, plan_status)
             if event.event_type == "agent:context_checkpoint":
-                snapshotter = getattr(session.swarm, "view_snapshot", None)
-                if not callable(snapshotter):
-                    return
-                live_graph = snapshotter()
-                if not isinstance(live_graph, dict):
+                live_graph = self._core.swarm_graph.live_view(session_id)
+                if live_graph is None:
                     return
                 round_value = data.get("round")
-                nodes = live_graph.get("nodes", [])
                 context_agents = [
-                    node.get("id")
-                    for node in nodes
-                    if isinstance(node, dict)
-                    and node.get("kind") == "agent"
-                    and isinstance(node.get("id"), str)
+                    node.id
+                    for node in live_graph.nodes
+                    if node.kind == "agent"
                 ]
                 contexts = {
                     agent_name: {
@@ -237,9 +230,7 @@ class ExecutionService:
             # to select it, while its per-Agent control view does not exist
             # yet.  Pre-registration lets a stop or steering instruction
             # target every Agent that was present when this attempt began.
-            snapshotter = getattr(session.swarm, "view_snapshot", None)
-            topology = snapshotter() if callable(snapshotter) else {"nodes": []}
-            nodes = topology.get("nodes", []) if isinstance(topology, dict) else []
+            nodes = self._core.swarm_graph.control_nodes(session_id)
             if isinstance(nodes, list):
                 for node in nodes:
                     if not isinstance(node, dict):
@@ -253,6 +244,11 @@ class ExecutionService:
                 run_kwargs: dict[str, object] = {"control": run_control}
                 if target_agent is not None:
                     run_kwargs["target_agent"] = target_agent
+                else:
+                    # A browser-originated turn enters the graph at the
+                    # coordinator only; unconnected workers must not become
+                    # implicit roots and receive the same user message.
+                    run_kwargs["entry_agent"] = session.coordinator_name
                 output = session.swarm.run(user_input, **run_kwargs)
                 root_name = target_agent or session.coordinator_name
                 root = output.get(root_name) if isinstance(output, dict) else None
@@ -271,8 +267,8 @@ class ExecutionService:
     @staticmethod
     def _validate_images(session: Any, images: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Resolve ownership and metadata before an execution can start."""
-        if not isinstance(images, list) or len(images) > 8:
-            raise ValueError("At most 8 images may be sent in one turn")
+        if not isinstance(images, list) or len(images) > MAX_IMAGES_PER_RUN:
+            raise ValueError(f"At most {MAX_IMAGES_PER_RUN} images may be sent in one turn")
         if not images:
             return []
         if session.attachments is None:
@@ -294,8 +290,8 @@ class ExecutionService:
             total_bytes += metadata["size_bytes"]
             refs.append({"attachment_id": metadata["attachment_id"],
                          "media_type": metadata["media_type"], "detail": detail})
-        if total_bytes > 15 * 1024 * 1024:
-            raise ValueError("Images exceed the 15 MiB per-turn upload budget")
+        if total_bytes > MAX_IMAGES_TOTAL_BYTES:
+            raise ValueError(f"Images exceed the {MAX_IMAGES_TOTAL_BYTES // (1024 * 1024)} MiB per-turn upload budget")
         return refs
 
     def recover(self, session_id: str, execution_id: str | None = None) -> ExecutionSnapshot:

@@ -10,16 +10,19 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import os
 import re
 import threading
+from collections.abc import Sequence
 from concurrent.futures import Future as ConcurrentFuture
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from pydantic import BaseModel
 
 from llmfetcher.llm_types import Tool, ToolSchema
+
+from .records import MCPCapabilities, MCPResolvedServer, MCPSecrets, MCPServerRecord
 
 
 class MCPToolError(RuntimeError):
@@ -36,9 +39,8 @@ def _safe_name_part(value: str) -> str:
 
 def _model_dump(value: Any) -> Any:
     """Return SDK Pydantic models as JSON-compatible values."""
-    dump = getattr(value, "model_dump", None)
-    if callable(dump):
-        return dump(mode="json")
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
     return value
 
 
@@ -56,53 +58,64 @@ class MCPServer:
     headers: tuple[tuple[str, str], ...] = ()
 
     @classmethod
-    def from_config(cls, item: dict[str, Any]) -> "MCPServer":
-        """Validate one decrypted registry or compatibility server mapping.
+    def from_record(
+        cls, record: MCPServerRecord, secrets: MCPSecrets
+    ) -> "MCPServer":
+        """Validate one decrypted server record into a connectable definition.
 
         Args:
-            item: Structured server fields. ``env`` may be a legacy list of
-                host variable names or a decrypted name/value mapping.
+            record: Catalog entry with identity and transport fields.
+            secrets: Decrypted credentials supplying env, headers and bearer token.
 
         Returns:
             Immutable normalized server definition.
 
         Raises:
-            MCPToolError: If identity, transport, endpoint, args, environment,
+            MCPToolError: If identity, transport, endpoint, environment,
                 headers, or credentials are malformed.
         """
-        name = str(item.get("name") or "").strip()
-        transport = str(item.get("transport") or "stdio").strip().lower()
+        name = record.name.strip()
+        transport = record.transport.strip().lower()
         if not name or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name):
             raise MCPToolError("MCP server name must match [A-Za-z][A-Za-z0-9_-]{0,63}")
         if transport not in {"stdio", "streamable-http"}:
-            raise MCPToolError(f"MCP server {name!r} has unsupported transport {transport!r}")
-        command = str(item.get("command") or "").strip()
-        url = str(item.get("url") or "").strip()
+            raise MCPToolError(
+                f"MCP server {name!r} has unsupported transport {transport!r}"
+            )
+        command = record.command.strip()
+        url = record.url.strip()
         if transport == "stdio" and not command:
             raise MCPToolError(f"MCP stdio server {name!r} needs a command")
         if transport != "stdio" and not re.fullmatch(r"https?://[^\s]+", url):
             raise MCPToolError(f"MCP {transport} server {name!r} needs an http(s) URL")
-        args = item.get("args") or []
-        env = item.get("env") or []
-        headers = item.get("headers") or {}
-        if not isinstance(args, list) or not all(isinstance(value, str) for value in args):
+        if not all(isinstance(value, str) for value in record.args):
             raise MCPToolError(f"MCP server {name!r} args must be a string array")
-        if isinstance(env, list):
-            if not all(isinstance(value, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) for value in env):
-                raise MCPToolError(f"MCP server {name!r} env must contain environment-variable names")
-            env_values = tuple((value, os.environ.get(value, "")) for value in env if value in os.environ)
-        elif isinstance(env, dict) and all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(key)) and isinstance(value, str) for key, value in env.items()):
-            env_values = tuple((str(key), value) for key, value in env.items())
-        else:
-            raise MCPToolError(f"MCP server {name!r} env must be a string array or mapping")
-        if not isinstance(headers, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in headers.items()):
+        if not all(
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) and isinstance(value, str)
+            for key, value in secrets.env.items()
+        ):
+            raise MCPToolError(
+                f"MCP server {name!r} env must contain environment-variable names"
+            )
+        headers = dict(secrets.headers)
+        if not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in headers.items()
+        ):
             raise MCPToolError(f"MCP server {name!r} headers must be a string mapping")
-        bearer = str(item.get("bearer_token") or item.get("oauth_token") or "")
+        bearer = secrets.bearer_token or secrets.oauth_token
         if bearer and not any(key.lower() == "authorization" for key in headers):
             headers = {**headers, "Authorization": f"Bearer {bearer}"}
-        return cls(name=name, transport=transport, command=command, args=tuple(args), url=url,
-                   env=env_values, cwd=str(item.get("cwd") or "").strip(),
-                   headers=tuple((key, value) for key, value in headers.items()))
+        return cls(
+            name=name,
+            transport=transport,
+            command=command,
+            args=tuple(record.args),
+            url=url,
+            env=tuple((key, value) for key, value in secrets.env.items()),
+            cwd=record.cwd.strip(),
+            headers=tuple((key, value) for key, value in headers.items()),
+        )
 
 
 class MCPToolBridge:
@@ -116,7 +129,7 @@ class MCPToolBridge:
 
     def __init__(
         self,
-        servers: list[dict[str, Any]],
+        servers: Sequence[MCPResolvedServer],
         *,
         approval_handler: Any | None = None,
         sampling_handler: Any | None = None,
@@ -130,9 +143,9 @@ class MCPToolBridge:
             sampling_handler: Blocking no-tools model completion callback.
             event_handler: Optional trace callback for connection/notification metadata.
         """
-        if not all(isinstance(item, dict) for item in servers):
-            raise MCPToolError("Every MCP server entry must be an object")
-        parsed = [MCPServer.from_config(item) for item in servers]
+        parsed = [
+            MCPServer.from_record(item.record, item.secrets) for item in servers
+        ]
         names = [server.name for server in parsed]
         if len(names) != len(set(names)):
             raise MCPToolError("MCP server names must be unique")
@@ -152,7 +165,9 @@ class MCPToolBridge:
         self._clients: dict[str, Any] = {}
         self._calls: dict[str, set[ConcurrentFuture[Any]]] = {}
         self._calls_lock = threading.Lock()
-        self._project_root = str(next((item.get("_project_root", "") for item in servers if item.get("_project_root")), ""))
+        self._project_root = next(
+            (item.project_root for item in servers if item.project_root), ""
+        )
         self._approval_handler = approval_handler
         self._sampling_handler = sampling_handler
         self._event_handler = event_handler
@@ -277,7 +292,7 @@ class MCPToolBridge:
             from mcp_types import ErrorData
             if self._approval_handler is None or self._sampling_handler is None:
                 return ErrorData(code=-32603, message="Sampling requires browser approval")
-            details = {"max_tokens": int(getattr(params, "max_tokens", 0) or 0)}
+            details = {"max_tokens": int(params.max_tokens or 0)}
             decision = await asyncio.to_thread(
                 self._approval_handler, server.name, self._approval_agent(server.name), "sampling", details,
             )
@@ -425,11 +440,11 @@ class MCPToolBridge:
                 listing = await client.list_tools(
                     params=PaginatedRequestParams(cursor=cursor)
                 )
-            for tool in getattr(listing, "tools", []):
-                tool_name = str(getattr(tool, "name", "")).strip()
+            for tool in listing.tools:
+                tool_name = str(tool.name).strip()
                 if not tool_name:
                     continue
-                schema = _model_dump(getattr(tool, "input_schema", {}))
+                schema = _model_dump(tool.input_schema)
                 if not isinstance(schema, dict):
                     schema = {"type": "object", "properties": {}}
                 schema.setdefault("type", "object")
@@ -437,13 +452,13 @@ class MCPToolBridge:
                 public_name = f"mcp.{_safe_name_part(server.name)}.{_safe_name_part(tool_name)}"
                 if any(existing[0] == public_name for existing in self._tools):
                     raise MCPToolError(f"MCP tool name collision: {public_name}")
-                description = str(getattr(tool, "description", "") or getattr(tool, "title", "") or tool_name)
+                description = str(tool.description or tool.title or tool_name)
                 self._tools.append((public_name, server.name, tool_name, schema, description))
-            cursor = getattr(listing, "next_cursor", None)
+            cursor = listing.next_cursor
             if not cursor:
                 return
 
-    def capability_snapshot(self) -> dict[str, Any]:
+    def capability_snapshot(self) -> MCPCapabilities:
         """Discover tools, resources, templates, and prompts on live clients."""
         if self._closed:
             raise MCPToolError("MCP bridge is closed")
@@ -483,15 +498,35 @@ class MCPToolBridge:
         if server is None:
             raise MCPToolError(f"MCP server {server_name!r} is not configured")
         client = await self._ensure_client(server)
-        result = await getattr(client, method)(*args)
+        methods = {
+            "read_resource": client.read_resource,
+            "subscribe_resource": client.subscribe_resource,
+            "get_prompt": client.get_prompt,
+            "complete": client.complete,
+        }
+        try:
+            operation = methods[method]
+        except KeyError as exc:
+            raise MCPToolError(f"unsupported MCP capability: {method}") from exc
+        result = await operation(*args)
         return _model_dump(result)
 
-    async def _capability_snapshot_async(self) -> dict[str, Any]:
+    async def _capability_snapshot_async(self) -> MCPCapabilities:
         """Collect JSON-safe full discovery data from every live server."""
-        snapshot: dict[str, Any] = {"tools": [], "resources": [], "resource_templates": [], "prompts": []}
+        tools: list[str] = []
+        resources: list[dict[str, object]] = []
+        resource_templates: list[dict[str, object]] = []
+        prompts: list[dict[str, object]] = []
+        buckets = {
+            "resources": resources,
+            "resource_templates": resource_templates,
+            "prompts": prompts,
+        }
         for server in self._servers:
             client = await self._ensure_client(server)
-            snapshot["tools"].extend(public for public, owner, *_ in self._tools if owner == server.name)
+            tools.extend(
+                public for public, owner, *_ in self._tools if owner == server.name
+            )
             for method, key, attribute in (
                 (client.list_resources, "resources", "resources"),
                 (client.list_resource_templates, "resource_templates", "resource_templates"),
@@ -501,12 +536,22 @@ class MCPToolBridge:
                     result = await method()
                 except Exception:
                     continue
-                values = getattr(result, attribute, [])
-                snapshot[key].extend(
-                    {"server": server.name, **(_model_dump(value) if isinstance(_model_dump(value), dict) else {"value": str(value)})}
-                    for value in values
-                )
-        return snapshot
+                values = result.resources if attribute == "resources" else (
+                    result.resource_templates if attribute == "resource_templates" else result.prompts)
+                for value in values:
+                    dumped = _model_dump(value)
+                    entry = (
+                        dumped
+                        if isinstance(dumped, dict)
+                        else {"value": str(value)}
+                    )
+                    buckets[key].append({"server": server.name, **entry})
+        return MCPCapabilities(
+            tools=tuple(tools),
+            resources=tuple(resources),  # type: ignore[arg-type]
+            resource_templates=tuple(resource_templates),  # type: ignore[arg-type]
+            prompts=tuple(prompts),  # type: ignore[arg-type]
+        )
 
     async def _call(
         self, server_name: str, tool_name: str, arguments: dict[str, Any], agent: str,

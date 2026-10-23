@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from llmfetcher.swarm_module.snapshots import SwarmViewSnapshot
+
 from .models import RunGraph, RunNodeState, RunState
 
 
@@ -21,40 +23,30 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def apply_live_snapshot(graph: RunGraph, snapshot: Mapping[str, Any]) -> None:
-    """Seed or refresh a graph from llmfetcher's safe view snapshot."""
-    assignments = snapshot.get("assignments", {})
-    task_states = snapshot.get("task_states", {})
-    node_states = snapshot.get("node_states", {})
-    task_to_agent = assignments if isinstance(assignments, Mapping) else {}
-    for raw in snapshot.get("nodes", []):
-        if not isinstance(raw, Mapping) or not isinstance(raw.get("id"), str):
-            continue
-        node_id = raw["id"]
+def apply_live_snapshot(graph: RunGraph, snapshot: SwarmViewSnapshot) -> None:
+    """Seed or refresh a graph from llmfetcher's typed live view snapshot."""
+    for raw in snapshot.nodes:
         node = graph.ensure_node(
-            node_id, kind=str(raw.get("kind", "agent")),
-            origin="runtime" if raw.get("dynamic") else "blueprint",
-            parent_id=_text(raw.get("parent")),
+            raw.id, kind=raw.kind,
+            origin="runtime" if raw.dynamic else "blueprint",
+            parent_id=raw.parent or None,
         )
-        record = node_states.get(node_id) if isinstance(node_states, Mapping) else None
-        if isinstance(record, Mapping):
-            state = _NODE_STATES.get(str(record.get("state", "")))
+        record = snapshot.node_states.get(raw.id)
+        if record is not None:
+            state = _NODE_STATES.get(record.state)
             if state is not None:
                 node.state = state
-            node.message = str(record.get("message", ""))
-            node.updated_at = record.get("updated_at") if isinstance(record.get("updated_at"), (int, float)) else None
-            node.task_id = _text(record.get("task_id")) or node.task_id
-    for task_id, agent_id in task_to_agent.items():
-        if not isinstance(task_id, str) or not isinstance(agent_id, str):
-            continue
+            node.message = record.message
+            node.updated_at = record.updated_at
+            node.task_id = record.task_id or node.task_id
+    for task_id, agent_id in snapshot.assignments.items():
         node = graph.ensure_node(agent_id, origin="runtime")
         node.task_id = task_id
-        state = task_states.get(task_id) if isinstance(task_states, Mapping) else None
-        if isinstance(state, str) and state in _NODE_STATES:
+        state = snapshot.task_states.get(task_id)
+        if state is not None and state in _NODE_STATES:
             node.state = _NODE_STATES[state]
-    for raw in snapshot.get("edges", []):
-        if isinstance(raw, Mapping):
-            graph.add_edge(str(raw.get("source", "")), str(raw.get("target", "")), str(raw.get("kind", "dependency")))
+    for edge in snapshot.edges:
+        graph.add_edge(edge.source, edge.target, edge.kind)
 
 
 def apply_run_graph_snapshot(graph: RunGraph, snapshot: Mapping[str, Any]) -> None:
@@ -120,14 +112,7 @@ def apply_journal_event(graph: RunGraph, event: Mapping[str, Any], *, cursor: in
         return
     if not agent:
         return
-    node = graph.ensure_node(
-        agent,
-        origin="runtime" if _text(data.get("task_id")) else "blueprint",
-        # Dispatch facts carry the TaskBus reply_to; restoring it here rebuilds
-        # parent/child topology on post-restart journal replay even with no
-        # live snapshot (ensure_node ignores None, so it never clobbers).
-        parent_id=_text(data.get("reply_to")),
-    )
+    node = graph.ensure_node(agent, origin="runtime" if _text(data.get("task_id")) else "blueprint")
     node.task_id = _text(data.get("task_id")) or node.task_id
     node.plan_task_id = _text(data.get("plan_task_id")) or node.plan_task_id
     node.message = message or node.message

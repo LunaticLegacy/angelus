@@ -42,6 +42,7 @@ class ConsoleToolProvider:
             ToolPermissionPolicy(policy.categories, policy.tools),
             self._core.session_service.create_runtime_worker,
             agent_name or ("coordinator" if role == "coordinator" else "worker"),
+            swarm_graph=self._core.swarm_graph,
         ).build()
 
 

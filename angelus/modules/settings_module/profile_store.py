@@ -8,51 +8,56 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from llmfetcher.context_handlers import DEFAULT_CONTEXT_HANDLER
-
 from .json_store import read_json, write_json
+from llmfetcher.context_handlers import DEFAULT_CONTEXT_HANDLER
 
 
 DEFAULT_RUN_PROFILE: dict[str, Any] = {
-    # Empty means a future Agent may use directly-entered transient credentials.
-    "connector_id": "",
-    "provider": "openai",
-    "model": "",
-    "api_url": "",
-    "system_prompt": "You are a helpful, precise assistant.",
+    "system_prompt": "You are a helpful, precise assistant.\nAfter each checkpoint, DO NOT re-call the tool called `set_task_plan` for task updation.",
     "temperature": 0.4,
-    "max_tokens": 16384,
+    "thinking_mode": "auto",
+    "reasoning_effort": "auto",
+    "max_tokens": 32768,
     "max_rounds": 0,
     "max_retries": 3,
     "request_timeout_seconds": 60.0,
     "max_context_threshold": 262144,
-    "compaction_output_max_tokens": 8192,
-    "compaction_keep_recent": 0,
-    # Which context handler a future attempt builds for its Agents. The library
-    # registry owns the default and the selectable list.
+    "compaction_output_max_tokens": 16384,
+    "context_keep_recent": 0,
+    "tool_result_context_limit": 0,
     "context_handler": DEFAULT_CONTEXT_HANDLER,
+    "context_handler_settings": {},
+    "context_block_order": {},
     "max_swarm_agents": 4,
+    "agent_overrides": {},
     "session_memory_search_sessions": [],
     "session_memory_read_sessions": [],
     "session_artifact_search_sessions": [],
     "session_artifact_open_sessions": [],
     "tool_permissions": {
         "categories": {
-            "context_version": True, "session_memory": True, "vision": True,
+                "context_version": True, "session_memory": True, "notes": True, "vision": True, "file_discovery": True, "project_retrieval": True, "file_write": True,
             "shell": True, "planning": True,
         },
         "tools": {
-            "inspect_agent_context": True, "edit_agent_context": True, "restore_agent_context": True,
+            "file_list": True, "file_read": True, "file_search": True, "file_write": True,
+            "inspect_agent_context": True, "search_agent_archive": True, "read_agent_archive": True,
+            "edit_agent_context": True, "restore_agent_context": True,
             "search_session_memory": True, "read_session_memory": True,
             "search_session_artifacts": True, "open_session_artifact": True,
             "create_session_handoff": True, "read_session_handoff": True,
+            "note_list": True, "note_search": True, "note_read": True, "note_create": True, "note_update": True, "note_delete": True,
             "view_image": True,
-            "computer": False,
             "shell": True,
             "set_task_plan": True, "update_task_status": True, "read_task_plan": True,
         },
     },
 }
+
+# Accepted only so an explicit migration can read old documents. New profile
+# writes never add these connector-owned fields unless a legacy caller submits
+# them unchanged.
+LEGACY_CONNECTOR_FIELDS = {"connector_id", "provider", "model", "api_url"}
 
 
 class RunProfileStore:
@@ -89,7 +94,7 @@ class RunProfileStore:
         """
         with self._lock:
             profile = self._validated(values, partial=False)
-            write_json(self._global_path, {"schema_version": 1, "settings": profile})
+            write_json(self._global_path, {"schema_version": 2, "settings": profile})
             return profile
 
     def session_profile(self, session_id: str) -> dict[str, Any]:
@@ -118,7 +123,7 @@ class RunProfileStore:
             # A complete override makes its meaning independent of later UI
             # field additions; inherit is the explicit way back to global.
             override = self._validated(values, partial=False)
-            write_json(self._session_path(session_id), {"schema_version": 1, "settings": override})
+            write_json(self._session_path(session_id), {"schema_version": 2, "settings": override})
             return {"scope": "session", "inherits_default": False, "effective": override}
 
     def clear_session(self, session_id: str) -> dict[str, Any]:
@@ -155,7 +160,7 @@ class RunProfileStore:
     def _read(self, path: Path) -> Mapping[str, Any]:
         """Decode one optional profile envelope, rejecting malformed documents."""
         document = read_json(path, {"schema_version": 1, "settings": {}})
-        if not isinstance(document, dict) or document.get("schema_version") != 1:
+        if not isinstance(document, dict) or document.get("schema_version") not in {1, 2}:
             raise ValueError(f"unsupported run profile: {path}")
         settings = document.get("settings")
         if not isinstance(settings, dict):
@@ -184,12 +189,12 @@ class RunProfileStore:
         """
         if not isinstance(values, Mapping):
             raise ValueError("run profile must be an object")
-        unknown = set(values) - set(DEFAULT_RUN_PROFILE)
+        unknown = set(values) - (set(DEFAULT_RUN_PROFILE) | LEGACY_CONNECTOR_FIELDS)
         if unknown:
             raise ValueError(f"unknown run-profile fields: {', '.join(sorted(unknown))}")
         result: dict[str, Any] = {} if partial else dict(DEFAULT_RUN_PROFILE)
         for key, value in values.items():
-            if key in {"connector_id", "provider", "model", "api_url", "system_prompt"}:
+            if key in LEGACY_CONNECTOR_FIELDS | {"system_prompt"}:
                 if not isinstance(value, str):
                     raise ValueError(f"{key} must be a string")
                 result[key] = value
@@ -197,6 +202,14 @@ class RunProfileStore:
                 if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
                     raise ValueError("temperature must be between 0 and 2")
                 result[key] = float(value)
+            elif key == "thinking_mode":
+                if value not in {"auto", "on", "off"}:
+                    raise ValueError("thinking_mode must be auto, on, or off")
+                result[key] = value
+            elif key == "reasoning_effort":
+                if value not in {"auto", "low", "medium", "high"}:
+                    raise ValueError("reasoning_effort must be auto, low, medium, or high")
+                result[key] = value
             elif key == "request_timeout_seconds":
                 if (
                     not isinstance(value, (int, float))
@@ -206,21 +219,71 @@ class RunProfileStore:
                 ):
                     raise ValueError("request_timeout_seconds must be between 1 and 3600")
                 result[key] = float(value)
-            elif key in {"max_tokens", "max_retries", "max_context_threshold", "compaction_output_max_tokens", "compaction_keep_recent", "max_swarm_agents", "max_rounds"}:
+            elif key in {"max_tokens", "max_retries", "max_context_threshold", "compaction_output_max_tokens", "context_keep_recent", "tool_result_context_limit", "max_swarm_agents", "max_rounds"}:
                 if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                     raise ValueError(f"{key} must be a non-negative integer")
                 if key in {"max_tokens", "compaction_output_max_tokens"} and value < 1:
                     raise ValueError(f"{key} must be at least 1")
                 result[key] = value
+            elif key == "agent_overrides":
+                if not isinstance(value, dict):
+                    raise ValueError("agent_overrides must be an object")
+                overrides: dict[str, dict[str, int]] = {}
+                allowed = {"max_rounds", "max_tokens", "max_context_threshold"}
+                for name, override in value.items():
+                    if not isinstance(name, str) or not name.strip():
+                        raise ValueError("agent_overrides names must be non-empty strings")
+                    if not isinstance(override, dict):
+                        raise ValueError(f"agent_overrides[{name}] must be an object")
+                    unknown_override = set(override) - allowed
+                    if unknown_override:
+                        raise ValueError(
+                            f"unknown agent override fields for {name}: {', '.join(sorted(unknown_override))}"
+                        )
+                    normalized: dict[str, int] = {}
+                    for override_key, override_value in override.items():
+                        if (
+                            not isinstance(override_value, int)
+                            or isinstance(override_value, bool)
+                            or override_value < 0
+                        ):
+                            raise ValueError(f"{override_key} override for {name} must be a non-negative integer")
+                        if override_key == "max_tokens" and override_value < 1:
+                            raise ValueError(f"max_tokens override for {name} must be at least 1")
+                        if override_key == "max_context_threshold" and override_value < 1024:
+                            raise ValueError(f"max_context_threshold override for {name} must be at least 1024")
+                        normalized[override_key] = override_value
+                    overrides[name.strip()] = normalized
+                result[key] = overrides
             elif key == "context_handler":
-                # Deliberately not checked against the library registry here: a
-                # stored value that a later llmfetcher version drops must not
-                # make an existing settings document unreadable, which would
-                # also block the UI that could fix it. An unknown id is
-                # rejected by create_context_handler() when it is built.
-                if not isinstance(value, str) or not value:
+                # Keep unknown IDs readable so a newer handler can be added
+                # without making an existing profile impossible to edit.
+                if not isinstance(value, str) or not value.strip():
                     raise ValueError("context_handler must be a non-empty string")
-                result[key] = value
+                result[key] = value.strip()
+            elif key == "context_handler_settings":
+                if not isinstance(value, dict):
+                    raise ValueError("context_handler_settings must be an object")
+                normalized: dict[str, dict[str, Any]] = {}
+                for handler, settings in value.items():
+                    if not isinstance(handler, str) or not handler.strip() or not isinstance(settings, dict):
+                        raise ValueError("context_handler_settings must map handler names to objects")
+                    normalized[handler.strip()] = dict(settings)
+                result[key] = normalized
+            elif key == "context_block_order":
+                if not isinstance(value, dict):
+                    raise ValueError("context_block_order must be an object")
+                normalized_order: dict[str, int] = {}
+                for source, priority in value.items():
+                    if not isinstance(source, str) or not source.strip():
+                        raise ValueError("context_block_order sources must be non-empty strings")
+                    if isinstance(priority, bool) or not isinstance(priority, int):
+                        raise ValueError("context_block_order priorities must be integers")
+                    # Existence is deliberately not checked: a plugin provider
+                    # may be absent on this machine while its saved position
+                    # remains valid for a later run.
+                    normalized_order[source.strip()] = priority
+                result[key] = normalized_order
             elif key.endswith("_sessions"):
                 if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
                     raise ValueError(f"{key} must be a list of session IDs")

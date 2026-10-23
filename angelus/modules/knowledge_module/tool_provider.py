@@ -1,4 +1,4 @@
-"""ToolRegistry provider for session-isolated knowledge retrieval."""
+"""ToolRegistry provider for session knowledge documents and Agent pins."""
 from __future__ import annotations
 
 import json
@@ -25,7 +25,8 @@ def _schema(*parameters: ToolParameter) -> ToolSchema:
 class KnowledgeToolProvider:
     """Materialize only authorized knowledge Tools for their owning Session."""
 
-    def __init__(self, _core: "AngelusCore") -> None:
+    def __init__(self, core: "AngelusCore") -> None:
+        self._core = core
         self._stores: dict[Path, KnowledgeStore] = {}
         self._lock = threading.RLock()
 
@@ -45,32 +46,52 @@ class KnowledgeToolProvider:
             return []
         store = self._store(session)
         tools: list[Tool] = []
+        injection = self._core.knowledge_injection
+        session_id = session.execution.session_id if session.execution is not None else ""
+        agent = agent_name or ""
 
-        def upsert(**kwargs: object) -> str:
+        def upsert(id: str, content: str, title: str = "", tags: list[str] | None = None) -> str:
             try:
-                return self._result(store.upsert(kwargs.get("id"), kwargs.get("content"), kwargs.get("title", ""), kwargs.get("tags", [])))
+                return self._result(store.upsert(id, content, title, tags or []))
             except ValueError as exc:
                 return f"Error: {exc}"
 
-        def search(**kwargs: object) -> str:
+        def search(query: str, limit: int = 5) -> str:
             try:
-                return self._result({"query": kwargs.get("query"), "results": store.search(kwargs.get("query"), kwargs.get("limit", 5))})
+                return self._result({"query": query, "results": store.search(query, limit)})
             except ValueError as exc:
                 return f"Error: {exc}"
 
-        def read(**kwargs: object) -> str:
+        def read(id: str, max_chars: int = 6000) -> str:
             try:
-                return self._result(store.read(kwargs.get("id"), kwargs.get("max_chars", 6000)))
+                return self._result(store.read(id, max_chars))
             except KeyError:
                 return "Error: knowledge document was not found"
             except ValueError as exc:
                 return f"Error: {exc}"
 
-        def delete(**kwargs: object) -> str:
+        def delete(id: str) -> str:
             try:
-                return self._result({"id": kwargs.get("id"), "deleted": store.delete(kwargs.get("id"))})
+                return self._result({"id": id, "deleted": store.delete(id)})
             except ValueError as exc:
                 return f"Error: {exc}"
+
+        def pin(path: str) -> str:
+            try:
+                return self._result({"agent": agent, "pins": list(injection.add(session_id, agent, path))})
+            except ValueError as exc:
+                return f"Error: {exc}"
+
+        def unpin(path: str) -> str:
+            try:
+                return self._result({"agent": agent, "pins": list(injection.remove(session_id, agent, path))})
+            except ValueError as exc:
+                return f"Error: {exc}"
+
+        if injection.available and policy.allows("knowledge", "knowledge_pin"):
+            tools.append(Tool("knowledge_pin", "Keep one knowledge document in this Agent's context for every request.", _schema(ToolParameter("path", description="Corpus-relative document path")), pin))
+        if injection.available and policy.allows("knowledge", "knowledge_unpin"):
+            tools.append(Tool("knowledge_unpin", "Stop injecting one pinned knowledge document for this Agent.", _schema(ToolParameter("path", description="Corpus-relative document path")), unpin))
 
         if policy.allows("knowledge", "knowledge_upsert"):
             tools.append(Tool("knowledge_upsert", "Create or replace one explicit document in this Session's knowledge base. The content is not added to context until searched or read.", _schema(ToolParameter("id", description="Stable document ID"), ToolParameter("content", description="Document text to retain"), ToolParameter("title", description="Optional concise title", required=False, default=""), ToolParameter("tags", type="array", description="Optional labels", required=False, default=[])), upsert))
@@ -84,15 +105,21 @@ class KnowledgeToolProvider:
 
 
 def knowledge_tool_registration(core: "AngelusCore") -> ToolProviderRegistration:
-    """Return the built-in local knowledge-base provider registration."""
+    """Return the knowledge provider registration: session documents and pins."""
+    definitions = [
+        ToolDefinition("knowledge_upsert", "knowledge", "写入知识", "新增或替换当前会话的一份知识文档。", "knowledge", frozenset({"coordinator", "worker"})),
+        ToolDefinition("knowledge_search", "knowledge", "检索知识", "从当前会话知识库返回排序后的受限片段。", "knowledge", frozenset({"coordinator", "worker"})),
+        ToolDefinition("knowledge_read", "knowledge", "读取知识", "按文档 ID 读取受限长度的原文。", "knowledge", frozenset({"coordinator", "worker"})),
+        ToolDefinition("knowledge_delete", "knowledge", "删除知识", "按文档 ID 删除当前会话的一份知识。", "knowledge", frozenset({"coordinator", "worker"})),
+    ]
+    if core.knowledge_injection.available:
+        definitions.extend([
+            ToolDefinition("knowledge_pin", "knowledge", "固定知识到上下文", "把一篇知识文档加入本 Agent 的持续注入清单。", "knowledge", frozenset({"coordinator", "worker"})),
+            ToolDefinition("knowledge_unpin", "knowledge", "取消固定知识", "把一篇知识文档移出本 Agent 的持续注入清单。", "knowledge", frozenset({"coordinator", "worker"})),
+        ])
     return ToolProviderRegistration(
         id="knowledge",
         provider=KnowledgeToolProvider(core),
-        categories=(ToolCategory("knowledge", "知识库", "按会话保存资料，并只在 Agent 显式检索时提供受限片段。"),),
-        definitions=(
-            ToolDefinition("knowledge_upsert", "knowledge", "写入知识", "新增或替换当前会话的一份知识文档。", "knowledge", frozenset({"coordinator", "worker"})),
-            ToolDefinition("knowledge_search", "knowledge", "检索知识", "从当前会话知识库返回排序后的受限片段。", "knowledge", frozenset({"coordinator", "worker"})),
-            ToolDefinition("knowledge_read", "knowledge", "读取知识", "按文档 ID 读取受限长度的原文。", "knowledge", frozenset({"coordinator", "worker"})),
-            ToolDefinition("knowledge_delete", "knowledge", "删除知识", "按文档 ID 删除当前会话的一份知识。", "knowledge", frozenset({"coordinator", "worker"})),
-        ),
+        categories=(ToolCategory("knowledge", "知识库", "按会话保存资料，并提供可选的持续注入清单。"),),
+        definitions=tuple(definitions),
     )

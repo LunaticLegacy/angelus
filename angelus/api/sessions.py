@@ -2,20 +2,31 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ..core import AngelusCore
 from ..modules.console_module import ConsoleDomainError
-from ..modules.platform_module import SystemResourceManager, SystemResourceManagerError, SystemResourceManagerUnavailable
+from .dependencies import get_core
+
+
+if TYPE_CHECKING:
+    from ..core import AngelusCore
 
 
 router = APIRouter()
-_resource_manager = SystemResourceManager()
+
+
+def _session_status(snapshot: Any) -> str:
+    state = snapshot.state.value if hasattr(snapshot.state, "value") else str(snapshot.state)
+    return {"completed": "done", "failed": "error", "interrupted": "error"}.get(state, state)
 
 
 class CreateSessionRequest(BaseModel):
@@ -32,12 +43,41 @@ class DeleteSessionRequest(BaseModel):
     confirmation: str = Field(min_length=1, max_length=80)
 
 
+class RenameSessionRequest(BaseModel):
+    """HTTP input for changing one Session's display name only."""
+
+    name: str = Field(min_length=1, max_length=200)
+
+
 def _core(request: Request) -> AngelusCore:
     """Resolve the app-owned core without manufacturing application state."""
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
+
+
+def _open_directory(path: Path) -> None:
+    """Ask the host desktop to open an existing directory.
+
+    The desktop release serves the UI from a local webview, while this API is
+    owned by the packaged backend process.  Returning a path is not enough to
+    open a native file manager, so perform the platform operation here without
+    invoking a shell or interpolating user-controlled text into a command.
+    """
+    if not path.is_dir():
+        raise OSError(f"Directory does not exist: {path}")
+    if sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+        return
+    command = "open" if sys.platform == "darwin" else "xdg-open"
+    executable = shutil.which(command)
+    if executable is None:
+        raise OSError(f"Desktop opener is unavailable: {command}")
+    subprocess.Popen(
+        [executable, str(path)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 @router.get("/api/sessions")
@@ -50,9 +90,20 @@ def list_sessions(request: Request) -> dict[str, list[dict[str, Any]]]:
                 "id": item.session_id,
                 "name": item.name,
                 "project_path": str(item.project_path) if item.project_path is not None else None,
-                "state": core.execution_service.status(item.session_id).state if core.sessions.exists(item.session_id) else "unknown",
+                "status": _session_status(core.execution_service.status(item.session_id)) if core.sessions.exists(item.session_id) else "idle",
             }
             for item in core.session_service.list()
+        ]
+    }
+
+
+@router.get("/api/workspaces")
+def list_workspaces(request: Request) -> dict[str, list[dict[str, Any]]]:
+    """Compatibility alias during the session/workspace naming migration."""
+    return {
+        "workspaces": [
+            {"id": item.session_id, "name": item.name, "project_path": str(item.project_path)}
+            for item in _core(request).session_service.list()
         ]
     }
 
@@ -72,8 +123,29 @@ def create_session(payload: CreateSessionRequest, request: Request) -> dict[str,
         "id": workspace.session_id,
         "name": workspace.name,
         "project_path": str(workspace.project_path) if workspace.project_path else None,
-        "state": "idle",
+        "status": "idle",
     }
+
+
+@router.post("/api/workspaces", status_code=201)
+def create_workspace(payload: CreateSessionRequest, request: Request) -> dict[str, Any]:
+    """Compatibility alias for clients that still call a workspace a workspace."""
+    return create_session(payload, request)
+
+
+@router.post("/api/sessions/{session_id}/open-folder")
+def open_session_folder(session_id: str, request: Request) -> dict[str, str]:
+    """Open the session project directory in the host file manager."""
+    try:
+        workspace = _core(request).workspaces.get(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
+    path = Path(workspace.project_path)
+    try:
+        _open_directory(path)
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"无法打开会话目录：{exc}") from exc
+    return {"path": str(path)}
 
 
 @router.delete("/api/sessions/{session_id}")
@@ -90,20 +162,16 @@ def delete_session(session_id: str, payload: DeleteSessionRequest, request: Requ
     return {"status": "deleted", "session_id": session_id}
 
 
-@router.post("/api/sessions/{session_id}/workspace/open")
-def open_workspace_directory(session_id: str, request: Request) -> dict[str, str]:
-    """Open the selected project directory in the host file manager."""
-    core = _core(request)
+@router.patch("/api/sessions/{session_id}")
+def rename_session(session_id: str, payload: RenameSessionRequest, request: Request) -> dict[str, str]:
+    """Rename one Session without changing its state or execution history."""
     try:
-        workspace = core.workspaces.get(session_id)
-        opened = _resource_manager.open_directory(workspace.project_path or workspace.state_path)
+        workspace = _core(request).workspaces.rename(session_id, payload.name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
-    except SystemResourceManagerUnavailable as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
-    except SystemResourceManagerError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"session_id": session_id, "path": str(opened)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": workspace.session_id, "name": workspace.name}
 
 
 @router.get("/api/sessions/{session_id}/messages")

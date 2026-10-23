@@ -7,6 +7,8 @@ import hashlib
 from pathlib import Path
 from typing import Any, Mapping
 
+from llmfetcher.swarm_module.snapshots import SwarmViewSnapshot
+
 from .models import RunGraph, RunState
 from .reducer import apply_journal_event, apply_live_snapshot, apply_run_graph_snapshot
 
@@ -20,7 +22,7 @@ class RunGraphProjector:
         execution_root: Path,
         *,
         execution_id: str | None = None,
-        live_snapshot: Mapping[str, Any] | None = None,
+        live_snapshot: SwarmViewSnapshot | None = None,
         live_status: Mapping[str, Any] | None = None,
     ) -> dict[str, object]:
         """Return one normalized graph, preferring a requested/latest attempt."""

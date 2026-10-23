@@ -5,10 +5,22 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 
+from ..settings_module.json_schema import decode_record, encode_record
+from ..settings_module.json_store import JsonSchemaError
 from .workspace import Workspace
+
+
+@dataclass(frozen=True)
+class WorkspaceCatalogDocument:
+    """The complete durable ``workspaces.json`` document."""
+
+    workspaces: tuple[Workspace, ...]
+    schema_version: int = 1
+    legacy_workspace_imported: bool = False
 
 
 class WorkspaceCatalog:
@@ -66,6 +78,31 @@ class WorkspaceCatalog:
             self._write(records)
             return workspace
 
+    def rename(self, session_id: str, name: str) -> Workspace:
+        """Rename one workspace display name without changing its identity.
+
+        Args:
+            session_id: Stable Session identity to rename.
+            name: New display name, trimmed to one through 200 characters.
+
+        Returns:
+            The updated workspace record after the atomic write.
+
+        Raises:
+            KeyError: If no current workspace has the supplied Session ID.
+            ValueError: If the normalized name is empty or too long.
+        """
+        normalized = name.strip()
+        if not normalized or len(normalized) > 200:
+            raise ValueError("name must contain 1 to 200 characters")
+        with self._lock:
+            records = self._read()
+            workspace = records[session_id]
+            updated = replace(workspace, name=normalized)
+            records[session_id] = updated
+            self._write(records)
+            return updated
+
     def import_legacy_sessions(self, path: Path, state_root: Path) -> tuple[Workspace, ...]:
         """Import old ``workspace/sessions.json`` identities once, without copying data.
 
@@ -81,13 +118,13 @@ class WorkspaceCatalog:
             return ()
         try:
             entries = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return ()
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read legacy workspace index: {path}") from exc
         if not isinstance(entries, list):
-            return ()
+            raise ValueError(f"invalid legacy workspace index: {path}")
         with self._lock:
             document = self._read_document()
-            if document.get("legacy_workspace_imported") is True:
+            if document.legacy_workspace_imported:
                 return ()
             records = self._records(document)
             imported: list[Workspace] = []
@@ -135,34 +172,48 @@ class WorkspaceCatalog:
         """Read valid registry records; an absent file denotes an empty catalog."""
         return self._records(self._read_document())
 
-    def _read_document(self) -> dict[str, object]:
-        """Read the validated catalog envelope while preserving migration metadata."""
+    def _read_document(self) -> WorkspaceCatalogDocument:
+        """Read and strictly decode the catalog envelope."""
         if not self.path.exists():
-            return {"schema_version": 1, "workspaces": []}
-        raw = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or raw.get("schema_version") != 1:
-            raise ValueError(f"Unsupported workspace catalog: {self.path}")
-        return raw
-
-    def _records(self, document: dict[str, object]) -> dict[str, Workspace]:
-        """Decode workspace entries from one previously validated envelope."""
-        entries = document.get("workspaces")
-        if not isinstance(entries, list):
+            return WorkspaceCatalogDocument(workspaces=())
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read workspace catalog: {self.path}") from exc
+        if not isinstance(raw, dict):
             raise ValueError(f"Invalid workspace catalog: {self.path}")
-        workspaces = [Workspace.from_json(item) for item in entries if isinstance(item, dict)]
-        return {workspace.session_id: workspace for workspace in workspaces}
+        # Older catalogs omitted the one-way migration marker.
+        raw.setdefault("legacy_workspace_imported", False)
+        try:
+            document = decode_record(
+                WorkspaceCatalogDocument, raw, "workspace catalog"
+            )
+        except JsonSchemaError as exc:
+            raise ValueError(f"Invalid workspace catalog: {self.path}") from exc
+        if document.schema_version != 1:
+            raise ValueError(f"Unsupported workspace catalog: {self.path}")
+        return document
+
+    def _records(self, document: WorkspaceCatalogDocument) -> dict[str, Workspace]:
+        """Index decoded workspace entries by their stable Session identity."""
+        records: dict[str, Workspace] = {}
+        for workspace in document.workspaces:
+            if workspace.session_id in records:
+                raise ValueError(f"Duplicate workspace: {workspace.session_id}")
+            records[workspace.session_id] = workspace
+        return records
 
     def _write(self, records: dict[str, Workspace], *, legacy_workspace_imported: bool | None = None) -> None:
         """Atomically replace the registry after flushing file and parent directory."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if legacy_workspace_imported is None:
-            legacy_workspace_imported = self._read_document().get("legacy_workspace_imported") is True
-        payload = {
-            "schema_version": 1,
-            "workspaces": [workspace.to_json() for workspace in records.values()],
-        }
-        if legacy_workspace_imported:
-            payload["legacy_workspace_imported"] = True
+            legacy_workspace_imported = self._read_document().legacy_workspace_imported
+        payload = encode_record(
+            WorkspaceCatalogDocument(
+                workspaces=tuple(records.values()),
+                legacy_workspace_imported=legacy_workspace_imported,
+            )
+        )
         descriptor, temporary = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as file:
@@ -171,9 +222,6 @@ class WorkspaceCatalog:
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temporary, self.path)
-            # POSIX idiom: fsync the parent directory so the rename itself
-            # survives a crash.  Windows cannot open directories for fsync;
-            # os.replace already committed the rename atomically there.
             if os.name == "posix":
                 directory = os.open(self.path.parent, os.O_RDONLY)
                 try:

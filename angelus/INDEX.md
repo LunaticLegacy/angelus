@@ -23,25 +23,25 @@ live execution belongs to `Session`, not to API routes or `AngelusCore`.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [cli.py](cli.py#L13) | `_parser` | `None` | `argparse.ArgumentParser` | Build the CLI without importing FastAPI or Uvicorn for local commands. |
-| [cli.py](cli.py#L33) | `_cmd_session` | `args: argparse.Namespace, core: AngelusCore` | `int` | Run the durable workspace-only session commands. |
-| [cli.py](cli.py#L44) | `_cmd_web` | `args: argparse.Namespace, core: AngelusCore` | `NoReturn` | Run an HTTP host whose routes use exactly the supplied core instance. |
-| [cli.py](cli.py#L76) | `main` | `argv: list[str] \| None` | `int` | Parse one command and delegate all stateful work to ``AngelusCore``. |
-| [core.py](core.py#L30) | `_bundled_plugin_root` | `None` | `Path` | Resolve the read-only plugin root shipped inside a desktop sidecar. |
-| [core.py](core.py#L38) | `_managed_plugin_root` | `state_root: Path` | `Path \| None` | Resolve an explicit portable plugin directory when the host supplies it. |
-| [core.py](core.py#L44) | `_development_plugin_root` | `None` | `Path` | Resolve the repository plugin source, or an inert root in releases. |
-| [core.py](core.py#L164) | `AngelusCore.install_signal_handlers` | `None` | `None` | Install SIGINT receipt and start a non-blocking drain helper. |
-| [core.py](core.py#L181) | `AngelusCore.drain_signals` | `None` | `bool` | Force-stop pending attempts outside the Python signal handler. |
-| [core.py](core.py#L189) | `AngelusCore.receive_sigint` | `None` | `None` | Announce Ctrl+C and immediately force-stop every current attempt. |
-| [core.py](core.py#L208) | `AngelusCore.shutdown` | `None` | `None` | Durably stop live attempts before releasing host resources. |
-| [core.py](core.py#L238) | `AngelusCore._drain_signal_loop` | `None` | `None` | Poll the signal supervisor until shutdown requests this daemon exit. |
+| [cli.py](cli.py#L14) | `_parser` | `None` | `argparse.ArgumentParser` | Build the CLI without importing FastAPI or Uvicorn for local commands. |
+| [cli.py](cli.py#L39) | `_cmd_session` | `args: argparse.Namespace, core: AngelusCore` | `int` | Run the durable workspace-only session commands. |
+| [cli.py](cli.py#L50) | `_cmd_web` | `args: argparse.Namespace, core: AngelusCore` | `NoReturn` | Run an HTTP host whose routes use exactly the supplied core instance. |
+| [cli.py](cli.py#L82) | `main` | `argv: list[str] \| None` | `int` | Parse one command and delegate all stateful work to ``AngelusCore``. |
+| [core.py](core.py#L40) | `_bundled_plugin_root` | `None` | `Path` | Resolve the read-only plugin root shipped inside a desktop sidecar. |
+| [core.py](core.py#L48) | `_managed_plugin_root` | `state_root: Path` | `Path \| None` | Resolve an explicit portable plugin directory when the host supplies it. |
+| [core.py](core.py#L54) | `_development_plugin_root` | `None` | `Path` | Resolve the repository plugin source, or an inert root in releases. |
+| [core.py](core.py#L209) | `AngelusCore.install_signal_handlers` | `None` | `None` | Install SIGINT receipt and start a non-blocking drain helper. |
+| [core.py](core.py#L226) | `AngelusCore.drain_signals` | `None` | `bool` | Force-stop pending attempts outside the Python signal handler. |
+| [core.py](core.py#L234) | `AngelusCore.receive_sigint` | `None` | `None` | Announce Ctrl+C and immediately force-stop every current attempt. |
+| [core.py](core.py#L253) | `AngelusCore.shutdown` | `None` | `None` | Durably stop live attempts before releasing host resources. |
+| [core.py](core.py#L283) | `AngelusCore._drain_signal_loop` | `None` | `None` | Poll the signal supervisor until shutdown requests this daemon exit. |
 | [version.py](version.py#L26) | `runtime_versions` | `None` | `RuntimeVersions` | Return version information from independent runtime authorities. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [core.py](core.py#L54) | `AngelusCore` | `state_root: Path \| None, sessions: SessionHandler \| None` | `object` | Compose the one process-local Angelus application. |
+| [core.py](core.py#L64) | `AngelusCore` | `state_root: Path \| None, sessions: SessionHandler \| None` | `object` | Compose the one process-local Angelus application. |
 | [version.py](version.py#L12) | `RuntimeVersions` | `angelus_version: str, llmfetcher_version: str, llmfetcher_compatibility: str` | `object` | Independent application and orchestration-library version metadata. |
 
 <!-- END GENERATED SYMBOL MAP -->

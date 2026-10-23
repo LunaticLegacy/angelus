@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from llmfetcher.context_handlers import context_handler_specs
-
-from ..core import AngelusCore
 from ..modules.application_module import UnknownSession
+from ..modules.connector_module.connector_store import ConnectorView
+from ..modules.settings_module.session_preferences import SessionPreference
 from ..modules.tool_module import ToolCatalog
 from ..version import RuntimeVersions, runtime_versions
+from llmfetcher.context_handlers import DEFAULT_CONTEXT_HANDLER, context_handler_specs
+from .dependencies import get_core
+
+
+if TYPE_CHECKING:
+    from ..core import AngelusCore
 
 
 router = APIRouter()
@@ -53,10 +58,7 @@ def _core(request: Request) -> AngelusCore:
     Raises:
         RuntimeError: If this router was installed without AngelusCore state.
     """
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
 
 
 @router.get("/api/tool-registry")
@@ -72,6 +74,35 @@ def tool_registry(request: Request) -> ToolCatalog:
     return _core(request).tool_registry.catalog()
 
 
+@router.get("/api/context-handlers")
+def context_handlers() -> dict[str, Any]:
+    """Return the context strategies available to future Session runs."""
+    return {
+        "default": DEFAULT_CONTEXT_HANDLER,
+        "handlers": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "description": item.description,
+                "settings": [
+                    {
+                        "key": setting.key,
+                        "title": setting.title,
+                        "description": setting.description,
+                        "type": setting.type,
+                        "default": setting.default,
+                        **({"enum": list(setting.enum)} if setting.enum else {}),
+                        **({"minimum": setting.minimum} if setting.minimum is not None else {}),
+                        **({"maximum": setting.maximum} if setting.maximum is not None else {}),
+                    }
+                    for setting in item.settings
+                ],
+            }
+            for item in context_handler_specs()
+        ],
+    }
+
+
 @router.get("/api/version")
 def version() -> RuntimeVersions:
     """Return independent Angelus and llmfetcher runtime versions.
@@ -83,13 +114,13 @@ def version() -> RuntimeVersions:
 
 
 @router.get("/api/connectors")
-def list_connectors(request: Request) -> dict[str, list[dict[str, Any]]]:
+def list_connectors(request: Request) -> dict[str, list[ConnectorView]]:
     """List global connectors without serializing credentials in HTTP output."""
     return {"connectors": list(_core(request).settings_service.list_connectors())}
 
 
 @router.post("/api/connectors", status_code=201)
-def create_connector(payload: ConnectorPayload, request: Request) -> dict[str, Any]:
+def create_connector(payload: ConnectorPayload, request: Request) -> ConnectorView:
     """Create one globally reusable connector and return its public projection."""
     try:
         return _core(request).settings_service.create_connector(payload.model_dump())
@@ -98,7 +129,7 @@ def create_connector(payload: ConnectorPayload, request: Request) -> dict[str, A
 
 
 @router.put("/api/connectors/{connector_id}")
-def replace_connector(connector_id: str, payload: ConnectorPayload, request: Request) -> dict[str, Any]:
+def replace_connector(connector_id: str, payload: ConnectorPayload, request: Request) -> ConnectorView:
     """Replace metadata, retaining a secret when the supplied API key is blank."""
     try:
         return _core(request).settings_service.replace_connector(connector_id, payload.model_dump())
@@ -110,11 +141,7 @@ def replace_connector(connector_id: str, payload: ConnectorPayload, request: Req
 
 @router.delete("/api/connectors/{connector_id}", status_code=204)
 def delete_connector(connector_id: str, request: Request) -> None:
-    """Delete connector only when no effective run profile references it.
-
-    A 409 response is intentional: callers must first change every retaining
-    global/session profile, rather than leaving a broken future-run reference.
-    """
+    """Delete connector metadata and clear optional Session defaults."""
     try:
         _core(request).settings_service.delete_connector(connector_id)
     except KeyError as exc:
@@ -169,20 +196,29 @@ def delete_session_profile(session_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
 
 
-@router.get("/api/context-handlers")
-def list_context_handlers() -> dict[str, Any]:
-    """Return the selectable context handlers for the run-profile form.
+@router.get("/api/sessions/{session_id}/preferences")
+def get_session_preferences(session_id: str, request: Request) -> SessionPreference:
+    """Return optional UI preferences, including the default connector."""
+    try:
+        return _core(request).settings_service.session_preferences(session_id)
+    except UnknownSession as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
 
-    Returns:
-        Catalog entries carrying the stable id, a library-neutral title and a
-        one-line description. The console maps ids to its own localized labels.
-    """
-    return {
-        "handlers": [
-            {"id": spec.id, "title": spec.title, "description": spec.description}
-            for spec in context_handler_specs()
-        ]
-    }
+
+class SessionPreferencesPayload(BaseModel):
+    """Optional Session convenience settings, independent from run profile."""
+
+    default_connector_id: str | None = None
+
+
+@router.put("/api/sessions/{session_id}/preferences")
+def put_session_preferences(session_id: str, payload: SessionPreferencesPayload, request: Request) -> SessionPreference:
+    try:
+        return _core(request).settings_service.set_default_connector(session_id, payload.default_connector_id)
+    except UnknownSession as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 __all__ = ["router"]

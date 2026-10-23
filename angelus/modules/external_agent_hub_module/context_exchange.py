@@ -130,11 +130,11 @@ class SessionContextExchangeService:
         handler = agent.context_handler
         if path.is_file() and not handler.load(path):
             raise ContextExchangeError("target Agent context cannot be loaded")
-        linear = getattr(handler, "linear", handler)
-        messages = getattr(linear, "messages", None)
+        linear = handler.linear
+        messages = linear.messages
         if not isinstance(messages, list):
             raise ContextExchangeError("target Agent context does not support append import")
-        round_value = getattr(linear, "_round", 0)
+        round_value = linear._round
         if not isinstance(round_value, int):
             raise ContextExchangeError("target Agent context timeline is invalid")
         accepted = 0

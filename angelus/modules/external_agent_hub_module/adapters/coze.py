@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..models import ExternalAgentCapability, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
-from .read_only import ExternalAgentReadOnlyFacade, ReadOnlyExternalAgentAdapter
+from .read_only import ExternalAgentFacadeError, ExternalAgentReadOnlyFacade, ReadOnlyExternalAgentAdapter
 
 if TYPE_CHECKING:
     from ..models import ContextPackage, ContextPage, ContextTransferResult

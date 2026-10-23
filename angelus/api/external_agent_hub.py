@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..core import AngelusCore
+from .dependencies import get_core
 from ..modules.external_agent_hub_module import ContextMessage, ContextPackage, ContextToolCall, ContextTransferResult, ExternalAgentAdapterFailure, ExternalAgentCandidate, ExternalAgentCapability, ExternalAgentContext, ExternalAgentDefinition, ExternalAgentHealth, ExternalAgentSession
 from ..modules.external_agent_hub_module.context_codec import parse_context_package
 
@@ -50,10 +51,7 @@ def _core(request: Request) -> AngelusCore:
     Raises:
         RuntimeError: If no Angelus composition root is installed.
     """
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
 
 
 @router.get("/api/external-agents")

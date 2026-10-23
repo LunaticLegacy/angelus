@@ -28,6 +28,28 @@ class WorkspaceServiceTests(unittest.TestCase):
             self.assertTrue(restored.sessions.exists("alpha"))
             self.assertEqual([item.session_id for item in restored.session_service.list()], ["alpha"])
 
+    def test_rename_updates_only_the_display_name_and_survives_restart(self) -> None:
+        """Renaming persists the display name without touching session state."""
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary) / "state"
+            project = Path(temporary) / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=state_root)
+            core.session_service.create("alpha", "Alpha", project)
+
+            renamed = core.workspaces.rename("alpha", "  Renamed  ")
+            self.assertEqual(renamed.name, "Renamed")
+            self.assertEqual(core.workspaces.get("alpha").name, "Renamed")
+
+            restored = AngelusCore(state_root=state_root)
+            self.assertEqual(restored.workspaces.get("alpha").name, "Renamed")
+            self.assertEqual(restored.workspaces.get("alpha").project_path, project.resolve())
+
+            with self.assertRaises(ValueError):
+                core.workspaces.rename("alpha", "   ")
+            with self.assertRaises(KeyError):
+                core.workspaces.rename("missing", "x")
+
     def test_legacy_session_index_is_imported_without_inventing_project_paths(self) -> None:
         """Old session identities remain selectable after the storage redesign."""
         with tempfile.TemporaryDirectory() as temporary:

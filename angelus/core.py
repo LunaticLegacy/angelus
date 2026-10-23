@@ -9,19 +9,29 @@ import threading
 
 from .modules.session_module import SessionHandler
 from .modules.execution_module import SigintSupervisor
+from .modules.execution_module.reconcile import reconcile_interrupted_attempts
 from .modules.workspace_module import WorkspaceCatalog
 from .modules.conversation_module import ConversationStore
-from .modules.application_module import ExecutionService, SessionService, SettingsService
-from .modules.console_module import ConsoleProjectionService
+from .modules.application_module import ExecutionService, SessionService, SettingsService, SwarmGraphService
+from .modules.application_module.context_provider import workspace_context_registration
+from .modules.context_module import ContextProviderRegistry
+from .modules.console_module import ConsoleProjectionService, plan_context_registration
 from .modules.console_module.tool_provider import console_tool_registration
 from .modules.connector_module import ConnectorStore, ProviderCatalog
 from .modules.settings_module import RunProfileStore
+from .modules.settings_module.session_preferences import SessionPreferenceStore
 from .modules.tool_module import ToolRegistry, runtime_tool_registration
-from .modules.knowledge_module import knowledge_tool_registration
+from .modules.knowledge_module import (
+    KnowledgeInjectionService,
+    knowledge_context_registration,
+    knowledge_tool_registration,
+)
 from .modules.mcp_module import MCPService, mcp_tool_registration
 from .modules.context_version_module import context_version_tool_registration
 from .modules.session_memory_module import session_memory_tool_registration
+from .modules.note_module import note_context_registration, note_tool_registration
 from .modules.attachment_module.tool_provider import image_tool_registration
+from .modules.file_module import file_tool_registration
 from .modules.plugin_module import PluginManager
 from .modules.external_agent_hub_module import CodexAppServerAdapter, ExternalAgentAdapterRegistry, ExternalAgentHubService, ExternalAgentHubStore, SessionContextExchangeService
 from .modules.external_agent_hub_module.adapters import ClaudeSdkAdapter, CozeExternalAgentAdapter, OpenCodeExternalAgentAdapter, UnavailableExternalAgentFacade, WorkBuddyExternalAgentAdapter
@@ -78,8 +88,16 @@ class AngelusCore:
             sessions: Optional prebuilt aggregate registry, mainly for tests
                 and alternate hosts.  Existing sessions are rehydrated into it.
         """
-        # Root of new state only; never a user project directory.
-        self.state_root = (state_root or (Path.cwd() / ".angelus-state")).resolve()
+        # Root of new state only; never a user project directory.  Hosts may
+        # provide the explicit constructor value, otherwise honor the same
+        # environment override used by the CLI/desktop sidecar.
+        configured_state_dir = os.environ.get("ANGELUS_STATE_DIR", "").strip()
+        default_state_root = (
+            Path(configured_state_dir)
+            if configured_state_dir
+            else Path.cwd() / ".angelus-state"
+        )
+        self.state_root = (state_root or default_state_root).resolve()
         # Process-local registry.  Each value is a complete Session aggregate.
         self.sessions = sessions or SessionHandler()
         # Durable list of selectable Sessions and their user project bindings.
@@ -93,6 +111,10 @@ class AngelusCore:
                 self.legacy_workspace_index,
                 self.state_root / "sessions",
             )
+        # A hard kill never runs the SIGINT supervisor, so an attempt can stay
+        # "running" on disk after its process died. Reconcile those manifests
+        # before any new run can start.
+        reconcile_interrupted_attempts(self.state_root)
         # Runtime discovery only; this catalog neither stores secrets nor
         # configures an Agent.
         self.providers = ProviderCatalog()
@@ -100,8 +122,20 @@ class AngelusCore:
         self.connectors = ConnectorStore(self.state_root)
         # Global defaults plus Session-local future-run profile overrides.
         self.run_profiles = RunProfileStore(self.state_root)
+        self.session_preferences = SessionPreferenceStore(self.state_root)
+        # llmfetcher's web-search tool otherwise defaults to the process cwd,
+        # which is the disposable extracted runtime in a packaged release.
+        # Pin its settings and usage database beside Angelus' durable state.
+        try:
+            from llmfetcher.tools.obscura_tools import configure_web_search_store
+
+            configure_web_search_store(self.state_root / "settings" / "agent-console.sqlite3")
+        except ImportError:
+            # The optional search tool is not required for the core backend.
+            pass
         # Sole process-wide directory of capability definitions and runtime
         # materializers. Domain modules register providers once at startup.
+        self.knowledge_injection = KnowledgeInjectionService(self.state_root)
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(console_tool_registration(self))
         self.tool_registry.register(runtime_tool_registration(self))
@@ -110,7 +144,17 @@ class AngelusCore:
         self.tool_registry.register(mcp_tool_registration(self.mcp_service))
         self.tool_registry.register(context_version_tool_registration(self))
         self.tool_registry.register(session_memory_tool_registration(self))
+        self.tool_registry.register(note_tool_registration(self))
         self.tool_registry.register(image_tool_registration(self))
+        self.tool_registry.register(file_tool_registration(self))
+        # Sole process-wide registry of module-owned Composer sources.
+        # Modules register once here; each Agent materializes its own
+        # instances, gated by its role and effective Tool grants.
+        self.context_registry = ContextProviderRegistry()
+        self.context_registry.register(workspace_context_registration())
+        self.context_registry.register(note_context_registration(self.state_root))
+        self.context_registry.register(plan_context_registration())
+        self.context_registry.register(knowledge_context_registration(self.knowledge_injection))
         # Plugins can only extend the application through this same ToolRegistry.
         self.plugin_manager = PluginManager(
             self.state_root,
@@ -140,6 +184,7 @@ class AngelusCore:
         # Application use cases: adapters call these rather than mutating a
         # store or Session aggregate directly.
         self.session_service = SessionService(self)
+        self.swarm_graph = SwarmGraphService(self)
         self.execution_service = ExecutionService(self)
         self.settings_service = SettingsService(self)
         self.console_service = ConsoleProjectionService(self)

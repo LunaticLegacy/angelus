@@ -18,6 +18,7 @@ by storing mutable runtime state in an API adapter.
 | Session console | [`console_module/INDEX.md`](console_module/INDEX.md) | Persisted task-plan/topology blueprints and Session projections. |
 | Run graph | [`run_graph_module/INDEX.md`](run_graph_module/INDEX.md) | Versioned read-only graph projection from attempt journals, checkpoints and live views. |
 | Knowledge | [`knowledge_module/INDEX.md`](knowledge_module/INDEX.md) | Session-isolated durable knowledge documents and explicit Agent retrieval tools. |
+| Files | [`file_module/INDEX.md`](file_module/INDEX.md) | Bounded listing, reading, searching and writing inside the bound Session workspace. |
 | Unified tools | [`tool_module/INDEX.md`](tool_module/INDEX.md) | Canonical Tool identities, authorization policy and future runtime registry. |
 | External Agent Hub | [`external_agent_hub_module/INDEX.md`](external_agent_hub_module/INDEX.md) | Credential-free external Agent definitions and protocol adapter boundary. |
 | Platform integration | [`platform_module/INDEX.md`](platform_module/INDEX.md) | Operating-system desktop resource-manager dispatch; no browser or Tauri ownership. |
@@ -31,36 +32,62 @@ by storing mutable runtime state in an API adapter.
 
 | Source | Function / method | Input types | Output type | Semantics |
 |---|---|---|---|---|
-| [computer_use_module/backend.py](computer_use_module/backend.py#L22) | `ComputerBackend.screenshot` | `None` | `ScreenCapture` | Implement `ComputerBackend.screenshot`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L23) | `ComputerBackend.screen_size` | `None` | `tuple[int, int]` | Implement `ComputerBackend.screen_size`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L24) | `ComputerBackend.click` | `x: int, y: int, button: str` | `None` | Implement `ComputerBackend.click`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L25) | `ComputerBackend.double_click` | `x: int, y: int, button: str` | `None` | Implement `ComputerBackend.double_click`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L26) | `ComputerBackend.type_text` | `text: str` | `None` | Implement `ComputerBackend.type_text`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L27) | `ComputerBackend.press_key` | `key: str` | `None` | Implement `ComputerBackend.press_key`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L28) | `ComputerBackend.scroll` | `dx: int, dy: int` | `None` | Implement `ComputerBackend.scroll`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L31) | `backend_for_host` | `None` | `ComputerBackend` | Implement `backend_for_host`. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L40) | `_UnavailableBackend._raise` | `None` | `None` | Implement `_UnavailableBackend._raise`. |
-| [computer_use_module/provider.py](computer_use_module/provider.py#L23) | `ComputerUseProvider.materialize` | `session: 'Session', policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `ComputerUseProvider.materialize`. |
-| [computer_use_module/provider.py](computer_use_module/provider.py#L79) | `ComputerUseProvider._validate_point` | `backend: ComputerBackend, x: int, y: int` | `None` | Implement `ComputerUseProvider._validate_point`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L30) | `WindowsComputerBackend.screenshot` | `None` | `ScreenCapture` | Implement `WindowsComputerBackend.screenshot`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L39) | `WindowsComputerBackend.screen_size` | `None` | `tuple[int, int]` | Implement `WindowsComputerBackend.screen_size`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L42) | `WindowsComputerBackend._move` | `x: int, y: int` | `None` | Implement `WindowsComputerBackend._move`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L46) | `WindowsComputerBackend.click` | `x: int, y: int, button: str` | `None` | Implement `WindowsComputerBackend.click`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L55) | `WindowsComputerBackend.double_click` | `x: int, y: int, button: str` | `None` | Implement `WindowsComputerBackend.double_click`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L59) | `WindowsComputerBackend.type_text` | `text: str` | `None` | Implement `WindowsComputerBackend.type_text`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L66) | `WindowsComputerBackend._unicode_key` | `char: str, key_up: bool` | `None` | Implement `WindowsComputerBackend._unicode_key`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L71) | `WindowsComputerBackend.press_key` | `key: str` | `None` | Implement `WindowsComputerBackend.press_key`. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L84) | `WindowsComputerBackend.scroll` | `dx: int, dy: int` | `None` | Implement `WindowsComputerBackend.scroll`. |
+| [context_module/registry.py](context_module/registry.py#L52) | `ContextProviderFactory.build` | `request: ContextProviderRequest` | `Sequence[ContextProvider]` | Return this module's sources for the requested Agent. |
+| [context_module/registry.py](context_module/registry.py#L88) | `ContextProviderRegistry.register` | `registration: ContextProviderRegistration` | `None` | Register one complete module contribution atomically. |
+| [context_module/registry.py](context_module/registry.py#L112) | `ContextProviderRegistry.materialize` | `request: ContextProviderRequest` | `tuple[ContextProvider, ...]` | Build every source authorized for the requested Agent. |
+| [context_module/registry.py](context_module/registry.py#L133) | `ContextProviderRegistry.registrations` | `None` | `tuple[ContextProviderRegistration, ...]` | Return every registration in stable registration order. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L31) | `KnowledgeEntry.to_json` | `None` | `dict[str, object]` | Encode the entry for the HTTP response and the build artifact. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L51) | `KnowledgeCatalog.to_json` | `None` | `dict[str, object]` | Encode the catalog as the same payload the frontend always read. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L60) | `summary_of` | `text: str` | `str` | Return the leaf's first 适用场景 paragraph, else its opening lines. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L80) | `entry_for` | `root: Path, path: Path` | `KnowledgeEntry` | Build one catalog entry from a Markdown leaf below ``root``. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L97) | `build_catalog` | `root: Path` | `KnowledgeCatalog` | Scan every non-index Markdown leaf below ``root`` in path order. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L36) | `_lock_for` | `path: Path` | `threading.RLock` | Return the process-local lock guarding one knowledge leaf. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L42) | `resolve_knowledge_root` | `None` | `Path \| None` | Resolve the one live knowledge root the Agent and the page share. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L56) | `knowledge_tree_for` | `root: Path` | `'CtfKnowledgeTree'` | Return the process-wide tree instance for one resolved root. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L72) | `CtfKnowledgeTree.catalog` | `None` | `KnowledgeCatalog` | Return every leaf, re-reading only files whose signature changed. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L97) | `CtfKnowledgeTree.read` | `relative: object` | `KnowledgeEntry` | Return one parsed leaf without mutating the cache. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L101) | `CtfKnowledgeTree.write` | `relative: object, content: object` | `KnowledgeEntry` | Replace one existing leaf atomically and return its new entry. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L137) | `CtfKnowledgeTree._existing_leaf` | `value: object` | `Path` | Resolve one existing editable leaf, rejecting every escape. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L160) | `_replace_with_retry` | `source: Path, target: Path` | `None` | Replace ``target`` with ``source`` despite a transient Windows refusal. |
+| [note_module/context_provider.py](note_module/context_provider.py#L27) | `NoteContextProvider.source_id` | `None` | `str` | Implement `NoteContextProvider.source_id`. |
+| [note_module/context_provider.py](note_module/context_provider.py#L30) | `NoteContextProvider.build_blocks` | `snapshot: ContextSnapshot` | `Sequence[ContextBlock]` | Implement `NoteContextProvider.build_blocks`. |
+| [note_module/context_provider.py](note_module/context_provider.py#L65) | `NoteContextFactory.build` | `request: ContextProviderRequest` | `Sequence[ContextProvider]` | Return the note source bound to this Agent's Session and Project. |
+| [note_module/context_provider.py](note_module/context_provider.py#L80) | `note_context_registration` | `state_root: Path` | `ContextProviderRegistration` | Return the note source registration for the process registry. |
+| [note_module/store.py](note_module/store.py#L35) | `Note.as_dict` | `None` | `dict[str, Any]` | Implement `Note.as_dict`. |
+| [note_module/store.py](note_module/store.py#L55) | `NoteStore.project_root` | `state_root: Path, project_path: Path \| None` | `Path \| None` | Implement `NoteStore.project_root`. |
+| [note_module/store.py](note_module/store.py#L61) | `NoteStore._path` | `scope: str` | `Path` | Implement `NoteStore._path`. |
+| [note_module/store.py](note_module/store.py#L69) | `NoteStore._initialize` | `path: Path` | `None` | Implement `NoteStore._initialize`. |
+| [note_module/store.py](note_module/store.py#L80) | `NoteStore._connection` | `path: Path` | `Any` | Implement `NoteStore._connection`. |
+| [note_module/store.py](note_module/store.py#L91) | `NoteStore._write_connection` | `path: Path` | `Any` | Hold one read-modify-write span behind SQLite's write lock. |
+| [note_module/store.py](note_module/store.py#L119) | `NoteStore._validate_text` | `value: object, field: str` | `str` | Implement `NoteStore._validate_text`. |
+| [note_module/store.py](note_module/store.py#L128) | `NoteStore._tags` | `tags: object` | `tuple[str, ...]` | Implement `NoteStore._tags`. |
+| [note_module/store.py](note_module/store.py#L136) | `NoteStore._row` | `row: tuple[Any, ...]` | `Note` | Implement `NoteStore._row`. |
+| [note_module/store.py](note_module/store.py#L139) | `NoteStore.create` | `scope: str, title: object, content: object, tags: object` | `Note` | Implement `NoteStore.create`. |
+| [note_module/store.py](note_module/store.py#L149) | `NoteStore.read` | `scope: str, note_id: str` | `Note` | Implement `NoteStore.read`. |
+| [note_module/store.py](note_module/store.py#L158) | `NoteStore.update` | `scope: str, note_id: str, title: object \| None, content: object \| None, tags: object \| None, status: str \| None, revision: int \| None` | `Note` | Replace selected fields of one note inside its write lock. |
+| [note_module/store.py](note_module/store.py#L198) | `NoteStore.delete` | `scope: str, note_id: str, revision: int \| None` | `Note` | Implement `NoteStore.delete`. |
+| [note_module/store.py](note_module/store.py#L201) | `NoteStore.list` | `scope: str, include_inactive: bool, limit: int` | `list[Note]` | Implement `NoteStore.list`. |
+| [note_module/store.py](note_module/store.py#L212) | `NoteStore.search` | `scope: str, query: str, limit: int` | `list[Note]` | Implement `NoteStore.search`. |
+| [note_module/tool_provider.py](note_module/tool_provider.py#L21) | `NoteToolProvider._store` | `session: object` | `NoteStore` | Implement `NoteToolProvider._store`. |
+| [note_module/tool_provider.py](note_module/tool_provider.py#L26) | `NoteToolProvider.materialize` | `session: object, policy: ToolPolicy, role: str, agent_name: str \| None` | `list[Tool]` | Implement `NoteToolProvider.materialize`. |
+| [note_module/tool_provider.py](note_module/tool_provider.py#L54) | `note_tool_registration` | `core: 'AngelusCore'` | `ToolProviderRegistration` | Implement `note_tool_registration`. |
 
 ## Class Map
 
 | Source | Class | Constructor / field input types | Base(s) | Semantics |
 |---|---|---|---|---|
-| [computer_use_module/backend.py](computer_use_module/backend.py#L9) | `ComputerUseUnavailable` | `None` | `RuntimeError` | Raised when the host cannot provide desktop interaction. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L14) | `ScreenCapture` | `png_bytes: bytes, width: int, height: int, scale: float` | `object` | Provide `ScreenCapture` behavior. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L21) | `ComputerBackend` | `None` | `Protocol` | Provide `ComputerBackend` behavior. |
-| [computer_use_module/backend.py](computer_use_module/backend.py#L39) | `_UnavailableBackend` | `None` | `object` | Provide `_UnavailableBackend` behavior. |
-| [computer_use_module/provider.py](computer_use_module/provider.py#L18) | `ComputerUseProvider` | `core: 'AngelusCore', backend: ComputerBackend \| None` | `object` | Provide `ComputerUseProvider` behavior. |
-| [computer_use_module/windows_backend.py](computer_use_module/windows_backend.py#L11) | `WindowsComputerBackend` | `None` | `object` | Provide `WindowsComputerBackend` behavior. |
+| [context_module/registry.py](context_module/registry.py#L31) | `ContextProviderRequest` | `session: 'Session', workspace: Workspace, policy: ToolPolicy, role: str, agent_name: str` | `object` | Complete host state one module needs to build its sources. |
+| [context_module/registry.py](context_module/registry.py#L49) | `ContextProviderFactory` | `None` | `Protocol` | Materialize one module's sources for one Agent. |
+| [context_module/registry.py](context_module/registry.py#L65) | `ContextProviderRegistration` | `id: str, factory: ContextProviderFactory, roles: frozenset[str], gates: tuple[tuple[str, str], ...]` | `object` | One module contribution to every Agent's Composer. |
+| [context_module/registry.py](context_module/registry.py#L81) | `ContextProviderRegistry` | `None` | `object` | Validate unique registrations and materialize sources per Agent. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L20) | `KnowledgeEntry` | `path: str, direction: str, group: str, title: str, summary: str, headings: tuple[str, ...], content: str` | `object` | One Markdown leaf as the knowledge page consumes it. |
+| [ctf_knowledge_module/catalog.py](ctf_knowledge_module/catalog.py#L45) | `KnowledgeCatalog` | `directions: dict[str, int], entries: tuple[KnowledgeEntry, ...]` | `object` | The complete knowledge tree projected into one document. |
+| [ctf_knowledge_module/tree.py](ctf_knowledge_module/tree.py#L63) | `CtfKnowledgeTree` | `root: Path` | `object` | Read and edit the Markdown leaves below one runtime root. |
+| [note_module/context_provider.py](note_module/context_provider.py#L18) | `NoteContextProvider` | `store: NoteStore, max_notes: int, max_characters: int` | `object` | Provide `NoteContextProvider` behavior. |
+| [note_module/context_provider.py](note_module/context_provider.py#L54) | `NoteContextFactory` | `state_root: Path` | `object` | Materialize the active-note source for one Agent. |
+| [note_module/store.py](note_module/store.py#L19) | `NoteError` | `None` | `ValueError` | Safe rejection of an invalid note operation. |
+| [note_module/store.py](note_module/store.py#L24) | `Note` | `note_id: str, scope: str, title: str, content: str, tags: tuple[str, ...], status: str, created_at: float, updated_at: float, revision: int` | `object` | Provide `Note` behavior. |
+| [note_module/store.py](note_module/store.py#L41) | `NoteStore` | `session_root: Path, project_root: Path \| None` | `object` | SQLite-backed notes with optimistic revision checks. |
+| [note_module/tool_provider.py](note_module/tool_provider.py#L17) | `NoteToolProvider` | `core: 'AngelusCore'` | `object` | Provide `NoteToolProvider` behavior. |
 
 <!-- END GENERATED SYMBOL MAP -->

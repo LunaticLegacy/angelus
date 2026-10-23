@@ -77,7 +77,9 @@ class ContextHandlerSelectionTests(unittest.TestCase):
     def _build(self, **kwargs: object):
         """Call ``create_agent`` with the provider client stubbed out."""
         with patch.object(agent_handler, "LLMFetcher", _StubFetcher):
-            return create_agent([_backend()], [], system_prompt="system", **kwargs)
+            return create_agent(
+                [_backend()], [], system_prompt="system", context_providers=(), **kwargs
+            )
 
     def test_create_agent_builds_the_selected_handler(self) -> None:
         """Each registered id builds its own implementation."""
@@ -119,16 +121,16 @@ class ContextHandlerSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = RunProfileStore(Path(directory))
 
-            self.assertEqual(0, store.global_profile()["compaction_keep_recent"])
+            self.assertEqual(0, store.global_profile()["context_keep_recent"])
 
     def test_profile_round_trips_a_retention_count(self) -> None:
         """A saved retention count survives a reload of the document."""
         with tempfile.TemporaryDirectory() as directory:
             store = RunProfileStore(Path(directory))
 
-            store.replace_global({**DEFAULT_RUN_PROFILE, "compaction_keep_recent": 7})
+            store.replace_global({**DEFAULT_RUN_PROFILE, "context_keep_recent": 7})
 
-            self.assertEqual(7, store.global_profile()["compaction_keep_recent"])
+            self.assertEqual(7, store.global_profile()["context_keep_recent"])
 
     def test_profile_rejects_a_negative_retention_count(self) -> None:
         """The retention count is a non-negative integer."""
@@ -136,13 +138,13 @@ class ContextHandlerSelectionTests(unittest.TestCase):
             store = RunProfileStore(Path(directory))
 
             with self.assertRaises(ValueError):
-                store.replace_global({**DEFAULT_RUN_PROFILE, "compaction_keep_recent": -1})
+                store.replace_global({**DEFAULT_RUN_PROFILE, "context_keep_recent": -1})
 
     def test_create_agent_forwards_the_retention_count(self) -> None:
         """The profile value reaches the composed context handler."""
         for name in ("graph", "linear"):
             with self.subTest(handler=name):
-                agent = self._build(context_handler_name=name, keep_recent=4)
+                agent = self._build(context_handler_name=name, context_keep_recent=4)
 
                 composed = getattr(agent.context_handler, "linear", agent.context_handler)
 
@@ -168,7 +170,7 @@ class ContextHandlerSelectionUiTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('id="compaction-keep-recent"', html)
+        self.assertIn('id="context-keep-recent"', html)
 
     def test_every_selectable_handler_has_a_localized_label(self) -> None:
         """A new registry entry must not ship as a raw i18n key."""

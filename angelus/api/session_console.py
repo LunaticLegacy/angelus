@@ -6,11 +6,13 @@ import json
 import time
 from collections.abc import Iterator
 from fastapi import APIRouter, Body, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from ..core import AngelusCore
 from ..modules.console_module import ConsoleDomainError
 from ..modules.external_agent_hub_module import ContextExchangeError, ContextPackage
 from ..modules.external_agent_hub_module.context_codec import parse_context_package
+from .dependencies import get_core
 
 router = APIRouter(prefix="/api/sessions/{session_id}")
 
@@ -77,6 +79,16 @@ class RecoveryRequest:
 
     execution_id: str | None = None
 
+
+class PlanPayload(BaseModel):
+    goal: str = Field(min_length=1, max_length=4_000)
+    summary: str = Field(default="", max_length=12_000)
+    tasks: list[dict[str, object]] = Field(default_factory=list)
+
+
+class TaskStatusPayload(BaseModel):
+    status: str
+
 def _service(request: Request):
     """Resolve the installed console projection service.
 
@@ -89,9 +101,7 @@ def _service(request: Request):
     Raises:
         RuntimeError: If the application has no installed Angelus core.
     """
-    core=getattr(request.app.state,"angelus_core",None)
-    if not isinstance(core, AngelusCore): raise RuntimeError("AngelusCore is not installed")
-    return core.console_service
+    return get_core(request).console_service
 def _call(fn):
     """Map console-domain failures raised by one deferred route action.
 
@@ -140,13 +150,17 @@ def graph_events(session_id: str, request: Request, cursor: int = 0, execution_i
             resumed_cursor = 0
         next_cursor = max(0, cursor, resumed_cursor)
         try:
+            ephemeral_cursor = _service(request).ephemeral_cursor(session_id)
+        except (KeyError, LookupError):
+            ephemeral_cursor = 0
+        try:
             while True:
                 page = _service(request).graph_events(session_id, next_cursor, execution_id)
                 events = page["events"]
                 for event in events:
                     next_cursor = int(event["sequence"])
                     yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                core = getattr(request.app.state, "angelus_core")
+                core = get_core(request)
                 status = core.execution_service.status(session_id)
                 selected = page.get("execution_id")
                 if execution_id is not None or selected != status.execution_id or str(status.state) not in {"running", "stopping", "force_stopping"}:
@@ -169,7 +183,7 @@ def workflow(session_id: str, request: Request):
 def recover_graph(session_id: str, body: RecoveryRequest, request: Request):
     """Create a new guided attempt from a verified RunGraph checkpoint."""
     try:
-        snapshot = getattr(request.app.state, "angelus_core").execution_service.recover(session_id, body.execution_id)
+        snapshot = get_core(request).execution_service.recover(session_id, body.execution_id)
     except KeyError as exc:
         raise HTTPException(404, "Unknown session") from exc
     except (ValueError, RuntimeError) as exc:
@@ -214,50 +228,63 @@ def mapper(session_id: str, body: MapperEdit, request: Request): return _call(la
 def router_edit(session_id: str, body: RouterEdit, request: Request): return _call(lambda:_service(request).set_router(session_id, body.agent, body.targets))
 @router.get("/plan")
 def plan(session_id: str, request: Request, agent: str | None = None): return _call(lambda:_service(request).plan(session_id, agent))
+
+
+@router.put("/plan")
+def replace_plan(session_id: str, body: PlanPayload, request: Request, agent: str = "coordinator"):
+    return _call(lambda:_service(request).replace_plan(session_id, agent, body.goal, body.summary, body.tasks))
+
+
+@router.patch("/plan/tasks/{task_id}")
+def update_plan_task(session_id: str, task_id: str, body: TaskStatusPayload, request: Request, agent: str = "coordinator"):
+    return _call(lambda:_service(request).update_task_status(session_id, agent, task_id, body.status))
 @router.get("/events")
-def events(session_id: str, request: Request, cursor: int = 0, limit: int = 200): return _call(lambda:_service(request).events(session_id,cursor,limit))
+def events(session_id: str, request: Request, execution_id: str | None = None, before: int | None = None, limit: int = 200):
+    return _call(lambda: _service(request).event_page(session_id, execution_id=execution_id, before=before, limit=limit))
+
+
+@router.get("/events/attempts")
+def event_attempts(session_id: str, request: Request):
+    return _call(lambda: {"attempts": _service(request).event_attempts(session_id)})
+
+
+@router.get("/steers")
+def steers(session_id: str, request: Request, agent: str | None = None): return _call(lambda:_service(request).steering(session_id, agent))
 
 
 @router.get("/events/stream")
-def events_stream(session_id: str, request: Request, cursor: int = 0, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
-    """Follow durable lifecycle facts so the browser renders live deltas.
-
-    Each poll iteration emits the live-only (ephemeral) backlog *before* the
-    durable journal page, so in-round frames precede the durable record that
-    closes their round.  Do not reverse that order: see the loop comment.
-    """
+def events_stream(session_id: str, request: Request, cursor: int = 0, ephemeral_cursor: int | None = None, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
+    """Follow durable lifecycle facts so the browser renders live deltas."""
     def stream() -> Iterator[str]:
         try:
             resumed_cursor = int(last_event_id) if last_event_id is not None else 0
         except ValueError:
             resumed_cursor = 0
         next_cursor = max(0, cursor, resumed_cursor)
-        try:
-            ephemeral_cursor = _service(request).ephemeral_cursor(session_id)
-        except (KeyError, LookupError):
-            ephemeral_cursor = 0
+        # Ephemeral records use their own cursor and are not part of the
+        # durable SSE id sequence.  Initialize it before the first poll so
+        # the stream also works when no live records have been emitted yet.
+        live_after = ephemeral_cursor
+        if live_after is None:
+            try:
+                live_after = _service(request).ephemeral_cursor(session_id)
+            except (KeyError, LookupError, ValueError, TypeError):
+                live_after = 0
         try:
             while True:
-                # Live-only frames go out before the durable page of the same
-                # iteration.  A round's deltas buffer ephemerally while the
-                # fact that the round ended (`agent:round`) is committed
-                # durably, so flushing the durable page first delivered
-                # `agent:round` before its own trailing `agent:stream_delta`
-                # frames; the browser then re-created a streaming card for an
-                # already-finished round (streamingMessages had been discarded)
-                # and nothing ever removed it.
-                live = _service(request).ephemeral_events(session_id, ephemeral_cursor)
+                # Live frames must precede the durable fact that closes their
+                # round; otherwise a trailing delta re-creates a streaming card
+                # for a round the durable page has already completed.
+                live = _service(request).ephemeral_events(session_id, live_after)
                 for event in live["events"]:
-                    ephemeral_cursor = int(event["ephemeral_sequence"])
-                    # No SSE id: ephemeral frames must never advance the
-                    # durable Last-Event-ID/cursor used for reconnect replay.
+                    live_after = int(event["ephemeral_sequence"])
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 page = _service(request).events(session_id, next_cursor, 500)
                 records = page["events"]
                 for event in records:
                     next_cursor += 1
                     yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                core = getattr(request.app.state, "angelus_core")
+                core = get_core(request)
                 status = core.execution_service.status(session_id)
                 if str(status.state) not in {"running", "stopping", "force_stopping"}:
                     return
@@ -273,6 +300,8 @@ def events_stream(session_id: str, request: Request, cursor: int = 0, last_event
     )
 @router.get("/usage")
 def usage(session_id: str, request: Request): return _call(lambda:_service(request).usage(session_id))
+@router.get("/usage/series")
+def usage_series(session_id: str, request: Request): return _call(lambda:_service(request).usage_series(session_id))
 @router.get("/agents/{agent}/context")
 def context(session_id: str, agent: str, request: Request, before: int | None = None, limit: int = 200):
     """Return the newest context page or one older cursor page.
@@ -288,6 +317,24 @@ def context(session_id: str, agent: str, request: Request, before: int | None = 
         Chronological context metadata page and older-page cursor.
     """
     return _call(lambda:_service(request).context(session_id, agent, before, limit))
+
+
+@router.get("/agents/{agent}/context/archive")
+def archive_context(session_id: str, agent: str, request: Request, before: int | None = None, limit: int = 50):
+    """Return one archive-only page of one Agent's compacted-out context.
+
+    Args:
+        session_id: Stable Session identity owning the Agent.
+        agent: Valid coordinator or worker identity.
+        request: Incoming request carrying the application core.
+        before: Exclusive older-than timeline cursor from the prior response.
+        limit: Requested entry count, bounded by the durable reader to 200.
+
+    Returns:
+        Chronological archived entries, the next older cursor, and whether
+        another older page exists.
+    """
+    return _call(lambda:_service(request).archive(session_id, agent, before, limit))
 
 
 @router.get("/agents/{agent}/context/export")
@@ -399,10 +446,7 @@ def _core_context_exchange(request: Request):
     Raises:
         RuntimeError: If the application has no installed Angelus core.
     """
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed")
-    return core.context_exchange_service
+    return get_core(request).context_exchange_service
 
 
 def _package(value: ContextPackage) -> dict[str, object]:

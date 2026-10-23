@@ -3,17 +3,34 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
-from ..core import AngelusCore
 from ..modules.application_module import UnknownSession
 from ..modules.execution_module import ExecutionState
+from .dependencies import get_core
+
+if TYPE_CHECKING:
+    from ..core import AngelusCore
 
 
 router = APIRouter()
+
+
+def _status_wire(snapshot: Any) -> dict[str, Any]:
+    """Expose the stable React run projection from the kernel snapshot."""
+    state = snapshot.state.value if hasattr(snapshot.state, "value") else str(snapshot.state)
+    return {
+        "run_id": snapshot.execution_id or snapshot.session_id,
+        "session_id": snapshot.session_id,
+        "status": state,
+        "active": state in {"running", "stopping", "force_stopping"},
+        "started_at": snapshot.started_at,
+        "finished_at": snapshot.finished_at,
+        "error": snapshot.error,
+    }
 
 
 class RunImageReference(BaseModel):
@@ -32,6 +49,7 @@ class RunRequest(BaseModel):
     message: str = Field(default="", max_length=100_000)
     images: list[RunImageReference] = Field(default_factory=list, max_length=8)
     target_agent: str | None = Field(default=None, min_length=1, max_length=80)
+    connector_id: str | None = Field(default=None, min_length=1, max_length=120)
 
     @model_validator(mode="after")
     def require_input(self) -> "RunRequest":
@@ -69,10 +87,7 @@ class AgentControlRequest:
 
 def _core(request: Request) -> AngelusCore:
     """Resolve the app-owned core without constructing a fallback instance."""
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
 
 
 @router.post("/api/runs")
@@ -84,6 +99,7 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
             payload.session_id, payload.message,
             images=[image.model_dump() for image in payload.images],
             target_agent=payload.target_agent,
+            connector_id=payload.connector_id,
         )
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
@@ -91,13 +107,7 @@ def start_run(payload: RunRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {
-        "session_id": snapshot.session_id,
-        "execution_id": snapshot.execution_id,
-        "attempt": snapshot.attempt,
-        "state": snapshot.state,
-        "target_agent": payload.target_agent,
-    }
+    return {**_status_wire(snapshot), "execution_id": snapshot.execution_id, "attempt": snapshot.attempt, "target_agent": payload.target_agent}
 
 
 @router.get("/api/runs/{session_id}/status")
@@ -107,15 +117,7 @@ def run_status(session_id: str, request: Request) -> dict[str, Any]:
         snapshot = _core(request).execution_service.status(session_id)
     except UnknownSession as exc:
         raise HTTPException(status_code=404, detail="Unknown session") from exc
-    return {
-        "session_id": snapshot.session_id,
-        "execution_id": snapshot.execution_id,
-        "attempt": snapshot.attempt,
-        "state": snapshot.state,
-        "started_at": snapshot.started_at,
-        "finished_at": snapshot.finished_at,
-        "error": snapshot.error,
-    }
+    return {**_status_wire(snapshot), "execution_id": snapshot.execution_id, "attempt": snapshot.attempt}
 
 
 def _stop(session_id: str, payload: StopRequest, request: Request, *, force: bool) -> dict[str, Any]:
