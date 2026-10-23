@@ -29,7 +29,11 @@ class TemplateWorkbenchTests(unittest.TestCase):
                     self.assertIn('id="context-keep-recent"', index.text)
                     script = client.get("/static/app.js")
                     self.assertEqual(200, script.status_code)
+                    self.assertIn("javascript", script.headers["content-type"])
                     self.assertIn("context_keep_recent", script.text)
+                    component = client.get("/static/components/dom.js")
+                    self.assertEqual(200, component.status_code)
+                    self.assertIn("javascript", component.headers["content-type"])
             finally:
                 core.shutdown()
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
+from starlette.datastructures import Headers
+from starlette.staticfiles import NotModifiedResponse
 
 from ..core import AngelusCore
 from .error_reporting import install_error_reporting
@@ -22,6 +25,47 @@ from .attachments import router as attachments_router
 from .memory import router as memory_router
 from .compact import router as compact_router
 from .notes import router as notes_router
+
+
+class _FrontendStaticFiles(StaticFiles):
+    """Serve browser assets with stable MIME types in packaged hosts.
+
+    PyInstaller and minimal Windows Python installations may not ship the
+    system MIME database that :class:`starlette.responses.FileResponse` uses.
+    In that case JavaScript files fall back to ``text/plain`` and browsers
+    reject module scripts.  Keep the normal StaticFiles path safety and cache
+    handling, while making the asset types required by this workbench explicit.
+    """
+
+    _MEDIA_TYPES = {
+        ".css": "text/css",
+        ".gif": "image/gif",
+        ".html": "text/html",
+        ".ico": "image/x-icon",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".js": "text/javascript",
+        ".json": "application/json",
+        ".mjs": "text/javascript",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".wasm": "application/wasm",
+        ".webp": "image/webp",
+    }
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        """Return a cache-aware file response with an explicit asset type."""
+        request_headers = Headers(scope=scope)
+        media_type = self._MEDIA_TYPES.get(Path(full_path).suffix.lower())
+        response = FileResponse(
+            full_path,
+            status_code=status_code,
+            stat_result=stat_result,
+            media_type=media_type,
+        )
+        if self.is_not_modified(response.headers, request_headers):
+            return NotModifiedResponse(response.headers)
+        return response
 
 
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
@@ -102,9 +146,9 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     app.include_router(notes_router)
     assets = frontend_dist / "assets"
     if assets.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets), name="frontend-assets")
+        app.mount("/assets", _FrontendStaticFiles(directory=assets), name="frontend-assets")
     if static_dir.is_dir():
-        app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
+        app.mount("/static", _FrontendStaticFiles(directory=static_dir), name="frontend-static")
 
     @app.get("/{path:path}", include_in_schema=False)
     def react_routes(path: str) -> FileResponse:
