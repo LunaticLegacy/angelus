@@ -237,7 +237,6 @@ not introduce a second transcript renderer.
 | [app.js](app.js#L874) | `clearCompactStatus` | `None` | `unknown` | Perform the browser runtime operation: clear compact status. |
 | [app.js](app.js#L875) | `scheduleCompactionRender` | `key: unknown` | `unknown` | Perform the browser runtime operation: schedule compaction render. |
 | [app.js](app.js#L883) | `compactCardEvent` | `event: unknown, manual: unknown` | `unknown` | Perform the browser runtime operation: compact card event. |
-| [app.js](app.js#L900) | `stopCompaction` | `agent: unknown, force: unknown` | `Promise<unknown>` | Perform the browser runtime operation: stop compaction. |
 | [app.js](app.js#L906) | `debounce` | `fn: unknown, wait: unknown` | `unknown` | Perform the browser runtime operation: debounce. |
 | [app.js](app.js#L917) | `pushTraceEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: push trace event. |
 | [app.js](app.js#L922) | `indexTraceEvent` | `event: unknown` | `unknown` | Perform the browser runtime operation: index trace event. |

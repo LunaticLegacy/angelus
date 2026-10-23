@@ -485,7 +485,7 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
     const title = state === "success" ? "上下文压缩完成" : state === "failed" ? "上下文压缩失败" : state === "cancelled" ? "压缩已停止" : "正在压缩上下文";
     const stages = Array.isArray(event.stages) ? event.stages : [];
     const details = stages.map(stage => `<li class="${escapeHtml(String(stage.state || ""))}"><span>${escapeHtml(String(stage.label || stage.detail || ""))}</span>${stage.value ? `<small>${escapeHtml(String(stage.value))}</small>` : ""}</li>`).join("");
-    const canStop = state === "running";
+    const canStop = state === "running" && typeof onCompactStop === "function";
     // The terminal stage repeats the title ("上下文压缩完成"), so the status chip
     // only renders when it adds something the title does not already say.
     const detail = String(event.detail || "");
