@@ -1,4 +1,4 @@
-﻿/** Workbench composition root: coordinates feature state, REST calls, and views. */
+/** Workbench composition root: coordinates feature state, REST calls, and views. */
 import { $, escapeHtml } from "./components/dom.js?v=dom-selectors-1";
 import { createChatView } from "./components/chat-view.js?v=native-vision-7";
 import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
