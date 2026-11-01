@@ -26,7 +26,7 @@ def _status_wire(snapshot: Any) -> dict[str, Any]:
         "run_id": snapshot.execution_id or snapshot.session_id,
         "session_id": snapshot.session_id,
         "status": state,
-        "active": state in {"running", "stopping", "force_stopping"},
+        "active": state in {"queued", "preparing", "materializing_tools", "connecting_mcp", "materializing_swarm", "loading_context", "running", "stopping", "force_stopping"},
         "started_at": snapshot.started_at,
         "finished_at": snapshot.finished_at,
         "error": snapshot.error,

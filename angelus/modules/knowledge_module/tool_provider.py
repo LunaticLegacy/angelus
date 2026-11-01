@@ -1,4 +1,4 @@
-"""ToolRegistry provider for session knowledge documents and Agent pins."""
+﻿"""ToolRegistry provider for session knowledge documents and Agent pins."""
 from __future__ import annotations
 
 import json

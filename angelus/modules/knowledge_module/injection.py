@@ -1,4 +1,4 @@
-"""Per-Agent durable knowledge pins injected into every request.
+﻿"""Per-Agent durable knowledge pins injected into every request.
 
 The Agent and the Session UI must never diverge: both mutate the same durable
 document, and ``set_pins`` is the only writer. The Tool wrappers compose a new

@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.datastructures import Headers
-from starlette.staticfiles import NotModifiedResponse
+from pathlib import Path
 
 from ..core import AngelusCore
-from .error_reporting import install_error_reporting
 from .runs import router as runs_router
 from .sessions import router as sessions_router
 from .providers import router as providers_router
@@ -27,56 +23,14 @@ from .compact import router as compact_router
 from .notes import router as notes_router
 
 
-class _FrontendStaticFiles(StaticFiles):
-    """Serve browser assets with stable MIME types in packaged hosts.
-
-    PyInstaller and minimal Windows Python installations may not ship the
-    system MIME database that :class:`starlette.responses.FileResponse` uses.
-    In that case JavaScript files fall back to ``text/plain`` and browsers
-    reject module scripts.  Keep the normal StaticFiles path safety and cache
-    handling, while making the asset types required by this workbench explicit.
-    """
-
-    _MEDIA_TYPES = {
-        ".css": "text/css",
-        ".gif": "image/gif",
-        ".html": "text/html",
-        ".ico": "image/x-icon",
-        ".jpeg": "image/jpeg",
-        ".jpg": "image/jpeg",
-        ".js": "text/javascript",
-        ".json": "application/json",
-        ".mjs": "text/javascript",
-        ".png": "image/png",
-        ".svg": "image/svg+xml",
-        ".wasm": "application/wasm",
-        ".webp": "image/webp",
-    }
-
-    def file_response(self, full_path, stat_result, scope, status_code=200):
-        """Return a cache-aware file response with an explicit asset type."""
-        request_headers = Headers(scope=scope)
-        media_type = self._MEDIA_TYPES.get(Path(full_path).suffix.lower())
-        response = FileResponse(
-            full_path,
-            status_code=status_code,
-            stat_result=stat_result,
-            media_type=media_type,
-        )
-        if self.is_not_modified(response.headers, request_headers):
-            return NotModifiedResponse(response.headers)
-        return response
-
-
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     """Install API routes and the local workbench assets on one host."""
     app.state.angelus_core = core
-    install_error_reporting(app, core.state_root)
     frontend_root = Path(__file__).resolve().parents[2] / "frontend"
-    # A built React bundle wins when the host ships one.  A host that only
-    # carries the template workbench (the library checkout) is served from
-    # ``templates/`` with ``static/`` mounted beside it instead of failing to
-    # mount a directory that was never built.
+    # The React/Vite workbench is the canonical POFP client.  The template
+    # workbench is kept in the repository as a historical migration artifact,
+    # but must not be selected at runtime: doing so makes the web backend show
+    # a different UI from the desktop bundle (which already packages dist/).
     frontend_dist = frontend_root / "dist"
     templates_dir = frontend_root / "templates"
     static_dir = frontend_root / "static"
@@ -85,32 +39,19 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        """Serve the built workbench shell, or the template workbench.
-
-        Raises:
-            HTTPException: When this host ships neither frontend.
-        """
+        """Serve the canonical React workbench shell."""
         if has_dist:
-            return FileResponse(
-                frontend_dist / "index.html",
-                headers={"Cache-Control": "no-store"},
-            )
+            return FileResponse(frontend_dist / "index.html", headers={"Cache-Control": "no-store"})
         if has_templates:
-            return FileResponse(
-                templates_dir / "index.html",
-                headers={"Cache-Control": "no-store"},
-            )
+            return FileResponse(templates_dir / "index.html", headers={"Cache-Control": "no-store"})
         raise HTTPException(status_code=404, detail="frontend is not installed")
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> FileResponse:
-        """Serve the Angelus mark to clients that request the default icon URL.
-
-        Raises:
-            HTTPException: When this host ships no frontend.
-        """
-        if has_dist and (frontend_dist / "logo.svg").is_file():
-            return FileResponse(frontend_dist / "logo.svg", media_type="image/svg+xml")
+        """Serve the Angelus mark to clients that request the default icon URL."""
+        icon = frontend_dist / "logo.svg"
+        if icon.is_file():
+            return FileResponse(icon, media_type="image/svg+xml")
         icon = static_dir / "angelus-icon.svg"
         if icon.is_file():
             return FileResponse(icon, media_type="image/svg+xml")
@@ -146,27 +87,19 @@ def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     app.include_router(notes_router)
     assets = frontend_dist / "assets"
     if assets.is_dir():
-        app.mount("/assets", _FrontendStaticFiles(directory=assets), name="frontend-assets")
+        app.mount("/assets", StaticFiles(directory=assets), name="frontend-assets")
     if static_dir.is_dir():
-        app.mount("/static", _FrontendStaticFiles(directory=static_dir), name="frontend-static")
+        app.mount("/static", StaticFiles(directory=static_dir), name="frontend-static")
 
     @app.get("/{path:path}", include_in_schema=False)
     def react_routes(path: str) -> FileResponse:
-        """Fall back to the SPA shell for client-side routes.
-
-        Raises:
-            HTTPException: When this host ships no frontend.
-        """
-        if has_dist:
-            candidate = (frontend_dist / path).resolve()
-            if candidate.is_file() and frontend_dist.resolve() in candidate.parents:
-                return FileResponse(candidate)
-            return FileResponse(frontend_dist / "index.html")
-        if has_templates:
-            candidate = (templates_dir / path).resolve()
-            if candidate.is_file() and templates_dir.resolve() in candidate.parents:
-                return FileResponse(candidate)
-            return FileResponse(templates_dir / "index.html")
+        """Fall back to index.html for React Router's browser routes."""
+        root = frontend_dist if has_dist else templates_dir
+        candidate = (root / path).resolve()
+        if candidate.is_file() and root.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        if root.joinpath("index.html").is_file():
+            return FileResponse(root / "index.html")
         raise HTTPException(status_code=404, detail="frontend is not installed")
 
 

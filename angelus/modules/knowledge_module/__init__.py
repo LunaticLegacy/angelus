@@ -1,4 +1,4 @@
-"""Session knowledge documents, per-Agent pins, and the host corpus seam."""
+﻿"""Session knowledge documents, per-Agent pins, and the host corpus seam."""
 
 from .context_provider import knowledge_context_registration
 from .corpus import KnowledgeCorpus, KnowledgeDocument

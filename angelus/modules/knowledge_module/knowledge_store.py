@@ -1,4 +1,4 @@
-"""Small durable, session-local lexical knowledge base."""
+﻿"""Small durable, session-local lexical knowledge base."""
 from __future__ import annotations
 
 from collections import Counter

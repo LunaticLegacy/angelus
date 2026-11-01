@@ -21,6 +21,7 @@ from llmfetcher.context_handlers.archive_retrieval import (
 from llmfetcher.context_handlers.linear.codec import (
     context_item_from_dict,
     context_item_to_dict,
+    tool_result_from_dict,
     tool_result_to_dict,
 )
 from llmfetcher.llm_types import (
@@ -38,6 +39,21 @@ from .messages import ContextCompactedMessage, ContextEntry, ContextMessage
 
 class ContextVersionError(ValueError):
     """Safe context revision or edit rejection."""
+
+
+class _ArchiveToolResultStore:
+    """Resolve tool references from a read-only archive projection."""
+
+    def __init__(self, tool_results: dict[str, ToolResultRecord]) -> None:
+        self._tool_results = tool_results
+
+    def resolve_tool_result(self, result_id: Any) -> ToolResultRecord:
+        try:
+            return self._tool_results[result_id.value]
+        except KeyError:
+            raise KeyError(
+                f"no stored tool result for {result_id.value!r}"
+            ) from None
 
 
 @dataclass(frozen=True)
@@ -158,7 +174,7 @@ class ContextVersionStore:
             entries = self._messages()
             active = [item for item in entries if isinstance(item, ContextMessage)]
             metadata = self._metadata()
-            archive = self._linear().archive
+            archive, _ = self._archive_projection()
             history: list[dict[str, object]] = []
             for path in sorted(self.revisions.glob("*.json")) if self.revisions.is_dir() else ():
                 try:
@@ -175,7 +191,7 @@ class ContextVersionStore:
             return {
                 "agent": self.agent_name,
                 "revision_id": metadata.get("revision_id"),
-                "archive_records": len(cast("list[object]", archive)) if archive else 0,
+                "archive_records": len(archive),
                 "records": [
                     self._record(item, index)
                     for index, item in enumerate(active, 1)
@@ -203,12 +219,11 @@ class ContextVersionStore:
             bounded = max(1, min(int(limit), 20))
         except (TypeError, ValueError):
             bounded = 5
-        linear = self._linear()
-        records = list(linear.archive)
+        records, tool_results = self._archive_projection()
         result = retrieve_archive(
             normalized,
             records,
-            store=linear,
+            store=_ArchiveToolResultStore(tool_results),
             config=ArchiveRetrievalConfig(
                 max_results=bounded,
                 max_chars_per_record=2_000,
@@ -238,10 +253,10 @@ class ContextVersionStore:
             wanted = int(timeline)
         except (TypeError, ValueError):
             raise ContextVersionError("timeline must be an integer") from None
-        linear = self._linear()
-        for record in linear.archive:
+        records, tool_results = self._archive_projection()
+        for record in records:
             if int(record.timeline) == wanted:
-                entry = ContextMessage.from_item(record, linear.tool_results)
+                entry = ContextMessage.from_item(record, tool_results)
                 if not isinstance(entry, ContextMessage):
                     break
                 return ArchiveRecordResult(agent=self.agent_name, record=entry.to_context())
@@ -294,6 +309,68 @@ class ContextVersionStore:
 
     def _linear(self) -> Any:
         return self.agent.context_handler.linear
+
+    def _archive_projection(self) -> tuple[list[ContextItem], dict[str, ToolResultRecord]]:
+        """Read the archive and its tool results from the durable checkpoint.
+
+        ``ContextHandlerLinear.load`` intentionally keeps archived rows out of
+        its live in-memory window.  The context tools are read-only views, so
+        they must page the SQLite archive directly after a process reload.
+        In-memory handlers used by older callers remain supported as a
+        fallback when no durable storage port is available.
+        """
+        linear = self._linear()
+        storage = getattr(linear, "storage", None)
+        if storage is None or not hasattr(storage, "read_archive_page") or not self.path.exists():
+            return list(linear.archive), dict(linear.tool_results)
+
+        rows: list[JsonObject] = []
+        before_timeline: int | None = None
+        while True:
+            page = storage.read_archive_page(
+                self.path,
+                before_timeline=before_timeline,
+                limit=200,
+            )
+            rows.extend(cast(JsonObject, row) for row in page.rows)
+            if not page.has_more:
+                break
+            before_timeline = page.next_before
+            if before_timeline is None:
+                raise ContextVersionError("archive pagination returned an invalid cursor")
+
+        records_by_timeline = {
+            item.timeline: item
+            for item in (context_item_from_dict(row) for row in rows)
+        }
+        # A compaction can complete just before the handler's next save. Keep
+        # that in-memory tail visible while treating durable rows as the
+        # source of truth after a process reload.
+        records_by_timeline.update({item.timeline: item for item in linear.archive})
+        records = [
+            records_by_timeline[timeline]
+            for timeline in sorted(records_by_timeline)
+        ]
+        tool_results = dict(getattr(linear, "tool_results", {}))
+        result_ids = [
+            call.result_id.value
+            for item in records
+            if item.kind == "assistant"
+            for call in item.tool_calls
+            if call.result_id is not None
+        ]
+        if result_ids:
+            pointer = self._pointer()
+            database_name = pointer.get("database")
+            if not isinstance(database_name, str):
+                raise ContextVersionError("unsupported context checkpoint")
+            database = self.path.with_name(database_name)
+            for result_id, payload in storage.read_tool_results(database, result_ids):
+                decoded = json.loads(payload)
+                if not isinstance(decoded, dict):
+                    raise ContextVersionError("tool result payload must be an object")
+                tool_results[result_id] = tool_result_from_dict(cast(JsonObject, decoded))
+        return records, tool_results
 
     def _pointer(self) -> dict[str, object]:
         value = read_json(self.path, {})

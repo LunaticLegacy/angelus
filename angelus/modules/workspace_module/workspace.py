@@ -19,3 +19,6 @@ class Workspace:
     name: str
     project_path: Path | None
     state_path: Path
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    last_activity_at: float | None = None

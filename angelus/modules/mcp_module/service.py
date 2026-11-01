@@ -6,7 +6,10 @@ import hashlib
 import json
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
+from uuid import uuid4
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from llmfetcher import Tool
@@ -23,6 +26,30 @@ from .records import (
     MCPResolvedServer,
 )
 from .store import MCPStore
+from .runtime import MCPRegistrySnapshot, MCPRuntimeKey, MCPRuntimeManager, MCPServerSnapshot
+
+
+@dataclass
+class MCPOperation:
+    id: str
+    kind: str
+    state: str = "queued"
+    result: object | None = None
+    error: str | None = None
+
+
+def _probe_error(exc: BaseException) -> str:
+    """Flatten AnyIO/TaskGroup wrappers into an actionable probe error."""
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(_probe_error(item) for item in exc.exceptions)
+    code = getattr(exc, "code", None)
+    data = getattr(exc, "data", None)
+    detail = str(exc)
+    if code is not None:
+        detail = f"{detail} (code {code})"
+    if data not in (None, ""):
+        detail = f"{detail}: {data}"
+    return f"{type(exc).__name__}: {detail}"
 
 if TYPE_CHECKING:
     from ...core import AngelusCore
@@ -65,6 +92,66 @@ class MCPService:
         self.store = MCPStore(core.state_root)
         self._lock = threading.RLock()
         self._bridges: dict[tuple[str, str], tuple[str, MCPToolBridge]] = {}
+        self._runtimes = MCPRuntimeManager()
+        self._revision = 0
+        self._operations: dict[str, MCPOperation] = {}
+        self._operation_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="angelus-mcp-op")
+
+    def revision(self) -> int:
+        """Return the in-process catalog revision used by new attempts."""
+        with self._lock:
+            return self._revision
+
+    def operation(self, operation_id: str) -> MCPOperation:
+        with self._lock:
+            operation = self._operations.get(operation_id)
+            if operation is None:
+                raise KeyError(operation_id)
+            return replace(operation)
+
+    def register_async(self, payload: Mapping[str, JsonValue]) -> MCPOperation:
+        operation = self._new_operation("register")
+        self._operation_pool.submit(self._run_operation, operation.id, lambda: self.create_server(payload))
+        return operation
+
+    def remove_async(self, server_id: str) -> MCPOperation:
+        operation = self._new_operation("delete")
+        self._operation_pool.submit(self._run_operation, operation.id, lambda: self.remove_server(server_id))
+        return operation
+
+    def _new_operation(self, kind: str) -> MCPOperation:
+        operation = MCPOperation(uuid4().hex, kind)
+        with self._lock:
+            self._operations[operation.id] = operation
+        return operation
+
+    def _run_operation(self, operation_id: str, action: Callable[[], object]) -> None:
+        with self._lock:
+            operation = self._operations[operation_id]
+            operation.state = "running"
+        try:
+            result = action()
+        except Exception as exc:
+            with self._lock:
+                operation.state = "failed"
+                operation.error = f"{type(exc).__name__}: {exc}"
+        else:
+            with self._lock:
+                operation.state = "completed"
+                operation.result = result
+
+    def snapshot(self, session_id: str, role: str) -> MCPRegistrySnapshot:
+        """Return a secret-free, revisioned MCP view for an attempt."""
+        workspace = self._core.workspaces.get(session_id)
+        servers = self.store.resolve(session_id, workspace.project_path or workspace.state_path, role)
+        return MCPRegistrySnapshot(
+            revision=self.revision(),
+            servers=tuple(MCPServerSnapshot(
+                server_id=item.record.id, server_revision=item.record.updated_at,
+                name=item.record.name, transport=item.record.transport,
+                tool_allowlist=item.tool_allowlist,
+            ) for item in servers),
+        )
 
     def list_servers(self) -> tuple[MCPPublicServer, ...]:
         """Return every configured server without credentials."""
@@ -73,19 +160,27 @@ class MCPService:
     def create_server(self, payload: Mapping[str, JsonValue]) -> MCPPublicServer:
         """Create one server and invalidate cached bridges."""
         self.invalidate()
-        return self.store.create(payload)
+        result = self.store.create(payload)
+        with self._lock:
+            self._revision += 1
+        return result
 
     def replace_server(
         self, server_id: str, payload: Mapping[str, JsonValue]
     ) -> MCPPublicServer:
         """Replace one server and invalidate cached bridges."""
         self.invalidate()
-        return self.store.replace(server_id, payload)
+        result = self.store.replace(server_id, payload)
+        with self._lock:
+            self._revision += 1
+        return result
 
     def remove_server(self, server_id: str) -> None:
         """Delete one server and invalidate cached bridges."""
         self.invalidate()
         self.store.remove(server_id)
+        with self._lock:
+            self._revision += 1
 
     def bindings(self, session_id: str) -> tuple[MCPBinding, ...]:
         """Return one Session's server bindings."""
@@ -104,7 +199,10 @@ class MCPService:
     ) -> tuple[MCPBinding, ...]:
         """Replace one Session's binding set and invalidate its bridge."""
         self.invalidate(session_id)
-        return self.store.write_bindings(session_id, bindings)
+        result = self.store.write_bindings(session_id, bindings)
+        with self._lock:
+            self._revision += 1
+        return result
 
     def probe(self, server_id: str) -> MCPPublicServer:
         """Connect once, persist the discovery snapshot, and disconnect."""
@@ -125,7 +223,7 @@ class MCPService:
             probe = MCPProbe(
                 ok=False,
                 checked_at=time.time(),
-                error=f"{type(exc).__name__}: {exc}"[:1000],
+                error=_probe_error(exc)[:1000],
             )
         finally:
             bridge.close()
@@ -152,8 +250,19 @@ class MCPService:
             if cached is None or cached[0] != fingerprint:
                 if cached:
                     cached[1].close()
-                bridge = MCPToolBridge(servers)
-                bridge.start()
+                try:
+                    runtime = self._runtimes.ensure_ready(
+                        MCPRuntimeKey(session_id, fingerprint), servers
+                    )
+                    bridge = runtime.bridge
+                except Exception as exc:
+                    details = "; ".join(
+                        f"server={item.record.name} transport={item.record.transport}"
+                        for item in servers
+                    )
+                    raise MCPToolError(
+                        f"MCP connecting_mcp failed ({details}): {type(exc).__name__}: {exc}"
+                    ) from exc
                 self._bridges[key] = (fingerprint, bridge)
             else:
                 bridge = cached[1]
@@ -200,7 +309,7 @@ class MCPService:
                 )
         return result
 
-    def invalidate(self, session_id: str | None = None) -> None:
+    def invalidate(self, session_id: str | None = None, *, timeout: float = 5.0) -> None:
         """Close cached bridges for one Session, or for every Session."""
         with self._lock:
             keys = [
@@ -208,12 +317,19 @@ class MCPService:
                 for key in self._bridges
                 if session_id is None or key[0] == session_id
             ]
-            for key in keys:
-                self._bridges.pop(key)[1].close()
+            runtimes = [self._bridges.pop(key)[1] for key in keys]
+        # Slow transport cleanup must never run under the service lock.
+        for bridge in runtimes:
+            bridge.close(timeout=timeout)
+        if session_id is None:
+            self._runtimes.close(timeout=timeout)
+        else:
+            self._runtimes.drain(server_id=session_id, timeout=timeout)
 
-    def close(self) -> None:
+    def close(self, *, timeout: float = 5.0) -> None:
         """Close every cached bridge."""
-        self.invalidate()
+        self.invalidate(timeout=timeout)
+        self._operation_pool.shutdown(wait=False, cancel_futures=True)
 
 
 class MCPToolProvider:

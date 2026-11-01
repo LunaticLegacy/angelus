@@ -1,4 +1,4 @@
-"""Module-owned context: corpus directions plus this Agent's pinned documents.
+﻿"""Module-owned context: corpus directions plus this Agent's pinned documents.
 
 The corpus is read-only at request time; only the pin list is mutable, and it
 is owned by :class:`KnowledgeInjectionService` so the Agent tools and the

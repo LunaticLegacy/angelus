@@ -13,6 +13,7 @@ from ..tool_module import ToolPolicy
 
 PluginKind = Literal["tool", "ui", "theme_pack"]
 PluginSettingScalar = str | int | float | bool
+PluginFieldVisibility = dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class PluginPanelField:
     value_format: Literal["uri", "path", "textarea", "password"] | None = None
     placeholder: str = ""
     sensitive: bool = False
+    visible_if: PluginFieldVisibility | None = None
 
 
 @dataclass(frozen=True)

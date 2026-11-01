@@ -36,6 +36,7 @@ class ExecutionJournal:
         self, event_type: str, data: dict[str, Any] | None = None, *,
         agent: str = "", message: str = "", usage: dict[str, int] | None = None,
         duration_ms: float | None = None,
+        sync: bool = True,
     ) -> dict[str, Any]:
         """Commit one event before any caller publishes it to observers.
 
@@ -65,7 +66,8 @@ class ExecutionJournal:
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(encoded)
                 handle.flush()
-                os.fsync(handle.fileno())
+                if sync:
+                    os.fsync(handle.fileno())
                 event["offset"] = handle.tell()
         return event
 

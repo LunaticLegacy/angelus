@@ -139,11 +139,19 @@ class ExecutionAttempt(Generic[ResultT]):
         with self._lock:
             if self._state is not ExecutionState.IDLE:
                 raise RuntimeError("execution attempt is not idle")
-            self._state = ExecutionState.RUNNING
+            self._state = ExecutionState.QUEUED
             self._started_at = time.time()
             self._write_manifest()
             self.journal.append("execution_started", {"session_id": self.session_id, "attempt": self.attempt, **(start_data or {})})
         threading.Thread(target=self._run, args=(operation,), name=f"angelus-execution-{self.execution_id}", daemon=False).start()
+
+    def transition(self, state: ExecutionState, *, data: dict[str, object] | None = None) -> None:
+        """Publish a non-terminal preparation or execution lifecycle state."""
+        with self._lock:
+            if self._state in {ExecutionState.COMPLETED, ExecutionState.FAILED, ExecutionState.STOPPED, ExecutionState.INTERRUPTED}:
+                return
+            self._state = state
+            self.journal.append("execution_state_changed", {"state": state, **(data or {})}, sync=False)
 
     def request_stop(self, *, force: bool, reason: str) -> ExecutionSnapshot:
         """Record one stop request and propagate it to every resource owner.
@@ -156,7 +164,7 @@ class ExecutionAttempt(Generic[ResultT]):
             Snapshot after accepting the request, or unchanged terminal state.
         """
         with self._lock:
-            if self._state not in {ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
+            if self._state not in {ExecutionState.QUEUED, ExecutionState.PREPARING, ExecutionState.MATERIALIZING_TOOLS, ExecutionState.CONNECTING_MCP, ExecutionState.MATERIALIZING_SWARM, ExecutionState.LOADING_CONTEXT, ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING}:
                 return self.snapshot()
             mode = StopMode.FORCE if force else StopMode.GRACEFUL
             request = self.controller.request_stop(mode, reason=reason)

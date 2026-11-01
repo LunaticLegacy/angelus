@@ -6,6 +6,7 @@ import hashlib
 import json
 import secrets
 import time
+from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request as URLRequest, urlopen
@@ -37,11 +38,23 @@ def list_servers(request: Request): return {"servers": list(_service(request).li
 @router.post("/api/mcp/servers", status_code=201)
 def create_server(request: Request, payload: dict[str, Any] = Body(...)): return _call(lambda: _service(request).create_server(payload))
 
+@router.post("/api/mcp/operations/register", status_code=202)
+def register_server_async(request: Request, payload: dict[str, Any] = Body(...)):
+    return asdict(_service(request).register_async(payload))
+
+@router.get("/api/mcp/operations/{operation_id}")
+def operation_status(operation_id: str, request: Request):
+    return _call(lambda: asdict(_service(request).operation(operation_id)))
+
 @router.put("/api/mcp/servers/{server_id}")
 def replace_server(server_id: str, request: Request, payload: dict[str, Any] = Body(...)): return _call(lambda: _service(request).replace_server(server_id,payload))
 
 @router.delete("/api/mcp/servers/{server_id}", status_code=204)
 def remove_server(server_id: str, request: Request): _call(lambda: _service(request).remove_server(server_id)); return Response(status_code=204)
+
+@router.delete("/api/mcp/servers/{server_id}/async", status_code=202)
+def remove_server_async(server_id: str, request: Request):
+    return asdict(_service(request).remove_async(server_id))
 
 @router.post("/api/mcp/servers/{server_id}/probe")
 def probe_server(server_id: str, request: Request): return _call(lambda: _service(request).probe(server_id))

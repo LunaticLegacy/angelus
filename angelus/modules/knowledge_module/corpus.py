@@ -1,4 +1,4 @@
-"""Host-supplied knowledge corpus behind the per-Agent pin surface.
+﻿"""Host-supplied knowledge corpus behind the per-Agent pin surface.
 
 The kernel owns the durable pin document and the request-time rendering, but
 never the documents themselves. An embedding application supplies a corpus;

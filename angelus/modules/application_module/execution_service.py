@@ -107,21 +107,10 @@ class ExecutionService:
         image_refs = self._validate_images(session, images or [])
         if not message.strip() and not image_refs:
             raise ValueError("A message or image is required")
-        if connector_id:
-            self._core.session_service.ensure_coordinator(session_id, connector_id=connector_id)
-        else:
-            self._core.session_service.ensure_coordinator(session_id)
-        # ``ensure_coordinator`` installs the required role at index zero.
-        # Keep this defensive guard so a malformed custom Session cannot run.
-        if not session.agents:
-            raise RuntimeError("Session coordinator could not be constructed")
-        if target_agent is not None:
-            target_agent = str(target_agent).strip()
-            if not target_agent or target_agent == "all" or session.swarm.get_agent(target_agent) is None:
-                raise ValueError("Unknown Session Agent target")
         executor = session.execution
         if executor is None:
             raise RuntimeError("Session has no execution boundary")
+        self._core.session_service.touch_activity(session_id)
         # Hooks are attached inside the attempt operation, before the swarm
         # scheduler starts, so even a very fast root Agent cannot outrun the
         # durable trace subscription.
@@ -209,7 +198,6 @@ class ExecutionService:
                 )
         def install_hook(attempt: Any) -> None:
             binding.attempt = attempt
-            session.swarm.add_hook(journal_hook)
             if recovery is not None:
                 attempt.journal.append("execution_recovery_started", recovery)
         def run_swarm(controller: object) -> object:
@@ -224,6 +212,34 @@ class ExecutionService:
             Raises:
                 RuntimeError: If the coordinator returned an ``AgentFailure``.
             """
+            attempt = executor.attempt
+            if attempt is None:
+                raise RuntimeError("Execution attempt was not allocated")
+            attempt.transition(ExecutionState.PREPARING)
+            mcp_snapshot = self._core.mcp_service.snapshot(session_id, "coordinator")
+            attempt.journal.append("mcp_snapshot_selected", {
+                "revision": mcp_snapshot.revision,
+                "servers": [asdict(server) for server in mcp_snapshot.servers],
+            }, sync=False)
+            attempt.transition(ExecutionState.MATERIALIZING_TOOLS)
+            if connector_id:
+                self._core.session_service.ensure_coordinator(session_id, connector_id=connector_id)
+            else:
+                self._core.session_service.ensure_coordinator(session_id)
+            if not session.agents:
+                raise RuntimeError("Session coordinator could not be constructed")
+            attempt.transition(ExecutionState.CONNECTING_MCP)
+            # MCP bridges are created by tool materialization above; this state
+            # is emitted separately so slow discovery is visible to clients.
+            attempt.transition(ExecutionState.MATERIALIZING_SWARM)
+            if target_agent is not None:
+                selected = str(target_agent).strip()
+                if not selected or selected == "all" or session.swarm.get_agent(selected) is None:
+                    raise ValueError("Unknown Session Agent target")
+            target = str(target_agent).strip() if target_agent is not None else None
+            session.swarm.add_hook(journal_hook)
+            binding.attempt = attempt
+            attempt.transition(ExecutionState.LOADING_CONTEXT)
             run_control = SessionRunControl(controller)
             # Register the persisted topology before scheduling begins.  A
             # worker can otherwise remain queued long enough for the browser
@@ -242,15 +258,16 @@ class ExecutionService:
             try:
                 user_input = UserMessage(text=message, images=image_refs) if image_refs else message
                 run_kwargs: dict[str, object] = {"control": run_control}
-                if target_agent is not None:
-                    run_kwargs["target_agent"] = target_agent
+                if target is not None:
+                    run_kwargs["target_agent"] = target
                 else:
                     # A browser-originated turn enters the graph at the
                     # coordinator only; unconnected workers must not become
                     # implicit roots and receive the same user message.
                     run_kwargs["entry_agent"] = session.coordinator_name
+                attempt.transition(ExecutionState.RUNNING)
                 output = session.swarm.run(user_input, **run_kwargs)
-                root_name = target_agent or session.coordinator_name
+                root_name = target or session.coordinator_name
                 root = output.get(root_name) if isinstance(output, dict) else None
                 if isinstance(root, AgentFailure):
                     raise RuntimeError(f"{root.agent_name} failed: {root.error}")

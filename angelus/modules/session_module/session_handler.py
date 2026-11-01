@@ -263,6 +263,12 @@ class SessionHandler:
         return tuple(
             attempt for attempt in attempts
             if attempt is not None and attempt.snapshot().state in {
+                ExecutionState.QUEUED,
+                ExecutionState.PREPARING,
+                ExecutionState.MATERIALIZING_TOOLS,
+                ExecutionState.CONNECTING_MCP,
+                ExecutionState.MATERIALIZING_SWARM,
+                ExecutionState.LOADING_CONTEXT,
                 ExecutionState.RUNNING,
                 ExecutionState.STOPPING,
                 ExecutionState.FORCE_STOPPING,

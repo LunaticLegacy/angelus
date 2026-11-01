@@ -32,10 +32,10 @@ class WorkspaceCatalog:
         self._lock = threading.RLock()
 
     def list(self) -> tuple[Workspace, ...]:
-        """Return every registered workspace in deterministic name order."""
+        """Return workspaces by most recent activity, then stable identity."""
         with self._lock:
             records = self._read()
-        return tuple(sorted(records.values(), key=lambda item: (item.name, item.session_id)))
+        return tuple(sorted(records.values(), key=lambda item: (-(item.last_activity_at or item.updated_at or item.created_at), item.name, item.session_id)))
 
     def get(self, session_id: str) -> Workspace:
         """Return one workspace or raise ``KeyError`` when it is unknown."""
@@ -184,6 +184,24 @@ class WorkspaceCatalog:
             raise ValueError(f"Invalid workspace catalog: {self.path}")
         # Older catalogs omitted the one-way migration marker.
         raw.setdefault("legacy_workspace_imported", False)
+        # Workspace activity metadata was added after the first catalog
+        # version. Fill defaults before strict dataclass decoding so existing
+        # installations remain readable without deleting their state.
+        raw_workspaces = raw.get("workspaces", [])
+        if isinstance(raw_workspaces, list):
+            migrated_workspaces: list[object] = []
+            for item in raw_workspaces:
+                if isinstance(item, dict):
+                    migrated = dict(item)
+                    created_at = float(migrated.get("created_at", 0.0) or 0.0)
+                    updated_at = float(migrated.get("updated_at", created_at) or created_at)
+                    migrated.setdefault("created_at", created_at)
+                    migrated.setdefault("updated_at", updated_at)
+                    migrated.setdefault("last_activity_at", updated_at or created_at or None)
+                    migrated_workspaces.append(migrated)
+                else:
+                    migrated_workspaces.append(item)
+            raw["workspaces"] = migrated_workspaces
         try:
             document = decode_record(
                 WorkspaceCatalogDocument, raw, "workspace catalog"

@@ -55,7 +55,10 @@ class SessionExecutor(Generic[ResultT]):
         """
         with self._lock:
             if self._attempt is not None and self._attempt.snapshot().state in {
-                ExecutionState.RUNNING, ExecutionState.STOPPING, ExecutionState.FORCE_STOPPING,
+                ExecutionState.QUEUED, ExecutionState.PREPARING, ExecutionState.MATERIALIZING_TOOLS,
+                ExecutionState.CONNECTING_MCP, ExecutionState.MATERIALIZING_SWARM,
+                ExecutionState.LOADING_CONTEXT, ExecutionState.RUNNING, ExecutionState.STOPPING,
+                ExecutionState.FORCE_STOPPING,
             }:
                 raise RuntimeError(f"Executor {self.session_id!r} already has a live attempt")
             self._attempt_number += 1

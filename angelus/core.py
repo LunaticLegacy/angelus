@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import threading
+import time
 
 from .modules.session_module import SessionHandler
 from .modules.execution_module import SigintSupervisor
@@ -205,6 +206,7 @@ class AngelusCore:
         self._sigint_received = False
         # Ensures the terminal completion line appears exactly once.
         self._shutdown_reported = False
+        self._shutdown_complete = False
 
     def install_signal_handlers(self) -> None:
         """Install SIGINT receipt and start a non-blocking drain helper.
@@ -259,6 +261,9 @@ class AngelusCore:
         server process is allowed to leave.
         """
         with self._shutdown_lock:
+            if self._shutdown_complete:
+                return
+            started = time.monotonic()
             if self._sigint_received:
                 attempts = self._sigint_attempts
                 reason = "sigint"
@@ -266,6 +271,11 @@ class AngelusCore:
                 attempts = self.sigint.request_force_stop_all(reason="host_shutdown")
                 reason = "host_shutdown"
         self.sigint.wait_for_stop_all(attempts, reason=reason)
+        print(
+            f"Angelus: execution shutdown phase complete ({time.monotonic() - started:.2f}s); closing MCP transports...",
+            file=sys.stderr,
+            flush=True,
+        )
         with self._shutdown_lock:
             if self._sigint_received and not self._shutdown_reported:
                 print(
@@ -278,7 +288,22 @@ class AngelusCore:
         if self._signal_loop is not None:
             self._signal_loop.join(timeout=1)
         self.sigint.restore()
-        self.mcp_service.close()
+        try:
+            self.mcp_service.close(timeout=5.0)
+        except Exception as exc:
+            print(
+                f"Angelus: MCP shutdown reported {type(exc).__name__}: {exc}; continuing exit.",
+                file=sys.stderr,
+                flush=True,
+            )
+        finally:
+            with self._shutdown_lock:
+                self._shutdown_complete = True
+            print(
+                f"Angelus: shutdown complete ({time.monotonic() - started:.2f}s).",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _drain_signal_loop(self) -> None:
         """Poll the signal supervisor until shutdown requests this daemon exit.

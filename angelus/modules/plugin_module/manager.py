@@ -113,8 +113,11 @@ class PluginManager:
             tool_registry: Existing global tool registry receiving loaded tools.
             development_root: Optional read-only source package directory. When
                 omitted, Angelus discovers repository ``plugins/`` packages.
-            managed_root: Optional portable package directory. Its registry,
-                runtime data, and editable package copies share that root.
+            managed_root: Optional explicit plugin home (the
+                ``ANGELUS_PLUGIN_DIR`` value) to use instead of
+                ``<state_root>/plugins``. Packages are scanned from its
+                ``package/`` subdirectory; registration records and plugin
+                runtime data stay beside that subdirectory, inside the home.
         """
         self.store = PluginStore(state_root, managed_root)
         self._tool_registry = tool_registry
@@ -756,6 +759,7 @@ def _field_json(value: object) -> dict[str, object]:
         "key": value.key, "type": value.value_type, "title": value.title, "description": value.description,
         "required": value.required, "default": value.default, "enum": list(value.choices) or None, "minimum": value.minimum,
         "maximum": value.maximum, "format": value.value_format, "placeholder": value.placeholder,
+        "visible_if": getattr(value, "visible_if", None),
         "sensitive": isinstance(value, PluginPanelField) and value.sensitive,
     }
 

@@ -12,6 +12,7 @@ import asyncio
 import contextvars
 import re
 import threading
+import logging
 from collections.abc import Sequence
 from concurrent.futures import Future as ConcurrentFuture
 from contextlib import AsyncExitStack
@@ -23,6 +24,8 @@ from pydantic import BaseModel
 from llmfetcher.llm_types import Tool, ToolSchema
 
 from .records import MCPCapabilities, MCPResolvedServer, MCPSecrets, MCPServerRecord
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MCPToolError(RuntimeError):
@@ -78,7 +81,7 @@ class MCPServer:
         transport = record.transport.strip().lower()
         if not name or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name):
             raise MCPToolError("MCP server name must match [A-Za-z][A-Za-z0-9_-]{0,63}")
-        if transport not in {"stdio", "streamable-http"}:
+        if transport not in {"stdio", "streamable-http", "sse"}:
             raise MCPToolError(
                 f"MCP server {name!r} has unsupported transport {transport!r}"
             )
@@ -201,7 +204,9 @@ class MCPToolBridge:
             self._thread.start()
         self._owner_future = asyncio.run_coroutine_threadsafe(self._own_connections(), self._loop)
         if not self._ready.wait(timeout=120):
-            raise MCPToolError("MCP connection startup timed out")
+            self.close()
+            names = ", ".join(f"{server.name}/{server.transport}" for server in self._servers)
+            raise MCPToolError(f"MCP connecting_mcp timed out after 120s ({names})")
         if self._startup_error is not None:
             raise self._startup_error
         return self.tools_for("coordinator")
@@ -225,7 +230,7 @@ class MCPToolBridge:
             if allowed is None or public_name in allowed or tool_name in allowed
         ]
 
-    def close(self) -> None:
+    def close(self, *, timeout: float = 5.0) -> None:
         """Close every persistent transport and stop the owning event loop."""
         if self._closed:
             return
@@ -236,12 +241,14 @@ class MCPToolBridge:
                     self._loop.call_soon_threadsafe(self._close_requested.set)
                 if self._owner_future is not None:
                     try:
-                        self._owner_future.result(timeout=15)
-                    except Exception:
-                        pass
+                        self._owner_future.result(timeout=max(0.1, timeout))
+                    except Exception as exc:
+                        _LOGGER.warning("MCP owner cleanup did not finish within %.1fs: %s", timeout, exc)
             finally:
                 self._loop.call_soon_threadsafe(self._loop.stop)
-                self._thread.join(timeout=5)
+                self._thread.join(timeout=max(0.1, timeout))
+                if self._thread.is_alive():
+                    _LOGGER.warning("MCP event-loop thread is still alive after %.1fs", timeout)
 
     def cancel_agent(self, agent: str) -> int:
         """Cancel in-flight MCP calls attributed to one Agent.
@@ -351,13 +358,41 @@ class MCPToolBridge:
                 ClientSession(read_stream, write_stream, **client_options)
             )
             await client.initialize()
-        else:
+        elif server.transport == "streamable-http":
             if server.headers:
+                import httpx2
                 from mcp.client.streamable_http import streamable_http_client
-                transport = streamable_http_client(server.url, headers=dict(server.headers))
+                # mcp==2.2.0 accepts custom headers on the HTTP client, not
+                # on streamable_http_client itself. Passing ``headers=`` to
+                # the transport raises a TypeError which AnyIO surfaces as a
+                # generic ExceptionGroup during probe/startup.
+                http_client = await self._stack.enter_async_context(
+                    httpx2.AsyncClient(headers=dict(server.headers))
+                )
+                transport = streamable_http_client(
+                    server.url, http_client=http_client
+                )
                 client = await self._stack.enter_async_context(Client(transport, **client_options))
             else:
                 client = await self._stack.enter_async_context(Client(server.url, **client_options))
+        else:
+            # Legacy HTTP+SSE servers (including FastMCP's ``/mcp/sse``)
+            # expose a long-lived event stream and a separately announced
+            # POST endpoint. The SDK's sse_client owns both channels and
+            # feeds them into the regular ClientSession API.
+            from mcp.client.sse import sse_client
+
+            read_stream, write_stream = await self._stack.enter_async_context(
+                sse_client(
+                    server.url,
+                    headers=dict(server.headers) or None,
+                    timeout=30.0,
+                )
+            )
+            client = await self._stack.enter_async_context(
+                ClientSession(read_stream, write_stream, **client_options)
+            )
+            await client.initialize()
         self._clients[server.name] = client
         self._emit("connected", server.name)
         return client

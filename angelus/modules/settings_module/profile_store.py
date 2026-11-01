@@ -37,9 +37,10 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
     "tool_permissions": {
         "categories": {
                 "context_version": True, "session_memory": True, "notes": True, "vision": True, "file_discovery": True, "project_retrieval": True, "file_write": True,
-            "shell": True, "planning": True,
+            "shell": True, "planning": True, "mcp": True,
         },
         "tools": {
+            "ctf_create": True, "ctf_delete": True, "ctf_index": True,
             "file_list": True, "file_read": True, "file_search": True, "file_write": True,
             "inspect_agent_context": True, "search_agent_archive": True, "read_agent_archive": True,
             "edit_agent_context": True, "restore_agent_context": True,
@@ -50,6 +51,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
             "view_image": True,
             "shell": True,
             "set_task_plan": True, "update_task_status": True, "read_task_plan": True,
+            "mcp": True,
         },
     },
 }

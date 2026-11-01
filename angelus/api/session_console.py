@@ -68,9 +68,12 @@ class RequestPreviewInput:
     Args:
         message: Hypothetical next user message added only to a detached
             in-memory context copy.
+        context_handler: Optional handler id composed instead of the
+            saved profile handler; nothing is persisted.
     """
 
     message: str
+    context_handler: str | None = None
 
 
 @dataclass
@@ -272,18 +275,15 @@ def events_stream(session_id: str, request: Request, cursor: int = 0, ephemeral_
                 live_after = 0
         try:
             while True:
-                # Live frames must precede the durable fact that closes their
-                # round; otherwise a trailing delta re-creates a streaming card
-                # for a round the durable page has already completed.
-                live = _service(request).ephemeral_events(session_id, live_after)
-                for event in live["events"]:
-                    live_after = int(event["ephemeral_sequence"])
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 page = _service(request).events(session_id, next_cursor, 500)
                 records = page["events"]
                 for event in records:
                     next_cursor += 1
                     yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                live = _service(request).ephemeral_events(session_id, live_after)
+                for event in live["events"]:
+                    live_after = int(event["ephemeral_sequence"])
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 core = get_core(request)
                 status = core.execution_service.status(session_id)
                 if str(status.state) not in {"running", "stopping", "force_stopping"}:
@@ -406,13 +406,14 @@ def request_preview(session_id: str, agent: str, body: RequestPreviewInput, requ
     Args:
         session_id: Stable Session identity owning the Agent context.
         agent: Valid coordinator or Worker identity.
-        body: Hypothetical next user message for the detached preview.
+        body: Hypothetical next user message for the detached preview,
+            optionally composed with an unsaved context handler.
         request: Incoming request carrying the application core.
 
     Returns:
         Credential-free model request snapshot and composition statistics.
     """
-    return _call(lambda:_service(request).request_preview(session_id, agent, body.message))
+    return _call(lambda:_service(request).request_preview(session_id, agent, body.message, body.context_handler))
 @router.get("/agents/{agent}/context/compaction-input")
 def compaction_input(session_id: str, agent: str, request: Request): return _call(lambda:_service(request).compaction_input(session_id,agent))
 

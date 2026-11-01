@@ -62,7 +62,7 @@ class MCPStore:
     def list(self) -> tuple[MCPPublicServer, ...]:
         """Return every server without credentials or header/env values."""
         return tuple(
-            self.public(item) for item in self._records()
+            self.public(self._with_secrets(item)) for item in self._records()
         )
 
     def internal(self) -> tuple[MCPServerWithSecrets, ...]:

@@ -1,6 +1,7 @@
 """Read and edit the Session-owned console without a second runtime state."""
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from collections import OrderedDict
@@ -8,7 +9,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, cast
 
-from llmfetcher.context_handlers import ContextSnapshot
+from llmfetcher.context_handlers import (
+    DEFAULT_CONTEXT_HANDLER,
+    ContextSnapshot,
+    available_context_handlers,
+)
 from llmfetcher.context_handlers.linear import read_persisted_archive_page, read_persisted_context_page
 from llmfetcher.context_handlers.linear.codec import tool_result_from_dict
 from llmfetcher.context_handlers.storage import SQLiteContextStorage
@@ -1818,7 +1823,13 @@ class ConsoleProjectionService:
         finally:
             agent.close()
 
-    def request_preview(self, session_id: str, name: str, message: str) -> dict[str, object]:
+    def request_preview(
+        self,
+        session_id: str,
+        name: str,
+        message: str,
+        context_handler: str | None = None,
+    ) -> dict[str, object]:
         """Compose one possible next Agent request without dispatching it.
 
         Args:
@@ -1826,6 +1837,9 @@ class ConsoleProjectionService:
             name: Agent role identity whose next request is composed.
             message: Hypothetical next user message added only to a detached
                 in-memory context copy.
+            context_handler: Optional handler id composed instead of the
+                saved profile handler, so the order editor can show the
+                sources of an unsaved strategy switch.
 
         Returns:
             Credential-free dispatch-ready request and composition statistics.
@@ -1833,7 +1847,11 @@ class ConsoleProjectionService:
         Raises:
             ConsoleDomainError: If the persisted checkpoint cannot be loaded.
         """
-        agent = self._detached_preview_agent(session_id, name)
+        if context_handler is not None and context_handler not in available_context_handlers():
+            raise ConsoleDomainError(f"unknown context handler: {context_handler}")
+        agent = self._detached_preview_agent(
+            session_id, name, context_handler=context_handler,
+        )
         try:
             # During the first model round the live Agent has already accepted
             # the user turn in memory, while its context checkpoint is written
@@ -1842,8 +1860,12 @@ class ConsoleProjectionService:
             # coordinator request during an active graph execution.
             if not message.strip():
                 pending = self._latest_agent_input(session_id, name)
-                linear = agent.context_handler.linear
-                existing = linear.messages
+                # ``sage`` has no ``.messages`` transcript (its ``linear``
+                # attribute is the SageContext itself), so a missing
+                # transcript must skip the pending-input reconciliation
+                # instead of failing the whole preview with AttributeError.
+                linear = getattr(agent.context_handler, "linear", None)
+                existing = getattr(linear, "messages", None) or []
                 if pending and not any(
                     item.kind == "user"
                     and str(item.content or "") == pending
@@ -1928,8 +1950,16 @@ class ConsoleProjectionService:
                     "present": False,
                 })
             blocks.sort(key=lambda item: (int(item["priority"]), int(item["position_value"])))
+            sources = [str(item["source"]) for item in blocks]
+            source_signature = hashlib.sha1(
+                "|".join(sorted(sources)).encode("utf-8")
+            ).hexdigest()
+            resolved_handler = context_handler or self._saved_context_handler(session_id)
             return {
                 "agent": name,
+                "context_handler": resolved_handler,
+                "sources": sources,
+                "source_signature": source_signature,
                 "request": request,
                 "blocks": blocks,
                 "stats": {
@@ -1941,6 +1971,18 @@ class ConsoleProjectionService:
             }
         finally:
             agent.close()
+
+    def _saved_context_handler(self, session_id: str) -> str:
+        """Return the context handler id saved in one Session profile.
+
+        Args:
+            session_id: Stable identity of the owning Session.
+
+        Returns:
+            Saved handler id, or the registry default when unset.
+        """
+        value = self._core.run_profiles.effective(session_id).get("context_handler")
+        return str(value) if isinstance(value, str) and value else DEFAULT_CONTEXT_HANDLER
 
     def _latest_agent_input(self, session_id: str, name: str) -> str:
         """Read the newest live user input for one Agent from its journal."""
@@ -1963,12 +2005,21 @@ class ConsoleProjectionService:
                 return value
         return ""
 
-    def _detached_preview_agent(self, session_id: str, name: str):
+    def _detached_preview_agent(
+        self,
+        session_id: str,
+        name: str,
+        *,
+        context_handler: str | None = None,
+    ):
         """Create and hydrate an Agent copy that cannot mutate Session state.
 
         Args:
             session_id: Stable identity of the Session owning the checkpoint.
             name: Valid coordinator or persisted Worker identity.
+            context_handler: Optional handler id used for this detached
+                preview only; the saved profile handler otherwise.  The
+                composed request is never dispatched or persisted.
 
         Returns:
             Detached configured Agent with its context loaded when available.
@@ -1977,7 +2028,9 @@ class ConsoleProjectionService:
             ConsoleDomainError: If the checkpoint exists but is invalid.
         """
         self._agent(session_id, name)
-        agent = self._core.session_service.preview_agent(session_id, name)
+        agent = self._core.session_service.preview_agent(
+            session_id, name, context_handler_name=context_handler,
+        )
         path = self._context_path(session_id, name)
         if path.is_file() and not agent.context_handler.load(path):
             agent.close()

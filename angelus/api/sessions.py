@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import uuid
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -90,7 +91,10 @@ def list_sessions(request: Request) -> dict[str, list[dict[str, Any]]]:
                 "id": item.session_id,
                 "name": item.name,
                 "project_path": str(item.project_path) if item.project_path is not None else None,
-                "status": _session_status(core.execution_service.status(item.session_id)) if core.sessions.exists(item.session_id) else "idle",
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
+                "last_activity_at": item.last_activity_at,
+                "status": "deleting" if core.session_service.is_deleting(item.session_id) else (_session_status(core.execution_service.status(item.session_id)) if core.sessions.exists(item.session_id) else "idle"),
             }
             for item in core.session_service.list()
         ]
@@ -160,6 +164,23 @@ def delete_session(session_id: str, payload: DeleteSessionRequest, request: Requ
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "deleted", "session_id": session_id}
+
+@router.delete("/api/sessions/{session_id}/async", status_code=202)
+def delete_session_async(session_id: str, payload: DeleteSessionRequest, request: Request) -> dict[str, Any]:
+    try:
+        operation = _core(request).session_service.delete_async(session_id, payload.confirmation)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown session") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return asdict(operation)
+
+@router.get("/api/session-delete-operations/{operation_id}")
+def delete_operation_status(operation_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return asdict(_core(request).session_service.delete_operation(operation_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown delete operation") from exc
 
 
 @router.patch("/api/sessions/{session_id}")
