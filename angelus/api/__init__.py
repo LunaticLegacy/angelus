@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import mimetypes
 
 from ..core import AngelusCore
 from .runs import router as runs_router
@@ -25,6 +26,10 @@ from .notes import router as notes_router
 
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     """Install API routes and the local workbench assets on one host."""
+    # Windows Python installations commonly lack a MIME mapping for `.mjs`.
+    # Starlette's StaticFiles then serves ES modules as `text/plain`, which
+    # browsers reject before evaluating the module graph.
+    mimetypes.add_type("text/javascript", ".mjs")
     app.state.angelus_core = core
     # Resolve through the packaged frontend module so wheels carry the same
     # workbench assets as a source checkout.  The filesystem fallback keeps
