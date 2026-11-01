@@ -14,7 +14,7 @@ export function createImageComposer({ input, picker, button, previews, feedback,
   };
   function render() {
     const draft = getDraft(activeSession);
-    previews.replaceChildren();
+    previews.querySelectorAll(".composer-image").forEach((node) => node.remove());
     for (const image of draft.images) {
       const card = document.createElement("span"); card.className = "composer-image";
       const thumb = document.createElement("img"); thumb.src = attachmentImageUrl(activeSession, image); thumb.alt = image.filename || "图片";
@@ -22,7 +22,7 @@ export function createImageComposer({ input, picker, button, previews, feedback,
       remove.addEventListener("click", () => { draft.images = draft.images.filter(item => item !== image); render(); });
       card.append(thumb, remove); previews.append(card);
     }
-    previews.hidden = !draft.images.length;
+    previews.hidden = !draft.images.length && !previews.querySelector(".composer-file");
     feedback.textContent = draft.error || (draft.pending ? `正在上传 ${draft.pending} 张图片…` : draft.sending ? "正在发送…" : "");
     feedback.hidden = !feedback.textContent;
     button.disabled = !activeSession || draft.sending;

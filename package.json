@@ -7,7 +7,8 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:backend": "node scripts/build-backend.mjs"
+    "build:backend": "node scripts/build-backend.mjs",
+    "check:frontend": "node scripts/check-frontend-architecture.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.4"

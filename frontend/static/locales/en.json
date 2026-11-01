@@ -38,6 +38,7 @@
   "inspector.agents": "Agents",
   "inspector.trace": "Trace",
   "inspector.usage": "Usage",
+  "inspector.notes": "Notes",
   "settings.title": "Settings",
   "settings.connection": "Connections",
   "settings.agent": "Agent execution",

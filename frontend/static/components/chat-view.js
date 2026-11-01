@@ -1,4 +1,4 @@
-import { $, escapeHtml } from "./dom.js";
+import { $, escapeHtml } from "./dom.js?v=dom-selectors-1";
 import { createMarkdownStream, renderMarkdownInto } from "./markdown-renderer.js";
 import { attachmentImageUrl } from "./image-composer.js";
 

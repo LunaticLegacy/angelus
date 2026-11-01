@@ -38,6 +38,7 @@
   "inspector.agents": "Agents",
   "inspector.trace": "Trace",
   "inspector.usage": "用量",
+  "inspector.notes": "笔记",
   "settings.title": "设置",
   "settings.connection": "连接器",
   "settings.agent": "Agent 执行",

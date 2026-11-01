@@ -1,4 +1,4 @@
-:root { color-scheme:dark; --bg:#080d17; --panel:#0d1421; --panel2:#111b2c; --line:#1f2c42; --line2:#344766; --text:#eef3ff; --muted:#8491a8; --soft:#b8c2d5; --purple:#a995ff; --green:#a4f03d; --amber:#f8ad38; --red:#ff6573; }
+﻿:root { color-scheme:dark; --bg:#080d17; --panel:#0d1421; --panel2:#111b2c; --line:#1f2c42; --line2:#344766; --text:#eef3ff; --muted:#8491a8; --soft:#b8c2d5; --purple:#a995ff; --green:#a4f03d; --amber:#f8ad38; --red:#ff6573; }
 * { box-sizing:border-box; } html,body { margin:0; min-height:100%; } body { min-height:100vh; display:grid; grid-template-columns:260px minmax(520px,1fr) 350px; overflow:hidden; background:radial-gradient(ellipse at 52% -20%,#1b2b49 0,#080d17 48%); color:var(--text); font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer; } button:disabled { cursor:not-allowed; opacity:.38; } input,select,textarea { width:100%; border:1px solid var(--line); border-radius:7px; outline:0; background:#0a1220; color:var(--text); padding:8px 9px; } input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow:0 0 0 3px #a995ff1c; }
 .sidebar { min-height:100vh; display:flex; flex-direction:column; overflow:auto; padding:24px 17px 15px; border-right:1px solid var(--line); background:linear-gradient(180deg,#0e1625,#0a111d); }.brand { display:flex; align-items:baseline; gap:7px; margin:0 4px 33px; color:var(--text); text-decoration:none; font-size:var(--fs-title); letter-spacing:-.6px; }.brand span { color:var(--green); font-size:var(--fs-large); text-shadow:0 0 14px #a4f03d99; }.brand strong { font-weight:750; }.brand small { color:var(--purple); font-size:var(--fs-micro); font-weight:700; letter-spacing:.13em; }
@@ -87,7 +87,7 @@ button,input,select,textarea { font:inherit; } button { border:0; cursor:pointer
 /* The inspector keeps one focused session view visible instead of squeezing
    plans, topology, trace, and usage into a permanently stacked sidebar. */
 .activity { padding:21px 15px 15px; }
-.inspector-tabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin:16px -15px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.inspector-tabs { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); margin:16px -15px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
 .inspector-tabs button { min-width:0; padding:11px 4px 9px; border-bottom:2px solid transparent; background:transparent; color:var(--muted); font-size:var(--fs-small); font-weight:700; white-space:nowrap; }
 .inspector-tabs button:hover { color:var(--soft); background:#111d30; }
 .inspector-tabs button.active { border-bottom-color:var(--purple); color:#d5cbff; }
@@ -818,7 +818,7 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 .image-feedback { margin: 6px 0; font-size:var(--fs-body); color: var(--text-muted, #999); }
 .message-images img { display: block; max-width: min(280px, 100%); max-height: 240px; object-fit: contain; border-radius: 8px; }
 .message-images a { min-width: 0; }
-#attach-image { border: 1px solid var(--border, #555); border-radius: 6px; padding: 3px 8px; color: inherit; background: transparent; cursor: pointer; }
+#attach-image, .attach-button { border: 1px solid var(--border, #555); border-radius: 6px; padding: 3px 8px; color: inherit; background: transparent; cursor: pointer; }
 .tool-live-status { margin-left: 7px; color: var(--amber); font-size:var(--fs-small); }.available-tools{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:7px; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:rgba(84,220,155,.04); }
 .available-tools { margin:0 auto 14px; max-width:780px; border-left:2px solid var(--green); background:rgba(84,220,155,.06); }
 .tool-round-label { color:var(--muted); font-size:var(--fs-small); font-weight:700; letter-spacing:.04em; }
@@ -844,6 +844,8 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
    被 chat-view.js / app.js 的 `replaceChildren` 重建流程清空，也会打乱追加内容；
    叠加定位无需 JS 同步坐标。 */
 .main-panel > #chat { grid-row:3; grid-column:1; }
+/* Keep the composer in the bottom track even when the Agent row is hidden. */
+.main-panel > #composer { grid-row:4; grid-column:1; }
 .scroll-to-bottom {
   grid-row:3;
   grid-column:1;
@@ -1076,3 +1078,12 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
    sidebar they sit in, and the panel already separates itself from the chat. */
 .inspector-tabs { border-left:0; background:transparent; }
 :root[data-theme="light"] .inspector-tabs { background:transparent; }
+
+.notes-panel { gap:10px; } .notes-hint { margin:0; color:var(--muted); font-size:var(--fs-small); line-height:1.45; } .notes-toolbar { display:flex; gap:6px; } .notes-scope,.notes-search,.notes-title,.notes-tags { min-width:0; border:1px solid var(--line); border-radius:6px; background:#0a1220; color:var(--text); padding:7px 8px; font:inherit; } .notes-search { flex:1; } .notes-error { border:1px solid var(--red); border-radius:6px; color:var(--red); padding:7px 8px; font-size:var(--fs-micro); } .notes-list { display:flex; flex-direction:column; gap:6px; max-height:220px; overflow:auto; } .notes-item { display:flex; flex-direction:column; gap:3px; text-align:left; border:1px solid var(--line); border-radius:7px; background:transparent; color:var(--text); padding:8px; cursor:pointer; } .notes-item:hover,.notes-item.selected { border-color:var(--purple); background:color-mix(in srgb,var(--purple) 10%,transparent); } .notes-item span { overflow:hidden; color:var(--muted); font-size:var(--fs-micro); text-overflow:ellipsis; white-space:nowrap; } .notes-empty { color:var(--muted); font-size:var(--fs-small); text-align:center; } .notes-editor-wrap { display:flex; flex-direction:column; gap:7px; min-height:0; } .notes-editor-head { display:flex; justify-content:space-between; align-items:center; font-size:var(--fs-small); } .notes-delete,.notes-new { border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--muted); padding:5px 8px; font-size:var(--fs-micro); cursor:pointer; } .notes-delete:hover { color:var(--red); border-color:var(--red); } .notes-new:hover,.notes-save:hover { border-color:var(--purple); color:var(--text); } .notes-editor { min-height:150px; width:100%; resize:vertical; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; background:#0a1220; color:var(--text); padding:12px; font:inherit; line-height:1.6; } .notes-editor:focus,.notes-title:focus,.notes-tags:focus,.notes-search:focus { outline:2px solid color-mix(in srgb,var(--purple) 55%,transparent); outline-offset:1px; } .notes-footer { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:var(--fs-micro); } .notes-status { flex:1; } .notes-save { border:1px solid var(--purple); border-radius:6px; background:var(--purple); color:white; padding:6px 12px; cursor:pointer; font-size:var(--fs-micro); }
+
+.composer-model { min-width: 8rem; max-width: 14rem; border: 1px solid var(--line); border-radius: 6px; background: #0a1220; color: var(--text); padding: 6px 8px; font: inherit; font-size: var(--fs-micro); }
+.composer-file { display: inline-flex; align-items: center; gap: 5px; margin: 4px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: var(--fs-micro); }
+.composer-file button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+
+
+
