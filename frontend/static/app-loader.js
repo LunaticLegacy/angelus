@@ -5,7 +5,7 @@
  * otherwise aborts the whole static module graph. Retry the composition root
  * so a short Uvicorn restart or socket hiccup does not leave a blank shell.
  */
-const APP_URL = "/static/app.js?v=context-architecture-14";
+const APP_URL = "/static/app.js?v=context-architecture-15";
 const MAX_ATTEMPTS = 4;
 const RETRY_DELAY_MS = 350;
 

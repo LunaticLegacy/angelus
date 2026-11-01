@@ -1,6 +1,8 @@
 /** Safe Markdown projection shared by historical and streamed Agent messages. */
 import { marked } from "../vendor/marked/marked.esm.js";
-import DOMPurify from "../vendor/dompurify/purify.es.mjs";
+// The version query also invalidates browsers that cached this module while
+// the Windows MIME table still served `.mjs` as `text/plain`.
+import DOMPurify from "../vendor/dompurify/purify.es.mjs?v=mjs-mime-1";
 
 const MARKDOWN_SANITIZE_OPTIONS = Object.freeze({
   ALLOWED_TAGS: [
