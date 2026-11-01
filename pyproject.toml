@@ -28,7 +28,10 @@ angelus = "angelus.cli:main"
 angelus-web = "angelus.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["angelus*"]
+include = ["angelus*", "frontend*"]
+
+[tool.setuptools.package-data]
+frontend = ["templates/*", "static/*", "static/**/*", "dist/*", "dist/**/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "angelus._version.__version__"}

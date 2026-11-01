@@ -26,7 +26,15 @@ from .notes import router as notes_router
 def include_api_routes(app: FastAPI, core: AngelusCore) -> None:
     """Install API routes and the local workbench assets on one host."""
     app.state.angelus_core = core
-    frontend_root = Path(__file__).resolve().parents[2] / "frontend"
+    # Resolve through the packaged frontend module so wheels carry the same
+    # workbench assets as a source checkout.  The filesystem fallback keeps
+    # older editable layouts working when the package is absent.
+    try:
+        import frontend as frontend_package
+
+        frontend_root = Path(frontend_package.__file__).resolve().parent
+    except (ImportError, AttributeError):
+        frontend_root = Path(__file__).resolve().parents[2] / "frontend"
     # The React/Vite workbench is the canonical POFP client.  The template
     # workbench is kept in the repository as a historical migration artifact,
     # but must not be selected at runtime: doing so makes the web backend show
