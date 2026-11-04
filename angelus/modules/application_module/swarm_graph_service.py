@@ -563,6 +563,15 @@ class SwarmGraphService:
         if isinstance(nodes, list):
             for node in nodes:
                 if isinstance(node, dict):
+                    # One node schema for every consumer: the durable projector
+                    # emits ``parent_id``/``origin`` while legacy payloads and
+                    # synthesized nodes used ``parent``/``dynamic``.  Normalize
+                    # both directions so the delegation tree stays renderable
+                    # no matter which producer built the snapshot.
+                    if not node.get("parent_id") and node.get("parent"):
+                        node["parent_id"] = node["parent"]
+                    node.setdefault("parent", node.get("parent_id"))
+                    node.setdefault("dynamic", node.get("origin") == "runtime")
                     node.setdefault("role", roles.get(str(node.get("id")), "worker"))
         # A durable RunGraph checkpoint can contain runtime nodes while its
         # edge list is empty (for example, if SIGINT lands between a runtime
@@ -574,7 +583,15 @@ class SwarmGraphService:
                 graph["nodes"] = [
                     {"id": "coordinator", "kind": "agent", "role": "coordinator"},
                     *[
-                        {"id": worker.name, "kind": "agent", "role": worker.role, "dynamic": False, "parent": None}
+                        {
+                            "id": worker.name,
+                            "kind": "agent",
+                            "role": worker.role,
+                            "dynamic": False,
+                            "origin": "blueprint",
+                            "parent": None,
+                            "parent_id": None,
+                        }
                         for worker in sorted(workers.values(), key=lambda item: item.name)
                     ],
                 ]

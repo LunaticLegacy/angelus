@@ -13,7 +13,33 @@ from typing import Any
 from uuid import uuid4
 
 
-_NOTE_COLUMNS = "note_id, ?, title, content, tags, status, created_at, updated_at, revision"
+# Statements are complete literals rather than fragments joined at the call site:
+# assembling SQL from interpolated pieces means a typo only surfaces on the first
+# query in production, and it hides the statement from static review. The three
+# SELECT variants therefore each spell the column list out; keep them in sync.
+_SELECT_NOTE_BY_ID = (
+    "SELECT note_id, :scope AS scope, title, content, tags, status, created_at, "
+    "updated_at, revision FROM notes WHERE note_id = :note_id"
+)
+_SELECT_NOTES_ACTIVE = (
+    "SELECT note_id, :scope AS scope, title, content, tags, status, created_at, "
+    "updated_at, revision FROM notes WHERE status = 'active' "
+    "ORDER BY updated_at DESC LIMIT :limit"
+)
+_SELECT_NOTES_ALL = (
+    "SELECT note_id, :scope AS scope, title, content, tags, status, created_at, "
+    "updated_at, revision FROM notes ORDER BY updated_at DESC LIMIT :limit"
+)
+_INSERT_NOTE = (
+    "INSERT INTO notes "
+    "(note_id, title, content, tags, status, created_at, updated_at, revision) "
+    "VALUES (:note_id, :title, :content, :tags, 'active', :created_at, :updated_at, 1)"
+)
+_UPDATE_NOTE = (
+    "UPDATE notes SET title = :title, content = :content, tags = :tags, "
+    "status = :status, updated_at = :updated_at, revision = revision + 1 "
+    "WHERE note_id = :note_id"
+)
 
 
 class NoteError(ValueError):
@@ -143,14 +169,24 @@ class NoteStore:
         note_id = uuid4().hex
         now = time.time()
         with self._connection(self._path(scope)) as db:
-            db.execute("INSERT INTO notes VALUES (?, ?, ?, ?, 'active', ?, ?, 1)", (note_id, title_text, content_text, json.dumps(tag_values, ensure_ascii=False), now, now))
+            db.execute(
+                _INSERT_NOTE,
+                {
+                    "note_id": note_id,
+                    "title": title_text,
+                    "content": content_text,
+                    "tags": json.dumps(tag_values, ensure_ascii=False),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
         return self.read(scope, note_id)
 
     def read(self, scope: str, note_id: str) -> Note:
         if not re.fullmatch(r"[0-9a-f]{32}", str(note_id)):
             raise NoteError("invalid note id")
         with self._connection(self._path(scope)) as db:
-            row = db.execute(f"SELECT {_NOTE_COLUMNS} FROM notes WHERE note_id = ?", (scope, note_id)).fetchone()
+            row = db.execute(_SELECT_NOTE_BY_ID, {"scope": scope, "note_id": note_id}).fetchone()
         if row is None:
             raise NoteError("note not found")
         return self._row(row)
@@ -169,8 +205,8 @@ class NoteStore:
             raise NoteError("invalid note id")
         with self._write_connection(self._path(scope)) as db:
             row = db.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes WHERE note_id = ?",
-                (scope, note_id),
+                _SELECT_NOTE_BY_ID,
+                {"scope": scope, "note_id": note_id},
             ).fetchone()
             if row is None:
                 raise NoteError("note not found")
@@ -184,12 +220,19 @@ class NoteStore:
             if new_status not in {"active", "archived", "deleted"}:
                 raise NoteError("invalid note status")
             db.execute(
-                "UPDATE notes SET title=?, content=?, tags=?, status=?, updated_at=?, revision=revision+1 WHERE note_id=?",
-                (new_title, new_content, json.dumps(new_tags, ensure_ascii=False), new_status, time.time(), note_id),
+                _UPDATE_NOTE,
+                {
+                    "title": new_title,
+                    "content": new_content,
+                    "tags": json.dumps(new_tags, ensure_ascii=False),
+                    "status": new_status,
+                    "updated_at": time.time(),
+                    "note_id": note_id,
+                },
             )
             updated = db.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes WHERE note_id = ?",
-                (scope, note_id),
+                _SELECT_NOTE_BY_ID,
+                {"scope": scope, "note_id": note_id},
             ).fetchone()
             if updated is None:
                 raise NoteError("note not found")
@@ -200,14 +243,12 @@ class NoteStore:
 
     def list(self, scope: str, *, include_inactive: bool = False, limit: int = 100) -> list[Note]:
         limit = max(1, min(int(limit), 500))
-        query = "SELECT note_id, ?, title, content, tags, status, created_at, updated_at, revision FROM notes"
-        params: list[Any] = [scope]
-        if not include_inactive:
-            query += " WHERE status = 'active'"
-        query += " ORDER BY updated_at DESC LIMIT ?"
-        params.append(limit)
+        statement = _SELECT_NOTES_ALL if include_inactive else _SELECT_NOTES_ACTIVE
         with self._connection(self._path(scope)) as db:
-            return [self._row(row) for row in db.execute(query, params).fetchall()]
+            return [
+                self._row(row)
+                for row in db.execute(statement, {"scope": scope, "limit": limit}).fetchall()
+            ]
 
     def search(self, scope: str, query: str, *, limit: int = 50) -> list[Note]:
         needle = self._validate_text(query, "query").casefold()

@@ -21,6 +21,9 @@ export function createRunStreamController({
   let lifecycleCursor = 0;
   let statusCheckPending = false;
   let lifecycleStatusCheckPending = false;
+  // Grace period before re-opening a dropped stream, so a flapping server is
+  // not hammered with a reconnect storm.
+  const RESUME_DELAY_MS = 1000;
 
   function closeGraph() {
     graphSource?.close();
@@ -45,6 +48,30 @@ export function createRunStreamController({
     lifecycleCursor = 0;
     statusCheckPending = false;
     lifecycleStatusCheckPending = false;
+  }
+
+  function resumeGraph(broken) {
+    if (graphSource !== broken) return;
+    try { broken.close(); } catch {}
+    graphSource = null;
+    onStatus("执行图连接中断，正在重连…", "running");
+    setTimeout(() => {
+      if (!isRunActive() || graphSource) return;
+      // graphCursor already advanced past every delivered event, so the
+      // reconnect resumes instead of replaying the whole log.
+      connectGraph();
+    }, RESUME_DELAY_MS);
+  }
+
+  function resumeLifecycle(broken) {
+    if (lifecycleSource !== broken) return;
+    try { broken.close(); } catch {}
+    lifecycleSource = null;
+    onStatus("生命周期连接中断，正在重连…", "running");
+    setTimeout(() => {
+      if (!isRunActive() || lifecycleSource) return;
+      connectLifecycle();
+    }, RESUME_DELAY_MS);
   }
 
   function connectGraph() {
@@ -72,13 +99,13 @@ export function createRunStreamController({
         .then((state) => {
           if (graphSource !== source) return;
           if (state.active || ["running", "stopping", "force_stopping"].includes(state.status)) {
-            onStatus("执行图连接中断，正在重连…", "running");
+            resumeGraph(source);
           } else {
             onFinish();
           }
         })
         .catch(() => {
-          if (graphSource === source) onStatus("执行图连接中断，正在重连…", "running");
+          if (graphSource === source) resumeGraph(source);
         })
         .finally(() => { statusCheckPending = false; });
     };
@@ -125,11 +152,11 @@ export function createRunStreamController({
             lifecycleSource = null;
             onFinish();
           } else {
-            onStatus("生命周期连接中断，正在重连…", "running");
+            resumeLifecycle(source);
           }
         })
         .catch(() => {
-          if (lifecycleSource === source) onStatus("生命周期连接中断，正在重连…", "running");
+          if (lifecycleSource === source) resumeLifecycle(source);
         })
         .finally(() => { lifecycleStatusCheckPending = false; });
     };

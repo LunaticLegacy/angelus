@@ -640,12 +640,11 @@ input:focus,select:focus,textarea:focus { border-color:var(--purple); box-shadow
 /* Agent cards become a compact roster with one clear selected state. */
 .agent-row { gap:8px; padding:14px 20px; border-bottom-color:var(--line); background:rgba(14,16,23,.7); scrollbar-width:thin; }
 .agent-row:empty { display:none; }
-.agent-filter,.agent-card { flex-basis:166px; min-height:64px; border-color:var(--line); border-radius:11px; background:var(--panel2); box-shadow:inset 0 1px rgba(255,255,255,.025); }
+.agent-filter,.agent-card { flex-basis:132px; min-height:46px; border-color:var(--line); border-radius:9px; background:var(--panel2); box-shadow:inset 0 1px rgba(255,255,255,.025); }
 .agent-filter:hover,.agent-card:hover { border-color:var(--line2); background:var(--surface); }
 .agent-filter.selected,.agent-card.selected { border-color:rgba(155,140,255,.65); background:linear-gradient(135deg,rgba(155,140,255,.16),rgba(155,140,255,.06)); box-shadow:0 0 0 1px rgba(155,140,255,.08) inset; }
 .agent-icon { border-radius:9px; }
-.agent-card-main { min-height:62px; padding:10px 31px 10px 11px; }
-.agent-context-button { border-color:var(--line2); background:var(--surface-raised); }
+.agent-card-main { min-height:44px; padding:8px 24px 8px 11px; }
 
 /* Transcript content gets a readable measure, stronger rhythm and softer cards. */
 .chat {
@@ -1010,6 +1009,24 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 .tool-panel-prompt { display:grid; gap:5px; margin:9px 0 0; color:var(--muted); font-size:var(--fs-micro); }
 .tool-panel-prompt textarea { min-height:84px; padding:7px 8px; border:1px solid var(--line2); border-radius:7px; background:var(--panel2); color:var(--soft); font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; resize:vertical; }
 .tool-panel-empty { margin:8px 0 0; color:var(--muted); font-size:var(--fs-small); }
+/* Context block order: a row's position is the value it edits, so the list is
+   the editor. Moves are buttons because a popover must stay keyboard-reachable. */
+.order-head { margin-top:11px; padding-top:9px; border-top:1px solid var(--line); }
+.order-reset { flex:none; padding:1px 8px; border:1px solid var(--line2); border-radius:6px; background:var(--panel2); color:var(--muted); font-size:var(--fs-micro); }
+.order-reset:hover:not(:disabled) { border-color:var(--purple); color:var(--text); }
+.order-list { display:grid; gap:3px; margin:8px 0 0; padding:0; list-style:none; }
+.order-row { display:grid; grid-template-columns:22px minmax(0,1fr) auto 20px 20px; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--line); border-radius:7px; background:var(--surface-raised); font-size:var(--fs-micro); }
+.order-row.is-absent { opacity:.62; }
+.order-index { color:var(--muted); text-align:right; font-variant-numeric:tabular-nums; }
+.order-label { display:flex; align-items:center; gap:5px; min-width:0; color:var(--soft); }
+.order-label > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.order-badge { flex:none; padding:0 5px; border-radius:5px; background:var(--accent-wash); color:var(--purple); font-size:10px; font-style:normal; line-height:15px; }
+.order-badge.is-absent { border:1px solid var(--line2); background:transparent; color:var(--muted); }
+.order-badge.is-quiet { background:transparent; color:var(--muted); }
+.order-size { color:var(--muted); font-variant-numeric:tabular-nums; }
+.order-move { width:20px; height:20px; padding:0; border:1px solid var(--line2); border-radius:5px; background:var(--panel2); color:var(--soft); font-size:11px; line-height:1; }
+.order-move:hover:not(:disabled) { border-color:var(--purple); color:var(--text); }
+.order-error { color:var(--red); }
 :root[data-theme="light"] .composer-popover { border-color:#ccd5e6; background:#ffffff; box-shadow:0 18px 48px rgba(45,48,64,.18); }
 /* Accent versus state. Primary and selected controls take the violet the shell
    already uses; green is kept for state - running, connected, success. The dark
@@ -1080,6 +1097,102 @@ html:has(body.external-hub-page){height:auto;overflow:auto}.external-hub-page{mi
 :root[data-theme="light"] .inspector-tabs { background:transparent; }
 
 .notes-panel { gap:10px; } .notes-hint { margin:0; color:var(--muted); font-size:var(--fs-small); line-height:1.45; } .notes-toolbar { display:flex; gap:6px; } .notes-scope,.notes-search,.notes-title,.notes-tags { min-width:0; border:1px solid var(--line); border-radius:6px; background:#0a1220; color:var(--text); padding:7px 8px; font:inherit; } .notes-search { flex:1; } .notes-error { border:1px solid var(--red); border-radius:6px; color:var(--red); padding:7px 8px; font-size:var(--fs-micro); } .notes-list { display:flex; flex-direction:column; gap:6px; max-height:220px; overflow:auto; } .notes-item { display:flex; flex-direction:column; gap:3px; text-align:left; border:1px solid var(--line); border-radius:7px; background:transparent; color:var(--text); padding:8px; cursor:pointer; } .notes-item:hover,.notes-item.selected { border-color:var(--purple); background:color-mix(in srgb,var(--purple) 10%,transparent); } .notes-item span { overflow:hidden; color:var(--muted); font-size:var(--fs-micro); text-overflow:ellipsis; white-space:nowrap; } .notes-empty { color:var(--muted); font-size:var(--fs-small); text-align:center; } .notes-editor-wrap { display:flex; flex-direction:column; gap:7px; min-height:0; } .notes-editor-head { display:flex; justify-content:space-between; align-items:center; font-size:var(--fs-small); } .notes-delete,.notes-new { border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--muted); padding:5px 8px; font-size:var(--fs-micro); cursor:pointer; } .notes-delete:hover { color:var(--red); border-color:var(--red); } .notes-new:hover,.notes-save:hover { border-color:var(--purple); color:var(--text); } .notes-editor { min-height:150px; width:100%; resize:vertical; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; background:#0a1220; color:var(--text); padding:12px; font:inherit; line-height:1.6; } .notes-editor:focus,.notes-title:focus,.notes-tags:focus,.notes-search:focus { outline:2px solid color-mix(in srgb,var(--purple) 55%,transparent); outline-offset:1px; } .notes-footer { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:var(--fs-micro); } .notes-status { flex:1; } .notes-save { border:1px solid var(--purple); border-radius:6px; background:var(--purple); color:white; padding:6px 12px; cursor:pointer; font-size:var(--fs-micro); }
+
+/* Notes: compact editorial cards with a focused writing surface. */
+.notes-panel { min-width:0; }
+.notes-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.notes-heading h3 { margin:2px 0 0; }
+.notes-new { border-color:color-mix(in srgb,var(--purple) 55%,var(--line)); color:var(--text); background:color-mix(in srgb,var(--purple) 14%,transparent); padding:7px 10px; }
+.notes-toolbar { display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--line); border-radius:10px; background:color-mix(in srgb,var(--panel) 82%,transparent); }
+.notes-scope-tabs { display:flex; gap:2px; padding:2px; border-radius:7px; background:color-mix(in srgb,var(--line) 38%,transparent); }
+.notes-scope-tab { border:0; border-radius:5px; padding:5px 8px; color:var(--muted); background:transparent; cursor:pointer; font-size:var(--fs-micro); }
+.notes-scope-tab.active { color:var(--text); background:var(--panel); box-shadow:0 1px 5px #0003; }
+.notes-search-wrap { display:flex; align-items:center; gap:5px; min-width:0; flex:1; color:var(--muted); }
+.notes-search-wrap input { width:100%; border:0; outline:0; background:transparent; color:var(--text); font:inherit; font-size:var(--fs-micro); }
+.notes-layout { display:grid; grid-template-columns:minmax(125px,.72fr) minmax(0,1.28fr); gap:10px; min-height:210px; }
+.notes-list-wrap { min-width:0; max-height:330px; overflow:auto; padding-right:2px; }
+.notes-list { max-height:none; gap:5px; }
+.notes-item { gap:5px; width:100%; box-sizing:border-box; padding:9px 10px; border-radius:9px; transition:border-color .15s ease,background .15s ease,transform .15s ease; }
+.notes-item:hover { transform:translateY(-1px); }
+.notes-item-top { display:flex; align-items:baseline; gap:6px; min-width:0; }
+.notes-item-top strong { overflow:hidden; flex:1; color:var(--text); font-size:var(--fs-small); text-overflow:ellipsis; white-space:nowrap; }
+.notes-item-top time { flex:none; color:var(--muted); font-size:10px; }
+.notes-item-preview { display:block; overflow:hidden; color:var(--muted); font-size:var(--fs-micro); line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
+.notes-item-tags { display:flex; gap:4px; overflow:hidden; }
+.notes-item-tags em { flex:none; padding:2px 5px; border-radius:4px; color:var(--purple-bright,var(--purple)); background:color-mix(in srgb,var(--purple) 13%,transparent); font-size:10px; font-style:normal; }
+.notes-empty { display:grid; place-items:center; gap:5px; min-height:130px; padding:12px; border:1px dashed var(--line); border-radius:9px; color:var(--muted); text-align:center; }
+.notes-empty strong { color:var(--text); font-size:var(--fs-small); }
+.notes-empty small { font-size:var(--fs-micro); }
+.notes-empty-glyph { display:block; color:var(--purple); font-size:20px; }
+.notes-editor-wrap { min-width:0; gap:8px; padding:11px; border:1px solid var(--line); border-radius:10px; background:color-mix(in srgb,var(--panel) 72%,transparent); }
+.notes-editor-head { align-items:flex-start; }
+.notes-editor-kicker { display:block; color:var(--muted); font-size:10px; letter-spacing:.12em; }
+.notes-status { display:block; margin-top:2px; color:var(--muted); font-size:var(--fs-micro); }
+.notes-dirty .notes-status { color:var(--yellow,#eab308); }
+.notes-title { border:0; border-bottom:1px solid var(--line); border-radius:0; padding:5px 0 8px; background:transparent; font-size:var(--fs-body); font-weight:650; }
+.notes-editor { min-height:125px; border-radius:7px; background:color-mix(in srgb,var(--bg) 55%,transparent); padding:10px; font-size:var(--fs-small); }
+.notes-tags { border-radius:6px; background:transparent; font-size:var(--fs-micro); }
+.notes-hint { flex:none; font-size:10px; }
+.notes-save { padding:7px 10px; }
+.notes-empty-editor { display:grid; place-content:center; justify-items:center; min-height:210px; padding:16px; border:1px dashed var(--line); border-radius:10px; color:var(--muted); text-align:center; }
+.notes-empty-editor strong { color:var(--text); font-size:var(--fs-small); }
+.notes-empty-editor p { margin:2px 0 0; font-size:var(--fs-micro); }
+.notes-error { grid-column:1 / -1; margin:0; }
+@media (max-width:600px) { .notes-layout { grid-template-columns:1fr; } .notes-list-wrap { max-height:180px; } .notes-empty-editor { min-height:100px; } .notes-hint { display:none; } }
+
+/* The Inspector is intentionally narrow even on desktop. Keep notes calm and
+   readable there instead of trying to force a dense two-column mini editor. */
+.notes-panel .notes-heading { padding-bottom:2px; }
+.notes-panel .notes-heading .eyebrow { margin-bottom:5px; font-size:10px; letter-spacing:.16em; }
+.notes-panel .notes-heading h3 { font-size:18px; letter-spacing:-.02em; }
+.notes-panel .notes-new { white-space:nowrap; border-radius:7px; font-size:var(--fs-micro); }
+.notes-panel .notes-toolbar { flex-wrap:wrap; padding:0; border:0; background:transparent; gap:7px; }
+.notes-panel .notes-scope-tabs { order:1; }
+.notes-panel .notes-search-wrap { order:2; flex-basis:100%; box-sizing:border-box; height:34px; padding:0 9px; border:1px solid var(--line); border-radius:8px; background:color-mix(in srgb,var(--panel) 78%,transparent); }
+.notes-panel .notes-search-wrap input { font-size:var(--fs-micro); }
+.notes-panel .notes-layout { display:flex; flex-direction:column; gap:8px; min-height:0; }
+.notes-panel .notes-list-wrap { max-height:245px; overflow:auto; }
+.notes-panel .notes-list { gap:6px; }
+.notes-panel .notes-item { padding:10px; background:color-mix(in srgb,var(--panel) 42%,transparent); }
+.notes-panel .notes-item.selected { background:color-mix(in srgb,var(--purple) 12%,var(--panel)); }
+.notes-panel .notes-empty { min-height:92px; box-sizing:border-box; }
+.notes-panel .notes-empty-editor { min-height:86px; box-sizing:border-box; padding:12px; }
+.notes-panel .notes-empty-editor .notes-empty-glyph { margin-bottom:1px; font-size:16px; }
+.notes-panel .notes-empty-editor strong { font-size:var(--fs-small); }
+.notes-panel .notes-empty-editor p { color:var(--muted); }
+.notes-panel .notes-editor-wrap { padding:11px; }
+.notes-panel [hidden] { display:none !important; }
+/* Let the note board occupy the inspector's remaining vertical space. */
+.notes-panel > .notes-list-wrap { flex:1 1 auto; min-height:0; max-height:none; padding:3px 2px 10px 0; overflow:auto; }
+.notes-panel > .notes-list-wrap .notes-list { min-height:100%; align-content:flex-start; }
+
+.notes-edit-dialog { width:min(700px,calc(100vw - 32px)); max-height:min(760px,calc(100vh - 32px)); }
+.notes-edit-form { display:grid; gap:12px; padding:22px; }
+.notes-edit-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.notes-edit-head h2 { margin:2px 0 0; font-size:var(--fs-large); letter-spacing:-.025em; }
+.notes-edit-form .notes-title { width:100%; box-sizing:border-box; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); font-size:var(--fs-body); }
+.notes-edit-form .notes-editor { min-height:360px; max-height:52vh; resize:vertical; padding:13px; border:1px solid var(--line); border-radius:9px; background:var(--bg); color:var(--text); font:inherit; line-height:1.65; }
+.notes-edit-form .notes-tags { width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+.notes-edit-form .notes-title:focus,.notes-edit-form .notes-editor:focus,.notes-edit-form .notes-tags:focus { outline:2px solid color-mix(in srgb,var(--purple) 55%,transparent); outline-offset:1px; }
+.notes-edit-feedback { min-height:18px; margin:0; color:var(--muted); font-size:var(--fs-small); }
+.notes-edit-form .notes-footer { justify-content:flex-end; }
+.notes-edit-form .notes-count { margin-right:auto; }
+.notes-edit-form .notes-delete { color:var(--red); }
+.notes-edit-tabs { display:flex; gap:0; border-bottom:1px solid var(--line); }
+.notes-edit-tab { margin-bottom:-1px; padding:9px 13px; border:1px solid transparent; border-bottom:0; border-radius:8px 8px 0 0; background:transparent; color:var(--muted); cursor:pointer; font:inherit; font-size:var(--fs-small); }
+.notes-edit-tab:hover { color:var(--text); }
+.notes-edit-tab.active { border-color:var(--line); background:var(--panel); color:var(--text); }
+.notes-edit-pane[hidden] { display:none !important; }
+.notes-edit-pane[data-notes-pane="write"] { display:grid; gap:12px; }
+.notes-preview { min-height:360px; max-height:52vh; overflow:auto; padding:15px 17px; border:1px solid var(--line); border-radius:9px; background:var(--bg); color:var(--text); line-height:1.65; }
+.notes-preview > :first-child { margin-top:0; }
+.notes-preview > :last-child { margin-bottom:0; }
+.notes-preview h1,.notes-preview h2,.notes-preview h3 { letter-spacing:-.02em; }
+.notes-preview code { padding:2px 4px; border-radius:4px; background:color-mix(in srgb,var(--line) 45%,transparent); }
+.notes-preview pre { overflow:auto; padding:10px; border-radius:7px; background:#080f1b; }
+.notes-preview blockquote { margin-left:0; padding-left:12px; border-left:3px solid var(--purple); color:var(--muted); }
+.notes-preview a { color:var(--purple-bright,var(--purple)); }
+@media (max-width:650px) { .notes-edit-dialog { width:calc(100vw - 18px); max-height:calc(100vh - 18px); } .notes-edit-form { padding:16px; } .notes-edit-form .notes-editor { min-height:300px; max-height:48vh; } }
 
 .composer-model { min-width: 8rem; max-width: 14rem; border: 1px solid var(--line); border-radius: 6px; background: #0a1220; color: var(--text); padding: 6px 8px; font: inherit; font-size: var(--fs-micro); }
 .composer-file { display: inline-flex; align-items: center; gap: 5px; margin: 4px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: var(--fs-micro); }

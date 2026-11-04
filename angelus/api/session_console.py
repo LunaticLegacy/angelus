@@ -275,15 +275,19 @@ def events_stream(session_id: str, request: Request, cursor: int = 0, ephemeral_
                 live_after = 0
         try:
             while True:
+                # Deltas first.  The two channels have independent cursors and a
+                # round's trailing deltas are published *before* the round's own
+                # durable fact, so draining the journal first would hand the
+                # browser a settled card followed by deltas for the same round.
+                live = _service(request).ephemeral_events(session_id, live_after)
+                for event in live["events"]:
+                    live_after = int(event["ephemeral_sequence"])
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 page = _service(request).events(session_id, next_cursor, 500)
                 records = page["events"]
                 for event in records:
                     next_cursor += 1
                     yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                live = _service(request).ephemeral_events(session_id, live_after)
-                for event in live["events"]:
-                    live_after = int(event["ephemeral_sequence"])
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 core = get_core(request)
                 status = core.execution_service.status(session_id)
                 if str(status.state) not in {"running", "stopping", "force_stopping"}:

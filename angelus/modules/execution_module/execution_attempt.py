@@ -191,20 +191,18 @@ class ExecutionAttempt(Generic[ResultT]):
     def commit_checkpoint(
         self,
         generation: str,
-        graph: dict[str, object] | None,
-        contexts: dict[str, dict[str, object]],
         *,
         reason: str,
         run_graph: dict[str, object] | None = None,
         recovery: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        """Commit one complete graph/context generation through this attempt.
+        """Commit one complete generation through this attempt.
 
         The checkpoint store writes payloads then journals the commit; readers
         must treat only journal-referenced generations as recoverable.
         """
         with self._lock:
-            return self.checkpoints.commit(generation, graph, contexts, reason=reason, run_graph=run_graph, recovery=recovery)
+            return self.checkpoints.commit(generation, reason=reason, run_graph=run_graph, recovery=recovery)
 
     def mark_interrupted(self, reason: str) -> None:
         """Persist an unconfirmed terminal when host shutdown exceeds deadline.

@@ -5,6 +5,12 @@ function streamKey(agent, round) {
 /** Own transient streamed chat state; the view owns all transcript DOM. */
 export function createStreamController({ chatView }) {
   const streams = new Map();
+  // Rounds already closed by a durable `agent:round` fact.  Durable facts and
+  // ephemeral deltas travel on two independently-cursored channels, so a
+  // round's trailing deltas can be delivered after the fact that closed it.
+  // Remembering settled rounds keeps such a late delta from creating a
+  // "正在生成" card that no later event could ever settle.
+  const settled = new Set();
 
   function stateFor(agent, round) {
     const key = streamKey(agent, round);
@@ -22,6 +28,9 @@ export function createStreamController({ chatView }) {
   }
 
   function updateDelta(agent, data) {
+    // A delta for a closed round is already part of that round's durable
+    // `assistant_content`, so it is dropped instead of reopening the card.
+    if (settled.has(streamKey(agent, data?.round))) return;
     const { state } = stateFor(agent, data?.round);
     if (data?.channel === "reasoning") {
       state.reasoning += String(data.delta || "");
@@ -43,11 +52,22 @@ export function createStreamController({ chatView }) {
   }
 
   function updateTool(agent, data, status) {
+    if (settled.has(streamKey(agent, data?.round))) return;
     const { state } = stateFor(agent, data?.round);
     const id = String(data?.stream_call_id || data?.call_id || `${data?.round || ""}:${data?.name || "tool"}`);
     const next = { ...(state.tools.get(id) || {}), ...data, call_id: id, status: status || data?.status };
     state.tools.set(id, next);
     state.view.updateTool(next);
+  }
+
+  /** Close one round: drop its streaming card and reject its late deltas. */
+  function settle(agent, round) {
+    const key = streamKey(agent, round);
+    settled.add(key);
+    const state = streams.get(key);
+    if (!state) return;
+    state.view.remove();
+    streams.delete(key);
   }
 
   function discard(agent, round) {
@@ -59,6 +79,8 @@ export function createStreamController({ chatView }) {
   }
 
   function discardAgent(agent) {
+    // Only the cards go away; the settled rounds stay settled so a delta that
+    // arrives after the run ended cannot leave a card behind.
     const prefix = `${agent || "coordinator"}:`;
     for (const [key, state] of streams) {
       if (!key.startsWith(prefix)) continue;
@@ -67,10 +89,17 @@ export function createStreamController({ chatView }) {
     }
   }
 
+  /** Drop every streaming card; settled rounds stay settled. */
   function clear() {
     for (const state of streams.values()) state.view.remove();
     streams.clear();
   }
 
-  return { updateDelta, updateTool, discard, discardAgent, clear };
+  /** Drop every streaming card and forget settled rounds (new run). */
+  function reset() {
+    clear();
+    settled.clear();
+  }
+
+  return { updateDelta, updateTool, settle, discard, discardAgent, clear, reset };
 }

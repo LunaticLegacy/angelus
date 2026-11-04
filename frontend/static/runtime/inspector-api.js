@@ -20,7 +20,17 @@ export const getPlan = (sessionId, agent) => apiJson(`${sessionPath(sessionId, "
 export const getTrace = (sessionId, cursor) => apiJson(`${sessionPath(sessionId, "/events")}?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 export const getUsage = (sessionId) => apiJson(sessionPath(sessionId, "/usage"));
 export const getContext = (sessionId, agentId) => apiJson(sessionPath(sessionId, `/agents/${encodeURIComponent(agentId)}/context`));
-export const previewContext = (sessionId, agentId) => apiPost(sessionPath(sessionId, `/agents/${encodeURIComponent(agentId)}/context/request-preview`), { message: "" });
+/**
+ * Compose the next request without sending it.
+ *
+ * `contextHandler` composes a handler that is not saved yet, which is what the
+ * block order editor needs; omitting it composes the saved profile handler.
+ */
+export function previewContext(sessionId, agentId, { message = "", contextHandler = "" } = {}) {
+  const body = { message };
+  if (contextHandler) body.context_handler = contextHandler;
+  return apiPost(sessionPath(sessionId, `/agents/${encodeURIComponent(agentId)}/context/request-preview`), body);
+}
 export const getCompactionInput = (sessionId, agentId) => apiJson(sessionPath(sessionId, `/agents/${encodeURIComponent(agentId)}/context/compaction-input`));
 export const getCalls = (sessionId, agentId) => apiJson(sessionPath(sessionId, `/agents/${encodeURIComponent(agentId)}/calls`));
 export const getContextGraph = (sessionId, agentId, refresh = false) => apiJson(`${sessionPath(sessionId, `/agents/${encodeURIComponent(agentId)}/context-graph`)}${refresh ? `?refresh=${Date.now()}` : ""}`);

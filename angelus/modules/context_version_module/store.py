@@ -462,13 +462,23 @@ class ContextVersionStore:
             payloads = [context_item_to_dict(item) for item in normalized]
             connection.execute("DELETE FROM messages")
             connection.executemany(
-                "INSERT INTO messages(timeline, payload) VALUES (?, ?)",
-                [(int(payload["timeline"]), json.dumps(payload, ensure_ascii=False)) for payload in payloads],
+                "INSERT INTO messages(timeline, payload) VALUES (:timeline, :payload)",
+                [
+                    {
+                        "timeline": int(payload["timeline"]),
+                        "payload": json.dumps(payload, ensure_ascii=False),
+                    }
+                    for payload in payloads
+                ],
             )
             for record in records:
                 connection.execute(
-                    "INSERT OR REPLACE INTO tool_results(result_id, payload) VALUES (?, ?)",
-                    (record.result_id.value, json.dumps(tool_result_to_dict(record), ensure_ascii=False)),
+                    "INSERT OR REPLACE INTO tool_results(result_id, payload) "
+                    "VALUES (:result_id, :payload)",
+                    {
+                        "result_id": record.result_id.value,
+                        "payload": json.dumps(tool_result_to_dict(record), ensure_ascii=False),
+                    },
                 )
             connection.commit()
         linear.abstract = compacted.to_summary() if compacted is not None else None

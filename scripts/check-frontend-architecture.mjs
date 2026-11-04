@@ -24,6 +24,7 @@ const active = [
   "ui/icons.js",
   "components/external-agent-hub-view.js",
   "components/session-list.js",
+  "components/composer-scope.js",
   "components/connector-select.js",
   "components/notes-view.js",
   "controllers/session-controller.js",

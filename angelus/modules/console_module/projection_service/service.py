@@ -164,7 +164,21 @@ class ConsoleProjectionService:
             except KeyError:
                 agent = None
             context = self._context_stats(agent) if agent is not None else {}
-            agents.append({"id": agent_id, "name": agent_id, "dynamic": node.get("dynamic", False), "parent": node.get("parent"), "context": context})
+            # RunGraph nodes carry ``parent_id``/``origin``; older projections
+            # carried ``parent``/``dynamic``.  Emit both so a client can nest the
+            # delegation tree without guessing which schema it was given.
+            parent_id = node.get("parent_id") or node.get("parent") or None
+            origin = str(node.get("origin") or "")
+            agents.append({
+                "id": agent_id,
+                "name": agent_id,
+                "dynamic": bool(node.get("dynamic", origin == "runtime")),
+                "origin": origin or None,
+                "state": node.get("state"),
+                "parent": parent_id,
+                "parent_id": parent_id,
+                "context": context,
+            })
         return {"agents": agents}
 
     @staticmethod

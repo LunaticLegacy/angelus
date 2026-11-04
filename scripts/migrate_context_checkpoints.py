@@ -6,6 +6,14 @@ import json
 from pathlib import Path
 import sqlite3
 
+# The two storage-owned tables are chosen by a loop, and SQLite cannot bind an
+# identifier, so the row insert is dispatched through an explicit table here
+# instead of being interpolated into one statement.
+_ROW_INSERT_SQL = {
+    "messages": "INSERT OR REPLACE INTO messages(timeline, payload) VALUES (:timeline, :payload)",
+    "archive": "INSERT OR REPLACE INTO archive(timeline, payload) VALUES (:timeline, :payload)",
+}
+
 
 def migrate_context(path: Path, raw: object | None = None) -> Path:
     """Migrate one legacy checkpoint without loading it more than once.
@@ -41,16 +49,16 @@ def migrate_context(path: Path, raw: object | None = None) -> Path:
         )
         for key in ("compress_threshold", "round", "abstract", "checkpoint_generation", "graph_checkpoint", "context_editing"):
             connection.execute(
-                "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-                (key, json.dumps(raw.get(key), ensure_ascii=False)),
+                "INSERT OR REPLACE INTO metadata(key, value) VALUES (:key, :value)",
+                {"key": key, "value": json.dumps(raw.get(key), ensure_ascii=False)},
             )
         for table, entries in (("messages", raw.get("messages", [])), ("archive", raw.get("archive", []))):
             for entry in entries:
                 if not isinstance(entry, dict) or not isinstance(entry.get("timeline"), int):
                     raise ValueError(f"invalid {table} entry in {path}")
                 connection.execute(
-                    f"INSERT OR REPLACE INTO {table}(timeline, payload) VALUES (?, ?)",
-                    (entry["timeline"], json.dumps(entry, ensure_ascii=False)),
+                    _ROW_INSERT_SQL[table],
+                    {"timeline": entry["timeline"], "payload": json.dumps(entry, ensure_ascii=False)},
                 )
         connection.commit()
     finally:

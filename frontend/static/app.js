@@ -2,7 +2,7 @@
 import { $, escapeHtml } from "./components/dom.js?v=dom-selectors-1";
 import { createChatView } from "./components/chat-view.js?v=native-vision-7";
 import { createSlashPalette } from "./components/slash-palette.js?v=slash-palette-1";
-import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-3";
+import { createComposerScope } from "./components/composer-scope.js?v=composer-scope-4";
 import { createImageComposer } from "./components/image-composer.js";
 import { createFileComposer } from "./components/file-composer.js";
 import { createTraceView } from "./components/trace-view.js";
@@ -22,7 +22,7 @@ import { createAgentStateController } from "./controllers/agent-state-controller
 import { initPlugins, loadPlugins, unloadPlugin } from "./plugins.js?v=plugin-tab-5";
 import { createEventStream, EVENT_STREAM_CLOSED } from "./runtime/backend-bridge.js";
 import { createSession as createSessionRequest, deleteSession as deleteSessionRequest, listMessages, uploadSessionImage, uploadSessionArtifact } from "./runtime/session-api.js";
-import { deleteRunProfile, loadProviders as loadProvidersRequest, openSessionWorkspace as openSessionWorkspaceRequest, pickWorkspaceDirectory as pickWorkspaceDirectoryRequest, saveSessionPreferences } from "./runtime/settings-api.js";
+import { deleteRunProfile, loadRunProfile, loadProviders as loadProvidersRequest, saveRunProfile, openSessionWorkspace as openSessionWorkspaceRequest, pickWorkspaceDirectory as pickWorkspaceDirectoryRequest, saveSessionPreferences } from "./runtime/settings-api.js";
 import { connectMcpOauth, disconnectMcpOauth } from "./runtime/mcp-api.js";
 import { getAgents, getGraph, getGraphInfo, getGraphOptional, getWorkflow, getPlan, getTrace, getUsage, getContext, previewContext, getCompactionInput, getCalls, getContextGraph, addGraphAgent, connectGraphNodes, setGraphMapper, setGraphRouter, removeGraphAgent, disconnectGraphNodes } from "./runtime/inspector-api.js";
 import { getRunStatus } from "./runtime/run-api.js";
@@ -67,6 +67,10 @@ let profileWorkspaceId = "";
 let slashPalette = null;
 /** Composer connector/toolset controls; assigned once the composer exists. */
 let composerScope = null;
+/** Context blocks of the next request, in the order it will compose them. */
+let contextOrder = { sessionId: "", rows: [], handler: "", error: "", busy: false };
+/** Ticket that retires an order read still in flight across a session switch. */
+let contextOrderTicket = 0;
 /** Connector choices last read from the backend, shared by both selectors. */
 let connectorChoices = [];
 let selectedAgent = "all";
@@ -365,6 +369,7 @@ function appendMessage(role, content, reasoning="", tools=[], agentName="", usag
 const renderStreamDelta = (agent, data) => streamController.updateDelta(agent, data);
 const renderStreamTool = (agent, data, status) => streamController.updateTool(agent, data, status);
 const discardStream = (agent, round) => streamController.discard(agent, round);
+const settleStream = (agent, round) => streamController.settle(agent, round);
 const discardAgentStreams = (agent) => streamController.discardAgent(agent);
 /** Display a durable run failure in the chat pane without hiding prior work. */
 function appendRunErrorBlock(title, message, rawContent="") { chatView.appendError(title, message, rawContent); }
@@ -531,12 +536,12 @@ function agentStateView(agentId, agents=currentAgents) { return agentStateContro
 function agentRunState(agentId, agents=currentAgents) { return agentStateController.runState(agentId, agents); }
 function agentNode(agentId) { return agentStateController.nodeFor(agentId); }
 function updateStopAvailability() { const state=agentStateView(selectedAgent).canonical; const actionable=runActive && (selectedAgent==="all" || ["running","queued"].includes(state)); $("stop").disabled=!actionable; $("force-stop").disabled=!actionable; const label=selectedAgent==="all"?"整个运行":selectedAgent; $("stop").title=`停止 ${label}`; $("force-stop").title=`强行停止 ${label}`; }
-function acknowledgeAgent(agentId) { agentStateController.acknowledge(agentId, currentAgents); renderAgentSelector(currentAgents); }/** Render a secondary Agent-context action without changing Agent-card selection. */
-function agentCard(agent, selected, tone, icon, subtitle, view, title) {
-  if (agent.id === "all") return `<button class="agent-filter ${selected?"selected active":""}" type="button" data-agent="all" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span><i class="agent-state ${view.ui}" data-ack-agent="all" title="${escapeHtml(title)}"></i></button>`;
-  return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><span class="agent-icon ${tone}">${icon}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(subtitle)}</small></span></button><button class="agent-context-button" type="button" data-context-agent="${escapeHtml(agent.id)}" title="查看 ${escapeHtml(agent.name)} 的上下文" aria-label="查看 ${escapeHtml(agent.name)} 的上下文">◎</button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
+function acknowledgeAgent(agentId) { agentStateController.acknowledge(agentId, currentAgents); renderAgentSelector(currentAgents); }
+function agentCard(agent, selected, view, title) {
+  if (agent.id === "all") return `<button class="agent-filter ${selected?"selected active":""}" type="button" data-agent="all" aria-pressed="${selected}"><strong>${escapeHtml(agent.name)}</strong><i class="agent-state ${view.ui}" data-ack-agent="all" title="${escapeHtml(title)}"></i></button>`;
+  return `<article class="agent-card ${selected?"selected active":""}"><button class="agent-card-main" type="button" data-agent="${escapeHtml(agent.id)}" aria-pressed="${selected}"><strong>${escapeHtml(agent.name)}</strong></button><i class="agent-state ${view.ui}" data-ack-agent="${escapeHtml(agent.id)}" title="${escapeHtml(title)}"></i></article>`;
 }
-function renderAgentSelector(agents=[]) { const row=$("agent-row"); const concrete=agents.filter(agent=>agent.id!=="all").map(agent=>({...agent,...(agentNode(agent.id)||{})})); if(!concrete.some(agent=>agent.id==="coordinator")) concrete.unshift({id:"coordinator",name:"Coordinator",kind:"coordinator"}); const visible=[{id:"all",name:"全部",kind:"filter"},...concrete]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const [tone,icon]=agentIcon(agent);const selected=agent.id===selectedAgent;const subtitle=agent.id==="all"?"聚合全部 Agent":agent.origin==="runtime"?"动态子 Agent":agent.parent_id?`上级：${agent.parent_id}`:"Agent 会话";const view=agentStateView(agent.id,visible);const title=view.canonical==="succeeded"?"点击确认完成":view.message;return agentCard(agent,selected,tone,icon,subtitle,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-context-agent]").forEach(control=>control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentStateView(agentId).canonical === "succeeded") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
+function renderAgentSelector(agents=[]) { const row=$("agent-row"); const concrete=agents.filter(agent=>agent.id!=="all").map(agent=>({...agent,...(agentNode(agent.id)||{})})); if(!concrete.some(agent=>agent.id==="coordinator")) concrete.unshift({id:"coordinator",name:"Coordinator",kind:"coordinator"}); const visible=[{id:"all",name:"全部",kind:"filter"},...concrete]; currentAgents=visible; if(!visible.some(agent=>agent.id===selectedAgent)) selectedAgent="all"; row.innerHTML=visible.map(agent=>{const selected=agent.id===selectedAgent;const view=agentStateView(agent.id,visible);const title=view.canonical==="succeeded"?"点击确认完成":view.message;return agentCard(agent,selected,view,title);}).join(""); row.querySelectorAll("[data-agent]").forEach(control=>control.addEventListener("click",()=>selectAgent(control.dataset.agent))); row.querySelectorAll("[data-ack-agent]").forEach(dot=>dot.addEventListener("click",event=>{event.stopPropagation();const agentId=dot.dataset.ackAgent;if(agentStateView(agentId).canonical === "succeeded") acknowledgeAgent(agentId);})); renderPlanAgentPicker(); updateStopAvailability(); }
 
 /** Map untrusted entity types to the finite visual palette used by the graph. */
 function contextNodeTone(type) { return ({file:"blue",tool:"amber",person:"pink",decision:"green",module:"purple",framework:"purple"})[String(type).toLowerCase()] || "slate"; }
@@ -836,7 +841,7 @@ function isTraceVisible(event) { return !(event?.event === "lifecycle" && event?
 const scheduleGraphPlanReload = debounce(() => {
   loadInspectorAgents().catch(error=>trace("执行图加载失败",error.message));
   loadPlan().catch(error=>trace("任务规划加载失败",error.message));
-}, 150);
+}, 150, {maxWait: 1200});
 async function loadTrace(reset=true) { if(!hasSelectedSession()) { traceEvents=[]; traceBefore=null; durableEventOffset=0; renderInspectorEmpty("请先创建或选择一个会话。"); $("load-more-trace").hidden=true; return; } const page=await getTrace(sessionId, reset ? null : traceBefore); const events=(page.events || []).filter(isTraceVisible); const target=$("trace"); durableEventOffset=Number(page.durable_offset||0); if(reset){ traceEvents=events; traceBefore=page.next_cursor??null; target.innerHTML=""; } else { traceEvents.push(...events); traceBefore=page.next_cursor??null; } rebuildTraceEventIndex(); if(!traceEvents.length){target.innerHTML=`<p class="empty">当前 session 尚无事件。</p>`;} else { const fragment=document.createDocumentFragment(); for(const event of events) { const lifecycle=event.event === "lifecycle"; const type=String(event.type || event.event || "event"); const title=lifecycle ? type.replace("agent:","").replaceAll("_"," ") : type; fragment.append(traceView.build(title,event.message || "",event.data || event.usage || null,traceView.kindFor(event),{time:traceView.formatTime(event.timestamp),agent:lifecycle && event.agent ? event.agent : ""})); } target.append(fragment); } $("load-more-trace").hidden=!page.has_more; }
 function agentContextStats(agent) {
   const ctx = agent.context || {};
@@ -865,12 +870,21 @@ function renderAgentTopology(agents, graph) {
   const target=$("inspector-agents-list");
   if(!agents.length){target.innerHTML=`<p class="empty">当前 session 尚未创建 Agent。</p>`;return;}
   const byId=Object.fromEntries(agents.map(agent=>[agent.id,agent])); const parent={}; const children={};
+  // One node index shared by the parent scan and the recursive render.
+  const nodeById=Object.fromEntries((graph.nodes||[]).filter(node=>node&&node.id).map(node=>[node.id,node]));
   // Delegation is explicit in the RunGraph and does not alter dependency edges.
-  for(const agent of agents) { const node=(graph.nodes||[]).find(item=>item.id===agent.id); if(node?.parent_id && byId[node.parent_id] && node.parent_id!==agent.id) parent[agent.id]=node.parent_id; }
+  for(const agent of agents) { const node=nodeById[agent.id]; const leader=node?.parent_id||agent.parent_id||agent.parent||null; if(leader && byId[leader] && leader!==agent.id) parent[agent.id]=leader; }
+  // A durable replay can expose only scheduling edges while every node reports
+  // parent_id:null, which used to collapse a real subagent tree into a flat
+  // list.  Adopt an unambiguous edge parent (the coordinator wins ties) without
+  // overriding an explicit parent_id above.
+  const edgeParents={};
+  for(const edge of graph.edges||[]) { if(!edge) continue; const source=edge.source??edge.source_id; const target=edge.target??edge.target_id; if(!source||!target||source===target||parent[target]) continue; if(!byId[source]||!byId[target]) continue; const kind=String(edge.kind||"dependency"); if(kind!=="delegation" && kind!=="dependency") continue; (edgeParents[target]??=new Set()).add(source); }
+  for(const [child,leaders] of Object.entries(edgeParents)) { const chosen=leaders.has("coordinator")?"coordinator":leaders.size===1?[...leaders][0]:null; if(chosen && chosen!==child) parent[child]=chosen; }
   for(const [child,leader] of Object.entries(parent)) (children[leader]??=[]).push(child);
   const taskByAgent={}; for(const node of graph.nodes||[]) if(node.task_id) (taskByAgent[node.id]??=[]).push(node.task_id);
-  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const node=(graph.nodes||[]).find(item=>item.id===id);const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${node?.origin==="runtime"?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
-  const roots=agents.filter(agent=>!parent[agent.id]).map(agent=>agent.id).sort((a,b)=>a==="coordinator"?-1:b==="coordinator"?1:a.localeCompare(b)); const html=roots.map(id=>render(id)).join("")+agents.filter(agent=>!rendered.has(agent.id)).map(agent=>render(agent.id)).join(""); target.innerHTML=html;
+  const rendered=new Set(); const render=(id,depth=0,path=new Set())=>{const agent=byId[id];if(!agent||path.has(id))return "";rendered.add(id);const node=nodeById[id];const view=agentStateView(id,[...agents,{id:"all"}]);const tasks=(taskByAgent[id]||[]).map(task=>`<span class="agent-task">${escapeHtml(task)}</span>`).join("");const descendants=(children[id]||[]).sort().map(child=>render(child,depth+1,new Set(path).add(id))).join("");return `<div class="agent-topology-branch"><article class="inspector-agent ${escapeHtml(view.ui)}" data-context-agent="${escapeHtml(id)}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(agent.name||id)} 的上下文" style="--agent-depth:${depth}"><i class="${escapeHtml(view.ui)}"></i><div><header><strong>${escapeHtml(agent.name||id)}</strong><small>${node?.origin==="runtime"?"动态子 Agent":id==="coordinator"?"协调者":"Agent"}</small></header><p>${escapeHtml(view.message)}</p>${tasks?`<div class="agent-tasks">${tasks}</div>`:""}${agentContextStats(agent)}</div></article>${descendants?`<div class="agent-topology-children">${descendants}</div>`:""}</div>`;};
+  const roots=agents.filter(agent=>!parent[agent.id]).map(agent=>agent.id).sort((a,b)=>a==="coordinator"?-1:b==="coordinator"?1:a.localeCompare(b)); const parts=roots.map(id=>render(id)); for(const agent of agents) if(!rendered.has(agent.id)) parts.push(render(agent.id)); const html=parts.join(""); target.innerHTML=html;
   target.querySelectorAll("[data-context-agent]").forEach(control=>{
     control.addEventListener("click",()=>openAgentContextInspector(control.dataset.contextAgent));
     control.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openAgentContextInspector(control.dataset.contextAgent);}});
@@ -966,7 +980,9 @@ function selectInspectorPanel(panel, refresh=true, open=true) { inspectorControl
 function initInspectorTabs() { inspectorController.init(); }
 /** Rehydrate the visible Inspector after Session identity or history changes. */
 function refreshActiveInspector() {
-  inspectorController.select(inspectorController.getActive(), true, false);
+  // "keep" reloads the visible panel without collapsing the Inspector that the
+  // user had opened; only an explicit tab click may toggle it.
+  inspectorController.select(inspectorController.getActive(), true, "keep");
 }
 function knownPlanAgents() { const known=new Map([["coordinator",{id:"coordinator",name:"协调者（总计划）"}]]); for(const agent of currentAgents||[]) if(agent?.id && agent.id!=="all") known.set(agent.id,agent); for(const node of currentRunGraph.nodes||[]) if(node?.id) known.set(node.id,{id:node.id,name:node.id,origin:node.origin}); return [...known.values()]; }
 function renderPlanAgentPicker() { const select=$("plan-agent"); if(!select)return; const agents=knownPlanAgents(); if(!agents.some(agent=>agent.id===selectedPlanAgent)) selectedPlanAgent="coordinator"; select.innerHTML=agents.map(agent=>`<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.id==="coordinator"?"协调者（总计划）":agent.name||agent.id)}</option>`).join(""); select.value=selectedPlanAgent; }
@@ -1049,8 +1065,14 @@ async function switchSession(selected) {
   clearCompactStatus();
   slashPalette?.close();
   profileWorkspaceId = selected;
+  // The previous session's blocks describe the previous session: drop them and
+  // retire any read still in flight instead of painting them for this one.
+  contextOrderTicket += 1;
+  contextOrder = { sessionId: "", rows: [], handler: "", error: "", busy: false };
   historyGeneration += 1;
   runStreamController.reset();
+  // Settled rounds describe the session being left; keep them out of the new one.
+  streamController.reset();
   setRunning(false);
   setStatus("正在打开会话", "running");
   selectedAgent = "all";
@@ -1072,8 +1094,9 @@ async function switchSession(selected) {
     loadAgents().catch((error) => trace("Agent 列表加载失败", error.message)),
   ]);
   await history;
+  await restoreRunState();
   refreshActiveInspector();
-  setStatus("准备就绪");
+  if (!runActive) setStatus("准备就绪");
 }
 
 async function start(message, images=[], targetSession=sessionId, files=[]) {
@@ -1095,6 +1118,7 @@ async function start(message, images=[], targetSession=sessionId, files=[]) {
     await runController.start({session_id:targetSession, message, images:images.map(({attachment_id,media_type})=>({attachment_id,media_type,detail:"auto"})), target_agent:targetAgent});
     setWorkspaceIndicator(targetSession,"running");
     if (targetSession === sessionId) {
+      streamController.reset();
       setRunning(true); setStatus("正在执行", "running"); chatView.append({role:"user",content:message,images});
       connectRunGraphEvents(); connectLifecycleEvents(); loadAgents().catch(error=>trace("Agent 列表刷新失败",error.message));
     }
@@ -1134,16 +1158,26 @@ function compactCardEvent(event, manual=false) {
   else chatView.upsertCompaction(next);
 }
 /** Coalesce a burst of SSE-driven refreshes into one trailing call. */
-function debounce(fn, wait=150) {
+function debounce(fn, wait=150, { maxWait = 0 } = {}) {
   let timer = null;
+  let deadline = 0;
   return function(...args) {
+    const now = Date.now();
+    // A trailing-only debounce can starve under a continuous SSE burst; maxWait
+    // forces a flush at least once per window while still coalescing.
+    if (!timer && maxWait > 0) deadline = now + maxWait;
+    const delay = deadline ? Math.min(wait, Math.max(0, deadline - now)) : wait;
     clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), wait);
+    timer = setTimeout(() => {
+      timer = null;
+      deadline = 0;
+      fn.apply(this, args);
+    }, delay);
   };
 }
 /** Trailing-debounced inspector refreshes: SSE bursts coalesce into one call. */
-const scheduleInspectorAgentsRefresh = debounce(() => loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)), 1000);
-const scheduleUsageRefresh = debounce(() => loadUsage().catch(error=>trace("用量加载失败",error.message)), 1000);
+const scheduleInspectorAgentsRefresh = debounce(() => loadInspectorAgents().catch(error=>trace("Agent 检查器加载失败",error.message)), 1000, {maxWait: 2000});
+const scheduleUsageRefresh = debounce(() => loadUsage().catch(error=>trace("用量加载失败",error.message)), 1000, {maxWait: 2000});
 /** Cap the in-memory trace ring so a long run never grows the tab unbounded. */
 function pushTraceEvent(event) {
   traceEvents.unshift(event);
@@ -1190,13 +1224,13 @@ function handleEvent(event) {
   if(event.type === "agent:tool_started") { const agent=event.agent||"coordinator"; if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,event.data||{},"执行中"); }
   if(event.type === "agent:tools_requested") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); }
   if(event.type === "agent:tools_completed") { pendingRoundTools.set(`${event.agent||"coordinator"}:${event.data?.round||""}`, liveTools(event.data)); const agent=event.agent||"coordinator"; for(const tool of (event.data?.tool_calls||[])){ if(selectedAgent === "all" || selectedAgent === agent) renderStreamTool(agent,{...tool,arguments:tool.args,status:tool.ok===false?"失败":"已完成"},tool.ok===false?"失败":"已完成"); } if((event.data?.tool_calls||[]).some(tool=>String(tool?.name||"").startsWith("graph_")) && contextDialogAgent===agent) refreshOpenContextGraph(); }
-  if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; discardStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") { discardAgentStreams(event.agent || "coordinator"); updateHeaderMetrics(event.data); } if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:") || event.type.startsWith("plan:")){ scheduleGraphPlanReload(); } return; }
+  if(event.type === "agent:round") { const roundAgent=event.agent || "coordinator"; settleStream(roundAgent,(event.data||{}).round||""); if(selectedAgent === "all" || selectedAgent === roundAgent){ const roundData=event.data||{}; const roundContent=String(roundData.assistant_content||""); const roundReasoning=String(roundData.reasoning_content||""); const roundKey=roundData.round||""; settleStream(roundAgent,roundKey); const roundTools=pendingRoundTools.get(`${roundAgent}:${roundKey}`) || liveTools(roundData); if(roundKey) pendingRoundTools.delete(`${roundAgent}:${roundKey}`); if(roundContent || roundReasoning || roundTools.length){ const dedupeKey=`${event.timestamp||""}:${roundAgent}:${roundKey}:${roundContent}`; if(!renderedRoundEvents.has(dedupeKey)){ renderedRoundEvents.add(dedupeKey); appendMessage("assistant", roundContent, roundReasoning, roundTools, roundAgent, roundData.round_usage, roundData.model_duration_ms, roundData.round_duration_ms ?? roundData.duration_ms, event.timestamp); } } } } if(event.type === "agent:complete") { discardAgentStreams(event.agent || "coordinator"); updateHeaderMetrics(event.data); } if(activeInspectorPanel === "inspector-usage" && event.type === "agent:round") scheduleUsageRefresh(); if(activeInspectorPanel === "inspector-agents") scheduleInspectorAgentsRefresh(); if(event.source === "graph" || event.source === "plan" || event.type.includes("task:") || event.type.startsWith("plan:")){ scheduleGraphPlanReload(); } return; }
   if(event.event === "result") { const resultAgent=event.agent || "coordinator"; discardAgentStreams(resultAgent); if(selectedAgent === "all" || selectedAgent === resultAgent) loadHistory().catch(error=>trace("聚合会话加载失败",error.message)); updateHeaderMetrics(event); refreshOpenContextGraph(); scheduleGraphPlanReload(); pushTraceEvent(event); indexTraceEvent(event); tracePayload({...event,message:`${event.provider} · ${event.model}`,data:event.usage}); return; }
   if(event.event === "error") { setWorkspaceIndicator(sessionId,"error"); const errorEvent={...event,type:"agent:error",agent:event.agent || "coordinator"}; pushTraceEvent(errorEvent); indexTraceEvent(errorEvent); tracePayload(errorEvent); renderAgentSelector(currentAgents); const retryNote = runRetryCount > 0 ? `（已重试 ${runRetryCount} 次后失败）` : ""; appendRunErrorBlock("运行失败", `${event.message}${retryNote}`); setStatus("运行失败", "error"); finish(); return; }
   if(event.event === "stopped") { setWorkspaceIndicator(sessionId,"done"); pushTraceEvent(event); indexTraceEvent(event); tracePayload(event); }
   if(event.event === "done") { setWorkspaceIndicator(sessionId,"done"); finish(); refreshOpenContextGraph(); scheduleGraphPlanReload(); }
 }
-function finish() { clearCompactStatus(); runStreamController.closeGraph(); /* lifecycle SSE drains committed tail and closes itself */ setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
+function finish() { clearCompactStatus(); streamController.clear(); runStreamController.closeGraph(); /* lifecycle SSE drains committed tail and closes itself */ setRunning(false); runRetryCount = 0; if(!$("status").classList.contains("error")) setStatus("准备就绪"); }
 /* ---- Slash commands -------------------------------------------------- */
 function showSlashHelp() {
   chatView.removeWelcome();
@@ -1285,16 +1319,127 @@ function dispatchSlashCommand(parsed) {
 
 /** Resize the composer to its content, restoring the compact size when empty. */
 function resizeComposer() { const el=$("message"); el.style.height="auto"; if(el.value) el.style.height=`${Math.min(el.scrollHeight,230)}px`; }
-function applyRunGraphEvent(event) { if(event?.kind!=="angelus.run-graph-event") return; const data=event.data||{}; if(event.type==="run.state_changed" && data.to) currentRunGraph={...currentRunGraph,state:data.to,error:data.error||currentRunGraph.error,stop_reason:data.reason||currentRunGraph.stop_reason}; if(event.node_id){const nodes=[...(currentRunGraph.nodes||[])];let node=nodes.find(item=>item.id===event.node_id);if(!node){node={id:event.node_id,kind:"agent",origin:"runtime",parent_id:null,state:"pending",task_id:null,plan_task_id:null,message:"",error:null,reason:null,updated_at:null};nodes.push(node);}if(event.type==="node.state_changed"&&data.to){node.state=data.to;node.error=data.error||null;node.reason=data.reason||null;}if(data.message)node.message=data.message;node.updated_at=event.occurred_at||node.updated_at;currentRunGraph={...currentRunGraph,nodes};}renderAgentSelector(currentAgents);if(currentAgents.length)renderAgentTopology(currentAgents.filter(agent=>agent.id!=="all"),currentRunGraph); }
+function applyRunGraphEvent(event) { if(event?.kind!=="angelus.run-graph-event") return; const data=event.data||{}; if(event.type==="run.state_changed" && data.to) currentRunGraph={...currentRunGraph,state:data.to,error:data.error||currentRunGraph.error,stop_reason:data.reason||currentRunGraph.stop_reason}; if(event.node_id){const nodes=[...(currentRunGraph.nodes||[])];let node=nodes.find(item=>item.id===event.node_id);if(!node){node={id:event.node_id,kind:"agent",origin:data.origin||"runtime",parent_id:data.parent_id||data.parent||data.reply_to||null,state:"pending",task_id:data.task_id||null,plan_task_id:data.plan_task_id||null,message:"",error:null,reason:null,updated_at:null};nodes.push(node);}const declaredParent=data.parent_id||data.parent||data.reply_to||null;if(declaredParent && declaredParent!==event.node_id) node.parent_id=declaredParent;if(data.task_id) node.task_id=data.task_id;if(event.type==="node.state_changed"&&data.to){node.state=data.to;node.error=data.error||null;node.reason=data.reason||null;}if(data.message)node.message=data.message;node.updated_at=event.occurred_at||node.updated_at;currentRunGraph={...currentRunGraph,nodes};}renderAgentSelector(currentAgents);if(currentAgents.length)renderAgentTopology(currentAgents.filter(agent=>agent.id!=="all"),currentRunGraph); }
 function handleRunGraphEvent(event) { applyRunGraphEvent(event); scheduleGraphPlanReload(); if(event.type==="node.state_changed" && event.data?.to==="failed") appendRunErrorBlock(`Agent ${event.node_id||"未知"} 运行失败`,String(event.data?.error||event.data?.message||"未知错误")); if(event.type==="run.state_changed" && ["completed","failed","stopped","interrupted"].includes(event.data?.to)){ loadHistory().catch(error=>trace("会话历史刷新失败",error.message)); loadTrace(true).catch(error=>trace("Trace 刷新失败",error.message)); setWorkspaceIndicator(sessionId,event.data.to==="failed"?"error":"done"); finish(); } }
 function connectRunGraphEvents() { runStreamController.connectGraph(); }
 function connectLifecycleEvents() { runStreamController.connectLifecycle(); }
-async function restoreRunState() { if(!hasSelectedSession()) return; try { const graph=await getGraph(sessionId); if(graph?.kind==="angelus.run-graph") currentRunGraph=graph; if(["running","stopping","force_stopping"].includes(currentRunGraph.state)){ setRunning(true); setStatus("正在执行", "running"); connectRunGraphEvents(); connectLifecycleEvents(); return; } if(["failed","interrupted"].includes(currentRunGraph.state)){ setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",currentRunGraph.error||""); } else if(currentRunGraph.state === "completed") setStatus("已完成"); else if(currentRunGraph.state === "stopped") setStatus("已停止"); } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
+async function restoreRunState() { if(!hasSelectedSession()) return; try { const [status,graph]=await Promise.all([getRunStatus(sessionId),getGraph(sessionId).catch(()=>null)]); if(graph?.kind==="angelus.run-graph") currentRunGraph=graph; const runState=String(status?.status||currentRunGraph.state||"idle"); const active=Boolean(status?.active)||["queued","preparing","materializing_tools","connecting_mcp","materializing_swarm","loading_context","running","stopping","force_stopping"].includes(runState); if(active){ setWorkspaceIndicator(sessionId,"running"); setRunning(true); setStatus("正在执行", "running"); connectRunGraphEvents(); connectLifecycleEvents(); return; } if(["failed","interrupted"].includes(runState)){ setWorkspaceIndicator(sessionId,"error"); setStatus("上次运行失败","error"); appendRunErrorBlock("上次运行失败",status?.error||currentRunGraph.error||""); } else if(runState === "completed"){ setWorkspaceIndicator(sessionId,"done"); setStatus("已完成"); } else if(runState === "stopped"){ setWorkspaceIndicator(sessionId,"done"); setStatus("已停止"); } else { setWorkspaceIndicator(sessionId,"idle"); setRunning(false); } } catch(error) { appendRunErrorBlock("运行状态加载失败",error.message); trace("运行状态加载失败", error.message); } }
 slashPalette = createSlashPalette({
   input: $("message"),
   root: $("slash-palette"),
   describeAvailability: (entry) => slashAvailability(entry, { running: runActive, hasSession: hasSelectedSession() }),
 });
+/* ---- Context block order -------------------------------------------------
+   The order lives in the session's run profile, so this side owns no copy of
+   the list: it reads the backend's own composition preview and reports moves,
+   then re-reads the preview to paint what is actually saved. */
+
+/** Read the next run's context blocks, in the order it will compose them. */
+async function loadContextOrder() {
+  const target = sessionId;
+  if (!target) {
+    contextOrder = { sessionId: "", rows: [], handler: "", error: "尚未选择会话，无法读取上下文块。", busy: false };
+    composerScope?.refresh();
+    return;
+  }
+  const ticket = ++contextOrderTicket;
+  contextOrder = { ...contextOrder, sessionId: target, busy: true, error: "" };
+  composerScope?.refresh();
+  try {
+    const preview = await previewContext(target, "coordinator");
+    if (ticket !== contextOrderTicket) return;
+    contextOrder = {
+      sessionId: target,
+      rows: preview.blocks || [],
+      handler: preview.context_handler || "",
+      error: "",
+      busy: false,
+    };
+  } catch (error) {
+    if (ticket !== contextOrderTicket) return;
+    contextOrder = { sessionId: target, rows: [], handler: "", error: contextOrderFailure(error.message), busy: false };
+  }
+  composerScope?.refresh();
+}
+
+/** Turn the backend's precondition failure into an actionable sentence. */
+function contextOrderFailure(message) {
+  const text = String(message || "");
+  if (/api key/i.test(text)) return "需要先为本会话的连接器保存密钥，才能读取上下文块的来源与顺序。";
+  if (text.includes("尚未选择会话")) return text;
+  return `读取上下文块失败：${text}`;
+}
+
+/** Replace this session's ordering table, sparing every other profile field. */
+async function persistContextOrder(priorities) {
+  const target = sessionId;
+  if (!target) throw new Error("尚未选择会话");
+  const url = `/api/sessions/${encodeURIComponent(target)}/run-profile`;
+  // Read-modify-write against the session's own profile. A body built from the
+  // settings form would copy whatever scope that page is editing - the global
+  // defaults, or another session - into this session's profile.
+  const profile = await loadRunProfile(url);
+  const settings = { ...(profile.effective || {}), context_block_order: priorities };
+  // Connector-owned and derived keys are never part of a profile document.
+  ["connector_id", "provider", "model", "api_url", "api_key", "context_settings", "enable_shell", "enable_swarm"]
+    .forEach((key) => delete settings[key]);
+  const saved = await saveRunProfile(url, { settings });
+  // Both editors read `currentProfile`; repaint it only while the settings page
+  // is showing this same session, so another scope is never overwritten.
+  if (currentProfile && (profileWorkspaceId || sessionId) === target && $("profile-scope")?.value !== "global") {
+    applyProfile(saved);
+  }
+  return saved;
+}
+
+/** Store the visible order as sparse priorities: equal values would fall back
+    to declaration order and disagree with what the list shows. */
+async function saveContextOrder(rows) {
+  const priorities = {};
+  rows.forEach((row, index) => { priorities[row.source] = (index + 1) * 10; });
+  return persistContextOrder(priorities);
+}
+
+/** Move one block, then repaint from a fresh preview rather than the guess. */
+async function reorderContextBlocks(from, to) {
+  const rows = contextOrder.rows || [];
+  if (!sessionId || contextOrder.busy) return;
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return;
+  if (from < 0 || to < 0 || from >= rows.length || to >= rows.length) return;
+  const next = [...rows];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  const previous = rows;
+  contextOrder = { ...contextOrder, rows: next, busy: true, error: "" };
+  composerScope?.refresh();
+  try {
+    await saveContextOrder(next);
+  } catch (error) {
+    trace("保存上下文块顺序失败", error.message);
+    // The list must not keep showing an order that was never stored.
+    contextOrder = { ...contextOrder, rows: previous, busy: false, error: `保存顺序失败：${error.message}` };
+    composerScope?.refresh();
+    return;
+  }
+  await loadContextOrder();
+}
+
+/** Forgetting the table returns every block to its own default position. */
+async function resetContextOrder() {
+  if (!sessionId || contextOrder.busy) return;
+  contextOrder = { ...contextOrder, busy: true, error: "" };
+  composerScope?.refresh();
+  try {
+    await persistContextOrder({});
+  } catch (error) {
+    trace("重置上下文块顺序失败", error.message);
+    contextOrder = { ...contextOrder, busy: false, error: `重置顺序失败：${error.message}` };
+    composerScope?.refresh();
+    return;
+  }
+  await loadContextOrder();
+}
+
 // The composer's own connector and toolset. Both write through the session's
 // run profile - the same keys the Agent settings page edits - so this component
 // only ever reads a snapshot and reports changes.
@@ -1304,11 +1449,13 @@ composerScope = createComposerScope({
   chip: $("composer-tools"),
   summary: $("composer-tools-summary"),
   panel: $("composer-tool-panel"),
-  readState: () => ({ connectors: connectorChoices, connectorId, policy: currentProfile?.effective?.tool_permissions || {}, catalog: toolRegistryGroups, systemPrompt: $("system-prompt")?.value ?? "" }),
+  readState: () => ({ connectors: connectorChoices, connectorId, policy: currentProfile?.effective?.tool_permissions || {}, catalog: toolRegistryGroups, systemPrompt: $("system-prompt")?.value ?? "", order: contextOrder }),
   onConnector: (id) => { selectConnector(id).catch((error) => trace("切换连接器失败", error.message)); },
   onPermission: (patch) => applyToolPermission(patch).catch((error) => trace("保存工具权限失败", error.message)),
   onSystemPrompt: (text) => { const field = $("system-prompt"); if (field) field.value = text; persistSettings().catch((error) => trace("保存运行档案失败", error.message)); },
-  onOpen: () => slashPalette?.close(),
+  onReorder: (from, to) => { reorderContextBlocks(from, to).catch((error) => trace("保存上下文块顺序失败", error.message)); },
+  onResetOrder: () => { resetContextOrder().catch((error) => trace("重置上下文块顺序失败", error.message)); },
+  onOpen: (target) => { slashPalette?.close(); if (target === "tools") loadContextOrder().catch((error) => trace("读取上下文块失败", error.message)); },
 });
 composerScope.refresh();
 $("composer").addEventListener("submit", async event=>{
@@ -1475,7 +1622,7 @@ async function initializeConsole() {
   // 启动时先恢复运行档案与连接列表，保证 composer 芯片在直接刷新后也有值。
   await restoreSettings().catch((error) => trace("加载运行档案失败", error.message));
   await loadConnectors(connectorId).catch((error) => trace("加载连接列表失败", error.message));
-  if(hasSelectedSession()) { await loadAgents(); await loadHistory(); refreshActiveInspector(); }
+  if(hasSelectedSession()) { await loadAgents(); await loadHistory(); await restoreRunState(); refreshActiveInspector(); }
   applyProviderPreset();
   updateModelSummary();
   await initPlugins().catch(error => trace("插件加载失败，已继续加载工作区", error.message));

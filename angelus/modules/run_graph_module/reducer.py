@@ -112,8 +112,15 @@ def apply_journal_event(graph: RunGraph, event: Mapping[str, Any], *, cursor: in
         return
     if not agent:
         return
-    node = graph.ensure_node(agent, origin="runtime" if _text(data.get("task_id")) else "blueprint")
-    node.task_id = _text(data.get("task_id")) or node.task_id
+    task_id = _text(data.get("task_id"))
+    # Delegation is the only fact that makes the subagent tree renderable, and
+    # it may arrive on the dispatch fact under three different key names.  Once
+    # known it must survive every later state-only fact for the same node.
+    parent_id = _text(data.get("parent_id")) or _text(data.get("parent")) or _text(data.get("reply_to"))
+    node = graph.ensure_node(agent, origin="runtime" if task_id else "blueprint")
+    if parent_id and parent_id != agent:
+        node.parent_id = parent_id
+    node.task_id = task_id or node.task_id
     node.plan_task_id = _text(data.get("plan_task_id")) or node.plan_task_id
     node.message = message or node.message
     node.updated_at = when or node.updated_at

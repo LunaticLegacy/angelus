@@ -161,19 +161,6 @@ class ExecutionService:
                 if live_graph is None:
                     return
                 round_value = data.get("round")
-                context_agents = [
-                    node.id
-                    for node in live_graph.nodes
-                    if node.kind == "agent"
-                ]
-                contexts = {
-                    agent_name: {
-                        "boundary": {"round": round_value},
-                        "storage": "agent-owned-context-pointer",
-                        "persisted": True,
-                    }
-                    for agent_name in context_agents
-                }
                 run_graph = RunGraphProjector().project(
                     session_id,
                     attempt.root.parent.parent,
@@ -190,8 +177,6 @@ class ExecutionService:
                 }
                 attempt.commit_checkpoint(
                     uuid4().hex,
-                    None,
-                    contexts,
                     reason=f"{event.agent_name}:round:{round_value}",
                     run_graph=run_graph,
                     recovery=recovery_descriptor,

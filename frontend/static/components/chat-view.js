@@ -557,7 +557,14 @@ export function createChatView({ getAgentLabel, getSessionId = () => null, onFol
       const previewMarkup = preview ? `<span class="tool-call-preview">${escapeHtml(preview)}</span>` : "";
       card.innerHTML = `<div class="tool-call-summary"><span class="tool-call-icon" aria-hidden="true">↳</span><strong>${escapeHtml(tool.name || "工具调用")}</strong><span class="tool-live-status">${escapeHtml(status)}</span>${duration != null ? `<span class="tool-duration">${escapeHtml(formatDuration(duration))}</span>` : ""}${previewMarkup}</div><details class="tool-call-details"><summary>查看参数与结果</summary><p>参数</p>${renderToolPayload(args, "正在接收参数…")}${result !== undefined ? `<p>结果</p>${renderToolPayload(result, "无返回内容")}` : ""}</details>`;
       if (started > 0 && ["running", "执行中"].includes(status) && !toolTimers.has(id)) {
-        const timer = setInterval(() => updateTool({...tool, duration_ms: (Date.now() / 1000 - started) * 1000}), 250);
+        // Tick only the duration node. Re-rendering the whole card on every
+        // tick would rebuild the <details> element and collapse the payload
+        // the reader opened while the tool is still running.
+        const timer = setInterval(() => {
+          if (!card.isConnected) { clearInterval(timer); toolTimers.delete(id); return; }
+          const durationNode = card.querySelector(".tool-duration");
+          if (durationNode) durationNode.textContent = formatDuration(Math.max(0, Date.now() / 1000 - started) * 1000);
+        }, 250);
         toolTimers.set(id, timer);
       }
       if (!["running", "执行中"].includes(status) && toolTimers.has(id)) {

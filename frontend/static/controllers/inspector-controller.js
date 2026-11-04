@@ -16,7 +16,11 @@ export function createInspectorController({
     if (!target) return;
     const isCurrent = activePanel === panel;
     const isOpen = activity?.dataset.inspectorOpen === "true";
-    if (refresh && isCurrent && isOpen) open = false;
+    // "keep" rehydrates the active panel without changing the open/collapsed
+    // state the user chose; only an explicit tab click may toggle it.
+    const keepOpen = open === "keep";
+    if (keepOpen) open = isOpen;
+    else if (refresh && isCurrent && isOpen) open = false;
     activePanel = panel;
     try { localStorage.setItem(storageKey, panel); } catch {}
     tabsRoot.querySelectorAll("[data-inspector-panel]").forEach((button) => {
@@ -47,7 +51,7 @@ export function createInspectorController({
     // Hydrate the initially selected panel after the shell is mounted. This
     // keeps a hard refresh from showing an empty Inspector until the user
     // clicks a tab.
-    select(activePanel, true, false);
+    select(activePanel, true, "keep");
   }
 
   return { init, select, getActive: () => activePanel };

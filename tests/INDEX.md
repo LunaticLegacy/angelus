@@ -13,6 +13,7 @@ real API credentials or mutate the repository's `.angelus-state` directory.
 | `test_settings_service.py` | Secret separation, global/Session profile inheritance and coordinator materialization from saved connector state. |
 | `test_llm_timeout_retry.py` | Provider-neutral timeout classification, causal-chain recognition, configured retries, and streamed partial-output safety. |
 | `test_session_console.py` | Typed console persistence, cycle rejection, controlled plan/topology tools, permission filtering, journal mutation evidence, secret exclusion, and restart-safe persisted Agent context chat projection. |
+| `test_lifecycle_event_stream.py` | Lifecycle SSE ordering: a round's live deltas precede the durable record that closes that round, and live frames never carry a durable replay id. |
 | `test_paged_context_storage.py` | SQLite context pointer save/load, newest-200 recovery and older-page cursor semantics. |
 | `test_external_agent_hub.py` | External Agent definition persistence, protocol adapter base, process-candidate discovery boundaries, and Hub route projections. |
 | `test_external_agent_hub_read_only_adapters.py` | Coze, OpenCode, and WorkBuddy typed read-only facade adapter tests. |
@@ -252,6 +253,13 @@ node --check frontend/static/app.js
 | [test_knowledge_injection.py](test_knowledge_injection.py#L53) | `KnowledgeInjectionTests.test_blank_agent_scope_is_rejected` | `None` | `None` | Implement `KnowledgeInjectionTests.test_blank_agent_scope_is_rejected`. |
 | [test_knowledge_tools.py](test_knowledge_tools.py#L16) | `KnowledgeStoreTests.test_upsert_search_read_delete_are_session_local` | `None` | `None` | Implement `KnowledgeStoreTests.test_upsert_search_read_delete_are_session_local`. |
 | [test_knowledge_tools.py](test_knowledge_tools.py#L31) | `KnowledgeStoreTests.test_registry_requires_explicit_knowledge_grants` | `None` | `None` | Implement `KnowledgeStoreTests.test_registry_requires_explicit_knowledge_grants`. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L38) | `_StubService.ephemeral_cursor` | `_session_id: str` | `int` | Expose a pending backlog instead of the new-subscriber skip. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L44) | `_StubService.ephemeral_events` | `_session_id: str, cursor: int` | `dict[str, object]` | Return every live frame newer than *cursor*. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L49) | `_StubService.events` | `_session_id: str, cursor: int, limit: int` | `dict[str, object]` | Return the durable page for *cursor*. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L59) | `_frames` | `body: str` | `list[str]` | Split one SSE body into its non-empty frames. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L67) | `LifecycleEventStreamOrderTests._body` | `service: _StubService` | `str` | Open the lifecycle stream once and return its whole SSE body. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L81) | `LifecycleEventStreamOrderTests.test_live_frames_precede_the_durable_record_that_closes_their_round` | `None` | `None` | A round's deltas must arrive before its own ``agent:round`` fact. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L91) | `LifecycleEventStreamOrderTests.test_ephemeral_frames_never_carry_a_replay_id` | `None` | `None` | Live frames must not advance the durable Last-Event-ID cursor. |
 | [test_llm_timeout_retry.py](test_llm_timeout_retry.py#L16) | `_Handler.prepare_tools` | `tools: object` | `object` | Implement `_Handler.prepare_tools`. |
 | [test_llm_timeout_retry.py](test_llm_timeout_retry.py#L19) | `_Handler.create_completion` | `**_kwargs: object` | `object` | Implement `_Handler.create_completion`. |
 | [test_llm_timeout_retry.py](test_llm_timeout_retry.py#L25) | `_Handler.normalize_completion_response` | `_raw: object` | `LLMOutput` | Implement `_Handler.normalize_completion_response`. |
@@ -549,6 +557,8 @@ node --check frontend/static/app.js
 | [test_json_schema_codec.py](test_json_schema_codec.py#L89) | `CodecRejectionTests` | `None` | `unittest.TestCase` | Provide `CodecRejectionTests` behavior. |
 | [test_knowledge_injection.py](test_knowledge_injection.py#L23) | `KnowledgeInjectionTests` | `None` | `unittest.TestCase` | Provide `KnowledgeInjectionTests` behavior. |
 | [test_knowledge_tools.py](test_knowledge_tools.py#L13) | `KnowledgeStoreTests` | `None` | `unittest.TestCase` | Verify durable retrieval stays outside Agent context and task state. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L21) | `_StubService` | `None` | `object` | Serve one pending live frame and one durable round-closing fact. |
+| [test_lifecycle_event_stream.py](test_lifecycle_event_stream.py#L64) | `LifecycleEventStreamOrderTests` | `None` | `unittest.TestCase` | Pin the frame order the browser's live rendering depends on. |
 | [test_llm_timeout_retry.py](test_llm_timeout_retry.py#L11) | `_Handler` | `failures: list[Exception]` | `object` | Provide `_Handler` behavior. |
 | [test_llm_timeout_retry.py](test_llm_timeout_retry.py#L32) | `_StreamingHandler` | `failures: list[Exception], fail_after_delta: bool` | `_Handler` | Provide `_StreamingHandler` behavior. |
 | [test_llm_timeout_retry.py](test_llm_timeout_retry.py#L60) | `TimeoutRetryTests` | `None` | `unittest.TestCase` | Provide `TimeoutRetryTests` behavior. |

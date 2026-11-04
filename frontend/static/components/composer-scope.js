@@ -1,4 +1,5 @@
-/** Composer-scope controls: which connector and which tools this session runs with.
+/** Composer-scope controls: which connector, which tools, and which order the
+ * context blocks of the next request compose in.
  *
  * Both values are keys of the session's run profile, which the Agent settings
  * page edits as well. This component keeps no copy of its own: it renders from
@@ -81,6 +82,57 @@ function cardMarkup(state) {
     .join("")}</div>`;
 }
 
+/** Human-readable size for one block row, or a dash when nothing composed. */
+function charactersText(row) {
+  const count = Number(row.characters || 0);
+  if (!count) return "—";
+  return count < 1000 ? `${count} 字` : `${(count / 1000).toFixed(1)}k 字`;
+}
+
+/** Badges that qualify a row without changing the position it occupies. */
+function orderBadges(row) {
+  const badges = [];
+  if (row.unlisted) badges.push('<em class="order-badge">未排序</em>');
+  if (row.present === false) badges.push('<em class="order-badge is-absent">本次未包含</em>');
+  if (row.persisted) badges.push('<em class="order-badge is-quiet">已持久化</em>');
+  return badges.join("");
+}
+
+/**
+ * The context block order editor: one row per source, in the order the next
+ * run will compose it.
+ *
+ * Rows, labels and the order itself all arrive from the backend preview, so
+ * this markup never invents either. A move is only reported as two indices;
+ * buttons rather than dragging because the panel must stay keyboard-reachable.
+ */
+function orderMarkup(order) {
+  const rows = order?.rows || [];
+  const busy = order?.busy === true;
+  const failure = order?.error || "";
+  const editable = !busy && !failure && rows.length > 1;
+  const head = `<div class="tool-panel-head order-head"><strong>上下文块顺序</strong><small>改动立即写入本会话运行档案；下次运行生效</small><button type="button" class="order-reset" data-order-action="reset"${editable ? "" : " disabled"}>重置</button></div>`;
+  if (failure) return `${head}<p class="tool-panel-empty order-error">${escapeHtml(failure)}</p>`;
+  if (!rows.length) {
+    return `${head}<p class="tool-panel-empty">${busy ? "正在读取上下文块…" : "这次运行没有可排序的上下文块。"}</p>`;
+  }
+  const items = rows
+    .map((row, index) => {
+      const label = row.label || row.source || "";
+      const up = editable && index > 0;
+      const down = editable && index < rows.length - 1;
+      return `<li class="order-row${row.present === false ? " is-absent" : ""}">
+          <span class="order-index">${index + 1}</span>
+          <span class="order-label"><span>${escapeHtml(label)}</span>${orderBadges(row)}</span>
+          <span class="order-size">${charactersText(row)}</span>
+          <button type="button" class="order-move" data-order-action="up" data-order-index="${index}" aria-label="上移"${up ? "" : " disabled"}>↑</button>
+          <button type="button" class="order-move" data-order-action="down" data-order-index="${index}" aria-label="下移"${down ? "" : " disabled"}>↓</button>
+        </li>`;
+    })
+    .join("");
+  return `${head}<ol class="order-list"${busy ? ' aria-busy="true"' : ""}>${items}</ol>`;
+}
+
 /**
  * Bind the composer's two scope controls into one input box.
  *
@@ -91,11 +143,17 @@ function cardMarkup(state) {
  * @param {HTMLElement} options.summary Chip's count slot.
  * @param {HTMLElement} options.panel Popover holding the prompt and both axes.
  * @param {() => object} options.readState Returns `{connectors, connectorId,
- *   policy, catalog, systemPrompt}` - everything a render needs, read fresh.
+ *   policy, catalog, systemPrompt, order}` - everything a render needs, read
+ *   fresh. `order` is `{rows, handler, error, busy}` and already sorted by the
+ *   backend, so nothing here has to know what a block priority means.
  * @param {(id: string) => void} options.onConnector Chosen connector id.
  * @param {(patch: object) => void} options.onPermission `{category|tool, enabled}`.
  * @param {(text: string) => void} options.onSystemPrompt Committed prompt text.
- * @param {() => void} [options.onOpen] Called before a popover is shown.
+ * @param {(from: number, to: number) => void} [options.onReorder] Move one
+ *   context block from one index of the visible order to another.
+ * @param {() => void} [options.onResetOrder] Drop the saved order.
+ * @param {(target: string) => void} [options.onOpen] Called with the popover
+ *   that is about to be shown, before it is painted.
  * @returns {{refresh: Function, close: Function}}
  */
 export function createComposerScope({
@@ -108,6 +166,8 @@ export function createComposerScope({
   onConnector,
   onPermission,
   onSystemPrompt,
+  onReorder,
+  onResetOrder,
   onOpen,
 }) {
   let openPopover = null;
@@ -122,7 +182,7 @@ export function createComposerScope({
     chip.setAttribute("aria-expanded", String(target === "tools"));
     chip.classList.toggle("is-open", target === "tools");
     if (!target) return;
-    onOpen?.();
+    onOpen?.(target);
     // A popover is only ever filled while it is up, so opening it has to paint.
     refresh();
   }
@@ -136,19 +196,31 @@ export function createComposerScope({
     const selected = choices.find((item) => item.id === current);
     connectorChip.innerHTML = `<span>${escapeHtml(selected?.name || "临时连接")}</span>`;
     summary.textContent = summarize(state);
-    chip.title = `当前会话的工具集：${summary.textContent || "尚未注册工具"}`;
+    chip.title = `当前会话的设置：${summary.textContent || "尚未注册工具"}`;
     if (openPopover === "connector") {
       connectorPanel.innerHTML = `<div class="composer-popover-head"><strong>当前会话连接器</strong><small>写入本会话运行档案</small></div>${connectorMarkup(
         state
       )}`;
     }
     if (openPopover === "tools") {
-      panel.innerHTML = `<div class="tool-panel-head"><strong>本条消息的工具集</strong><small>类别与单工具须同时开启；改动立即写入本会话档案</small></div>${promptMarkup()}${
+      // A repaint drops focus and the caret, so a prompt being typed into has
+      // to survive the refresh that follows every save and every preview.
+      const active = document.activeElement;
+      const typing = active?.id === "composer-system-prompt"
+        ? [active.selectionStart, active.selectionEnd]
+        : null;
+      panel.innerHTML = `<div class="tool-panel-head"><strong>本条消息的设置</strong><small>类别与单工具须同时开启；改动立即写入本会话档案</small></div>${promptMarkup()}${
         (state.catalog || []).length ? cardMarkup(state) : '<p class="tool-panel-empty">正在读取后端注册的工具…</p>'
-      }`;
+      }${orderMarkup(state.order)}`;
       // The prompt is prose: assign it as a value rather than into markup.
       const field = panel.querySelector("#composer-system-prompt");
-      if (field) field.value = state.systemPrompt || "";
+      if (field) {
+        field.value = state.systemPrompt || "";
+        if (typing) {
+          field.focus();
+          field.setSelectionRange(typing[0], typing[1]);
+        }
+      }
     }
   }
 
@@ -165,6 +237,23 @@ export function createComposerScope({
     if (input.id === "composer-system-prompt") onSystemPrompt(input.value);
     else if (input.dataset.composerCategory) onPermission({ category: input.dataset.composerCategory, enabled: input.checked });
     else if (input.dataset.composerTool) onPermission({ tool: input.dataset.composerTool, enabled: input.checked });
+  });
+  // A move is reported, never applied here: the caller stores the order in
+  // the run profile and the next render reads it back from a fresh preview,
+  // so this component keeps no order of its own that could be written stale.
+  panel.addEventListener("click", (event) => {
+    const control = event.target.closest("[data-order-action]");
+    if (!control || control.disabled) return;
+    if (control.dataset.orderAction === "reset") {
+      onResetOrder?.();
+      return;
+    }
+    const rows = readState()?.order?.rows || [];
+    const from = Number(control.dataset.orderIndex);
+    const to = control.dataset.orderAction === "up" ? from - 1 : from + 1;
+    if (!Number.isInteger(from) || from < 0 || to < 0) return;
+    if (from >= rows.length || to >= rows.length) return;
+    onReorder?.(from, to);
   });
   // A click anywhere else, or Escape, closes without changing anything.
   document.addEventListener("pointerdown", (event) => {
