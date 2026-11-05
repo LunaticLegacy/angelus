@@ -55,7 +55,7 @@ class ContextHandlerSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = RunProfileStore(Path(directory))
 
-            self.assertEqual("graph", store.global_profile()["context_handler"])
+            self.assertEqual("linear", store.global_profile()["context_handler"])
 
     def test_profile_round_trips_a_selected_handler(self) -> None:
         """A saved choice survives a reload of the settings document."""
@@ -98,7 +98,7 @@ class ContextHandlerSelectionTests(unittest.TestCase):
         """Omitting the name keeps the standard persistent handler."""
         agent = self._build()
 
-        self.assertIsInstance(agent.context_handler, GraphContextHandler)
+        self.assertIsInstance(agent.context_handler, ContextHandlerLinear)
 
     def test_explicit_handler_still_wins(self) -> None:
         """A specialised host may inject its own implementation."""

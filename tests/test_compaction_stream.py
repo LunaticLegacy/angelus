@@ -4,7 +4,7 @@ Two layers are pinned here:
 
 * ``angelus.api.compact`` relays each streamed chunk as a ``delta`` frame, so
   the client sees real progress instead of a silent block between
-  ``compacting`` and ``done``.
+  ``started`` and ``done``.
 * ``SessionService.compact`` borrows the handler's compaction hook without
   silencing the existing one, and always gives it back.
 
@@ -48,6 +48,11 @@ def _frames(response: object) -> list[dict]:
     return [json.loads(line) for line in body.splitlines() if line.strip()]
 
 
+def _summary(*chunks: str) -> list[str]:
+    """Wrap scripted summary text in the envelope the compaction model emits."""
+    return ["<context_abstract>", *chunks, "</context_abstract>"]
+
+
 class _StubCompactService:
     """Session service whose compaction publishes a scripted chunk sequence."""
 
@@ -56,17 +61,20 @@ class _StubCompactService:
         self.deltas = deltas
         self.error = error
         self.hook_seen: object = None
+        self.delta_hook_seen: object = None
         self.agent = SimpleNamespace(
             context_handler=ContextHandlerLinear(_NoopCompactor())
         )
 
-    def compact(self, session_id: str, agent_name: str = "coordinator", *, on_event=None):
-        """Replay the scripted chunks through the caller's event hook."""
+    def compact(self, session_id: str, agent_name: str = "coordinator", *, on_event=None, on_delta=None):
+        """Replay the scripted chunks through the caller's hooks."""
         self.hook_seen = on_event
+        self.delta_hook_seen = on_delta
         if on_event is not None:
             on_event("context:compact_started", "started", {"round": 1})
+        if on_delta is not None:
             for delta in self.deltas:
-                on_event("context:compact_delta", "chunk", {"delta": delta})
+                on_delta(delta)
         if self.error is not None:
             raise self.error
         return self.agent
@@ -90,20 +98,20 @@ class CompactionStreamTests(unittest.TestCase):
 
     def test_streamed_chunks_survive_as_delta_frames(self) -> None:
         """Every compactor chunk reaches the wire in order."""
-        service = _StubCompactService(deltas=["第一段", "第二段"])
+        service = _StubCompactService(deltas=_summary("第一段", "第二段"))
 
         frames = self._run(service)
 
         deltas = [frame for frame in frames if frame["kind"] == "delta"]
         self.assertEqual(["第一段", "第二段"], [frame["delta"] for frame in deltas])
         self.assertEqual(
-            ["loading", "compacting", "output", "output", "done"],
+            ["loading", "started", "delta", "delta", "done"],
             [frame["stage"] for frame in frames],
         )
 
     def test_only_delta_events_become_delta_frames(self) -> None:
         """A started/success event must not masquerade as a streamed chunk."""
-        service = _StubCompactService(deltas=["only"])
+        service = _StubCompactService(deltas=_summary("only"))
 
         frames = self._run(service)
 
@@ -111,7 +119,7 @@ class CompactionStreamTests(unittest.TestCase):
 
     def test_the_terminal_frame_reports_the_summary_accounting(self) -> None:
         """The done frame keeps the archive/abstract counts the card shows."""
-        service = _StubCompactService(deltas=["x"])
+        service = _StubCompactService(deltas=_summary("x"))
 
         done = self._run(service)[-1]
 
@@ -122,12 +130,12 @@ class CompactionStreamTests(unittest.TestCase):
 
     def test_a_failed_compaction_reports_the_error_frame(self) -> None:
         """A failing compaction ends with the error frame, never a done frame."""
-        service = _StubCompactService(deltas=["partial"], error=RuntimeError("boom"))
+        service = _StubCompactService(deltas=_summary("partial"), error=RuntimeError("boom"))
 
         frames = self._run(service)
 
         self.assertEqual(
-            ["loading", "compacting", "output", "error"],
+            ["loading", "started", "delta", "error"],
             [frame["stage"] for frame in frames],
         )
         self.assertIn("boom", frames[-1]["error"])

@@ -60,7 +60,7 @@ class PluginManagerTests(unittest.TestCase):
             managed = root / ".angelus-state" / "plugins"
             manager = PluginManager(root / ".angelus-state" / "workspace", ToolRegistry(), managed_root=managed)
 
-            self.assertEqual(managed.resolve(), manager.store.package_root)
+            self.assertEqual((managed / "package").resolve(), manager.store.package_root)
             self.assertEqual((managed / "registry.json").resolve(), manager.store._path)
             self.assertEqual((managed / "data").resolve(), manager.store.data_root)
 
@@ -72,7 +72,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "aurora-pack"
+            package = root / "plugins" / "package" / "aurora-pack"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "aurora-pack", "display_name": "Aurora", "version": "1.0.0", "api_version": "1", "kind": "theme_pack",
@@ -87,7 +87,7 @@ class PluginManagerTests(unittest.TestCase):
             })
             (package / "dark.css").write_text(":root { --accent: aqua; }", encoding="utf-8")
             (package / "light.css").write_text(":root { --accent: blue; }", encoding="utf-8")
-            manager = PluginManager(root, ToolRegistry())
+            manager = PluginManager(root, ToolRegistry(), root / "dev-plugins")
 
             self.assertEqual("discovered", manager.statuses()[0]["state"])
             registered = manager.register("aurora-pack")
@@ -110,7 +110,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "echo-tools"
+            package = root / "plugins" / "package" / "echo-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "echo-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -128,7 +128,7 @@ class PluginManagerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             registry = ToolRegistry()
-            manager = PluginManager(root, registry)
+            manager = PluginManager(root, registry, root / "dev-plugins")
             manager.register("echo-tools")
             self.assertEqual((), registry.definitions())
             manager.load("echo-tools", grant_permissions=False)
@@ -145,7 +145,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "echo-tools"
+            package = root / "plugins" / "package" / "echo-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "echo-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -165,7 +165,7 @@ class PluginManagerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             registry = ToolRegistry()
-            manager = PluginManager(root, registry)
+            manager = PluginManager(root, registry, root / "dev-plugins")
             manager.register("echo-tools")
             manager.load("echo-tools", grant_permissions=False)
             session = SimpleNamespace(execution=None)
@@ -187,7 +187,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "parameter-tools"
+            package = root / "plugins" / "package" / "parameter-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "parameter-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -206,7 +206,7 @@ class PluginManagerTests(unittest.TestCase):
                 "angelus_plugin = Plugin()\n",
                 encoding="utf-8",
             )
-            manager = PluginManager(root, ToolRegistry())
+            manager = PluginManager(root, ToolRegistry(), root / "dev-plugins")
             registered = manager.register("parameter-tools")
             self.assertEqual("default instructions", manager.settings(registered["id"])["settings"]["instructions"])
             manager.replace_settings(registered["id"], {"instructions": "user instructions"})
@@ -221,7 +221,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "panel-tools"
+            package = root / "plugins" / "package" / "panel-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "panel-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -239,7 +239,7 @@ class PluginManagerTests(unittest.TestCase):
                 "angelus_plugin = Plugin()\n",
                 encoding="utf-8",
             )
-            manager = PluginManager(root, ToolRegistry())
+            manager = PluginManager(root, ToolRegistry(), root / "dev-plugins")
             registered = manager.register("panel-tools")
             manager.load(registered["id"], grant_permissions=False)
             result = manager.invoke_panel(registered["id"], "lookup", {"query": "heap"})
@@ -257,7 +257,7 @@ class PluginManagerTests(unittest.TestCase):
         """
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            package = root / "plugins" / "login-tools"
+            package = root / "plugins" / "package" / "login-tools"
             package.mkdir(parents=True)
             _json(package / "manifest.json", {
                 "name": "login-tools", "version": "1.0.0", "api_version": "1", "kind": "tool", "entry": "main",
@@ -275,7 +275,7 @@ class PluginManagerTests(unittest.TestCase):
                 "angelus_plugin = Plugin()\n",
                 encoding="utf-8",
             )
-            manager = PluginManager(root, ToolRegistry())
+            manager = PluginManager(root, ToolRegistry(), root / "dev-plugins")
             manager.register("login-tools")
             manager.load("login-tools", grant_permissions=False)
             self.assertEqual("authenticated", manager.invoke_panel("login-tools", "login", {"password": "never-persist"}).content)
