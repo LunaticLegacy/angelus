@@ -90,7 +90,11 @@ class SessionExecutor(Generic[ResultT]):
             ``True`` when no attempt exists or the current attempt is terminal.
         """
         with self._lock:
-            return self._attempt.wait(timeout) if self._attempt else True
+            attempt = self._attempt
+        # Wait outside the lock: the worker's first action is to read
+        # ``executor.attempt`` (which takes this same lock), so holding the
+        # lock across the blocking wait can starve it for the whole timeout.
+        return attempt.wait(timeout) if attempt is not None else True
 
     def snapshot(self) -> ExecutionSnapshot:
         """Return current attempt snapshot or a synthetic Session-idle snapshot."""

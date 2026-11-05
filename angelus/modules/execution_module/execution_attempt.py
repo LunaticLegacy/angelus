@@ -246,15 +246,20 @@ class ExecutionAttempt(Generic[ResultT]):
                     self._state = ExecutionState.STOPPED if self.controller.should_stop() else ExecutionState.COMPLETED
                     self.journal.append("execution_stopped" if self._state is ExecutionState.STOPPED else "execution_completed", {})
         finally:
-            with self._lock:
-                try:
-                    self._stream.close()
-                except (OSError, RuntimeError) as exc:
-                    if self._error is None:
-                        self._error = f"TraceFlushError: {exc}"
-                self._finished_at = time.time()
-                self._write_manifest()
-            self._done.set()
+            try:
+                with self._lock:
+                    try:
+                        self._stream.close()
+                    except (OSError, RuntimeError) as exc:
+                        if self._error is None:
+                            self._error = f"TraceFlushError: {exc}"
+                    self._finished_at = time.time()
+                    self._write_manifest()
+            finally:
+                # Always release waiters, even when persisting the manifest
+                # fails: otherwise a manifest write error would hang
+                # ``wait()`` until its timeout and mask the original failure.
+                self._done.set()
 
     def _write_manifest(self) -> None:
         """Atomically project current lifecycle and latest checkpoint to manifest.
