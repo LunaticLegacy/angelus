@@ -247,7 +247,7 @@ CommunitySummary:          # 图感知压缩的产物
 ### 4.5 检索流程（混合召回 + 图扩散）
 
 ```
-触发：first_message（沿用）/ auto（压缩后）/ manual / 新增"话题切换检测"
+触发：every_message（默认）/ first_message / auto（压缩后）/ manual / 新增"话题切换检测"
       （可选：query 与最近话题 embedding 相似度 < 阈值 → 触发检索）
 
 1. 意图/实体抽取（LLM，轻量）：从当前 user 消息抽 seed entities + 关键词
@@ -294,7 +294,7 @@ CommunitySummary:          # 图感知压缩的产物
 
 | 事件 | 动作 |
 |---|---|
-| `add_user_message`（首个） | 检索一次（first_message 模式） |
+| `add_user_message`（每轮） | 默认每轮检索一次（every_message 模式）；也可配置为 first_message / auto / manual |
 | `add_assistant_message`（每 N 轮） | 增量图更新（异步/低开销） |
 | 上下文超阈值 | 图感知压缩（4.6） |
 | 压缩完成（auto 模式） | 触发一次检索（重新定位长期记忆） |

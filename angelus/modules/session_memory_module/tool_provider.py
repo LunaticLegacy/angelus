@@ -17,7 +17,10 @@ if TYPE_CHECKING:
 class SessionMemoryToolProvider:
     def __init__(self, core: "AngelusCore") -> None:
         self._core = core
-        self._store = SessionMemoryStore(core.state_root)
+        self._store = SessionMemoryStore(
+            core.state_root,
+            lambda session_id: core.workspaces.get(session_id).project_path,
+        )
 
     def materialize(self, session: object, policy: ToolPolicy, role: str, agent_name: str | None = None) -> list[Tool]:
         session_id = session.execution.session_id if session.execution is not None else ""

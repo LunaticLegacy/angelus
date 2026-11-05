@@ -18,9 +18,15 @@ class _NoopCompactor:
 
 
 def _payload(timeline: int, content: str) -> str:
-    """Serialize one active row the way the linear handler does."""
+    """Serialize one v2 active user item the way the linear handler does."""
     return json.dumps(
-        {"role": "user", "timeline": timeline, "content": content, "images": []},
+        {
+            "kind": "user",
+            "item_id": f"item-{timeline}",
+            "timeline": timeline,
+            "content": content,
+            "images": [],
+        },
         ensure_ascii=False,
     )
 
@@ -82,13 +88,11 @@ class ContextStorageInterfaceTests(unittest.TestCase):
             self.assertEqual(1, storage.count(database, "archive"))
             self.assertEqual(1, storage.count(database, "messages"))
 
-    def test_pointer_predicate_recognizes_only_schema_three_sqlite(self) -> None:
-        """Format recognition lives in one place."""
-        self.assertTrue(
-            is_sqlite_context_pointer({"schema_version": 3, "storage": "sqlite"})
-        )
+    def test_pointer_predicate_recognizes_only_v2_sqlite(self) -> None:
+        """Format recognition lives in one place and rejects versioned pointers."""
+        self.assertTrue(is_sqlite_context_pointer({"storage": "sqlite"}))
         self.assertFalse(
-            is_sqlite_context_pointer({"schema_version": 2, "storage": "sqlite"})
+            is_sqlite_context_pointer({"schema_version": 3, "storage": "sqlite"})
         )
         self.assertFalse(is_sqlite_context_pointer({"messages": []}))
         self.assertFalse(is_sqlite_context_pointer(None))
@@ -104,7 +108,7 @@ class ContextStorageInterfaceTests(unittest.TestCase):
             database = path.with_suffix(path.suffix + ".sqlite3")
 
             high_water = linear.replace_active_context(
-                [{"role": "user", "content": "edited"}],
+                [{"kind": "user", "item_id": "edited", "timeline": 0, "content": "edited", "images": []}],
                 database=database,
                 context_editing={"revision_id": "rev-1", "graph_stale": True},
             )

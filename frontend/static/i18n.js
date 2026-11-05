@@ -1,4 +1,6 @@
 /** JSON-backed locale service for the desktop frontend. */
+import { request } from "./runtime/backend-bridge.js";
+
 const DEFAULT_LOCALE = "en";
 const LOCALE_STORAGE_KEY = "angelusLocale";
 const LOCALE_FILES = { en: "en", "zh-CN": "zh-CN" };
@@ -16,7 +18,7 @@ function normalizeLocale(value) {
 
 async function loadMessages(name) {
   const file = LOCALE_FILES[name] || LOCALE_FILES[DEFAULT_LOCALE];
-  const response = await fetch(`/static/locales/${encodeURIComponent(file)}.json`);
+  const response = await request(`/static/locales/${encodeURIComponent(file)}.json`);
   if (!response.ok) throw new Error(`Unable to load locale ${name}`);
   return response.json();
 }
@@ -111,6 +113,7 @@ export function applyTranslations() {
     "#inspector-plan .section-title h3": "inspector.plan",
     "#inspector-agents .section-title h3": "inspector.agents",
     "#inspector-usage .section-title h3": "inspector.usage",
+    "#inspector-notes .section-title h3": "inspector.notes",
     "#settings-title": "settings.title",
     "#new-session-title": "dialog.newSession",
     "#new-connector-title": "dialog.newConnector",
@@ -129,7 +132,7 @@ export function applyTranslations() {
   if (welcome) welcome.innerHTML = t("chat.welcome.body").replace("\n", "<br />");
   // The rail's glyph is an svg inside the button, so a localized label has to
   // land on the tooltip span: setting the button's text would erase its icon.
-  const tabs = [["[data-inspector-panel=inspector-plan] span", "inspector.plan"], ["[data-inspector-panel=inspector-agents] span", "inspector.agents"], ["[data-inspector-panel=inspector-trace] span", "inspector.trace"], ["[data-inspector-panel=inspector-usage] span", "inspector.usage"]];
+  const tabs = [["[data-inspector-panel=inspector-plan] span", "inspector.plan"], ["[data-inspector-panel=inspector-agents] span", "inspector.agents"], ["[data-inspector-panel=inspector-trace] span", "inspector.trace"], ["[data-inspector-panel=inspector-usage] span", "inspector.usage"], ["[data-inspector-panel=inspector-notes] span", "inspector.notes"]];
   tabs.forEach(([selector, key]) => setText(selector, key));
   setTexts("[data-settings-section]", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcp", "settings.plugins", "settings.language", "settings.future"]);
   setTexts("#settings-dialog .settings-page-heading h3", ["settings.connection", "settings.agent", "settings.permissions", "settings.mcpServers", "settings.plugins", "settings.language", "settings.future"]);

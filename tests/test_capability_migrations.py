@@ -11,6 +11,7 @@ from llmfetcher.context_handlers.linear import ContextHandlerLinear
 from angelus.core import AngelusCore
 from angelus.modules.console_module.console_state import ConsoleDomainError, ConsoleState
 from angelus.modules.context_version_module.store import ContextEditOperation, ContextVersionError, ContextVersionStore
+from angelus.modules.mcp_module.records import MCPBinding, MCPCapabilities, MCPProbe
 from angelus.modules.mcp_module.store import MCPStore
 from angelus.modules.session_memory_module.store import SessionMemoryStore
 from angelus.modules.tool_module import ToolPolicy
@@ -65,27 +66,27 @@ class CapabilityMigrationTests(unittest.TestCase):
             public = store.create({"name":"local","transport":"stdio","command":"/bin/echo","args":[],"env":{"TOKEN":"secret"},"headers":{},"bearer_token":"bearer"})
             catalog = (root / "settings" / "mcp-servers.json").read_text()
             self.assertNotIn("secret", catalog); self.assertNotIn("bearer", catalog)
-            store.set_probe(public["id"], {"ok":True}, {"tools":["mcp.local.echo"]})
-            store.write_bindings("demo", [{"server_id":public["id"],"roles":["worker"],"tools":["echo"]}])
-            self.assertEqual(store.resolve("demo", root, "coordinator"), [])
-            self.assertEqual(store.resolve("demo", root, "worker")[0]["tool_allowlist"], ["echo"])
+            store.set_probe(public.id, MCPProbe(ok=True, checked_at=0.0), MCPCapabilities(tools=("mcp.local.echo",)))
+            store.write_bindings("demo", [MCPBinding(server_id=public.id, roles=("worker",), tools=("echo",))])
+            self.assertEqual(store.resolve("demo", root, "coordinator"), ())
+            self.assertEqual(store.resolve("demo", root, "worker")[0].tool_allowlist, ("echo",))
 
     def test_restored_tools_are_registered_and_enabled_by_default(self) -> None:
         with TemporaryDirectory() as directory:
             root=Path(directory); (root/"project").mkdir(); core=AngelusCore(state_root=root/"state")
             core.session_service.create("demo","Demo",root/"project")
             catalog={category.id:{tool.id for tool in category.tools} for category in core.tool_registry.catalog().categories}
-            self.assertEqual(catalog["context_version"], {"inspect_agent_context","edit_agent_context","restore_agent_context"})
+            self.assertEqual(catalog["context_version"], {"inspect_agent_context","search_agent_archive","read_agent_archive","edit_agent_context","restore_agent_context"})
             self.assertEqual(len(catalog["session_memory"]), 6)
             permissions=ToolPolicy.from_profile(core.run_profiles.global_profile()["tool_permissions"])
             names={tool.name for tool in core.tool_registry.materialize(core.sessions.get("demo"),permissions,"coordinator","coordinator")}
-            self.assertTrue({"inspect_agent_context","search_session_memory","create_session_handoff"} <= names)
+            self.assertTrue({"inspect_agent_context","search_agent_archive","read_agent_archive","search_session_memory","create_session_handoff"} <= names)
 
     def test_session_snapshot_reads_current_sqlite_context(self) -> None:
         with TemporaryDirectory() as directory:
             root=Path(directory); path=root/"sessions"/"source"/"agents"/"coordinator"/"context.json"; path.parent.mkdir(parents=True)
             linear=ContextHandlerLinear(None); linear.add_user_message("portable evidence"); self.assertTrue(linear.save(path))
-            manifest=SessionMemoryStore(root).snapshot("source")
+            manifest=SessionMemoryStore(root, lambda _session_id: None).snapshot("source")
             self.assertEqual(manifest["evidence"][0]["body"], "portable evidence")
 
 

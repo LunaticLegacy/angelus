@@ -186,6 +186,18 @@ class SessionRunControl:
                 self._agents[agent_id] = view
             return view
 
+    def forget_agent(self, agent_id: str) -> None:
+        """Drop one Agent's control view after it leaves the live graph.
+
+        Args:
+            agent_id: Runtime graph Agent identity to forget.
+
+        Returns:
+            None. A missing view is ignored.
+        """
+        with self._lock:
+            self._agents.pop(agent_id, None)
+
     def should_stop(self, agent_id: str = "all") -> bool:
         """Return the stop state used by AgentSwarm scheduling.
 

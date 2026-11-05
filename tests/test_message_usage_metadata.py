@@ -8,7 +8,12 @@ import unittest
 
 from angelus.core import AngelusCore
 from llmfetcher.context_handlers.linear import ContextHandlerLinear, read_persisted_context_page
-from llmfetcher.llm_types import LLMContext, LLMOutput, TokenUsage
+from llmfetcher.llm_types import (
+    AssistantContextItem,
+    AssistantTurnInput,
+    ContextItemId,
+    TokenUsage,
+)
 
 
 class _NoopCompactor:
@@ -29,13 +34,12 @@ class _UsageSwarm:
         }
 
 
-def _assistant() -> LLMOutput:
-    """Return one assistant response with provider-normalised token data."""
-    return LLMOutput(
+def _assistant() -> AssistantTurnInput:
+    """Return one assistant turn with provider-normalised token data."""
+    return AssistantTurnInput(
         content="durable assistant reply",
-        provider="test",
-        backend_name="test",
-        model="test-model",
+        reasoning="",
+        tool_calls=(),
         usage=TokenUsage(
             input_tokens=120,
             cached_tokens=75,
@@ -43,6 +47,9 @@ def _assistant() -> LLMOutput:
             reasoning_tokens=9,
             total_tokens=150,
         ),
+        model_duration_ms=400,
+        round_duration_ms=725,
+        created_at=1_725_000_000.25,
     )
 
 
@@ -54,29 +61,26 @@ class MessageUsageMetadataTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "context.json"
             writer = ContextHandlerLinear(_NoopCompactor())
-            writer.add_assistant_message(
-                _assistant(),
-                usage={"input": 120, "cached": 75, "output": 30, "reasoning": 9, "total": 150},
-                model_duration_ms=400,
-                round_duration_ms=725,
-                created_at=1_725_000_000.25,
-            )
+            writer.add_assistant_message(_assistant())
             self.assertTrue(writer.save(path))
 
             # Check the actual SQLite-backed reader, not only in-memory state.
             page, cursor, total = read_persisted_context_page(path)
             self.assertEqual((None, 1), (cursor, total))
             entry = page[0]
-            self.assertEqual(
-                {"input": 120, "cached": 75, "output": 30, "reasoning": 9, "total": 150},
-                entry.usage,
-            )
+            self.assertIsInstance(entry, AssistantContextItem)
+            assert isinstance(entry, AssistantContextItem)
+            self.assertEqual(120, entry.usage.input_tokens)
+            self.assertEqual(75, entry.usage.cached_tokens)
+            self.assertEqual(30, entry.usage.output_tokens)
+            self.assertEqual(9, entry.usage.reasoning_tokens)
+            self.assertEqual(150, entry.usage.total_tokens)
             self.assertEqual(400, entry.model_duration_ms)
             self.assertEqual(725, entry.round_duration_ms)
             self.assertEqual(1_725_000_000.25, entry.created_at)
 
-    def test_legacy_context_without_usage_fields_remains_readable(self) -> None:
-        """Old JSON checkpoints get safe empty metadata defaults."""
+    def test_legacy_context_pointer_is_rejected(self) -> None:
+        """A pre-2.0 JSON checkpoint is unsupported, never half-restored."""
         with TemporaryDirectory() as directory:
             path = Path(directory) / "legacy.json"
             path.write_text(json.dumps({
@@ -84,12 +88,8 @@ class MessageUsageMetadataTests(unittest.TestCase):
                 "messages": [{"role": "assistant", "timeline": 1, "content": "old"}],
             }), encoding="utf-8")
             handler = ContextHandlerLinear(_NoopCompactor())
-            self.assertTrue(handler.load(path))
-            entry = handler.messages[0]
-            self.assertEqual({}, entry.usage)
-            self.assertIsNone(entry.model_duration_ms)
-            self.assertIsNone(entry.round_duration_ms)
-            self.assertIsNone(entry.created_at)
+            self.assertFalse(handler.load(path))
+            self.assertEqual([], handler.messages)
 
     def test_graph_handler_forwards_usage_metadata_to_its_linear_store(self) -> None:
         """The default graph wrapper must not discard message observability."""
@@ -99,15 +99,11 @@ class MessageUsageMetadataTests(unittest.TestCase):
             compacting_fetcher=_NoopCompactor(),
             graph_update_every=100,
         )
-        handler.add_assistant_message(
-            _assistant(),
-            usage={"input": 120, "cached": 75, "output": 30, "reasoning": 9, "total": 150},
-            model_duration_ms=400,
-            round_duration_ms=725,
-            created_at=1_725_000_000.25,
-        )
+        handler.add_assistant_message(_assistant())
         entry = handler.linear.messages[0]
-        self.assertEqual(75, entry.usage["cached"])
+        self.assertIsInstance(entry, AssistantContextItem)
+        assert isinstance(entry, AssistantContextItem)
+        self.assertEqual(75, entry.usage.cached_tokens)
         self.assertEqual(400, entry.model_duration_ms)
         self.assertEqual(725, entry.round_duration_ms)
         self.assertEqual(1_725_000_000.25, entry.created_at)
@@ -121,10 +117,18 @@ class MessageUsageMetadataTests(unittest.TestCase):
             core = AngelusCore(state_root=root / "state")
             workspace = core.session_service.create("demo", "Demo", project)
             handler = ContextHandlerLinear(_NoopCompactor())
-            handler.messages.append(LLMContext(
-                role="assistant", timeline=1, content="reply",
-                usage={"input": 120, "cached": 75, "output": 30, "reasoning": 9, "total": 150},
-                model_duration_ms=400, round_duration_ms=725, created_at=1_725_000_000.25,
+            handler.messages.append(AssistantContextItem(
+                item_id=ContextItemId.new(),
+                timeline=1,
+                content="reply",
+                reasoning="",
+                tool_calls=(),
+                usage=TokenUsage(
+                    input_tokens=120, cached_tokens=75, output_tokens=30,
+                    reasoning_tokens=9, total_tokens=150,
+                ),
+                model_duration_ms=400, round_duration_ms=725,
+                created_at=1_725_000_000.25,
             ))
             handler._round = 1
             self.assertTrue(handler.save(workspace.state_path / "agents" / "coordinator" / "context.json"))

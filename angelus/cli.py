@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import signal
 from typing import NoReturn
@@ -13,7 +14,12 @@ from .core import AngelusCore
 def _parser() -> argparse.ArgumentParser:
     """Build the CLI without importing FastAPI or Uvicorn for local commands."""
     parser = argparse.ArgumentParser(prog="angelus", description="Angelus local agent control plane")
-    parser.add_argument("--state-dir", type=Path, default=Path.cwd() / ".angelus-state")
+    configured_state_dir = os.environ.get("ANGELUS_STATE_DIR", "").strip()
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=Path(configured_state_dir) if configured_state_dir else Path.cwd() / ".angelus-state",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     session = commands.add_parser("session", help="Create and inspect durable session workspaces")

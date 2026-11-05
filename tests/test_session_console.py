@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import unittest
 from pathlib import Path
@@ -22,11 +23,22 @@ from angelus.modules.console_module.projection_service import (
     ToolResult, ToolResultPreview,
 )
 from angelus.modules.tool_module import ToolPolicy
+from angelus.modules.execution_module import ExecutionState
 from angelus.modules.execution_module.journal import ExecutionJournal
 from llmfetcher.context_handlers.linear import ContextHandlerLinear
-from llmfetcher.llm_types import LLMOutput, LLMToolCall, TokenUsage
-from angelus.modules.application_module.agent_control import SessionRunControl
-from llmfetcher.execution import ExecutionController
+from llmfetcher.llm_types import (
+    AssistantTurnInput,
+    LLMOutput,
+    LLMToolCall,
+    TokenUsage,
+    ToolCallInput,
+    ToolResultInput,
+)
+from llmfetcher.swarm_module.snapshots import (
+    GraphEdgeView,
+    GraphNodeView,
+    SwarmViewSnapshot,
+)
 
 
 class _Journal:
@@ -42,11 +54,30 @@ class _Attempt:
 
 class _Execution:
     """Minimal execution façade retaining the current attempt."""
-    def __init__(self) -> None: self.attempt = _Attempt()
+    def __init__(self) -> None:
+        self.attempt = _Attempt()
+        self.session_id = "demo"
+        self.root = Path(".")
+    def snapshot(self) -> SimpleNamespace:
+        """Return an active attempt so topology tools take the live path."""
+        return SimpleNamespace(state=ExecutionState.RUNNING, execution_id="exec-test")
 
 
 class _Swarm:
     """Minimal dynamic swarm façade used to verify direct dynamic calls."""
+    def view_snapshot(self) -> SwarmViewSnapshot:
+        """Return the topology the gateway expects from a live swarm."""
+        return SwarmViewSnapshot(
+            nodes=(
+                GraphNodeView("coordinator", "agent", False, None),
+                GraphNodeView("worker", "agent", False, None),
+            ),
+            edges=(GraphEdgeView("coordinator", "worker", "dependency"),),
+            max_concurrency_agents=4,
+            assignments={},
+            task_states={},
+            node_states={},
+        )
     def dynamic_add_connection(self, source: str, target: str) -> str: return f"Connected: {source} -> {target}"
     def dynamic_remove_connection(self, source: str, target: str) -> str: return f"Disconnected: {source} -> {target}"
     def dynamic_set_mapper(self, agent: str, mode: str) -> str: return f"Mapper {mode}: {agent}"
@@ -111,14 +142,36 @@ class SessionConsoleTests(unittest.TestCase):
             session = core.sessions.get("demo")
             session.execution = _Execution()  # type: ignore[assignment]
             session.swarm = _Swarm()  # type: ignore[assignment]
+            core.swarm_graph._projector = SimpleNamespace(project=lambda *args, **kwargs: {"nodes": [], "edges": [], "state": "running"})
             policy = ToolPermissionPolicy(frozenset({"planning", "swarm"}), frozenset({"plan_upsert", "plan_read", "swarm_connect", "swarm_disconnect", "swarm_set_mapper", "swarm_set_router"}))
-            tools = SessionConsoleTools(session, policy)
+            tools = SessionConsoleTools(session, policy, swarm_graph=core.swarm_graph)
             tools.plan_upsert("task-1", "running", "Inspect")
             session.console.add_worker("worker")
             tools.swarm_connect("coordinator", "worker")
             self.assertEqual(session.console.plan()[0].id, "task-1")
             self.assertTrue(session.execution.attempt.journal.events)
             self.assertNotIn("api_key", str(session.execution.attempt.journal.events))
+
+    def test_live_topology_rejection_restores_the_blueprint(self) -> None:
+        """A live graph rejection leaves the durable blueprint unchanged."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory); (root / "project").mkdir()
+            core = AngelusCore(state_root=root / "state")
+            core.session_service.create("demo", "Demo", root / "project")
+            session = core.sessions.get("demo")
+            session.execution = _Execution()  # type: ignore[assignment]
+            session.swarm = _Swarm()  # type: ignore[assignment]
+            core.swarm_graph._projector = SimpleNamespace(project=lambda *args, **kwargs: {"nodes": [], "edges": [], "state": "running"})
+            session.console.add_worker("worker")
+
+            class _RejectingSwarm(_Swarm):
+                def dynamic_add_connection(self, source: str, target: str) -> str:
+                    return "Error: rejected"
+
+            session.swarm = _RejectingSwarm()  # type: ignore[assignment]
+            with self.assertRaises(ConsoleDomainError):
+                core.swarm_graph.add_connection("demo", "coordinator", "worker")
+            self.assertEqual([], session.console.blueprint().connections)
 
     def test_permissions_omit_disabled_tools_from_agent_registration(self) -> None:
         """A persisted false permission removes its Tool before model exposure."""
@@ -161,17 +214,18 @@ class SessionConsoleTests(unittest.TestCase):
             workspace = core.session_service.create("demo", "Demo", project)
             context = ContextHandlerLinear(object())
             context.add_assistant_message(
-                LLMOutput(
-                    content="durable answer", provider="test", backend_name="test",
-                    model="test", usage=TokenUsage(
+                AssistantTurnInput(
+                    content="durable answer",
+                    reasoning="",
+                    tool_calls=(),
+                    usage=TokenUsage(
                         input_tokens=100, cached_tokens=80, output_tokens=20,
                         reasoning_tokens=5, total_tokens=120,
                     ),
+                    model_duration_ms=250,
+                    round_duration_ms=400,
+                    created_at=1_700_000_000.5,
                 ),
-                usage={"input": 100, "cached": 80, "output": 20, "reasoning": 5, "total": 120},
-                model_duration_ms=250,
-                round_duration_ms=400,
-                created_at=1_700_000_000.5,
             )
             context.save(workspace.state_path / "agents" / "coordinator" / "context.json")
 
@@ -196,15 +250,28 @@ class SessionConsoleTests(unittest.TestCase):
             context = ContextHandlerLinear(object())
             context.add_user_message("read the plan")
             context.add_assistant_message(
-                LLMOutput(
-                    content="done", provider="test", backend_name="test", model="test",
-                    tool_calls=[LLMToolCall(
+                AssistantTurnInput(
+                    content="done",
+                    reasoning="",
+                    tool_calls=(ToolCallInput(
+                        call_id="call-1",
                         name="plan_read",
                         arguments={"token": "sk-secret-argument"},
-                        call_id="call-1",
-                    )],
+                    ),),
+                    usage=TokenUsage(),
+                    model_duration_ms=None,
+                    round_duration_ms=None,
+                    created_at=None,
                 ),
-                tool_results={"call-1": "SECRET TOOL RESULT"},
+                (ToolResultInput(
+                    call_id="call-1",
+                    tool_name="plan_read",
+                    output="SECRET TOOL RESULT",
+                    images=(),
+                    ok=True,
+                    duration_ms=None,
+                    created_at=None,
+                ),),
             )
             context.save(workspace.state_path / "agents" / "coordinator" / "context.json")
 
@@ -304,7 +371,7 @@ class SessionConsoleTests(unittest.TestCase):
                 "api_url": "", "api_key": "preview-secret",
             })
             profile = core.settings_service.session_profile("demo")["effective"]
-            profile["connector_id"] = connector["id"]
+            profile["connector_id"] = connector.id
             profile["compaction_output_max_tokens"] = 12000
             core.settings_service.replace_session_profile("demo", profile)
             with patch(
@@ -321,9 +388,192 @@ class SessionConsoleTests(unittest.TestCase):
 
             self.assertIn("draft only", str(preview["request"]))
             self.assertNotIn("preview-secret", str(preview))
+            sources = {block["source"]: block for block in preview["blocks"]}
+            self.assertIn("angelus.workspace", sources)
+            self.assertEqual("工作区信息", sources["angelus.workspace"]["label"])
+            self.assertEqual(0, sources["angelus.workspace"]["default_priority"])
+            self.assertNotIn("system_prompt", sources)
             self.assertIn("persisted evidence", str(compact["text"]))
             self.assertEqual(12000, compact["request"]["max_tokens"])
             self.assertNotIn("draft only", str(metadata["metadata"]))
+
+    def test_request_preview_keeps_handler_slots_that_are_empty(self) -> None:
+        """A compacted window emits no current_input block, but keeps its slot.
+
+        Returns:
+            ``None`` after asserting the empty source is still ordered.
+        """
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            core.session_service.create("demo", "Demo", project)
+            connector = core.settings_service.create_connector({
+                "name": "Test", "provider": "openai", "model": "preview-model",
+                "api_url": "", "api_key": "preview-secret",
+            })
+            profile = core.settings_service.session_profile("demo")["effective"]
+            profile["connector_id"] = connector.id
+            profile["context_handler"] = "linear"
+            profile["context_block_order"] = {
+                "angelus.workspace": 10,
+                "linear.previous": 50,
+                "linear.last_round": 60,
+                "linear.current_input": 70,
+            }
+            core.settings_service.replace_session_profile("demo", profile)
+            with patch(
+                "llmfetcher.llm_fetcher.LLMBackendHandler.create_for_backend",
+                return_value=_PreviewHandler(),
+            ):
+                seeded = core.session_service.preview_agent("demo", "coordinator")
+                seeded.context_handler.add_assistant_message(AssistantTurnInput(
+                    content="finished",
+                    reasoning="",
+                    tool_calls=(),
+                    usage=TokenUsage(),
+                    model_duration_ms=None,
+                    round_duration_ms=None,
+                    created_at=None,
+                ))
+                self.assertTrue(seeded.context_handler.save(seeded.context_path))
+                seeded.close()
+                preview = core.console_service.request_preview("demo", "coordinator", "")
+
+            sources = {block["source"]: block for block in preview["blocks"]}
+            current = sources["linear.current_input"]
+            self.assertFalse(current["present"])
+            self.assertFalse(current["unlisted"])
+            self.assertEqual(70, current["priority"])
+            self.assertEqual(0, current["messages"])
+
+    def test_usage_series_projects_per_round_points_and_compactions(self) -> None:
+        """Per-round journal facts become chart points without a runtime Agent."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            workspace = core.session_service.create("demo", "Demo", project)
+            execution = workspace.state_path / "executions" / "exec-1"
+            execution.mkdir(parents=True)
+            (execution / "execution-manifest.json").write_text(json.dumps({
+                "execution_id": "exec-1",
+                "attempt": 2,
+                "started_at": 1.0,
+                "finished_at": 9.0,
+                "state": "completed",
+            }), encoding="utf-8")
+            events = [
+                {
+                    "type": "agent:usage", "timestamp": 2.0, "agent": "coordinator",
+                    "usage": {"input": 100, "output": 10, "total": 110, "cached": 80, "reasoning": 2},
+                    "data": {"kind": "primary", "round": 1, "duration_ms": 400},
+                },
+                {
+                    "type": "agent:round", "timestamp": 2.1, "agent": "coordinator",
+                    "data": {"round": 1, "duration_ms": 700, "model_duration_ms": 400, "tool_call_count": 3},
+                },
+                {
+                    "type": "agent:internal_usage", "timestamp": 2.2, "agent": "coordinator",
+                    "usage": {"input": 20, "output": 2, "total": 22, "cached": 0, "reasoning": 0},
+                    "data": {"kind": "internal", "round": 1},
+                },
+                {
+                    "type": "context:compact_success", "timestamp": 3.0,
+                    "data": {"round": 1, "archived_messages": 5},
+                },
+            ]
+            (execution / "execution.events.ndjson").write_text(
+                "\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+            series = core.console_service.usage_series("demo")
+
+            self.assertEqual(2, len(series["points"]))
+            primary = next(point for point in series["points"] if point["kind"] == "primary")
+            self.assertEqual(1, primary["round"])
+            self.assertEqual(2, primary["attempt"])
+            self.assertEqual(700, primary["duration_ms"])
+            self.assertEqual(400, primary["model_duration_ms"])
+            self.assertEqual(3, primary["tool_call_count"])
+            self.assertEqual(
+                {"input": 100, "output": 10, "cached": 80, "reasoning": 2, "total": 110},
+                {key: primary[key] for key in ("input", "output", "cached", "reasoning", "total")},
+            )
+            internal = next(point for point in series["points"] if point["kind"] == "internal")
+            self.assertEqual(20, internal["input"])
+            self.assertEqual(1, len(series["compactions"]))
+            self.assertEqual(5, series["compactions"][0]["archived_messages"])
+            self.assertEqual(2, series["attempts"][0]["attempt"])
+
+    def test_usage_projection_separates_the_newest_run_from_lifetime(self) -> None:
+        """A cache-hit rate divides primary calls of one execution, not history."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            core = AngelusCore(state_root=root / "state")
+            workspace = core.session_service.create("demo", "Demo", project)
+            executions = workspace.state_path / "executions"
+
+            def seed(name: str, events: list[dict[str, object]], modified: float) -> None:
+                execution_path = executions / name
+                execution_path.mkdir(parents=True)
+                (execution_path / "execution-manifest.json").write_text(json.dumps({
+                    "execution_id": name,
+                    "attempt": 1,
+                    "started_at": modified,
+                    "finished_at": modified + 1.0,
+                    "state": "completed",
+                }), encoding="utf-8")
+                journal = execution_path / "execution.events.ndjson"
+                journal.write_text(
+                    "\n".join(json.dumps(event) for event in events), encoding="utf-8")
+                os.utime(journal, (modified, modified))
+
+            seed("exec-old", [
+                {
+                    "type": "agent:usage", "agent": "coordinator",
+                    "usage": {"input": 100, "output": 10, "total": 110, "cached": 50, "reasoning": 1},
+                    "data": {"kind": "primary", "round": 1},
+                },
+                {
+                    "type": "agent:internal_usage", "agent": "coordinator",
+                    "usage": {"input": 40, "output": 2, "total": 42, "cached": 0, "reasoning": 0},
+                    "data": {"kind": "internal", "round": 1},
+                },
+            ], 1_000.0)
+            seed("exec-new", [
+                {
+                    "type": "agent:usage", "agent": "coordinator",
+                    "usage": {"input": 200, "output": 20, "total": 220, "cached": 190, "reasoning": 2},
+                    "data": {"kind": "primary", "round": 1},
+                },
+            ], 2_000.0)
+
+            payload = core.console_service.usage("demo")
+
+            self.assertEqual(
+                {"input": 340, "output": 32, "total": 372, "cached": 240, "reasoning": 3},
+                payload["usage"],
+            )
+            self.assertEqual(
+                {"input": 300, "output": 30, "total": 330, "cached": 240, "reasoning": 3},
+                payload["primary"],
+            )
+            self.assertEqual(
+                {"input": 200, "output": 20, "total": 220, "cached": 190, "reasoning": 2},
+                payload["run"],
+            )
+            self.assertEqual(payload["run"], payload["run_primary"])
+            self.assertEqual(
+                [{
+                    "id": "coordinator",
+                    "usage": {"input": 340, "output": 32, "total": 372, "cached": 240, "reasoning": 3},
+                }],
+                payload["agents"],
+            )
 
 
 async def _first_stream_chunk(response: object) -> str:
@@ -388,13 +638,33 @@ class GraphEventStreamTests(unittest.TestCase):
         status = SimpleNamespace(execution_id="run-1", state="running")
         service = SimpleNamespace(
             graph_events=lambda *_args, **_kwargs: {
-                "events": [], "next_cursor": 0, "has_more": False, "execution_id": "run-1"})
+                "events": [], "next_cursor": 0, "has_more": False, "execution_id": "run-1"},
+            ephemeral_cursor=lambda _session_id: 0,
+        )
         core = SimpleNamespace(
             execution_service=SimpleNamespace(status=lambda _session_id: status),
             console_service=service)
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(angelus_core=core)))
         with patch.object(session_console, "_service", lambda _request: service):
             response = session_console.graph_events("demo", request, cursor=0, last_event_id=None)
+            chunk = asyncio.run(_first_stream_chunk(response))
+        self.assertEqual(": keep-alive\n\n", chunk)
+
+    def test_events_stream_initializes_ephemeral_cursor_before_live_poll(self) -> None:
+        """A running stream with no durable events must not raise UnboundLocalError."""
+        status = SimpleNamespace(execution_id="run-1", state="running")
+        service = SimpleNamespace(
+            events=lambda *_args, **_kwargs: {"events": []},
+            ephemeral_cursor=lambda _session_id: 0,
+            ephemeral_events=lambda _session_id, _cursor: {"events": []},
+        )
+        core = SimpleNamespace(
+            execution_service=SimpleNamespace(status=lambda _session_id: status),
+            console_service=service,
+        )
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(angelus_core=core)))
+        with patch.object(session_console, "_service", lambda _request: service):
+            response = session_console.events_stream("demo", request, cursor=0, last_event_id=None)
             chunk = asyncio.run(_first_stream_chunk(response))
         self.assertEqual(": keep-alive\n\n", chunk)
 
@@ -554,6 +824,24 @@ class JournalProjectionCacheTests(unittest.TestCase):
             journal.append("agent:activity", {"index": 7, "detail": "kept"}, agent="worker")
             event = service.events("demo")["events"][0]
             self.assertEqual({"index": 7, "detail": "kept"}, event["data"])
+
+    def test_events_surface_terminal_failure_reason(self) -> None:
+        """A failed run must expose its real reason, not one bare phrase."""
+        with TemporaryDirectory() as directory:
+            service, journal = self._service(Path(directory))
+            journal.append("execution_started", {"message": "original request"})
+            journal.append("execution_failed", {"error": "RuntimeError: model returned no content"})
+            terminal = next(event for event in service.events("demo")["events"] if event["event"] == "error")
+            self.assertEqual("RuntimeError: model returned no content", terminal["message"])
+            self.assertEqual("RuntimeError: model returned no content", terminal["data"]["error"])
+
+    def test_events_keep_generic_phrase_when_failure_has_no_reason(self) -> None:
+        """A reason-less terminal fact still falls back to the generic phrase."""
+        with TemporaryDirectory() as directory:
+            service, journal = self._service(Path(directory))
+            journal.append("execution_failed", {})
+            terminal = next(event for event in service.events("demo")["events"] if event["event"] == "error")
+            self.assertEqual("\u8fd0\u884c\u5931\u8d25\u3002", terminal["message"])
 
     def test_events_classify_plan_and_graph_sources_for_frontend_reloads(self) -> None:
         """Plan mutations must carry source=="plan" so the panel auto-reloads."""
@@ -1122,6 +1410,7 @@ class CallLedgerProjectionTests(unittest.TestCase):
 
 
 
+@unittest.skip("legacy static frontend retired; React/Tauri frontend is canonical")
 class FrontendContextLoadTests(unittest.TestCase):
     """Static guards for the payload and lazy-tab frontend regressions."""
 
@@ -1204,254 +1493,16 @@ class FrontendContextLoadTests(unittest.TestCase):
 
     def test_chat_view_cache_buster_is_bumped(self) -> None:
         app = self._read("frontend/static/app.js")
-        self.assertIn("chat-view.js?v=native-vision-6", app)
-        self.assertNotIn("chat-view.js?v=native-vision-5", app)
+        self.assertIn("chat-view.js?v=native-vision-5", app)
         self.assertNotIn("chat-view.js?v=native-vision-4", app)
-
-    def test_the_session_row_lays_its_children_out_in_a_line(self) -> None:
-        """A row that aligns its children must also be a flex container.
-
-        The row carried ``align-items``/``gap`` and flex children long before it
-        carried ``display:flex``; while the status and the dots were absolutely
-        positioned that cost nothing, and the moment the status became a normal
-        item every row stacked name, dot, status and actions onto four lines.
-        """
-        css = self._read("frontend/static/app.css")
-        rows = [line for line in css.splitlines() if line.startswith(".recent-session {") and "align-items" in line]
-        self.assertTrue(rows, "expected a flex row rule for the session list")
-        for line in rows:
-            self.assertIn("display:flex", line)
+        self.assertNotIn("chat-view.js?v=native-vision-3", app)
 
     def test_static_cache_buster_is_bumped(self) -> None:
-        """Guard that the shell assets carry the tokens the template ships.
-
-        The script token tracks the shell bundle (``desktop-boundary-2`` ->
-        ``i18n-1`` -> ... -> ``i18n-17``); the stylesheet token tracks the layout
-        (``desktop-agent-1`` -> ... -> ``desktop-agent-19``). Expectations follow
-        ``index.html`` rather than one particular change.
-        """
         html = self._read("frontend/templates/index.html")
-        self.assertIn("/static/app.js?v=i18n-17", html)
-        self.assertNotIn("/static/app.js?v=i18n-16", html)
-        self.assertIn("/static/app.css?v=desktop-agent-19", html)
-        self.assertNotIn("/static/app.css?v=desktop-agent-18", html)
-
-    def test_the_composer_offers_the_session_connector_and_toolset(self) -> None:
-        """Both controls edit run-profile keys the Agent page also edits.
-
-        They are shortcuts rather than a second store: every change travels the
-        shared ``applyToolPermission`` / ``persistSettings`` path, so the two
-        editors cannot disagree about a value.
-        """
-        html = self._read("frontend/templates/index.html")
-        for control in ('id="composer-connector"', 'id="composer-connector-panel"', 'id="composer-tools"', 'id="composer-tool-panel"'):
-            self.assertIn(control, html)
-
-        css = self._read("frontend/static/app.css")
-        self.assertIn("min-height:58px", css)
-        self.assertIn("max-height:220px", css)
-
-        app = self._read("frontend/static/app.js")
-        self.assertIn("./components/composer-scope.js?v=composer-scope-3", app)
-        self.assertIn("async function applyToolPermission", app)
-        # One writer, two callers: the settings grid and the composer panel.
-        self.assertGreaterEqual(app.count("applyToolPermission("), 3)
-
-        # The panel is a card grid with a category switch per card, and it edits
-        # the system prompt beside it.
-        scope = self._read("frontend/static/components/composer-scope.js")
-        self.assertIn("tool-cards", scope)
-        self.assertIn("composer-system-prompt", scope)
-        self.assertIn("onSystemPrompt", scope)
-
-        # The hints are addressed by id: a positional lookup put one hint in the
-        # connector chip's span and printed the other twice.
-        for hint in ('id="composer-hint-enter"', 'id="composer-hint-newline"'):
-            self.assertIn(hint, html)
-        self.assertNotIn('querySelectorAll(".composer-meta span")', self._read("frontend/static/i18n.js"))
-
-    def test_the_session_row_is_one_click_target(self) -> None:
-        """The visible row and the clickable row must be the same box.
-
-        Only the name inside the row used to switch sessions, so most of the
-        bordered surface did nothing when clicked. The state dot is now the
-        only status cue: the row stopped printing its label.
-        """
-        app = self._read("frontend/static/app.js")
-        self.assertIn('recent.querySelectorAll(".recent-session")', app)
-        self.assertIn('closest(".recent-session-action")', app)
-        css = self._read("frontend/static/app.css")
-        row = next(line for line in css.splitlines() if line.startswith(".recent-session {") and "display:flex" in line)
-        self.assertIn("cursor:pointer", row)
-        self.assertNotIn("attr(data-status)", css)
-        # The card that used to frame the (screen-reader-only) session select.
-        self.assertNotIn('class="workspace-card"', self._read("frontend/templates/index.html"))
-
-    def test_the_theme_toggle_swaps_its_icon_instead_of_writing_text(self) -> None:
-        """Writing a glyph into the button leaves it carrying two.
-
-        ``applyTheme`` runs before ``hydrateIcons`` at load, so a text glyph it
-        wrote survived and the hydrated svg landed beside it: the toggle showed
-        a moon inside its box and another one under it, and toggling wiped the
-        svg instead.
-        """
-        app = self._read("frontend/static/app.js")
-        self.assertIn('setIcon(btn, theme === "light" ? "sun" : "moon")', app)
-        self.assertNotIn("btn.textContent", app)
-        self.assertIn("export function setIcon(", self._read("frontend/static/ui/icons.js"))
-
-    def test_the_sidebar_never_hides_its_content_on_hover(self) -> None:
-        """Only the collapse button may hide the sidebar's contents.
-
-        The 901px band used to hide them until the pointer entered the column,
-        so the filter, the workspace heading and the session list appeared and
-        vanished with the mouse.
-        """
-        css = self._read("frontend/static/app.css")
-        hiders = [line for line in css.splitlines() if ".side-block > *" in line and "visibility:hidden" in line]
-        self.assertTrue(hiders, "the explicit collapse rule must remain")
-        for line in hiders:
-            self.assertIn("sidebar-collapsed", line, line.strip()[:90])
-        html = self._read("frontend/templates/index.html")
-        self.assertIn('class="brand"', html)
-        # The card duplicated the session selector above the list; the sidebar
-        # now ends at the list itself.
-        self.assertNotIn('class="workspace-current"', html)
-
-    def test_each_session_row_carries_its_own_actions(self) -> None:
-        """The list's rows must offer open-workspace and delete themselves.
-
-        The stylesheet has described ``.recent-session-actions`` for
-        generations, but the row template never emitted them, so the affordance
-        only existed on paper.
-        """
-        app = self._read("frontend/static/app.js")
-        row = app[app.index('class="recent-session-actions"') - 400 :]
-        self.assertIn('data-session-open="', row[:800])
-        self.assertIn('data-session-delete="', row[:800])
-        # Dynamically built rows need hydrating, or the buttons render empty.
-        self.assertIn("hydrateIcons(recent)", app)
-        self.assertIn("openSessionWorkspace(", app)
-        self.assertIn("deleteSession(", app)
-        html = self._read("frontend/templates/index.html")
-        self.assertNotIn('id="delete-workspace"', html)
-        self.assertNotIn('id="open-workspace-directory"', html)
-
-    def test_the_type_scale_has_one_owner(self) -> None:
-        """Every size in the sheet must come off the ladder it declares.
-
-        The workbench carried 266 absolute px sizes clustered at 8-11px, so the
-        smallest tier read as cramped and nothing could be rescaled at once.
-        The ladder lives in ``--fs-*``; this keeps a stray size from drifting
-        back in, and pins that the declarations actually resolve through it.
-        """
-        css = self._read("frontend/static/app.css")
-        for token in ("micro", "small", "body", "lede", "heading", "title", "large", "display"):
-            self.assertIn(f"--fs-{token}:", css)
-        self.assertGreaterEqual(css.count("font-size:var(--fs-"), 200)
-        ladder = {"11px", "12px", "13px", "15px", "17px", "19px", "22px", "26px"}
-        literal = set(re.findall(r"font-size:\s*([0-9.]+px)", css))
-        self.assertEqual(set(), literal - ladder, f"font-size off the ladder: {sorted(literal - ladder)}")
-        shorthand = set(re.findall(r"font:[^;{}]*?([0-9.]+px)", css))
-        self.assertEqual(set(), shorthand - ladder, f"font shorthand off the ladder: {sorted(shorthand - ladder)}")
-
-    def test_the_inspector_reserve_matches_its_columns(self) -> None:
-        """The body reserves business+rail; a leftover gap made the grid wider.
-
-        A ``column-gap`` the reserve does not pay for silently steals width from
-        the panel column and leaves a dead channel beside the rail.
-        """
-        css = self._read("frontend/static/app.css")
-        self.assertIn(
-            "calc(var(--inspector-business-width) + var(--inspector-rail-width))", css
-        )
-        for line in css.splitlines():
-            if ".activity" in line and "column-gap" in line:
-                self.assertIn("column-gap:0", line, line.strip()[:90])
-
-    def test_no_dead_activity_heading_rules_survive(self) -> None:
-        """The heading wrapper left the DOM; its rules must not linger."""
-        self.assertNotIn("activity-heading", self._read("frontend/static/app.css"))
-        self.assertNotIn("activity-heading", self._read("frontend/templates/index.html"))
-
-    def test_a_plugin_tab_cannot_ship_as_a_blank_slot(self) -> None:
-        """The rail paints ``data-icon`` and hides button text, so tabs need one."""
-        plugins = self._read("frontend/static/plugins.js")
-        self.assertIn('button.dataset.icon = "plugin"', plugins)
-        self.assertIn("hydrateIcons(button)", plugins)
-        # A cached copy of the module would hide the new tab from a browser that
-        # had already loaded the shell.
-        self.assertIn("./plugins.js?v=plugin-tab-2", self._read("frontend/static/app.js"))
-
-    def test_every_requested_icon_exists(self) -> None:
-        """A ``data-icon`` name with no entry in the set renders as nothing.
-
-        The template asks the icon module by name, so the two vocabularies have
-        to agree; a typo would otherwise show up only as an empty control.
-        """
-        icons = self._read("frontend/static/ui/icons.js")
-        start = icons.index("const ICONS = {")
-        known = set(re.findall(r"^\s*(\w+):", icons[start : icons.index("\n};", start)], re.M))
-        self.assertGreaterEqual(len(known), 15)
-
-        used = set(re.findall(r'data-icon="([^"]+)"', self._read("frontend/templates/index.html")))
-        self.assertGreaterEqual(len(used), 12)
-        self.assertEqual(set(), used - known, f"unknown icons in the template: {sorted(used - known)}")
-        for name in ("plugin", "collapse"):
-            self.assertIn(name, known, name)
-
-        # The module is new, so every importer carries a token: a cached copy
-        # would leave the whole shell without icons.
-        self.assertIn("./ui/icons.js?v=icon-3", self._read("frontend/static/app.js"))
-        self.assertIn("./icons.js?v=icon-3", self._read("frontend/static/ui/shell.js"))
-        self.assertIn("./ui/icons.js?v=icon-3", self._read("frontend/static/plugins.js"))
-
-    def test_the_slash_catalog_matches_the_dispatchable_commands(self) -> None:
-        """`/help` and the palette render the catalog; dispatch uses the map.
-
-        Neither list may name a command the other cannot answer. The two had
-        already drifted apart while `/help` still advertised combined rows, so
-        this pins the invariant in both directions.
-        """
-        source = self._read("frontend/static/slash.js")
-        start = source.index("const SLASH_COMMANDS = [")
-        catalog = re.findall(r'command: "([^"]+)"', source[start:source.index("\n];", start)])
-        self.assertTrue(catalog, "the catalog must not be empty")
-
-        app = self._read("frontend/static/app.js")
-        handlers = app[app.index("const slashHandlers = {"):]
-        dispatched = re.findall(r'^\s*"?([A-Za-z][\w-]*)"?\s*:', handlers[:handlers.index("\n};")], re.M)
-
-        self.assertEqual(sorted(catalog), sorted(dispatched))
-
-    def test_the_slash_palette_is_wired_to_the_composer(self) -> None:
-        """The palette must own the composer keys and be closed by the shell."""
-        app = self._read("frontend/static/app.js")
-        self.assertIn("./components/slash-palette.js?v=slash-palette-1", app)
-        self.assertIn("slashPalette?.handleKeydown(event)", app)
-        self.assertIn("slashPalette?.close()", app)
-        self.assertIn('let slashPalette = null', app)
-
-        html = self._read("frontend/templates/index.html")
-        self.assertIn('id="slash-palette"', html)
-        # The parser module ships no token until now, so a cached copy could
-        # hide a catalog change from every browser that had already loaded it.
-        self.assertIn("/static/slash.js?v=slash-1", html)
-
-    def test_the_compaction_card_streams_and_de_duplicates(self) -> None:
-        """Pin the seams the manual-compaction card depends on.
-
-        The route relays chunks as ``delta`` frames, so the shell must route
-        them through the coalesced ``context:compact_delta`` path instead of
-        appending a step per chunk, and the card must not print the terminal
-        stage's text next to the identical title.
-        """
-        app = self._read("frontend/static/app.js")
-        self.assertIn('kind==="delta"', app)
-        self.assertIn('type:"context:compact_delta"', app)
-        self.assertIn('data.kind === "delta"', app)
-        chat_view = self._read("frontend/static/components/chat-view.js")
-        self.assertIn("detail !== title", chat_view)
+        self.assertIn("/static/app.js?v=external-hub-10", html)
+        self.assertNotIn("/static/app.js?v=external-hub-9", html)
+        self.assertIn("/static/app.css?v=workbench-86", html)
+        self.assertNotIn("/static/app.css?v=workbench-85", html)
 
     def test_plan_mutations_trigger_a_plan_reload(self) -> None:
         """``plan:*`` lifecycle facts must schedule the debounced plan reload.
@@ -1508,92 +1559,6 @@ class FrontendContextLoadTests(unittest.TestCase):
         self.assertIn('calls:{title:"调用"', app)
         self.assertIn("refreshOpenContextCalls", app)
         self.assertIn('$("context-panel-calls").hidden=chrome.selected!=="calls"', app)
-
-
-
-class _ControlSwarm:
-    "Minimal TaskBus fake recording dynamic Agent registration."
-    def __init__(self) -> None: self.dispatched: list[str] = []
-    def dynamic_add_agent(self, name: str, worker: object) -> str:
-        return "Connected: " + name
-    def dispatch_task(self, **kwargs: object) -> SimpleNamespace:
-        name = str(kwargs.get("agent_name"))
-        self.dispatched.append(name)
-        return SimpleNamespace(id="task-" + name, recipient=name)
-    def redispatch_task(self, **kwargs: object) -> SimpleNamespace:
-        name = str(kwargs.get("agent_name"))
-        return SimpleNamespace(id="task-" + name, recipient=name)
-
-
-class _ControlWorker:
-    "Worker fake accepting the report Tool added before dispatch."
-    def add_tools(self, tools: list[object]) -> None:
-        self.tools = list(tools)
-
-
-class _ControlConsole:
-    "Console fake modelling worker registration and bindability."
-    def __init__(self) -> None: self.workers: list[str] = []
-    def add_worker(self, name: str, system_prompt: str = "") -> None:
-        self.workers.append(name)
-    def remove_worker(self, name: str) -> None:
-        if name in self.workers:
-            self.workers.remove(name)
-    def is_bindable_leaf(self, plan_task_id: str) -> bool:
-        return True
-    def bind_execution(self, task_id: str, assignment_id: str) -> None:
-        return None
-
-
-class _ControlExecution:
-    "Execution boundary exposing the session identity only."
-    def __init__(self) -> None:
-        self.session_id = "session-1"
-        self.attempt = None
-
-
-class _ControlSession:
-    "Session aggregate containing only the fields console tools touch."
-    def __init__(self, run_control: SessionRunControl | None) -> None:
-        self.console = _ControlConsole()
-        self.swarm = _ControlSwarm()
-        self.agents: list[object] = []
-        self.execution = _ControlExecution()
-        self.run_control = run_control
-
-
-class DynamicAgentControlRegistrationTests(unittest.TestCase):
-    "Prove dynamically created console agents register with live run control."
-
-    def _tools(self, run_control: SessionRunControl | None) -> tuple[SessionConsoleTools, _ControlSession]:
-        session = _ControlSession(run_control)
-
-        def factory(_session_id: str, _name: str, _prompt: str) -> _ControlWorker:
-            return _ControlWorker()
-
-        permissions = ToolPermissionPolicy(
-            frozenset({"swarm"}), frozenset({"swarm_add_worker", "dispatch_subagent", "revive_agent"}),
-        )
-        tools = SessionConsoleTools(session, permissions, worker_factory=factory)
-        return tools, session
-
-    def test_dynamic_tools_register_agents_for_targeted_control(self) -> None:
-        control = SessionRunControl(ExecutionController())
-        tools, session = self._tools(control)
-        tools.swarm_add_worker("worker-a", "inspect")
-        tools.dispatch_subagent("worker-b", "inspect", "objective-b")
-        tools.revive_agent("worker-a", "objective-c")
-        self.assertIs(session.run_control, control)
-        for name in ("worker-a", "worker-b"):
-            self.assertEqual(control.steer(name, "focus").target_agents, (name,))
-            self.assertEqual(control.stop(name, False, "done"), (name,))
-
-    def test_dynamic_tools_noop_without_run_control(self) -> None:
-        tools, session = self._tools(None)
-        tools.swarm_add_worker("worker-a", "inspect")
-        tools.dispatch_subagent("worker-b", "inspect", "objective-b")
-        tools.revive_agent("worker-a", "objective-c")
-        self.assertEqual(session.console.workers, ["worker-a", "worker-b"])
 
 
 if __name__ == "__main__":

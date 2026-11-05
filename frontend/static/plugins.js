@@ -2,7 +2,7 @@
  * frontend/static/plugins.js — S8 plugin frontend bridge & loader.
  *
  * Contract: docs/plugin-api.md §6 (five extension points, frontend row) and
- * the swarm execution spec S8.  Imported by main.js (the contract entry);
+ * the swarm execution spec S8.  Imported by app.js (the active contract entry);
  * it also self-initialises on module load so the bridge is live whichever
  * entry module eventually imports it.
  *
@@ -30,6 +30,7 @@
  */
 
 import { apiJson, apiPost } from "./api.js";
+import { pluginAssetAvailable } from "./runtime/plugin-api.js";
 import { hydrateIcons } from "./ui/icons.js?v=icon-3";
 
 /* ================================================================
@@ -128,12 +129,14 @@ async function _loadPluginAssets(plugin) {
   // loaded by the Settings UI; never probe them for executable plugin.js.
   if (plugin.kind === "theme_pack") return;
   for (const asset of ENTRY_SCRIPTS) {
+    if (!(await pluginAssetAvailable(plugin.name, asset))) continue;
     const ok = await _injectScript(_pluginAssetUrl(plugin.name, asset), plugin.name);
     if (!ok) {
       _warn(plugin.name, `前端入口 ${asset} 不在白名单或加载失败，已跳过`);
     }
   }
   for (const asset of ENTRY_STYLES) {
+    if (!(await pluginAssetAvailable(plugin.name, asset))) continue;
     await _injectStylesheet(_pluginAssetUrl(plugin.name, asset), plugin.name);
   }
 }
@@ -541,11 +544,4 @@ export async function initPlugins() {
   } catch (error) {
     _warn("bridge", `插件初始化失败：${error.message}`);
   }
-}
-
-/* Self-initialise on import so the bridge and loader are live regardless
- * of which entry module (main.js today, app.js after the merge) loads this
- * file.  initPlugins() is idempotent. */
-if (typeof document !== "undefined") {
-  initPlugins();
 }

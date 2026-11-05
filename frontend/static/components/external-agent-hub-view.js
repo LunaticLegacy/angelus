@@ -1,5 +1,7 @@
 /** External Agent Hub configuration and capability-gated context inspection workbench. */
 
+import { request as transportRequest } from "../runtime/backend-bridge.js";
+
 const ADAPTERS = [
   ["codex_app_server", "Codex App Server"],
   ["claude_sdk", "Claude Agent SDK"],
@@ -287,7 +289,7 @@ async function request(path, options = {}) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(options.body);
   }
-  const response = await fetch(path, init);
+  const response = await transportRequest(path, init);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`);
   return payload;

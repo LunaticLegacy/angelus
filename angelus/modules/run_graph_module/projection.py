@@ -7,6 +7,8 @@ import hashlib
 from pathlib import Path
 from typing import Any, Mapping
 
+from llmfetcher.swarm_module.snapshots import SwarmViewSnapshot
+
 from .models import RunGraph, RunState
 from .reducer import apply_journal_event, apply_live_snapshot, apply_run_graph_snapshot
 
@@ -20,7 +22,7 @@ class RunGraphProjector:
         execution_root: Path,
         *,
         execution_id: str | None = None,
-        live_snapshot: Mapping[str, Any] | None = None,
+        live_snapshot: SwarmViewSnapshot | None = None,
         live_status: Mapping[str, Any] | None = None,
     ) -> dict[str, object]:
         """Return one normalized graph, preferring a requested/latest attempt."""
@@ -278,6 +280,23 @@ def _run_graph_event(
     journal_type = str(journal.get("type", ""))
     node = graph.nodes.get(agent) if agent else None
     payload: dict[str, object] = {"journal_type": journal_type}
+    # Carry delegation facts on every event so SSE consumers can build the
+    # collaboration topology without waiting for a full graph refetch.
+    if node is not None:
+        parent_id = (
+            node.parent_id
+            or _string(data.get("parent_id"))
+            or _string(data.get("parent"))
+            or _string(data.get("reply_to"))
+        )
+        if parent_id:
+            payload["parent_id"] = parent_id
+        if node.origin:
+            payload["origin"] = node.origin
+        if node.task_id:
+            payload["task_id"] = node.task_id
+        if node.plan_task_id:
+            payload["plan_task_id"] = node.plan_task_id
     if node is not None and node.state != previous_node_state:
         kind = "node.state_changed"
         payload.update({"from": previous_node_state, "to": node.state, "reason": node.reason, "error": node.error})

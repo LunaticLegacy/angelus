@@ -6,12 +6,14 @@ from dataclasses import dataclass, field
 from typing import Callable, Literal, Protocol
 
 from llmfetcher import Tool
+from llmfetcher.context_handlers import ContextProvider
 
 from ..tool_module import ToolPolicy
 
 
 PluginKind = Literal["tool", "ui", "theme_pack"]
 PluginSettingScalar = str | int | float | bool
+PluginFieldVisibility = dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,7 @@ class PluginPanelField:
     value_format: Literal["uri", "path", "textarea", "password"] | None = None
     placeholder: str = ""
     sensitive: bool = False
+    visible_if: PluginFieldVisibility | None = None
 
 
 @dataclass(frozen=True)
@@ -326,6 +329,22 @@ class PluginToolContribution:
     definitions: tuple[PluginToolDefinition, ...]
 
 
+class PluginContextProvider(Protocol):
+    """Plugin factory for Session-scoped Composer context sources."""
+
+    def materialize_context(self, session_id: str, role: str, agent_name: str) -> list[ContextProvider]:
+        """Build context providers for one Agent instance."""
+        ...
+
+
+@dataclass(frozen=True)
+class PluginContextContribution:
+    """One plugin contribution that supplies Composer context sources."""
+
+    provider: PluginContextProvider
+    roles: frozenset[str] = frozenset({"coordinator", "worker"})
+
+
 @dataclass
 class PluginRuntime:
     """Constrained host object supplied to one executing plugin's setup hook.
@@ -343,6 +362,7 @@ class PluginRuntime:
     settings: tuple[PluginSettingValue, ...]
     state_path: str
     contributions: list[PluginToolContribution] = field(default_factory=list)
+    context_contributions: list[PluginContextContribution] = field(default_factory=list)
     ui_actions: list[PluginUiActionRegistration] = field(default_factory=list)
 
     def register_tool_provider(self, contribution: PluginToolContribution) -> None:
@@ -355,6 +375,10 @@ class PluginRuntime:
             None.
         """
         self.contributions.append(contribution)
+
+    def register_context_provider(self, contribution: PluginContextContribution) -> None:
+        """Stage one Composer context contribution for plugin activation."""
+        self.context_contributions.append(contribution)
 
     def register_ui_action(
         self,

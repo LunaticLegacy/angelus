@@ -81,3 +81,4 @@ class ToolCatalog:
     """
 
     categories: tuple[ToolCatalogCategory, ...]
+    revision: int = 0

@@ -15,6 +15,12 @@ class ExecutionState(StrEnum):
     """
 
     IDLE = "idle"
+    QUEUED = "queued"
+    PREPARING = "preparing"
+    MATERIALIZING_TOOLS = "materializing_tools"
+    CONNECTING_MCP = "connecting_mcp"
+    MATERIALIZING_SWARM = "materializing_swarm"
+    LOADING_CONTEXT = "loading_context"
     RUNNING = "running"
     STOPPING = "stopping"
     FORCE_STOPPING = "force_stopping"

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import APIRouter, Request
 
-from ..core import AngelusCore
+from .dependencies import get_core
+
+if TYPE_CHECKING:
+    from ..core import AngelusCore
 
 
 router = APIRouter()
@@ -12,10 +17,7 @@ router = APIRouter()
 
 def _core(request: Request) -> AngelusCore:
     """Resolve the application-owned core and its provider catalog."""
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
 
 
 @router.get("/api/providers")

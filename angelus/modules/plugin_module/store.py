@@ -13,20 +13,26 @@ from .models import PluginPermission, PluginRecord, PluginSettingScalar, PluginS
 class PluginStore:
     """Own global plugin registration state below the Angelus state root."""
 
-    def __init__(self, state_root: Path, package_root: Path | None = None) -> None:
-        """Create one store with a managed package directory.
+    def __init__(self, state_root: Path, plugin_root: Path | None = None) -> None:
+        """Create one store with a managed plugin home directory.
 
         Args:
             state_root: Angelus-owned durable state root.
+            plugin_root: Optional explicit plugin home (``ANGELUS_PLUGIN_DIR``).
+                Defaults to ``<state_root>/plugins``. The home keeps three
+                separated responsibilities so discovery can never mistake
+                bookkeeping or runtime state for a package.
         """
-        default_root = state_root / "plugins"
-        self.package_root = (package_root or default_root).resolve()
-        # In portable mode ``package_root`` is the plugin directory itself:
-        # <install>/.angelus-state/plugins/<plugin-id>. Keep its registry and
-        # runtime data beside those plugin directories.
-        plugin_root = self.package_root
-        self.data_root = plugin_root / "data"
-        self._path = plugin_root / "registry.json"
+        # One plugin home, three separated responsibilities:
+        #   <home>/package/        scanned package directories, and nothing else
+        #   <home>/data/<plugin>   per-plugin runtime state (credentials, files)
+        #   <home>/registry.json   registration records and persisted settings
+        # Registry and runtime data live beside -- never inside -- the scanned
+        # package directory, so discovery cannot mistake them for packages.
+        self.plugin_root = (plugin_root or state_root / "plugins").resolve()
+        self.package_root = (self.plugin_root / "package").resolve()
+        self.data_root = self.plugin_root / "data"
+        self._path = self.plugin_root / "registry.json"
         self._lock = threading.RLock()
 
     def records(self) -> tuple[PluginRecord, ...]:

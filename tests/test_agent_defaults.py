@@ -27,6 +27,7 @@ class AgentDefaultTests(unittest.TestCase):
                 [],
                 system_prompt="test",
                 context_handler=object(),
+                context_providers=(),
             )
         self.assertTrue(agent_class.call_args.kwargs["default_stream"])
 

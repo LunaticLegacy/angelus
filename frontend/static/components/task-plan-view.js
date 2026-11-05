@@ -1,4 +1,4 @@
-import { escapeHtml } from "./dom.js";
+import { escapeHtml } from "./dom.js?v=dom-selectors-1";
 
 /**
  * Render a nested task-plan record as Workbench inspector markup.

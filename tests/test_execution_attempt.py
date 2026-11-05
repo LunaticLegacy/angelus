@@ -43,29 +43,31 @@ class ExecutionAttemptTests(unittest.TestCase):
             attempt = executor.start(lambda _controller: "done")
             manifest = attempt.commit_checkpoint(
                 "ckpt_1",
-                {"schema_version": 2, "scheduler": {"running": []}},
-                {"coordinator": {"boundary": {"round": 1, "status": "completed"}, "linear": {}}},
                 reason="completed_boundary",
+                run_graph={"schema_version": 1, "nodes": [], "edges": []},
             )
             self.assertTrue(executor.wait(1))
 
             persisted = json.loads(attempt.checkpoints.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(persisted["checkpoint"]["generation"], "ckpt_1")
             self.assertEqual(persisted["checkpoint"]["committed_event_id"], manifest["checkpoint"]["committed_event_id"])
+            self.assertIn("run_graph", persisted["checkpoint"])
 
-    def test_context_only_checkpoint_does_not_create_a_legacy_graph_file(self) -> None:
-        """A non-swarm execution must not touch execution-graph storage."""
+    def test_checkpoint_without_payload_writes_no_generation_directory(self) -> None:
+        """A checkpoint with no payload must not create any generation directory."""
         with TemporaryDirectory() as directory:
             executor = SessionExecutor("demo", Path(directory))
             attempt = executor.start(lambda _controller: "done")
             attempt.commit_checkpoint(
-                "ckpt_1", None, {}, reason="context_boundary",
+                "ckpt_1", reason="context_boundary",
             )
             self.assertTrue(executor.wait(1))
             manifest = json.loads(attempt.checkpoints.manifest_path.read_text(encoding="utf-8"))
             self.assertNotIn("graph", manifest["checkpoint"])
+            self.assertNotIn("contexts", manifest["checkpoint"])
             self.assertNotIn("run_graph", manifest["checkpoint"])
             self.assertFalse((attempt.root / "graph").exists())
+            self.assertFalse((attempt.root / "contexts").exists())
             self.assertFalse((attempt.root / "run-graph").exists())
 
     def test_sigint_drain_force_stops_live_attempt_without_signal_handler_io(self) -> None:

@@ -18,6 +18,7 @@ const ICONS = {
     '<circle cx="12" cy="5" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M11 7.2 7 15.8M13 7.2 17 15.8"/>',
   trace: '<path d="M3 12h3.5l2.2-5.5 3.1 11 2.2-5.5H21"/>',
   usage: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
+  notes: '<path d="M5 4.5h14v15H5z"/><path d="M8 9h8M8 12.5h8M8 16h5"/>',
   plugin: '<path d="M12 3.2 4 7.4v9.2l8 4.2 8-4.2V7.4z"/><path d="M4 7.4l8 4.3 8-4.3M12 11.7V21"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v4.2h-4.2"/>',
   send: '<path d="M4.5 12 20 4.5l-6.6 15-2.4-6.4z"/>',

@@ -20,6 +20,7 @@ from angelus.core import AngelusCore
 from angelus.modules.execution_module import ExecutionState
 from llmfetcher.multimodal import UserMessage
 from llmfetcher.swarm_module import AgentFailure
+from llmfetcher.swarm_module.snapshots import SwarmViewSnapshot
 
 
 class _FailingSwarm:
@@ -54,7 +55,22 @@ class _FailingSwarm:
         self.hooks.remove(hook)
         return True
 
-    def run(self, _message: str, *, control: object) -> dict[str, object]:
+    def view_snapshot(self) -> SwarmViewSnapshot:
+        """Return an empty live graph for failure-path snapshots.
+
+        Returns:
+            Minimal typed snapshot accepted by the service.
+        """
+        return SwarmViewSnapshot(
+            nodes=(),
+            edges=(),
+            max_concurrency_agents=3,
+            assignments={},
+            task_states={},
+            node_states={},
+        )
+
+    def run(self, _message: str, *, control: object, **kwargs: object) -> dict[str, object]:
         """Return the graph's normal non-fatal root failure marker.
 
         Args:
@@ -177,7 +193,7 @@ class _RecordingSwarm:
         """
         return {"nodes": [{"id": "coordinator", "kind": "agent"}]}
 
-    def run(self, message: object, *, control: object) -> dict[str, object]:
+    def run(self, message: object, *, control: object, **kwargs: object) -> dict[str, object]:
         """Record the exact initial input handed to the graph.
 
         Args:
@@ -326,7 +342,7 @@ class ExecutionImageWiringTests(unittest.TestCase):
                 "api_url": "", "api_key": "secret",
             })
             profile = core.settings_service.session_profile("demo")["effective"]
-            profile["connector_id"] = connector["id"]
+            profile["connector_id"] = connector.id
             core.settings_service.replace_session_profile("demo", profile)
 
             with patch(
@@ -426,7 +442,7 @@ class _BlockingSwarm:
         """
         return {"nodes": [{"id": "coordinator", "kind": "agent"}]}
 
-    def run(self, _message: object, *, control: object) -> dict[str, object]:
+    def run(self, _message: object, *, control: object, **kwargs: object) -> dict[str, object]:
         """Signal entry and block until the test releases the attempt.
 
         Args:
@@ -516,7 +532,7 @@ class RuntimeAgentDirtyTests(unittest.TestCase):
                 "api_url": "", "api_key": "secret",
             })
             profile = core.settings_service.session_profile("demo")["effective"]
-            profile["connector_id"] = connector["id"]
+            profile["connector_id"] = connector.id
             core.settings_service.replace_session_profile("demo", profile)
             session = core.sessions.get("demo")
             first, second = object(), object()

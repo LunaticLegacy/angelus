@@ -24,11 +24,13 @@ from .models import (
     PluginSettingScalar,
     PluginSettingValue,
     PluginToolContribution,
+    PluginContextContribution,
     PluginUiActionRegistration,
     PluginUiActionRequest,
     PluginUiActionResult,
 )
 from .store import PluginStore
+from llmfetcher.context_handlers import ContextProvider
 
 if TYPE_CHECKING:
     from ..session_module import Session
@@ -90,6 +92,7 @@ class LoadedPlugin:
     module_name: str = ""
     entrypoint: PluginEntrypoint | None = None
     provider_ids: tuple[str, ...] = ()
+    context_contributions: tuple[PluginContextContribution, ...] = ()
     ui_actions: tuple[PluginUiActionRegistration, ...] = ()
 
 
@@ -110,8 +113,11 @@ class PluginManager:
             tool_registry: Existing global tool registry receiving loaded tools.
             development_root: Optional read-only source package directory. When
                 omitted, Angelus discovers repository ``plugins/`` packages.
-            managed_root: Optional portable package directory. Its registry,
-                runtime data, and editable package copies share that root.
+            managed_root: Optional explicit plugin home (the
+                ``ANGELUS_PLUGIN_DIR`` value) to use instead of
+                ``<state_root>/plugins``. Packages are scanned from its
+                ``package/`` subdirectory; registration records and plugin
+                runtime data stay beside that subdirectory, inside the home.
         """
         self.store = PluginStore(state_root, managed_root)
         self._tool_registry = tool_registry
@@ -283,6 +289,27 @@ class PluginManager:
             updated = PluginRecord(record.id, record.name, record.package_path, False, record.permissions_granted, record.settings)
             self.store.put(updated)
             return _status(manifest, updated, "inactive", "")
+
+    def materialize_context_providers(
+        self,
+        session_id: str,
+        role: str,
+        agent_name: str,
+    ) -> tuple[ContextProvider, ...]:
+        """Build Composer sources contributed by active plugins."""
+        providers: list[ContextProvider] = []
+        with self._lock:
+            loaded = tuple(self._loaded.values())
+        for plugin in loaded:
+            for contribution in plugin.context_contributions:
+                if role not in contribution.roles:
+                    continue
+                providers.extend(
+                    item for item in contribution.provider.materialize_context(
+                        session_id, role, agent_name,
+                    ) if item is not None
+                )
+        return tuple(providers)
 
     def settings(self, plugin_id: str) -> dict[str, object]:
         """Return one registered plugin's typed settings and schema.
@@ -526,7 +553,10 @@ class PluginManager:
             entrypoint.setup(runtime)
             ui_actions = _validate_ui_actions(manifest, runtime.ui_actions)
             provider_ids = self._publish(manifest, runtime.contributions)
-            return LoadedPlugin(manifest, record, module_name, entrypoint, provider_ids, ui_actions)
+            return LoadedPlugin(
+                manifest, record, module_name, entrypoint, provider_ids,
+                tuple(runtime.context_contributions), ui_actions,
+            )
         except Exception as exc:
             _remove_plugin_modules(module_name)
             raise RuntimeError(f"plugin setup failed: {type(exc).__name__}: {exc}") from exc
@@ -555,7 +585,18 @@ class PluginManager:
                 ) for item in contribution.definitions)
                 if not categories or any(item.category_id not in category_ids for item in contribution.definitions):
                     raise RuntimeError("plugin contribution has invalid categories")
-                self._tool_registry.register(ToolProviderRegistration(provider_id, _PluginProvider(manifest.name, contribution.provider, definitions), categories, definitions))
+                tool_categories = {
+                    f"plugin.{manifest.name}.{item.id}": f"plugin.{manifest.name}.{item.category_id}"
+                    for item in contribution.definitions
+                }
+                self._tool_registry.register(
+                    ToolProviderRegistration(
+                        provider_id,
+                        _PluginProvider(manifest.name, contribution.provider, tool_categories),
+                        categories,
+                        definitions,
+                    )
+                )
                 provider_ids.append(provider_id)
             return tuple(provider_ids)
         except Exception:
@@ -567,26 +608,19 @@ class PluginManager:
 class _PluginProvider:
     """Adapt a package-local provider to the host Session tool protocol."""
 
-    def __init__(self, name: str, provider: object, definitions: tuple[ToolDefinition, ...] = ()) -> None:
-        """Retain plugin identity, its provider, and its declared Tools.
+    def __init__(self, name: str, provider: object, tool_categories: dict[str, str]) -> None:
+        """Retain plugin identity and its declared provider.
 
         Args:
             name: Owning manifest name for tool namespace validation.
             provider: Plugin-supplied provider implementing ``materialize``.
-            definitions: Tools this contribution declared; each returned Tool
-                resolves through them to the category that authorizes it.
         """
         self._name = name
         self._provider = provider
-        self._definitions = definitions
+        self._tool_categories = dict(tool_categories)
 
     def materialize(self, session: "Session", policy: "ToolPolicy", role: str, agent_name: str | None = None) -> list["Tool"]:
         """Create namespaced concrete Tools for one Agent.
-
-        The host owns authorization: a plugin may return whatever Tools it
-        likes, but only those the Session actually granted reach the model, so
-        revoking a plugin category removes its Tools even from a plugin that
-        ignores the policy.
 
         Args:
             session: Owning Session aggregate.
@@ -594,22 +628,21 @@ class _PluginProvider:
             role: Receiving Agent role.
 
         Returns:
-            Plugin-provided concrete Tools matching the plugin namespace and
-            the Session's grants.
+            Plugin-provided concrete Tools matching the plugin namespace.
 
         Raises:
-            RuntimeError: If the plugin returns an un-namespaced Tool or a Tool
-                it never declared.
+            RuntimeError: If the plugin returns an un-namespaced Tool.
         """
         session_id = session.execution.session_id if session.execution is not None else ""
         tools = self._provider.materialize(session_id, policy, role)
         prefix = f"plugin.{self._name}."
         if any(not tool.name.startswith(prefix) for tool in tools):
             raise RuntimeError("plugin emitted a Tool outside its namespace")
-        declared = {item.id: item.category_id for item in self._definitions}
-        if any(tool.name not in declared for tool in tools):
-            raise RuntimeError("plugin emitted an undeclared Tool")
-        return [tool for tool in tools if policy.allows(declared[tool.name], tool.name)]
+        return [
+            tool for tool in tools
+            if self._tool_categories.get(tool.name) is not None
+            and policy.allows(self._tool_categories[tool.name], tool.name)
+        ]
 
 
 def _remove_plugin_modules(module_name: str) -> None:
@@ -726,6 +759,7 @@ def _field_json(value: object) -> dict[str, object]:
         "key": value.key, "type": value.value_type, "title": value.title, "description": value.description,
         "required": value.required, "default": value.default, "enum": list(value.choices) or None, "minimum": value.minimum,
         "maximum": value.maximum, "format": value.value_format, "placeholder": value.placeholder,
+        "visible_if": getattr(value, "visible_if", None),
         "sensitive": isinstance(value, PluginPanelField) and value.sensitive,
     }
 

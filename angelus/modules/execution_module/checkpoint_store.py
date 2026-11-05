@@ -29,8 +29,6 @@ def _write_json_atomically(path: Path, payload: dict[str, Any]) -> str:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_name, path)
-        # POSIX-only directory fsync; Windows cannot open directories and
-        # os.replace already committed the rename atomically there.
         if os.name == "posix":
             directory_fd = os.open(path.parent, os.O_RDONLY)
             try:
@@ -47,7 +45,7 @@ def _write_json_atomically(path: Path, payload: dict[str, Any]) -> str:
 
 
 class CheckpointStore:
-    """Commit graph/context generations through one journal event.
+    """Commit one generation payload through one journal event.
 
     It owns no execution state.  ``ExecutionAttempt`` supplies a complete
     generation at safe boundaries, then this store writes payload files before
@@ -61,7 +59,7 @@ class CheckpointStore:
             attempt_root: Exclusive durable directory of the owning attempt.
             journal: Its append-only journal used to commit generations.
         """
-        # Exclusive directory for graph/context generation payloads.
+        # Exclusive directory for generation payloads.
         self.attempt_root = attempt_root
         # The only authority that can make a written generation recoverable.
         self.journal = journal
@@ -71,8 +69,6 @@ class CheckpointStore:
     def commit(
         self,
         generation: str,
-        graph: dict[str, Any] | None,
-        contexts: dict[str, dict[str, Any]],
         *,
         reason: str,
         run_graph: dict[str, Any] | None = None,
@@ -82,22 +78,11 @@ class CheckpointStore:
 
         Args:
             generation: Caller-defined, unique generation label for this attempt.
-            graph: Optional legacy llmfetcher view. ``None`` means this
-                execution did not materialize a swarm graph and must not
-                create a graph checkpoint.
-            contexts: Complete per-Agent context snapshots at that boundary.
             reason: Boundary cause, retained for recovery and observability.
 
         Returns:
             Updated manifest containing the journal-committed checkpoint ref.
         """
-        graph_ref: dict[str, str] | None = None
-        if graph is not None:
-            graph_path = self.attempt_root / "graph" / f"{generation}.json"
-            graph_ref = {
-                "path": str(graph_path.relative_to(self.attempt_root)),
-                "sha256": _write_json_atomically(graph_path, graph),
-            }
         run_graph_ref: dict[str, str] | None = None
         if run_graph is not None:
             path = self.attempt_root / "run-graph" / f"{generation}.json"
@@ -105,22 +90,11 @@ class CheckpointStore:
                 "path": str(path.relative_to(self.attempt_root)),
                 "sha256": _write_json_atomically(path, run_graph),
             }
-        context_refs: dict[str, dict[str, Any]] = {}
-        for agent_id, context in contexts.items():
-            path = self.attempt_root / "contexts" / agent_id / f"{generation}.json"
-            context_refs[agent_id] = {
-                "path": str(path.relative_to(self.attempt_root)),
-                "sha256": _write_json_atomically(path, context),
-                "last_completed_boundary": context.get("boundary", {}).get("round"),
-            }
         checkpoint = {
             "generation": generation,
             "reason": reason,
-            "contexts": context_refs,
             "committed_at": time.time(),
         }
-        if graph_ref is not None:
-            checkpoint["graph"] = graph_ref
         if run_graph_ref is not None:
             checkpoint["run_graph"] = run_graph_ref
         if recovery is not None:

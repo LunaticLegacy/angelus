@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from ..core import AngelusCore
 from ..modules.plugin_module import PluginUiActionResult
+from .dependencies import get_core
+
+if TYPE_CHECKING:
+    from ..core import AngelusCore
 
 
 router = APIRouter()
@@ -40,10 +44,7 @@ def _core(request: Request) -> AngelusCore:
     Raises:
         RuntimeError: If the host omitted the Angelus composition root.
     """
-    core = getattr(request.app.state, "angelus_core", None)
-    if not isinstance(core, AngelusCore):
-        raise RuntimeError("AngelusCore is not installed on this application")
-    return core
+    return get_core(request)
 
 
 @router.get("/api/plugins")
@@ -145,7 +146,29 @@ def unload_plugin(plugin_id: str, payload: PluginConfirmation, request: Request)
     if not payload.confirm:
         raise HTTPException(status_code=422, detail="plugin unload requires confirm=true")
     try:
-        return {"plugin": _core(request).plugin_manager.unload(plugin_id)}
+        core = _core(request)
+        result = core.plugin_manager.unload(plugin_id)
+        # Removing a plugin also removes its old Session grants. Otherwise a
+        # later chat mount can resurrect stale UI switches from the profile,
+        # even though the provider is no longer registered.
+        prefix = f"plugin.{plugin_id}."
+        for workspace in core.session_service.list():
+            try:
+                profile = core.run_profiles.effective(workspace.session_id)
+                permissions = profile.get("tool_permissions")
+                if not isinstance(permissions, dict):
+                    continue
+                categories = permissions.get("categories", {})
+                tools = permissions.get("tools", {})
+                if isinstance(categories, dict):
+                    permissions["categories"] = {key: value for key, value in categories.items() if key != prefix.rstrip(".") and not key.startswith(prefix)}
+                if isinstance(tools, dict):
+                    permissions["tools"] = {key: value for key, value in tools.items() if not key.startswith(prefix)}
+                profile["tool_permissions"] = permissions
+                core.settings_service.replace_session_profile(workspace.session_id, profile)
+            except (KeyError, ValueError):
+                continue
+        return {"plugin": result}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="unknown plugin") from exc
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -166,22 +167,42 @@ class PofpCtfProvider:
         Raises:
             ValueError: If ``direction`` is outside the supported disciplines.
         """
-        q = (query or "").strip().lower()
+        q = (query or "").strip().casefold()
+        # Match useful terms independently. Requiring the complete query as
+        # one contiguous substring makes natural multi-term searches fail
+        # whenever the knowledge leaf uses a different word order.
+        terms = tuple(dict.fromkeys(
+            term for term in re.findall(r"[a-z0-9_]+|[\u3400-\u9fff]", q)
+            if term
+        ))
         allowed = {"", "re", "web", "pwn", "crypto", "misc", "strategy"}
         if direction not in allowed:
             raise ValueError("unknown CTF direction")
         if not self.is_available():
             return f"POFP CTF knowledge root is unavailable: {self._root}"
-        hits: list[CtfSearchHit] = []
+        ranked: list[tuple[int, str, Path, str]] = []
         for path in _iter_leaves(self._root, direction):
             text = path.read_text(encoding="utf-8", errors="replace")
             title = next((line[2:].strip() for line in text.splitlines() if line.startswith("# ")), path.stem)
             relative = path.relative_to(self._root)
-            if q and q not in title.lower() and q not in text.lower() and q not in str(relative).lower():
+            haystack = f"{title}\n{text}\n{relative.as_posix()}".casefold()
+            if q and not terms:
                 continue
-            hits.append(CtfSearchHit(relative.as_posix(), title, relative.parts[0] if relative.parts else ""))
-            if len(hits) >= max(1, min(int(limit or 20), 100)):
-                break
+            if q:
+                matched = sum(1 for term in terms if term in haystack)
+                if not matched:
+                    continue
+                # Prefer exact phrase matches, then documents matching more
+                # independent query terms, then stable path order.
+                score = matched * 10 + (1000 if q in haystack else 0)
+            else:
+                score = 0
+            ranked.append((score, relative.as_posix(), path, title))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        hits: list[CtfSearchHit] = [
+            CtfSearchHit(relative, title, Path(relative).parts[0] if relative else "")
+            for _, relative, _, title in ranked[: max(1, min(int(limit or 20), 100))]
+        ]
         if not hits:
             return "No POFP CTF knowledge documents matched the query."
         return "\n".join(f"- [{item.direction}] `{item.path}` — {item.title}" for item in hits)

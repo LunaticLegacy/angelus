@@ -4,20 +4,19 @@ Two layers are pinned here:
 
 * ``angelus.api.compact`` relays each streamed chunk as a ``delta`` frame, so
   the client sees real progress instead of a silent block between
-  ``compacting`` and ``done``.
-* ``SessionService.compact`` borrows the handler's compaction observer without
+  ``started`` and ``done``.
+* ``SessionService.compact`` borrows the handler's compaction hook without
   silencing the existing one, and always gives it back.
 
 Neither test compacts for real: the compactor is a stub and the service-level
-tests publish through the installed observer directly, so an unconfigured
-provider can never turn these assertions green or red for the wrong reason.
+tests publish through the installed hook directly, so an unconfigured provider
+can never turn these assertions green or red for the wrong reason.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -49,6 +48,11 @@ def _frames(response: object) -> list[dict]:
     return [json.loads(line) for line in body.splitlines() if line.strip()]
 
 
+def _summary(*chunks: str) -> list[str]:
+    """Wrap scripted summary text in the envelope the compaction model emits."""
+    return ["<context_abstract>", *chunks, "</context_abstract>"]
+
+
 class _StubCompactService:
     """Session service whose compaction publishes a scripted chunk sequence."""
 
@@ -56,20 +60,24 @@ class _StubCompactService:
         """Record the chunks (and optional failure) this fake compaction emits."""
         self.deltas = deltas
         self.error = error
-        self.observer_seen: object = None
+        self.hook_seen: object = None
+        self.delta_hook_seen: object = None
         self.agent = SimpleNamespace(
             context_handler=ContextHandlerLinear(_NoopCompactor())
         )
 
-    def compact(self, session_id: str, agent_name: str, *, observer=None):
-        """Replay the scripted chunks through the caller's observer."""
-        self.observer_seen = observer
-        observer("context:compact_started", "started", {"round": 1})
-        for delta in self.deltas:
-            observer("context:compact_delta", "chunk", {"delta": delta})
+    def compact(self, session_id: str, agent_name: str = "coordinator", *, on_event=None, on_delta=None):
+        """Replay the scripted chunks through the caller's hooks."""
+        self.hook_seen = on_event
+        self.delta_hook_seen = on_delta
+        if on_event is not None:
+            on_event("context:compact_started", "started", {"round": 1})
+        if on_delta is not None:
+            for delta in self.deltas:
+                on_delta(delta)
         if self.error is not None:
             raise self.error
-        return None, self.agent
+        return self.agent
 
 
 def _request(core: object) -> SimpleNamespace:
@@ -90,20 +98,20 @@ class CompactionStreamTests(unittest.TestCase):
 
     def test_streamed_chunks_survive_as_delta_frames(self) -> None:
         """Every compactor chunk reaches the wire in order."""
-        service = _StubCompactService(deltas=["第一段", "第二段"])
+        service = _StubCompactService(deltas=_summary("第一段", "第二段"))
 
         frames = self._run(service)
 
         deltas = [frame for frame in frames if frame["kind"] == "delta"]
         self.assertEqual(["第一段", "第二段"], [frame["delta"] for frame in deltas])
         self.assertEqual(
-            ["loading", "compacting", "delta", "delta", "done"],
+            ["loading", "started", "delta", "delta", "done"],
             [frame["stage"] for frame in frames],
         )
 
     def test_only_delta_events_become_delta_frames(self) -> None:
         """A started/success event must not masquerade as a streamed chunk."""
-        service = _StubCompactService(deltas=["only"])
+        service = _StubCompactService(deltas=_summary("only"))
 
         frames = self._run(service)
 
@@ -111,7 +119,7 @@ class CompactionStreamTests(unittest.TestCase):
 
     def test_the_terminal_frame_reports_the_summary_accounting(self) -> None:
         """The done frame keeps the archive/abstract counts the card shows."""
-        service = _StubCompactService(deltas=["x"])
+        service = _StubCompactService(deltas=_summary("x"))
 
         done = self._run(service)[-1]
 
@@ -122,16 +130,23 @@ class CompactionStreamTests(unittest.TestCase):
 
     def test_a_failed_compaction_reports_the_error_frame(self) -> None:
         """A failing compaction ends with the error frame, never a done frame."""
-        service = _StubCompactService(deltas=["partial"], error=RuntimeError("boom"))
+        service = _StubCompactService(deltas=_summary("partial"), error=RuntimeError("boom"))
 
         frames = self._run(service)
 
-        self.assertEqual(["loading", "compacting", "delta", "error"], [f["stage"] for f in frames])
+        self.assertEqual(
+            ["loading", "started", "delta", "error"],
+            [frame["stage"] for frame in frames],
+        )
         self.assertIn("boom", frames[-1]["error"])
 
 
-class _ObservingAgent:
-    """Agent façade whose compaction publishes through the handler's observer."""
+class _FakeAgentBase:
+    """Stand-in for llmfetcher's Agent so the service's isinstance guard passes."""
+
+
+class _ObservingAgent(_FakeAgentBase):
+    """Agent façade whose compaction publishes through the handler's hook."""
 
     def __init__(self, handler: ContextHandlerLinear, *, error: Exception | None = None) -> None:
         """Keep the composed handler and the optional failure to raise."""
@@ -141,7 +156,7 @@ class _ObservingAgent:
         self.error = error
 
     def compact_context(self, control: object = None) -> bool:
-        """Publish one streamed chunk to whichever observer is installed."""
+        """Publish one streamed chunk to whichever hook is installed."""
         hook = self.context_handler.event_hook
         if callable(hook):
             hook("context:compact_delta", "chunk", {"delta": "摘要片段"})
@@ -157,17 +172,15 @@ def _session(agent: _ObservingAgent) -> SimpleNamespace:
         agents=[agent],
         coordinator=agent,
         coordinator_name="coordinator",
-        compaction_lock=threading.Lock(),
-        compaction_control=None,
     )
 
 
-class CompactionObserverBorrowTests(unittest.TestCase):
-    """Borrowing the observer must add a listener, never replace one."""
+class CompactionHookBorrowTests(unittest.TestCase):
+    """Borrowing the hook must add a listener, never replace one."""
 
     @staticmethod
     def _recorder(seen: list[tuple[str, str, dict]]):
-        """Adapt the observer contract ``(event_type, message, data)`` onto a list."""
+        """Adapt the hook contract ``(event_type, message, data)`` onto a list."""
         return lambda event_type, message, data: seen.append((event_type, message, data))
 
     def _compact(self, agent: _ObservingAgent, seen: list[tuple[str, str, dict]]):
@@ -180,12 +193,14 @@ class CompactionObserverBorrowTests(unittest.TestCase):
                 ),
             )
         )
-        with patch.object(SessionService, "ensure_coordinator", lambda self, _id: None):
-            service.compact("demo", observer=self._recorder(seen))
+        with patch.object(SessionService, "ensure_coordinator", lambda self, _id: None), patch(
+            "angelus.modules.application_module.session_service.Agent", _FakeAgentBase
+        ):
+            service.compact("demo", on_event=self._recorder(seen))
         return service
 
-    def test_the_observer_receives_the_streamed_chunk(self) -> None:
-        """The borrowed observer sees what the compactor published."""
+    def test_the_hook_receives_the_streamed_chunk(self) -> None:
+        """The borrowed hook sees what the compactor published."""
         handler = ContextHandlerLinear(_NoopCompactor())
         seen: list[tuple[str, str, dict]] = []
 
@@ -193,8 +208,8 @@ class CompactionObserverBorrowTests(unittest.TestCase):
 
         self.assertEqual(["context:compact_delta"], [event[0] for event in seen])
 
-    def test_the_borrowed_observer_chains_the_installed_hook(self) -> None:
-        """An already-installed observer keeps receiving every event."""
+    def test_the_borrowed_hook_chains_the_installed_hook(self) -> None:
+        """An already-installed hook keeps receiving every event."""
         handler = ContextHandlerLinear(_NoopCompactor())
         chained: list[str] = []
         handler.set_compaction_event_hook(lambda event_type, _m, _d: chained.append(event_type))
@@ -206,7 +221,7 @@ class CompactionObserverBorrowTests(unittest.TestCase):
         self.assertEqual(["context:compact_delta"], [event[0] for event in seen])
 
     def test_the_installed_hook_is_restored_afterwards(self) -> None:
-        """A borrowed observer cannot outlive the call that asked for it."""
+        """A borrowed hook cannot outlive the call that asked for it."""
         handler = ContextHandlerLinear(_NoopCompactor())
         original = lambda event_type, _m, _d: None  # noqa: E731 - identity matters
         handler.set_compaction_event_hook(original)
@@ -216,7 +231,7 @@ class CompactionObserverBorrowTests(unittest.TestCase):
         self.assertIs(original, handler.event_hook)
 
     def test_a_failing_compaction_still_restores_the_installed_hook(self) -> None:
-        """A raised compaction must not leave the borrowed observer attached."""
+        """A raised compaction must not leave the borrowed hook attached."""
         handler = ContextHandlerLinear(_NoopCompactor())
         original = lambda event_type, _m, _d: None  # noqa: E731 - identity matters
         handler.set_compaction_event_hook(original)

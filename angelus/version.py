@@ -32,5 +32,5 @@ def runtime_versions() -> RuntimeVersions:
     return RuntimeVersions(
         angelus_version=ANGELUS_VERSION,
         llmfetcher_version=llmfetcher_version,
-        llmfetcher_compatibility=">=0.4.0,<0.5.0",
+        llmfetcher_compatibility=">=0.6.0,<0.7.0",
     )

@@ -1,0 +1,296 @@
+{
+  "description": "Ceiling of typing.Any uses and getattr() calls in shipped code. Regenerate with: python tests/test_typing_discipline.py --update",
+  "files": {
+    "angelus/api/compact.py": {
+      "any": 2
+    },
+    "angelus/api/external_agents.py": {
+      "any": 26
+    },
+    "angelus/api/mcp.py": {
+      "any": 4
+    },
+    "angelus/api/memory.py": {
+      "any": 1
+    },
+    "angelus/api/notes.py": {
+      "any": 1
+    },
+    "angelus/api/runs.py": {
+      "any": 7
+    },
+    "angelus/api/sessions.py": {
+      "any": 6
+    },
+    "angelus/api/settings.py": {
+      "any": 7
+    },
+    "angelus/modules/application_module/execution_service.py": {
+      "any": 7,
+      "getattr": 4
+    },
+    "angelus/modules/application_module/settings_service.py": {
+      "any": 7
+    },
+    "angelus/modules/attachment_module/store.py": {
+      "getattr": 3
+    },
+    "angelus/modules/console_module/console_tools.py": {
+      "getattr": 3
+    },
+    "angelus/modules/console_module/projection_service/service.py": {
+      "any": 4,
+      "getattr": 10
+    },
+    "angelus/modules/context_version_module/store.py": {
+      "any": 2
+    },
+    "angelus/modules/context_version_module/tool_provider.py": {
+      "any": 5
+    },
+    "angelus/modules/conversation_module/conversation_store.py": {
+      "any": 3
+    },
+    "angelus/modules/execution_module/checkpoint_store.py": {
+      "any": 7
+    },
+    "angelus/modules/execution_module/execution_attempt.py": {
+      "any": 4
+    },
+    "angelus/modules/execution_module/journal.py": {
+      "any": 3
+    },
+    "angelus/modules/external_agent_hub_module/adapters/claude_sdk.py": {
+      "getattr": 3
+    },
+    "angelus/modules/external_agent_hub_module/adapters/coze.py": {
+      "getattr": 2
+    },
+    "angelus/modules/external_agent_hub_module/adapters/opencode.py": {
+      "getattr": 2
+    },
+    "angelus/modules/external_agent_hub_module/adapters/workbuddy.py": {
+      "getattr": 2
+    },
+    "angelus/modules/file_module/file_service.py": {
+      "any": 6
+    },
+    "angelus/modules/mcp_module/bridge.py": {
+      "any": 42
+    },
+    "angelus/modules/note_module/store.py": {
+      "any": 3
+    },
+    "angelus/modules/note_module/tool_provider.py": {
+      "any": 1
+    },
+    "angelus/modules/platform_module/system_resource_manager.py": {
+      "any": 1
+    },
+    "angelus/modules/plugin_module/manager.py": {
+      "getattr": 3
+    },
+    "angelus/modules/run_graph_module/models.py": {
+      "any": 1
+    },
+    "angelus/modules/run_graph_module/projection.py": {
+      "any": 8
+    },
+    "angelus/modules/run_graph_module/reducer.py": {
+      "any": 2
+    },
+    "angelus/modules/session_memory_module/store.py": {
+      "any": 11
+    },
+    "angelus/modules/session_memory_module/tool_provider.py": {
+      "any": 2
+    },
+    "angelus/modules/session_module/agent_handler.py": {
+      "any": 2
+    },
+    "angelus/modules/session_module/session_handler.py": {
+      "any": 2
+    },
+    "angelus/modules/settings_module/profile_store.py": {
+      "any": 14
+    },
+    "llmfetcher/agent/control.py": {
+      "getattr": 1
+    },
+    "llmfetcher/agent/core.py": {
+      "any": 5,
+      "getattr": 1
+    },
+    "llmfetcher/agent/models.py": {
+      "any": 3
+    },
+    "llmfetcher/agent/request_preview.py": {
+      "any": 1
+    },
+    "llmfetcher/cli.py": {
+      "getattr": 1
+    },
+    "llmfetcher/context_handlers/base.py": {
+      "any": 2
+    },
+    "llmfetcher/context_handlers/composer.py": {
+      "any": 6,
+      "getattr": 6
+    },
+    "llmfetcher/context_handlers/linear/codec.py": {
+      "any": 4
+    },
+    "llmfetcher/context_handlers/linear/compaction.py": {
+      "any": 1
+    },
+    "llmfetcher/context_handlers/linear/handler.py": {
+      "any": 7,
+      "getattr": 2
+    },
+    "llmfetcher/context_handlers/registry.py": {
+      "any": 7
+    },
+    "llmfetcher/context_handlers/retrieved.py": {
+      "any": 13
+    },
+    "llmfetcher/context_handlers/sage/compaction.py": {
+      "any": 1
+    },
+    "llmfetcher/context_handlers/sage/sage.py": {
+      "any": 9
+    },
+    "llmfetcher/context_handlers/sage/tools.py": {
+      "any": 8
+    },
+    "llmfetcher/context_handlers/storage.py": {
+      "any": 3
+    },
+    "llmfetcher/events.py": {
+      "any": 1
+    },
+    "llmfetcher/fetcher_handlers/anthropic.py": {
+      "getattr": 4
+    },
+    "llmfetcher/fetcher_handlers/base.py": {
+      "any": 1,
+      "getattr": 10
+    },
+    "llmfetcher/fetcher_handlers/codex.py": {
+      "any": 9,
+      "getattr": 1
+    },
+    "llmfetcher/fetcher_handlers/deepseek.py": {
+      "any": 3,
+      "getattr": 1
+    },
+    "llmfetcher/fetcher_handlers/onnxruntime.py": {
+      "any": 9,
+      "getattr": 1
+    },
+    "llmfetcher/fetcher_handlers/openai.py": {
+      "any": 14,
+      "getattr": 11
+    },
+    "llmfetcher/fetcher_handlers/openvino.py": {
+      "getattr": 4
+    },
+    "llmfetcher/graph_memory/builder.py": {
+      "any": 8,
+      "getattr": 11
+    },
+    "llmfetcher/graph_memory/graph_store.py": {
+      "any": 2
+    },
+    "llmfetcher/graph_memory/handler.py": {
+      "any": 5,
+      "getattr": 4
+    },
+    "llmfetcher/graph_memory/models.py": {
+      "any": 9
+    },
+    "llmfetcher/graph_memory/retriever.py": {
+      "any": 2,
+      "getattr": 4
+    },
+    "llmfetcher/graph_memory/semantic.py": {
+      "any": 5,
+      "getattr": 2
+    },
+    "llmfetcher/graph_memory/tools.py": {
+      "any": 2
+    },
+    "llmfetcher/llm_fetcher.py": {
+      "getattr": 1
+    },
+    "llmfetcher/memory/base.py": {
+      "any": 1
+    },
+    "llmfetcher/rag_module/knowledge/embedding_model.py": {
+      "any": 3
+    },
+    "llmfetcher/rag_module/knowledge/models.py": {
+      "any": 1
+    },
+    "llmfetcher/rag_module/knowledge/vector_store.py": {
+      "any": 8
+    },
+    "llmfetcher/rag_module_tlb/core.py": {
+      "any": 3
+    },
+    "llmfetcher/rag_module_tlb/tlb_rag_tool.py": {
+      "getattr": 1
+    },
+    "llmfetcher/swarm_module/execution_graph/graph.py": {
+      "any": 10,
+      "getattr": 2
+    },
+    "llmfetcher/swarm_module/execution_graph/types.py": {
+      "any": 3
+    },
+    "llmfetcher/swarm_module/swarm.py": {
+      "any": 1,
+      "getattr": 2
+    },
+    "llmfetcher/swarm_module/task_bus.py": {
+      "any": 1
+    },
+    "llmfetcher/tools/__init__.py": {
+      "any": 1,
+      "getattr": 1
+    },
+    "llmfetcher/tools/obscura_tools.py": {
+      "any": 19
+    },
+    "llmfetcher/tools/process_runtime.py": {
+      "any": 4,
+      "getattr": 2
+    },
+    "llmfetcher/tools/shell_tools.py": {
+      "any": 1
+    },
+    "plugins/angelus-control-plane-ui-v0.2.2/main.py": {
+      "getattr": 1
+    },
+    "plugins/gzctf/automation.py": {
+      "any": 7
+    },
+    "plugins/gzctf/main.py": {
+      "any": 24
+    },
+    "plugins/token-burner/main.py": {
+      "getattr": 1
+    },
+    "scripts/backend_entry.py": {
+      "getattr": 1
+    },
+    "scripts/spike_product_adapters/adapters.py": {
+      "any": 4
+    }
+  },
+  "scope": [
+    "angelus",
+    "llmfetcher",
+    "plugins",
+    "scripts"
+  ]
+}

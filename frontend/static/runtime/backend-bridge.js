@@ -8,6 +8,22 @@
  */
 export { apiJson, apiPost, apiPut, apiPatch, apiDelete } from "../api.js";
 
+/**
+ * Low-level request escape hatch for operations that need status codes or
+ * non-JSON bodies. Keeping it here makes the browser transport replaceable
+ * without spreading fetch calls through controllers.
+ */
+export function request(url, options = {}) {
+  return fetch(url, options);
+}
+
+export const EVENT_STREAM_CLOSED = 2;
+
+/** Create an event stream without exposing EventSource construction to UI code. */
+export function createEventStream(url) {
+  return new EventSource(url);
+}
+
 export function openEventStream(url, { onMessage, onError, onOpen } = {}) {
   const source = new EventSource(url);
   source.onopen = () => onOpen?.();

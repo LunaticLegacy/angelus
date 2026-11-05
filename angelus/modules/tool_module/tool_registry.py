@@ -174,4 +174,4 @@ class ToolRegistry:
                 tools=tuple(item for item in self._definitions.values() if item.category_id == category.id),
             )
             for category in self._categories.values()
-        ))
+        ), revision=self._revision)

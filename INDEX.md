@@ -12,7 +12,7 @@
 | 应用装配、CLI、SIGINT | [`angelus/INDEX.md`](angelus/INDEX.md) | 新架构入口 |
 | HTTP 路由、SPA 挂载 | [`angelus/api/INDEX.md`](angelus/api/INDEX.md) | 新架构 API 边界 |
 | Session、执行、设置、持久化 | [`angelus/modules/INDEX.md`](angelus/modules/INDEX.md) | 领域和应用服务 |
-| 浏览器工作台 | [`frontend/INDEX.md`](frontend/INDEX.md) | 正在迁移到 Session API |
+| 浏览器工作台 | [`frontend/INDEX.md`](frontend/INDEX.md) | `app.js` 组合根、Runtime API、Controller 与组件 |
 | llmfetcher 运行时 | [`llmfetcher/INDEX.md`](llmfetcher/INDEX.md) | Git submodule |
 | 控制平面回归测试 | [`tests/INDEX.md`](tests/INDEX.md) | Phase 1 验证 |
 | 桌面壳 | [`src-tauri/INDEX.md`](src-tauri/INDEX.md) | Sidecar/桌面分发 |

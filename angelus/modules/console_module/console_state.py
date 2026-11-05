@@ -1,19 +1,47 @@
 """Typed durable console state; JSON is storage, dataclasses are the domain."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import re
 import threading
 from pathlib import Path
+from typing import Iterator
 from uuid import uuid4
 
 from ..execution_module.checkpoint_store import _write_json_atomically
+from ..settings_module.json_store import (
+    JsonSchemaError,
+    optional_string,
+    reject_unknown_keys,
+    require_int,
+    require_list,
+    require_mapping,
+    require_number,
+    require_string,
+    string_list,
+    string_list_map,
+    string_map,
+)
 
 
 class ConsoleDomainError(ValueError):
     """A safe, user-visible failure caused by a console operation."""
+
+
+_CONSOLE_LOCKS: dict[Path, threading.RLock] = {}
+_CONSOLE_LOCKS_GUARD = threading.Lock()
+
+
+def _console_lock(path: Path) -> threading.RLock:
+    """Return the process-local lock shared by every ConsoleState for a path."""
+    key = path.resolve()
+    with _CONSOLE_LOCKS_GUARD:
+        return _CONSOLE_LOCKS.setdefault(key, threading.RLock())
 
 
 @dataclass(frozen=True)
@@ -89,43 +117,51 @@ class ConsoleBlueprint:
 
     @classmethod
     def from_json(cls, value: object) -> "ConsoleBlueprint":
-        """Decode a tolerant on-disk document, ignoring malformed entries.
+        """Decode exactly one documented on-disk schema, or fail.
+
+        :meth:`to_json` emits ``asdict(self)``; this decoder consumes that same
+        shape, so every persisted field has exactly one reader.  That includes
+        ``WorkerBlueprint.role``, which the previous tolerant decoder dropped.
+        Schema version 1 stored one flat ``plan`` list instead of per-agent
+        ``plans``; that legacy shape stays readable.
 
         Args:
             value: Decoded JSON value read from the state file.
 
         Returns:
-            Valid typed blueprint, or an empty blueprint for invalid input.
+            Valid typed blueprint.
+
+        Raises:
+            ConsoleDomainError: If the document declares an unsupported
+                version, carries an unknown field, or holds a wrong-typed value.
         """
-        if not isinstance(value, dict): return cls()
-        raw_workers = value.get("workers", {})
-        workers = {name: WorkerBlueprint(name=name, system_prompt=str(item.get("system_prompt", ""))) for name, item in raw_workers.items() if isinstance(name, str) and isinstance(item, dict)} if isinstance(raw_workers, dict) else {}
-        connections = [
-            ConnectionBlueprint(str(item["source"]), str(item["target"]))
-            for item in value.get("connections", [])
-            if isinstance(item, dict) and isinstance(item.get("source"), str) and isinstance(item.get("target"), str)
-        ]
-        mappers = {name: mode for name, mode in value.get("mappers", {}).items() if isinstance(name, str) and isinstance(mode, str)} if isinstance(value.get("mappers"), dict) else {}
-        routers = {name: [target for target in targets if isinstance(target, str)] for name, targets in value.get("routers", {}).items() if isinstance(name, str) and isinstance(targets, list)} if isinstance(value.get("routers"), dict) else {}
-        plans: dict[str, TaskPlan] = {}
-        raw_plans = value.get("plans", {})
-        if isinstance(raw_plans, dict):
-            for agent, raw_plan in raw_plans.items():
-                if isinstance(agent, str) and isinstance(raw_plan, dict):
-                    plans[agent] = _decode_plan(raw_plan)
-        # Schema-v1 stored one flat list. Preserve ownership where present and
-        # place unowned items under the coordinator rather than dropping them.
-        raw_legacy = value.get("plan", [])
-        if not plans and isinstance(raw_legacy, list):
-            grouped: dict[str, list[PlanItem]] = {}
-            for item in raw_legacy:
-                if not isinstance(item, dict):
-                    continue
-                decoded = _decode_item(item)
-                if decoded is not None:
-                    grouped.setdefault(str(item.get("agent") or "coordinator"), []).append(decoded)
-            plans = {agent: TaskPlan(tasks=tuple(items)) for agent, items in grouped.items()}
-        return cls(workers=workers, connections=connections, mappers=mappers, routers=routers, plans=plans, schema_version=2)
+        try:
+            document = require_mapping(value, "console state")
+            version = _schema_version(document)
+            reject_unknown_keys(
+                document,
+                _BLUEPRINT_FIELDS_V1 if version == 1 else _BLUEPRINT_FIELDS_V2,
+                f"console state schema {version}",
+            )
+            workers = _decode_workers(document.get("workers", {}))
+            connections = _decode_connections(document.get("connections", []))
+            mappers = string_map(document.get("mappers", {}), "console state.mappers")
+            routers = string_list_map(
+                document.get("routers", {}), "console state.routers"
+            )
+            plans = _decode_plans(document.get("plans", {}))
+            if version == 1 and not plans:
+                plans = _decode_legacy_plan(document.get("plan", []))
+        except JsonSchemaError as exc:
+            raise ConsoleDomainError(f"invalid console state: {exc}") from exc
+        return cls(
+            workers=workers,
+            connections=connections,
+            mappers=mappers,
+            routers=routers,
+            plans=plans,
+            schema_version=_SCHEMA_VERSION,
+        )
 
 
 class ConsoleState:
@@ -138,12 +174,51 @@ class ConsoleState:
         Args:
             root: Durable root directory assigned to the owning Session.
         """
-        self.root = root / "console"; self.path = self.root / "state.json"; self._lock = threading.RLock(); self._blueprint = self._load()
+        self.root = root / "console"; self.path = self.root / "state.json"; self._lock = _console_lock(self.path); self._blueprint = self._load()
 
     def _load(self) -> ConsoleBlueprint:
-        """Load prior state or initialize an empty blueprint."""
-        try: return ConsoleBlueprint.from_json(json.loads(self.path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError): return ConsoleBlueprint()
+        """Load prior state or initialize an empty blueprint.
+
+        A missing document initializes an empty blueprint. An existing corrupt
+        document is isolated before the error is surfaced, so the next start
+        cannot silently overwrite user state.
+        """
+        try:
+            raw = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ConsoleBlueprint()
+        except OSError as exc:
+            raise ConsoleDomainError(f"cannot read console state: {self.path}") from exc
+        try:
+            return ConsoleBlueprint.from_json(json.loads(raw))
+        except (json.JSONDecodeError, ConsoleDomainError) as exc:
+            quarantine = self.path.with_name(
+                f"{self.path.name}.corrupt-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{uuid4().hex[:8]}"
+            )
+            try:
+                self.path.replace(quarantine)
+            except OSError as quarantine_error:
+                raise ConsoleDomainError(
+                    f"invalid console state and could not isolate it: {self.path}"
+                ) from quarantine_error
+            raise ConsoleDomainError(
+                f"invalid console state; isolated as {quarantine.name}"
+            ) from exc
+
+    @contextmanager
+    def transaction(self) -> Iterator["ConsoleState"]:
+        """Hold one per-Session write transaction across read-modify-write.
+
+        The lock is reentrant so mutations and :meth:`save` remain callable
+        inside the transaction. Callers must use this boundary when they need
+        to capture a snapshot, mutate, apply a live change, and optionally
+        restore the snapshot as one atomic unit.
+
+        Yields:
+            This state object while its per-Session lock is held.
+        """
+        with self._lock:
+            yield self
 
     def save(self) -> None:
         """Atomically commit the current secret-free blueprint.
@@ -159,7 +234,20 @@ class ConsoleState:
         Returns:
             Copy of the current blueprint that callers may inspect safely.
         """
-        with self._lock: return ConsoleBlueprint.from_json(self._blueprint.to_json())
+        with self._lock: return deepcopy(self._blueprint)
+
+    def replace(self, blueprint: ConsoleBlueprint) -> None:
+        """Restore a previously captured blueprint after a failed mutation.
+
+        Args:
+            blueprint: Isolated snapshot returned by :meth:`blueprint`.
+
+        Returns:
+            None. The restored snapshot is persisted atomically.
+        """
+        with self._lock:
+            self._blueprint = deepcopy(blueprint)
+            self.save()
 
     def add_worker(self, name: str, system_prompt: str = "") -> None:
         """Add a worker after validating its stable identity.
@@ -276,8 +364,8 @@ class ConsoleState:
             Isolated recursive plan, empty when the Agent has no plan.
         """
         with self._lock:
-            plan = self._blueprint.plans.get(agent, TaskPlan())
-            return _decode_plan(asdict(plan))
+            plan = deepcopy(self._blueprint.plans.get(agent, TaskPlan()))
+            return plan
 
     def set_plan(self, agent: str, goal: str, summary: str, tasks: list[dict[str, object]]) -> TaskPlan:
         """Validate and atomically replace one complete recursive plan.
@@ -386,29 +474,171 @@ class ConsoleState:
 
 _PLAN_STATUSES = {"not_started", "in_progress", "completed", "blocked"}
 _PLAN_PRIORITIES = {"low", "medium", "high", "critical"}
+_SCHEMA_VERSION = 2
+_BLUEPRINT_FIELDS_V1 = {
+    "schema_version", "workers", "connections", "mappers", "routers", "plan",
+}
+_BLUEPRINT_FIELDS_V2 = {
+    "schema_version", "workers", "connections", "mappers", "routers", "plans",
+}
+_WORKER_FIELDS = {"name", "system_prompt", "role"}
+_CONNECTION_FIELDS = {"source", "target"}
+_PLAN_FIELDS = {"goal", "summary", "tasks", "updated_at"}
+_ITEM_FIELDS = {
+    "id", "title", "description", "status", "priority",
+    "estimated_minutes", "subtasks", "execution",
+}
+_LEGACY_ITEM_FIELDS = _ITEM_FIELDS | {"agent"}
+_EXECUTION_FIELDS = {"assignment_ids", "active_assignment_id", "updated_at"}
 
 
-def _decode_item(value: object) -> PlanItem | None:
-    if not isinstance(value, dict) or not isinstance(value.get("id"), str):
-        return None
-    children = tuple(item for raw in value.get("subtasks", []) if (item := _decode_item(raw)) is not None) if isinstance(value.get("subtasks", []), (list, tuple)) else ()
-    estimate = value.get("estimated_minutes")
-    raw_execution = value.get("execution")
-    execution = None
-    if isinstance(raw_execution, dict):
-        raw_ids = raw_execution.get("assignment_ids", [])
-        execution = PlanExecution(tuple(str(x) for x in raw_ids if str(x)) if isinstance(raw_ids, (list, tuple)) else (), str(raw_execution.get("active_assignment_id", "")), str(raw_execution.get("updated_at", "")))
-    return PlanItem(
-        id=value["id"], title=str(value.get("title", "")), description=str(value.get("description", "")),
-        status=str(value.get("status", "not_started")), priority=str(value.get("priority", "medium")),
-        estimated_minutes=float(estimate) if isinstance(estimate, (int, float)) else None, subtasks=children, execution=execution,
+def _schema_version(document: Mapping[str, object]) -> int:
+    """Return the declared schema version; absence means the v1 layout."""
+    if "schema_version" not in document:
+        return 1
+    version = require_int(document["schema_version"], "console state.schema_version")
+    if version not in (1, 2):
+        raise JsonSchemaError(
+            f"console state.schema_version is not supported: {version}"
+        )
+    return version
+
+
+def _decode_workers(value: object) -> dict[str, WorkerBlueprint]:
+    """Decode the worker map, including the role the old decoder dropped."""
+    raw_workers = require_mapping(value, "console state.workers")
+    workers: dict[str, WorkerBlueprint] = {}
+    for name, item in raw_workers.items():
+        where = f"console state.workers[{name}]"
+        if not ConsoleState.NAME.fullmatch(name):
+            raise JsonSchemaError(f"{where} is not a valid agent name")
+        worker = require_mapping(item, where)
+        reject_unknown_keys(worker, _WORKER_FIELDS, where)
+        declared = optional_string(worker, "name", name, where)
+        if declared != name:
+            raise JsonSchemaError(f"{where}.name does not match its key")
+        workers[name] = WorkerBlueprint(
+            name=name,
+            system_prompt=optional_string(worker, "system_prompt", "", where),
+            role=optional_string(worker, "role", "worker", where),
+        )
+    return workers
+
+
+def _decode_connections(value: object) -> list[ConnectionBlueprint]:
+    """Decode the directed topology edges."""
+    raw_connections = require_list(value, "console state.connections")
+    connections: list[ConnectionBlueprint] = []
+    for index, item in enumerate(raw_connections):
+        where = f"console state.connections[{index}]"
+        connection = require_mapping(item, where)
+        reject_unknown_keys(connection, _CONNECTION_FIELDS, where)
+        connections.append(
+            ConnectionBlueprint(
+                source=require_string(connection.get("source"), f"{where}.source"),
+                target=require_string(connection.get("target"), f"{where}.target"),
+            )
+        )
+    return connections
+
+
+def _decode_plans(value: object) -> dict[str, TaskPlan]:
+    """Decode one task plan per owning Agent."""
+    raw_plans = require_mapping(value, "console state.plans")
+    return {
+        agent: _decode_plan(plan, f"console state.plans[{agent}]")
+        for agent, plan in raw_plans.items()
+    }
+
+
+def _decode_legacy_plan(value: object) -> dict[str, TaskPlan]:
+    """Decode the schema-v1 flat list, preserving each item's owner.
+
+    Args:
+        value: The legacy ``plan`` array.
+
+    Returns:
+        One TaskPlan per owner; unowned items belong to the coordinator.
+    """
+    grouped: dict[str, list[PlanItem]] = {}
+    for index, item in enumerate(require_list(value, "console state.plan")):
+        where = f"console state.plan[{index}]"
+        raw_item = require_mapping(item, where)
+        owner = optional_string(raw_item, "agent", "coordinator", where)
+        grouped.setdefault(owner, []).append(_decode_item(raw_item, where, legacy=True))
+    return {agent: TaskPlan(tasks=tuple(items)) for agent, items in grouped.items()}
+
+
+def _decode_plan(value: object, where: str) -> TaskPlan:
+    """Decode one complete per-Agent plan."""
+    plan = require_mapping(value, where)
+    reject_unknown_keys(plan, _PLAN_FIELDS, where)
+    return TaskPlan(
+        goal=optional_string(plan, "goal", "", where),
+        summary=optional_string(plan, "summary", "", where),
+        tasks=tuple(
+            _decode_item(item, f"{where}.tasks[{index}]")
+            for index, item in enumerate(
+                require_list(plan.get("tasks", []), f"{where}.tasks")
+            )
+        ),
+        updated_at=optional_string(plan, "updated_at", "", where),
     )
 
 
-def _decode_plan(value: dict[str, object]) -> TaskPlan:
-    raw_tasks = value.get("tasks", [])
-    tasks = tuple(item for raw in raw_tasks if (item := _decode_item(raw)) is not None) if isinstance(raw_tasks, (list, tuple)) else ()
-    return TaskPlan(str(value.get("goal", "")), str(value.get("summary", "")), tasks, str(value.get("updated_at", "")))
+def _decode_item(value: object, where: str, *, legacy: bool = False) -> PlanItem:
+    """Decode one recursively nested task, validating write-side invariants."""
+    item = require_mapping(value, where)
+    reject_unknown_keys(item, _LEGACY_ITEM_FIELDS if legacy else _ITEM_FIELDS, where)
+    task_id = require_string(item.get("id"), f"{where}.id")
+    if not task_id:
+        raise JsonSchemaError(f"{where}.id must not be empty")
+    status = optional_string(item, "status", "not_started", where)
+    if status not in _PLAN_STATUSES:
+        raise JsonSchemaError(f"{where}.status is not supported: {status}")
+    priority = optional_string(item, "priority", "medium", where)
+    if priority not in _PLAN_PRIORITIES:
+        raise JsonSchemaError(f"{where}.priority is not supported: {priority}")
+    raw_estimate = item.get("estimated_minutes")
+    estimated_minutes = None
+    if raw_estimate is not None:
+        estimated_minutes = require_number(raw_estimate, f"{where}.estimated_minutes")
+        if estimated_minutes < 0:
+            raise JsonSchemaError(f"{where}.estimated_minutes must not be negative")
+    return PlanItem(
+        id=task_id,
+        title=optional_string(item, "title", "", where),
+        description=optional_string(item, "description", "", where),
+        status=status,
+        priority=priority,
+        estimated_minutes=estimated_minutes,
+        subtasks=tuple(
+            _decode_item(child, f"{where}.subtasks[{index}]")
+            for index, child in enumerate(
+                require_list(item.get("subtasks", []), f"{where}.subtasks")
+            )
+        ),
+        execution=_decode_execution(item.get("execution"), f"{where}.execution"),
+    )
+
+
+def _decode_execution(value: object, where: str) -> PlanExecution | None:
+    """Decode the optional TaskBus correlation attached to one task."""
+    if value is None:
+        return None
+    execution = require_mapping(value, where)
+    reject_unknown_keys(execution, _EXECUTION_FIELDS, where)
+    return PlanExecution(
+        assignment_ids=tuple(
+            string_list(
+                execution.get("assignment_ids", []), f"{where}.assignment_ids"
+            )
+        ),
+        active_assignment_id=optional_string(
+            execution, "active_assignment_id", "", where
+        ),
+        updated_at=optional_string(execution, "updated_at", "", where),
+    )
 
 
 def _normalize_item(value: object, seen: set[str]) -> PlanItem:

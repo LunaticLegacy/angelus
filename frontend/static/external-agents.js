@@ -1,9 +1,11 @@
 /** Read-only external-history importer for independent Angelus workspaces. */
+import { request as transportRequest } from "./runtime/backend-bridge.js";
+
 const state = { providers: [], selectedProvider: null, sessions: [], candidate: null };
 const $ = (id) => document.getElementById(id);
 
 /** Request JSON and expose only the server's browser-safe error detail. */
-async function request(path, options = {}) { const response = await fetch(path, options); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`); return payload; }
+async function request(path, options = {}) { const response = await transportRequest(path, options); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.detail || `${response.status} ${response.statusText}`); return payload; }
 /** Update the live status without interpreting external source material as HTML. */
 function feedback(message = "", kind = "") { const node = $("hub-feedback"); node.textContent = message; node.dataset.kind = kind; }
 /** Make a text-only button with one fixed local action. */
