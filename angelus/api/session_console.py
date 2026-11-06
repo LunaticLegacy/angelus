@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from ..core import AngelusCore
 from ..modules.console_module import ConsoleDomainError
+from ..modules.execution_module import is_active_state
 from ..modules.external_agent_hub_module import ContextExchangeError, ContextPackage
 from ..modules.external_agent_hub_module.context_codec import parse_context_package
 from .dependencies import get_core
@@ -166,7 +167,7 @@ def graph_events(session_id: str, request: Request, cursor: int = 0, execution_i
                 core = get_core(request)
                 status = core.execution_service.status(session_id)
                 selected = page.get("execution_id")
-                if execution_id is not None or selected != status.execution_id or str(status.state) not in {"running", "stopping", "force_stopping"}:
+                if execution_id is not None or selected != status.execution_id or not is_active_state(status.state):
                     return
                 if not events:
                     yield ": keep-alive\n\n"
@@ -290,7 +291,7 @@ def events_stream(session_id: str, request: Request, cursor: int = 0, ephemeral_
                     yield f"id: {next_cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                 core = get_core(request)
                 status = core.execution_service.status(session_id)
-                if str(status.state) not in {"running", "stopping", "force_stopping"}:
+                if not is_active_state(status.state):
                     return
                 if not records:
                     yield ": keep-alive\n\n"

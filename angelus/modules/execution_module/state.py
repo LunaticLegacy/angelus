@@ -30,6 +30,40 @@ class ExecutionState(StrEnum):
     FAILED = "failed"
 
 
+# Every state in which an attempt still owns live work.  This is the single
+# table that "keep following / keep waiting" decisions must use: the run-status
+# route derives its ``active`` flag from it and both console SSE routes stop on
+# its complement.  Splitting the table is what makes a browser flap forever --
+# the client reconnects whenever ``active`` is true, so a stream that treats an
+# active state as terminal closes, is resumed one delay later, and closes again.
+# A swarm spends seconds in the preparation states below before ``RUNNING``,
+# which is why such a split only becomes visible with a swarm enabled.
+ACTIVE_STATE_VALUES: frozenset[str] = frozenset({
+    ExecutionState.QUEUED.value,
+    ExecutionState.PREPARING.value,
+    ExecutionState.MATERIALIZING_TOOLS.value,
+    ExecutionState.CONNECTING_MCP.value,
+    ExecutionState.MATERIALIZING_SWARM.value,
+    ExecutionState.LOADING_CONTEXT.value,
+    ExecutionState.RUNNING.value,
+    ExecutionState.STOPPING.value,
+    ExecutionState.FORCE_STOPPING.value,
+})
+
+
+def is_active_state(state: ExecutionState | str) -> bool:
+    """Return whether ``state`` still represents live work.
+
+    Args:
+        state: Canonical lifecycle state or its lowercase wire string.
+
+    Returns:
+        ``True`` for the nine non-terminal states, including the startup
+        phases an attempt passes through before it starts running.
+    """
+    return getattr(state, "value", state) in ACTIVE_STATE_VALUES
+
+
 @dataclass(frozen=True)
 class ExecutionSnapshot:
     """Immutable process-local projection of one attempt lifecycle.
