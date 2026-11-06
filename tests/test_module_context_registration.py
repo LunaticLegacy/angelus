@@ -232,13 +232,13 @@ class ContextProviderRegistryTests(unittest.TestCase):
                 [provider.source_id for provider in registry.materialize(
                     _request(session, _workspace(root), granted)
                 )],
-                ["angelus.workspace", "angelus.notes", "angelus.plan"],
+                ["angelus.workspace", "angelus.plan"],
             )
             self.assertEqual(
                 [provider.source_id for provider in registry.materialize(
                     _request(session, _workspace(root), ToolPolicy(frozenset(), frozenset()))
                 )],
-                ["angelus.workspace", "angelus.notes"],
+                ["angelus.workspace"],
             )
 
     def test_plan_sits_after_workspace_and_before_history(self) -> None:

@@ -47,7 +47,7 @@ DEFAULT_RUN_PROFILE: dict[str, Any] = {
             "search_session_memory": True, "read_session_memory": True,
             "search_session_artifacts": True, "open_session_artifact": True,
             "create_session_handoff": True, "read_session_handoff": True,
-            "note_list": True, "note_search": True, "note_read": True, "note_create": True, "note_update": True, "note_delete": True,
+            "note_list": True, "note_search": True, "note_read": True, "note_create": True, "note_update": True, "note_delete": True, "note_pin": True, "note_unpin": True,
             "view_image": True,
             "shell": True,
             "set_task_plan": True, "update_task_status": True, "read_task_plan": True,

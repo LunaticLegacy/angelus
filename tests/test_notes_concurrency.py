@@ -11,6 +11,27 @@ from angelus.modules.note_module import NoteError, NoteStore
 
 
 class NoteConcurrencyTests(unittest.TestCase):
+    def test_pins_are_isolated_per_agent_and_scope(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            store = NoteStore(root / "session", root / "project-notes")
+            session_note = store.create("session", "session", "session body")
+            project_note = store.create("project", "project", "project body")
+
+            store.pin("coordinator", "session", session_note.note_id)
+            store.pin("researcher", "project", project_note.note_id)
+
+            self.assertEqual(
+                [("session", session_note.note_id)], store.pinned("coordinator")
+            )
+            self.assertEqual(
+                [("project", project_note.note_id)], store.pinned("researcher")
+            )
+            store.unpin("coordinator", "session", session_note.note_id)
+            self.assertEqual([], store.pinned("coordinator"))
+
     def test_concurrent_updates_of_different_fields_keep_both(self) -> None:
         with TemporaryDirectory() as directory:
             store = NoteStore(Path(directory))

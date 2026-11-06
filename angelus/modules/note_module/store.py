@@ -40,6 +40,10 @@ _UPDATE_NOTE = (
     "status = :status, updated_at = :updated_at, revision = revision + 1 "
     "WHERE note_id = :note_id"
 )
+_SELECT_PINS = (
+    "SELECT scope, note_id FROM note_pins WHERE agent_name = :agent_name "
+    "ORDER BY pinned_at ASC"
+)
 
 
 class NoteError(ValueError):
@@ -100,6 +104,11 @@ class NoteStore:
                 updated_at REAL NOT NULL, revision INTEGER NOT NULL
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS notes_updated ON notes(updated_at DESC)")
+            db.execute("""CREATE TABLE IF NOT EXISTS note_pins (
+                agent_name TEXT NOT NULL, scope TEXT NOT NULL, note_id TEXT NOT NULL,
+                pinned_at REAL NOT NULL,
+                PRIMARY KEY (agent_name, scope, note_id)
+            )""")
 
     @staticmethod
     @contextmanager
@@ -240,6 +249,47 @@ class NoteStore:
 
     def delete(self, scope: str, note_id: str, revision: int | None = None) -> Note:
         return self.update(scope, note_id, status="deleted", revision=revision)
+
+    @staticmethod
+    def _agent_name(agent_name: object) -> str:
+        value = str(agent_name or "").strip()
+        if not value or len(value) > 120 or not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+            raise NoteError("invalid agent name")
+        return value
+
+    def pinned(self, agent_name: str) -> list[tuple[str, str]]:
+        """Return this Agent's durable ``(scope, note_id)`` pin references."""
+        with self._connection(self.session_db) as db:
+            return [tuple(row) for row in db.execute(
+                _SELECT_PINS, {"agent_name": self._agent_name(agent_name)},
+            ).fetchall()]
+
+    def pin(self, agent_name: str, scope: str, note_id: str) -> list[tuple[str, str]]:
+        """Pin one active note for one Agent, idempotently."""
+        agent = self._agent_name(agent_name)
+        note = self.read(scope, note_id)
+        if note.status != "active":
+            raise NoteError("only active notes can be pinned")
+        with self._write_connection(self.session_db) as db:
+            db.execute(
+                "INSERT OR IGNORE INTO note_pins(agent_name, scope, note_id, pinned_at) "
+                "VALUES (:agent_name, :scope, :note_id, :pinned_at)",
+                {"agent_name": agent, "scope": scope, "note_id": note_id, "pinned_at": time.time()},
+            )
+        return self.pinned(agent)
+
+    def unpin(self, agent_name: str, scope: str, note_id: str) -> list[tuple[str, str]]:
+        """Remove one Agent's pin, idempotently."""
+        agent = self._agent_name(agent_name)
+        if not re.fullmatch(r"[0-9a-f]{32}", str(note_id)):
+            raise NoteError("invalid note id")
+        self._path(scope)
+        with self._write_connection(self.session_db) as db:
+            db.execute(
+                "DELETE FROM note_pins WHERE agent_name = :agent_name AND scope = :scope AND note_id = :note_id",
+                {"agent_name": agent, "scope": scope, "note_id": note_id},
+            )
+        return self.pinned(agent)
 
     def list(self, scope: str, *, include_inactive: bool = False, limit: int = 100) -> list[Note]:
         limit = max(1, min(int(limit), 500))
